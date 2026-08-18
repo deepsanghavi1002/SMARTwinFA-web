@@ -27,6 +27,7 @@ html .modern-view .menu-root>button{height:25px;padding:0 11px;border:0;border-r
 html .modern-view .menu-root>button:hover{color:#126b86;background:#edf7f9;box-shadow:none}
 html .modern-view .menu-root>button.open{color:#fff;background:linear-gradient(135deg,#1986a5,#126580);box-shadow:0 3px 9px #12647e30}
 html .modern-view .dropdown,html .modern-view .mobile-dropdown{margin-top:4px;padding:6px;border:1px solid #d2e0e5;border-radius:10px;background:#fff;box-shadow:0 16px 38px #173e4d28}
+@media(hover:hover) and (pointer:fine){html .modern-view .menu-root:hover>.dropdown{display:block}html .modern-view .menu-root:hover>button{color:#fff;background:linear-gradient(135deg,#1986a5,#126580);box-shadow:0 3px 9px #12647e30}}
 html .modern-view .dropdown>button,html .modern-view .mobile-dropdown>button{border-radius:6px;color:var(--modern-text)}
 html .modern-view .dropdown>button:hover,html .modern-view .dropdown>button:focus,html .modern-view .mobile-dropdown>button:active{color:#fff;background:var(--modern-primary)}
 html .modern-view .mobile-dropdown>strong{border-radius:5px;color:var(--modern-primary-dark);background:#e5f1f4}

@@ -40,7 +40,7 @@ export default function Home() {
         {menus.map((menu) => (
           <div className="menu-root" key={menu.label}>
             <button className={openMenu === menu.label ? "open" : ""} onClick={() => setOpenMenu(openMenu === menu.label ? null : menu.label)} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
-            {openMenu === menu.label && <div className="dropdown" role="menu">{menu.children?.map((child, index) => <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); }}><span>{index > 4 ? "✓" : ""}</span>{child}<b>{["REPORT","INVENTORY","MASTER"].includes(menu.label) && index > 3 ? "›" : ""}</b></button>)}</div>}
+            <div className={`dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu">{menu.children?.map((child, index) => <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); }}><span>{index > 4 ? "✓" : ""}</span>{child}<b>{["REPORT","INVENTORY","MASTER"].includes(menu.label) && index > 3 ? "›" : ""}</b></button>)}</div>
           </div>
         ))}
       </div>
