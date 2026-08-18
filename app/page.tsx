@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AddonMaster } from "../features/addon-master/AddonMaster";
+import { StartupGate } from "../features/startup/StartupGate";
 
 type Menu = { label: string; children?: string[] };
 
@@ -31,7 +32,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  return (
+  return <StartupGate>{(
     <main className="winfa-window">
       <header className="title-bar"><span className="app-mark">S</span><strong>SMARTwinFA</strong><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
@@ -64,5 +65,5 @@ export default function Home() {
 
       <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.01</span></footer>
     </main>
-  );
+  )}</StartupGate>;
 }
