@@ -1,0 +1,57 @@
+html .modern-view{--modern-bg:#eef4f7;--modern-surface:#fff;--modern-surface-2:#f5f8fa;--modern-border:#c8d5dc;--modern-text:#18313d;--modern-muted:#607985;--modern-primary:#177f9f;--modern-primary-dark:#11627e;--modern-accent:#69508d;--modern-shadow:0 12px 34px #254c5d20;color:var(--modern-text);font-family:Inter,"Segoe UI",Arial,sans-serif}
+html .modern-view .view-switch{border:1px solid #197493;border-radius:14px;color:#fff;background:linear-gradient(135deg,var(--modern-primary),var(--modern-primary-dark));box-shadow:0 4px 14px #176c8d35;letter-spacing:.01em}
+html .modern-view .startup-desktop{background:linear-gradient(145deg,#edf6f8 0%,#dcecf1 48%,#c7e0e8 100%)}
+html .modern-view .login-window,html .modern-view .company-window{overflow:hidden;border:1px solid #b7cbd4;border-radius:14px;background:var(--modern-surface);box-shadow:0 24px 70px #234c5e32}
+html .modern-view .startup-title{height:34px;padding-left:12px;border-bottom:1px solid var(--modern-border);color:var(--modern-muted);background:#f7fafb;font-size:11px;font-weight:600}
+html .modern-view .startup-title button{width:38px;color:#6c7e86;background:transparent;font-size:18px}
+html .modern-view .startup-title button:hover{color:#fff;background:#d75362}
+html .modern-view .login-panel,html .modern-view .company-panel{margin:0;border:0;color:var(--modern-text);background:var(--modern-surface);box-shadow:none}
+html .modern-view .login-panel h1,html .modern-view .company-panel h1{color:var(--modern-text);text-shadow:none;font-family:Inter,"Segoe UI",sans-serif;font-size:16px;font-weight:700}
+html .modern-view .login-content label,html .modern-view .company-panel>label strong{color:var(--modern-muted);text-shadow:none;font-family:Inter,"Segoe UI",sans-serif;font-weight:600}
+html .modern-view .login-content input,html .modern-view .company-panel select{border:1px solid var(--modern-border);border-radius:7px;color:var(--modern-text);background:var(--modern-surface-2);box-shadow:none}
+html .modern-view .login-content input:focus,html .modern-view .company-panel select:focus{border-color:var(--modern-primary);background:#fff;box-shadow:0 0 0 3px #17809f1f}
+html .modern-view .company-panel option{color:var(--modern-text);background:#fff}
+html .modern-view .company-panel option:checked{color:#fff;background:var(--modern-primary)}
+html .modern-view .login-button,html .modern-view .company-actions button{border:1px solid var(--modern-primary);border-radius:7px;color:#fff;background:linear-gradient(135deg,var(--modern-primary),var(--modern-primary-dark));box-shadow:0 4px 12px #177f9f25;font-weight:700}
+html .modern-view .company-actions button:last-child{border-color:var(--modern-border);color:var(--modern-text);background:#edf3f5;box-shadow:none}
+html .modern-view .developer-credit{font-family:Inter,"Segoe UI",sans-serif;text-shadow:none}
+html .modern-view .developer-credit span{color:var(--modern-muted);font-size:10px;font-weight:500}
+html .modern-view .developer-credit strong{color:var(--modern-primary);font-size:11px;letter-spacing:.04em}
+html .modern-view .winfa-window{border:0;color:var(--modern-text);background:var(--modern-bg);box-shadow:none}
+html .modern-view .title-bar{border-bottom:1px solid var(--modern-border);background:#fff}
+html .modern-view .app-mark{border-radius:5px;box-shadow:0 2px 6px #177f9f2e}
+html .modern-view .window-controls button{border-left:1px solid #e0e8ec;color:var(--modern-muted)}
+html .modern-view .menu-bar{border-bottom:1px solid var(--modern-border);background:#f7fafb}
+html .modern-view .menu-root>button{border-right:1px solid #e2e9ed;color:#29434f;font-weight:600}
+html .modern-view .menu-root>button:hover,html .modern-view .menu-root>button.open{color:var(--modern-primary-dark);background:#e4f1f4;box-shadow:inset 0 -2px var(--modern-primary)}
+html .modern-view .dropdown,html .modern-view .mobile-dropdown{padding:5px;border:1px solid var(--modern-border);border-radius:8px;background:#fff;box-shadow:var(--modern-shadow)}
+html .modern-view .dropdown>button,html .modern-view .mobile-dropdown>button{border-radius:5px;color:var(--modern-text)}
+html .modern-view .dropdown>button:hover,html .modern-view .dropdown>button:focus,html .modern-view .mobile-dropdown>button:active{color:#fff;background:var(--modern-primary)}
+html .modern-view .mobile-dropdown>strong{border-radius:5px;color:var(--modern-primary-dark);background:#e5f1f4}
+html .modern-view .context-strip{border-bottom:1px solid #8fc3c7;color:#143844;background:linear-gradient(90deg,#9ed9cc,#a6d4df)}
+html .modern-view .context-strip>*{border-right:1px solid #89bdbe}
+html .modern-view .work-area{background:linear-gradient(145deg,#edf7f5,#e4f1f5)}
+html .modern-view .status-strip{border-top:1px solid var(--modern-border);color:var(--modern-muted);background:#f7fafb}
+html .modern-view .status-strip span{border-right:1px solid #dce6ea}
+html .modern-view .addon-master{color:var(--modern-text);background:var(--modern-bg)}
+html .modern-view .addon-heading{color:#fff;background:linear-gradient(90deg,#5f4782,#78629a);box-shadow:0 2px 9px #4732642e}
+html .modern-view .addon-heading select{border:1px solid #a999bd;border-radius:5px;color:#2c2340;background:#f2eef6;box-shadow:none}
+html .modern-view .addon-tabs{gap:5px;padding-left:8px;border-bottom:1px solid var(--modern-border);background:#edf3f5}
+html .modern-view .addon-tabs button{border:1px solid var(--modern-border);border-bottom:0;border-radius:6px 6px 0 0;color:var(--modern-muted);background:#f6f9fa}
+html .modern-view .addon-tabs button.active{color:var(--modern-primary-dark);background:#fff;box-shadow:inset 0 3px var(--modern-primary)}
+html .modern-view .addon-body{background:var(--modern-surface)}
+html .modern-view .addon-form{border-color:var(--modern-border);background:#fff}
+html .modern-view .addon-row{border-bottom:1px solid #d6e0e5}
+html .modern-view .addon-row>span{border-right:1px solid #d6e0e5;color:#435e6a;background:#f3f7f8}
+html .modern-view .addon-row input{border-right:1px solid #d6e0e5;border-bottom:1px solid #d6e0e5;color:var(--modern-text);background:#fff}
+html .modern-view .addon-row input:focus{border-color:var(--modern-primary);background:#f0fbfd;box-shadow:inset 0 0 0 2px var(--modern-primary)}
+html .modern-view .addon-column-head,html .modern-view .addon-help-head{color:#435e6a;background:#e9f0f3}
+html .modern-view .addon-help{border:1px solid var(--modern-border);border-radius:8px;background:#fff;box-shadow:var(--modern-shadow)}
+html .modern-view .addon-help .addon-help-row,html .modern-view .addon-help .state-help-row{border-bottom:1px solid #dce5e9;background:#fff}
+html .modern-view .addon-help .addon-help-row:hover,html .modern-view .addon-help .state-help-row:hover{color:#fff;background:var(--modern-primary)}
+html .modern-view .addon-actions{border-top:1px solid var(--modern-border);background:#f5f8fa}
+html .modern-view .addon-actions button{border:1px solid var(--modern-border);border-radius:6px;color:var(--modern-text);background:#fff;box-shadow:0 2px 5px #24455312}
+html .modern-view .addon-actions button:first-child{border-color:var(--modern-primary);color:#fff;background:var(--modern-primary)}
+html .modern-view .addon-actions button:first-child .action-icon{stroke:#fff}
+html .modern-view .action-icon{stroke:var(--modern-primary-dark)}
+@media(max-width:780px){html .modern-view .view-switch{right:105px}html .modern-view .addon-help{border-radius:10px}html .modern-view .addon-actions button{border-radius:7px}}
