@@ -19,7 +19,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
   return <main className="startup-desktop">
     {stage === "login" ? <section className="login-window" aria-label="User login screen">
       <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
-      <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><img src="/pranav-screen-logo.png" alt="SMARTwinFA"/><form onSubmit={(event) => { event.preventDefault(); login(); }}>
+      <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><form onSubmit={(event) => { event.preventDefault(); login(); }}>
         <label>Today&apos;s Date:<input value="18/08/2026" readOnly /></label>
         <label>User Name:<input autoFocus value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} /></label>
         <label>Password:<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
