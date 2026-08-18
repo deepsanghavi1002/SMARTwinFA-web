@@ -3,6 +3,17 @@ import { useMemo, useState } from "react";
 import { addonFields, addonGroups, createBlankAddon, initialAddonRecords, stateOptions } from "./mock-data";
 import type { AddonRecord } from "./types";
 
+function ActionIcon({ kind }: { kind: "save" | "cancel" | "delete" | "print" | "refresh" }) {
+  const paths = {
+    save: <><path d="M5 3h12l2 2v14H5z"/><path d="M8 3v6h8V3M8 19v-6h8v6"/></>,
+    cancel: <><path d="M5 5l14 14M19 5L5 19"/></>,
+    delete: <><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/></>,
+    print: <><path d="M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z"/></>,
+    refresh: <><path d="M19 7V3l-2 2a8 8 0 10 2 10M19 3h-4"/></>,
+  };
+  return <svg className="action-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[kind]}</svg>;
+}
+
 export function AddonMaster() {
   const [records, setRecords] = useState(initialAddonRecords);
   const [groupId, setGroupId] = useState("architect");
@@ -35,6 +46,6 @@ export function AddonMaster() {
       <div className="addon-form"><div className="addon-row addon-column-head"><span>Heading</span><span>Input</span></div>{addonFields.map((field) => <label className="addon-row" key={field.key}><span>{field.label}</span><input aria-label={field.label} value={draft[field.key]} onFocus={() => setHelpField(field.help ?? (field.key === "name" ? "name" : null))} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /></label>)}</div>
       <aside className="addon-help">{helpField === "name" && <><div className="addon-help-head"><span>SELECTED GROUP</span><span>DESCRIPTION</span><span>SHORT</span></div>{groupRecords.map((record) => <button key={record.id} onClick={() => selectRecord(record)}><span>{addonGroups.find((group) => group.id === groupId)?.name}</span><b>{record.name}</b><small>{record.shortName}</small></button>)}<p>Total Help Record : {groupRecords.length}</p></>}{helpField === "state" && <><strong>SELECT STATE</strong>{stateOptions.map((state) => <button key={state} onClick={() => { setDraft((current) => ({ ...current, state })); setHelpField(null); }}><b>{state}</b></button>)}</>}</aside>
     </div>
-    <div className="addon-actions"><button onClick={save}>Save ▣</button><button onClick={() => { reset(); setMessage("Cancelled"); }}>Cancel ✕</button><button onClick={remove}>Delete</button><button onClick={() => window.print()}>Print</button><button onClick={() => setMessage("Data refreshed")}>Refresh ↻</button><span role="status">{message}</span></div>
+    <div className="addon-actions"><button type="button" onClick={save}><ActionIcon kind="save" />Save</button><button type="button" onClick={() => { reset(); setMessage("Cancelled"); }}><ActionIcon kind="cancel" />Cancel</button><button type="button" onClick={remove}><ActionIcon kind="delete" />Delete</button><button type="button" onClick={() => window.print()}><ActionIcon kind="print" />Print</button><button type="button" onClick={() => setMessage("Data refreshed")}><ActionIcon kind="refresh" />Refresh</button><span role="status">{message}</span></div>
   </section>;
 }
