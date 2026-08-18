@@ -40,7 +40,7 @@ export function AddonMaster() {
   };
 
   return <section className="addon-master" aria-label="Addon sub master">
-    <div className="addon-heading"><strong>SUB MASTER</strong><select aria-label="Addon type" value={groupId} onChange={(event) => { const group = event.target.value; setGroupId(group); reset(group); setMessage("Ready"); }}>{addonGroups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select><span>▣ Cancel Both (Add And Update)</span></div>
+    <div className="addon-heading"><strong>SUB MASTER</strong><select aria-label="Addon type" value={groupId} onChange={(event) => { const group = event.target.value; setGroupId(group); reset(group); setMessage("Ready"); }}>{addonGroups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select><span><svg className="header-cancel-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" rx="1"/><path d="M5 5l8 8M13 5l-8 8"/></svg>Cancel Both (Add And Update)</span></div>
     <div className="addon-tabs"><button className={mode === "add" ? "active" : ""} onClick={() => reset()}>New(Add)</button><button className={mode === "update" ? "active" : ""} onClick={() => setHelpField("name")}>Update/Delete</button></div>
     <div className="addon-body">
       <div className="addon-form"><div className="addon-row addon-column-head"><span>Heading</span><span>Input</span></div>{addonFields.map((field) => <label className="addon-row" key={field.key}><span>{field.label}</span><input aria-label={field.label} value={draft[field.key]} onFocus={() => setHelpField(field.help ?? (field.key === "name" ? "name" : null))} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /></label>)}</div>
