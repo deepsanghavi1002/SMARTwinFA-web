@@ -9,14 +9,16 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const [year, setYear] = useState("2026");
   const [company, setCompany] = useState("dreamhouse");
+  const [modernView, setModernView] = useState(false);
 
-  if (stage === "ready") return <>{children}</>;
+  const viewButton = <button className="view-switch" type="button" onClick={() => setModernView((current) => !current)}>{modernView ? "Switch to Legacy View" : "Switch to Modern View"}</button>;
+  if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div>;
   const login = () => {
     if (username.trim().toUpperCase() === mockUser.username && password === mockUser.password) { setError(""); setStage("company"); }
     else setError("Invalid user name or password");
   };
 
-  return <main className="startup-desktop">
+  return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}<main className="startup-desktop">
     {stage === "login" ? <section className="login-window" aria-label="User login screen">
       <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
       <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-brand"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><div className="developer-credit"><span>Developed By</span><strong>PRANAV COMPUTERS</strong></div></div><form onSubmit={(event) => { event.preventDefault(); login(); }}>
@@ -34,5 +36,5 @@ export function StartupGate({ children }: { children: ReactNode }) {
         <div className="company-actions"><button onClick={() => setStage("ready")}>✓ Ok</button><button onClick={() => setStage("login")}>↩ Exit</button></div>
       </div>
     </section>}
-  </main>;
+  </main></div>;
 }
