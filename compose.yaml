@@ -1,0 +1,9 @@
+services:
+  smartwinfa-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smartwinfa-web
+    restart: unless-stopped
+    ports:
+      - "4173:3000"
