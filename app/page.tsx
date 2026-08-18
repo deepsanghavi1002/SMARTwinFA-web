@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AddonMaster } from "../features/addon-master/AddonMaster";
 
 type Menu = { label: string; children?: string[] };
 
@@ -23,7 +24,8 @@ export default function Home() {
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
-      if (!menuBar.current?.contains(event.target as Node)) setOpenMenu(null);
+      const target = event.target as Element;
+      if (!menuBar.current?.contains(target) && !target.closest(".mobile-dropdown")) setOpenMenu(null);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
@@ -56,8 +58,8 @@ export default function Home() {
         <strong>DREAMHOUSE INTERIORS SOLUTIONS (PVT.) LTD.</strong><span>01/Apr/2026 to 31/Mar/2027</span><span>PRANAV</span><span className="running">{activeItem === "Home" ? "" : activeItem}</span>
       </section>
 
-      <section className="work-area" onClick={() => setOpenMenu(null)}>
-        <img src="/pranav-screen-logo.png" alt="SMART WINFA — Modern Technology. Simple Accounting. Smart Business." />
+      <section className={`work-area ${activeItem === "Addon Master" ? "workflow-open" : ""}`} onClick={() => setOpenMenu(null)}>
+        {activeItem === "Addon Master" ? <AddonMaster /> : <img src="/pranav-screen-logo.png" alt="SMART WINFA — Modern Technology. Simple Accounting. Smart Business." />}
       </section>
 
       <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.01</span></footer>
