@@ -42,6 +42,16 @@ export default function Home() {
         ))}
       </div>
 
+      {openMenu && <>
+        <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={() => setOpenMenu(null)} />
+        <div className="mobile-dropdown" role="menu" aria-label={`${openMenu} menu`}>
+          <strong>{openMenu}</strong>
+          {menus.find((menu) => menu.label === openMenu)?.children?.map((child) => (
+            <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); }}>{child}<b>›</b></button>
+          ))}
+        </div>
+      </>}
+
       <section className="context-strip">
         <strong>DREAMHOUSE INTERIORS SOLUTIONS (PVT.) LTD.</strong><span>01/Apr/2026 to 31/Mar/2027</span><span>PRANAV</span><span className="running">{activeItem === "Home" ? "" : activeItem}</span>
       </section>
