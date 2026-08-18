@@ -10,7 +10,14 @@ export const addonFields: AddonField[] = [
   ["gst", "GST NO"], ["state", "E-STATE"], ["email", "E-MAIL ADD"], ["website", "WEB SITE"],
   ["startDate", "START DATE"], ["lastDate", "LAST DATE"],
 ].map(([key, label]) => ({ key: key as keyof AddonRecord, label, required: key === "name", help: key === "state" ? "state" : undefined }));
-export const stateOptions = ["Andaman and Nicobar Islands", "Andhra Pradesh", "Chhattisgarh", "Delhi", "Gujarat", "Karnataka", "Kerala", "Maharashtra", "Rajasthan", "Tamil Nadu", "Uttar Pradesh", "West Bengal"];
+export const stateOptions = [
+  "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chandigarh",
+  "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana",
+  "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep",
+  "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry",
+  "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand",
+  "West Bengal",
+];
 export const createBlankAddon = (id: number, groupId: string): AddonRecord => ({ id, groupId, name: "", shortName: "", openingBalance: "", margin: "", address1: "", address2: "", address3: "", city: "", pincode: "", district: "", remark: "", contact: "", telephone: "", mobile: "", fax: "", localCode: "", stdCode: "", pan: "", aadhaar: "", vat: "", cst: "", gst: "", state: "", email: "", website: "", startDate: "", lastDate: "" });
 export const initialAddonRecords: AddonRecord[] = [
   { ...createBlankAddon(1, "architect"), name: "ABHISEK GUPTA", shortName: "AG", city: "Kolkata", state: "West Bengal", mobile: "9830012345" },
