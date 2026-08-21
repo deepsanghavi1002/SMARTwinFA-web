@@ -48,3 +48,12 @@ test("retains an aggregate-only metadata catalogue for the first Account Master 
   assert.match(catalogue.catalogHash, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(JSON.stringify(catalogue), /select\s|password|rawSql/i);
 });
+
+test("documents the Account Master structural field contract without asserting functional parity", async () => {
+  const report = await readFile(new URL("../docs/intake/account-master-field-contract-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /87 ordered field mappings/);
+  assert.match(report, /expression-review-required/);
+  assert.match(report, /no target field, lookup, validation,[\s\S]*write command is approved/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});
