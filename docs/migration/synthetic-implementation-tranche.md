@@ -13,12 +13,12 @@ integration, cutover, and business signoff remain pending.
 | SYN-04 | Session expiry and terminal revocation rules | PLAT-AUTH-001 | complete |
 | SYN-05 | Deny-by-default permission decision | PLAT-RBAC-001 | complete |
 | SYN-06 | Company/year-scoped permission decision | PLAT-RBAC-001 | complete |
-| SYN-07 | Synthetic control catalog adapter | PLAT-CTX-001 | planned |
-| SYN-08 | Context transaction-scope lifecycle | PLAT-DB-001 | planned |
-| SYN-09 | Context isolation negative contract | PLAT-RLS-001 | planned |
-| SYN-10 | Typed archive registry | DB-INTAKE-001 | planned |
-| SYN-11 | Archive checksum validation | DB-INTAKE-001 | planned |
-| SYN-12 | Restore-plan allowlist | DB-INTAKE-001 | planned |
+| SYN-07 | Synthetic control catalog adapter | PLAT-CTX-001 | complete |
+| SYN-08 | Context transaction-scope lifecycle | PLAT-DB-001 | complete |
+| SYN-09 | Context isolation negative contract | PLAT-RLS-001 | complete |
+| SYN-10 | Typed archive registry | DB-INTAKE-001 | complete |
+| SYN-11 | Archive checksum validation | DB-INTAKE-001 | complete |
+| SYN-12 | Restore-plan allowlist | DB-INTAKE-001 | complete |
 | SYN-13 | Target type mapping contract | DB-MAP-001 | planned |
 | SYN-14 | Money and rounding contract | ARCH-007 | planned |
 | SYN-15 | Date/time and identifier contract | ARCH-007 | planned |
