@@ -49,6 +49,20 @@ Adopt a cell-based hybrid target:
 - Automated tests prove cross-tenant reads/writes fail for APIs, direct
   repositories, reports, exports, jobs, and print artifacts.
 
+## Implemented foundation
+
+`platform/context/tenant-context.ts` now resolves an immutable context from a
+server-owned membership and company-year catalog. A selection supplies only a
+membership, company, and accounting-year identifier; tenant identity is derived
+from the membership and the matching company/year must be open and permitted.
+The module also derives tenant/company/year-scoped cache/job keys and
+transaction-local PostgreSQL setting values.
+
+This is a tested contract, not production identity or routing. Real
+memberships, roles, company/year records, cell placement, sessions, PostgreSQL
+transactions, and RLS remain dependent on `smart_system`, the approved control
+plane schema, and the PostgreSQL platform implementation.
+
 ## Revisit criteria
 
 Revisit only with measured evidence: cell size/latency, operational cost,

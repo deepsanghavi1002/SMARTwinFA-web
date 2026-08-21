@@ -26,6 +26,7 @@
 "ARCH-008","2","Architecture","Set SLO, RPO, RTO, supported platform, residency, and capacity targets","Product/operations decisions","Measurable release budgets approved","discovered","TBD",""
 "PLAT-AUTH-001","3","Platform","Implement production identity and session lifecycle","ARCH-005","Login/reset/lockout/revocation/audit and security tests pass","discovered","TBD",""
 "PLAT-CTX-001","3","Platform","Implement tenant/company/accounting-year control catalog and resolver","ARCH-001","Only authorized selections produce immutable request context","discovered","TBD",""
+"CTX-CONTRACT-001","3","Platform","Implement source-independent immutable tenant/company/year context resolver","ARCH-001","Synthetic membership/catalog tests deny cross-identity, cross-tenant, closed, and malformed selections; scoped keys and PostgreSQL setting values include all three dimensions","unit-tested","TBD",""
 "PLAT-RBAC-001","3","Platform","Implement scoped roles/permissions/entitlements and deny-by-default guards","ARCH-005","UI, API, job, and repository negative tests pass","discovered","TBD",""
 "PLAT-DB-001","3","Platform","Implement PostgreSQL pool, TLS, least-privilege roles, timeouts, and context cleanup","ARCH-003","Pool reuse never leaks context; failover/saturation tests pass","discovered","TBD",""
 "PLAT-RLS-001","3","Platform","Implement forced tenant RLS and composite tenant-aware keys","ARCH-001","Cross-tenant read/write/reference tests fail closed","discovered","TBD",""
