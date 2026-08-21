@@ -75,7 +75,14 @@ catalog-shaped format, requires an audit event for write actions, and resolves
 only active/effective definitions with deterministic override precedence:
 global → module → tenant → company → accounting year.
 
-It is deliberately not a SQL compiler or execution path. Client definitions,
+`platform/metadata/registry.ts` adds the controlled lifecycle around those
+contracts. Definitions enter as drafts and can only advance through validated,
+approved, active, and retired states. It rejects duplicate identities, skipped
+approval states, and overlapping active versions at the same scope while
+allowing a more-specific tenant/company/year override. Each transition emits
+immutable audit evidence.
+
+These foundations are deliberately not a SQL compiler or execution path. Client definitions,
 catalog entries, PostgreSQL queries, permissions, source hashes, golden
 fixtures, and approval workflow remain blocked until their authoritative source
 artifacts are received and reviewed.
