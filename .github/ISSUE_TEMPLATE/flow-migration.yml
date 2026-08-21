@@ -1,0 +1,64 @@
+name: Feature or flow migration
+description: Track one behaviorally complete SMARTwinFA flow through parity and release.
+title: "[FLOW-ID] "
+labels:
+  - migration
+body:
+  - type: input
+    id: stable_id
+    attributes:
+      label: Stable backlog ID
+      placeholder: MST-ACCOUNT-001
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: User outcome and scope
+      description: Identify roles, tenant/company/year scope, entry points, states, and excluded behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: legacy
+    attributes:
+      label: Legacy lineage
+      description: Menu/form/control, metadata IDs, code, queries/routines, tables, reports/templates, side effects, and source hashes.
+    validations:
+      required: true
+  - type: textarea
+    id: variants
+    attributes:
+      label: Client and permission variants
+      description: Include effective dates, license/company/database branches, roles, and negative access behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Target contract and database rules
+      description: Inputs, outputs, validation, calculations, transaction/idempotency/concurrency, constraints, audit, and errors.
+    validations:
+      required: true
+  - type: textarea
+    id: controls
+    attributes:
+      label: Controls and traceability IDs
+      description: List every button, field, shortcut, action, API/domain operation, and downstream effect.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required evidence
+      description: Unit, component, DB/RLS, contract, E2E, parity/golden, performance/security, and UAT links.
+    validations:
+      required: true
+  - type: checkboxes
+    id: done
+    attributes:
+      label: Definition-of-done gate
+      options:
+        - label: No client data, secrets, or raw confidential SQL are attached.
+          required: true
+        - label: The repository definition of done will be completed before closure.
+          required: true

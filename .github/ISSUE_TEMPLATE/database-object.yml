@@ -1,0 +1,64 @@
+name: Database object or routine migration
+description: Classify and migrate a schema object, query, procedure, or data rule.
+title: "[DB-ID] "
+labels:
+  - database
+  - migration
+body:
+  - type: input
+    id: stable_id
+    attributes:
+      label: Stable backlog/object ID
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target classification
+      options:
+        - Domain command
+        - Read query or read model
+        - Report
+        - Maintenance or migration job
+        - Compatibility-only adapter
+        - Obsolete or duplicate
+        - Not yet classified
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source evidence
+      description: Hash, engine/version/dialect, database/schema/object/signature, owner, callers, tenant variants, and effective dates.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Inputs, outputs, side effects, and dependencies
+      description: Include result sets, transactions, dynamic SQL, temp/scratch behavior, tables, templates, permissions, and errors.
+    validations:
+      required: true
+  - type: textarea
+    id: target_contract
+    attributes:
+      label: Target contract and migration plan
+      description: Types, constraints, tenant keys/RLS, parameterization, reconciliation, rollout, and rollback/repair.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Required tests and parity evidence
+      description: Syntax/static analysis, unit, disposable PostgreSQL, isolation/injection, differential, performance, and UAT.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: No raw backup, credential, client row, or confidential attachment is included.
+          required: true
+        - label: Source dialect was verified rather than inferred from the filename/container.
+          required: true

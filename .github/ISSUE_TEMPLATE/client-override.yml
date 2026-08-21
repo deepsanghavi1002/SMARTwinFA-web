@@ -1,0 +1,40 @@
+name: Client override migration
+description: Track one license/company/database/query/report/template variation.
+title: "[CUST-ID] "
+labels:
+  - client-override
+  - migration
+body:
+  - type: input
+    id: stable_id
+    attributes:
+      label: Stable override ID
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and provenance
+      description: Use approved opaque tenant IDs where possible; record source hash/location, owner, effective dates, and reason without client data.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Behavior difference
+      description: Standard behavior, override behavior, fields/queries/templates/permissions, and downstream effects.
+    validations:
+      required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Versioned target implementation
+      description: Manifest version, precedence, validation, fallback, activation, rollback, and retirement plan.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Regression and UAT evidence
+    validations:
+      required: true

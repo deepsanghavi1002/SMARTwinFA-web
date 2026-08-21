@@ -1,0 +1,46 @@
+name: Defect or regression
+description: Report a reproducible problem without secrets or client data.
+title: "[DEFECT] "
+labels:
+  - bug
+body:
+  - type: input
+    id: affected_id
+    attributes:
+      label: Affected flow/control/backlog ID
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior and impact
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior and legacy/parity evidence
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Synthetic reproduction steps
+      description: Do not paste credentials, SQL backups, client rows, or sensitive screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version, tenant fixture, role, company/year fixture, browser, and migration/definition versions
+    validations:
+      required: true
+  - type: checkboxes
+    id: severity
+    attributes:
+      label: Release-blocking impact
+      options:
+        - label: Financial correctness or reconciliation
+        - label: Tenant isolation or authorization
+        - label: Data corruption or unrecoverable migration
+        - label: Sensitive report/export/print disclosure

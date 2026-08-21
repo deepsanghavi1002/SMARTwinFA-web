@@ -1,61 +1,88 @@
 # SMARTwinFA Web
 
-Web-friendly reconstruction of the SMARTwinFA Windows accounting interface.
-This stack contains the complete application source required to rebuild the
-ARM64-compatible container on the Raspberry Pi.
+SMARTwinFA Web is the new home for the cross-platform migration of the
+SMARTwinFA financial accounting product. It preserves the latest web upgrade
+from the legacy repository and adds the architecture, migration controls, and
+quality gates needed to reach production parity.
 
-## Runtime
+> **Current status: prototype, not production software.** The login, company
+> selection, navigation, and Addon Master currently use mock/in-memory data.
+> There is no production authentication, authorization, PostgreSQL persistence,
+> or tenant isolation yet. Do not expose this build to the public internet.
 
-- Container: `smartwinfa-web`
-- LAN URL: `http://pinas.local:4173`
-- Published port: `4173`
-- Container port: `3000`
-- Restart policy: `unless-stopped`
-- Persistent data: none in this interface-only phase
-- Secrets: none required
+## What is present today
 
-The current version reproduces the desktop application's horizontal menus,
-company/accounting-period/user strip, home artwork, dropdown navigation, and
-status strip. Menu selections are UI placeholders until database and business
-workflows are migrated.
+- React 19 and TypeScript application built with Vinext/Vite.
+- Responsive legacy and modern presentation modes.
+- Mock login and company/accounting-year selection flow.
+- Accounting shell with 9 menu groups and 49 visible menu labels.
+- Home navigation and branded splash screen.
+- In-memory Addon Master prototype with 8 groups, 27 fields, lookup behavior,
+  validation, add/update/delete, print, refresh, and responsive layouts.
+- Docker/Compose packaging for the interface prototype.
+- Passing lint, TypeScript, build, and rendered-shell tests.
+- A traceable, phased migration plan covering the metadata runtime, database
+  rules, client-specific queries, permissions, reports, printing, testing,
+  rollout, and future AI readiness.
 
-## Restore or deploy
+The imported UI is based on `SMARTwinFA/web` at legacy commit
+`b3970e94991824574fd2106764e1b3e95e377c9e`. Earlier prototype history is also
+preserved in this repository.
 
-From this directory on the Pi:
+## Start locally
 
-```bash
-sudo docker compose up --build -d
-```
-
-Verify the service:
-
-```bash
-sudo docker ps --filter name=smartwinfa-web
-curl --fail http://127.0.0.1:4173/
-```
-
-To stop it:
+Requirements: Node.js 22.13 or newer.
 
 ```bash
-sudo docker compose down
+npm ci
+npm run dev
 ```
 
-## Cloudflared
-
-Use `http://pinas.local:4173` as the tunnel origin when Cloudflared can resolve
-the Pi hostname. If Cloudflared shares a Docker network with this service, use
-`http://smartwinfa-web:3000` instead.
-
-The application currently has no authentication. Do not expose it publicly
-until authentication and authorization have been implemented.
-
-## Update procedure
-
-After changing the source in this directory:
+The Docker prototype can be started with:
 
 ```bash
-sudo docker compose up --build -d
+docker compose up --build
 ```
 
-Docker will rebuild the application and recreate the container while preserving
-the `unless-stopped` restart behavior.
+## Required checks
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+```
+
+`npm test` performs a production build before running the baseline rendered
+application checks. Browser interaction, PostgreSQL contract, permission,
+parity, and migration tests are planned gates and must be added alongside each
+vertical slice.
+
+## Migration control center
+
+- [Documentation index](docs/README.md)
+- [Current-state inventory](docs/discovery/current-state.md)
+- [Source and evidence register](docs/discovery/source-register.md)
+- [Database inventory](docs/discovery/database-inventory.md)
+- [Target architecture](docs/architecture/target-architecture.md)
+- [Migration roadmap](docs/migration/roadmap.md)
+- [Tracked backlog](docs/migration/backlog.csv)
+- [Feature and flow inventory](docs/migration/feature-inventory.md)
+- [Database migration plan](docs/migration/database-migration.md)
+- [Test strategy](docs/testing/test-strategy.md)
+- [Control coverage seed](docs/testing/control-coverage.csv)
+- [Definition of done](docs/migration/definition-of-done.md)
+
+## Data safety
+
+Client backups, production data, `connection.ini`, credentials, private test
+fixtures, and raw client-specific SQL exports do not belong in this repository.
+Only reviewed schema migrations, sanitized metadata, synthetic fixtures, and
+source-file hashes may be committed. See [SECURITY.md](SECURITY.md).
+
+## Delivery policy
+
+Migration work is completed as behaviorally complete vertical slices. A copied
+screen is not complete until its API behavior, PostgreSQL rules, permissions,
+tenant/client overrides, reports/printing effects, audit trail, automated
+tests, legacy parity evidence, and user acceptance are all linked to the same
+tracker item.
