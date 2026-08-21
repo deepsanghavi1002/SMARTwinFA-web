@@ -51,6 +51,13 @@ transition, but fields used for joins, uniqueness, range filters, reporting,
 or financial rules require explicit typed/indexed projections. Field IDs remain
 stable when labels change.
 
+Each definition attaches to exactly one canonical entity (`account`, `product`,
+`entry_header`, or `entry_line`). The target does not carry forward the legacy
+polymorphic `addon_data` association. A field definition must state its typed
+storage constraints, uses, scope, read/write permissions, and audit event;
+unreviewed formulas, relationship expressions, and marker strings are not
+target behavior.
+
 ## Temporary compatibility path
 
 Legacy SQL may run only in an isolated compatibility repository when:
@@ -86,6 +93,13 @@ These foundations are deliberately not a SQL compiler or execution path. Client 
 catalog entries, PostgreSQL queries, permissions, source hashes, golden
 fixtures, and approval workflow remain blocked until their authoritative source
 artifacts are received and reviewed.
+
+`platform/custom-fields/definition.ts` now supplies the equivalent typed
+custom-field boundary. It validates a single target entity, scoped override
+precedence, type-specific text/decimal constraints, permissions, and an audit
+event. It rejects raw SQL, formulas, relationship expressions, legacy markers,
+and a multi-entity definition. It is deliberately not persistence, a data
+mover, or an approval of the 118 legacy add-on definitions.
 
 ## Account Master acceptance example
 

@@ -139,6 +139,13 @@ fragments and opaque numeric flags with contracts:
 - tenant/company/year overrides with precedence and effective dates;
 - compiler status, contract hash, deployment, rollback, and audit records.
 
+Custom fields use a separate typed definition contract. A field belongs to one
+canonical entity—not a legacy polymorphic row—and declares value type,
+type-specific constraints, allowed product surfaces, scope, permissions, and
+audit event. Sparse values may be stored during transition, but any field used
+for joins, uniqueness, range filters, financial rules, or high-volume reports
+must receive an explicit typed/indexed projection after review.
+
 Definitions progress through draft, validated, approved, active, and retired.
 The compiler accepts only supported operators, catalog-owned identifiers, and
 bound values. It emits a deterministic contract that can be diffed and tested.
