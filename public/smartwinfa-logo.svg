@@ -1,0 +1,32 @@
+<svg width="848" height="984" viewBox="0 0 848 984" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cyanFace" x1="124" y1="198" x2="692" y2="752" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31C2FF"/>
+      <stop offset="1" stop-color="#0A95E0"/>
+    </linearGradient>
+    <linearGradient id="cyanSide" x1="86" y1="250" x2="248" y2="812" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#259EE2"/>
+      <stop offset="1" stop-color="#0A7BC5"/>
+    </linearGradient>
+    <linearGradient id="pinkFace" x1="258" y1="408" x2="687" y2="849" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF2AAB"/>
+      <stop offset="1" stop-color="#E11487"/>
+    </linearGradient>
+    <linearGradient id="pinkSide" x1="226" y1="431" x2="424" y2="880" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4269E"/>
+      <stop offset="1" stop-color="#CB0C74"/>
+    </linearGradient>
+    <filter id="softShadow" x="54" y="108" width="742" height="804" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#005B97" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <g filter="url(#softShadow)">
+    <path d="M118 346L412 176L694 339V603L556 682V416L412 333L256 423V756L118 676V346Z" fill="url(#cyanFace)"/>
+    <path d="M118 346L256 423V756L118 676V346Z" fill="url(#cyanSide)"/>
+    <path d="M268 483L414 399L546 475V593L688 675L425 828L268 736V483Z" fill="url(#pinkFace)"/>
+    <path d="M268 483L401 561V810L268 736V483Z" fill="url(#pinkSide)"/>
+    <path d="M381 548L381 684L425 708L592 611V541L660 578L660 692L425 829L336 778V520L414 474L486 516L486 587L592 528L414 426L268 510L268 481L414 399L546 475V592L688 675L425 829L268 736V483L381 548Z" fill="#FFEEF8" fill-opacity="0.92"/>
+    <path d="M412 333L556 416V454L412 373L323 425L280 398L412 333Z" fill="#F3FCFF" fill-opacity="0.96"/>
+    <path d="M437 418L528 471L459 510L435 495V678L408 693L381 678V480L437 418Z" fill="#FFFFFF" fill-opacity="0.96"/>
+  </g>
+</svg>

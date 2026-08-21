@@ -21,26 +21,35 @@ const menus: Menu[] = [
 export default function Home() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState("Home");
+  const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
   const menuBar = useRef<HTMLDivElement>(null);
+  const goHome = () => {
+    setActiveItem("Home");
+    setOpenMenu(null);
+    setSuspendHoverMenu(true);
+  };
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
       const target = event.target as Element;
-      if (!menuBar.current?.contains(target) && !target.closest(".mobile-dropdown")) setOpenMenu(null);
+      if (!menuBar.current?.contains(target) && !target.closest(".mobile-dropdown")) {
+        setOpenMenu(null);
+        setSuspendHoverMenu(false);
+      }
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
   return <StartupGate>{(
-    <main className="winfa-window">
-      <header className="title-bar"><span className="app-mark">S</span><strong>SMARTwinFA</strong><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
+      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
-      <div className="menu-bar" ref={menuBar} role="menubar" aria-label="SMARTwinFA application menu">
+      <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
         {menus.map((menu) => (
           <div className="menu-root" key={menu.label}>
-            <button className={openMenu === menu.label ? "open" : ""} onClick={() => setOpenMenu(openMenu === menu.label ? null : menu.label)} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
-            <div className={`dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu">{menu.children?.map((child, index) => <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); }}><span>{index > 4 ? "✓" : ""}</span>{child}<b>{["REPORT","INVENTORY","MASTER"].includes(menu.label) && index > 3 ? "›" : ""}</b></button>)}</div>
+            <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
+            <div className={`dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu">{menu.children?.map((child, index) => <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); setSuspendHoverMenu(true); }}><span>{index > 4 ? "✓" : ""}</span>{child}<b>{["REPORT","INVENTORY","MASTER"].includes(menu.label) && index > 3 ? "›" : ""}</b></button>)}</div>
           </div>
         ))}
       </div>
@@ -50,7 +59,7 @@ export default function Home() {
         <div className="mobile-dropdown" role="menu" aria-label={`${openMenu} menu`}>
           <strong>{openMenu}</strong>
           {menus.find((menu) => menu.label === openMenu)?.children?.map((child) => (
-            <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); }}>{child}<b>›</b></button>
+            <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); setSuspendHoverMenu(true); }}>{child}<b>›</b></button>
           ))}
         </div>
       </>}
@@ -59,8 +68,16 @@ export default function Home() {
         <strong>DREAMHOUSE INTERIORS SOLUTIONS (PVT.) LTD.</strong><span>01/Apr/2026 to 31/Mar/2027</span><span>PRANAV</span><span className="running">{activeItem === "Home" ? "" : activeItem}</span>
       </section>
 
-      <section className={`work-area ${activeItem === "Addon Master" ? "workflow-open" : ""}`} onClick={() => setOpenMenu(null)}>
-        {activeItem === "Addon Master" ? <AddonMaster /> : <img src="/pranav-screen-logo.png" alt="SMART WINFA — Modern Technology. Simple Accounting. Smart Business." />}
+      <section className={`work-area ${activeItem === "Addon Master" ? "workflow-open" : ""}`}>
+        {activeItem === "Addon Master" ? <AddonMaster /> : <div className="home-splash" aria-label="SMART WINFA homepage">
+          <div className="home-splash-logo" role="img" aria-label="SMART WINFA logo" />
+          <aside className="home-credit" aria-label="Developed by Pranav Computers">
+            <span>DEVELOPED BY</span>
+            <strong>PRANAV COMPUTERS</strong>
+            <b>MO :9820144816</b>
+            <b>MO :9833844816</b>
+          </aside>
+        </div>}
       </section>
 
       <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.01</span></footer>

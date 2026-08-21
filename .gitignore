@@ -38,3 +38,14 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# Local database exports and legacy credentials must never be committed.
+/backups/
+/database/snapshots/
+/database/fixtures/private/
+*.dump
+*.backup
+*.bak
+*_backup.sql
+*_postgres_pc.sql
+connection.ini

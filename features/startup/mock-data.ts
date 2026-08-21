@@ -1,4 +1,4 @@
-export const mockUser = { username: "SRP", password: "smart123", displayName: "SRP" };
+export const mockUser = { username: "SRP", displayName: "SRP" };
 export const accountingYears = [
   { id: "2024", label: "01/Apr/2024 to 31/Mar/2025" },
   { id: "2025", label: "01/Apr/2025 to 31/Mar/2026" },
