@@ -2,19 +2,20 @@
 
 ## Baseline decision gate: identify the real source dialect
 
-Current evidence conflicts:
+The migration direction is confirmed; object-level conversion evidence remains incomplete:
 
 | Evidence | Dialect/state |
 |---|---|
 | Inspected C# legacy branch | SQL Server/T-SQL (`SqlClient`, `.dbo`, `TOP`, `ISNULL`, `CONVERT`, SMO, MDF/LDF) |
-| User migration description | MySQL to PostgreSQL |
+| Product-owner confirmation (2026-08-21) | SQL Server is the legacy source; PostgreSQL is the destination; MySQL is out of scope |
 | Two supplied “.sql” files | PostgreSQL custom-format archives, already containing converted objects/data |
 | Procedures inside `smart_setup` archive | PostgreSQL wrappers with substantial T-SQL still embedded in dynamic text |
 
 The program must maintain an object registry with `source_engine`,
 `source_version`, `source_object`, `target_object`, `conversion_status`, and
-`evidence`. No blanket MySQL conversion or acceptance of dumped PostgreSQL
-routines is allowed until this registry resolves the dialect per object.
+`evidence`. No blanket acceptance of dumped PostgreSQL routines is allowed
+until this registry resolves the source/target mapping and conversion status per
+object.
 
 ## Verified intake progress — 2026-08-21
 
@@ -94,7 +95,7 @@ Obtain and catalog:
 - current menu, entry, master, report, dashboard, help, book, security, document,
   custom-field, and key metadata;
 - the PostgreSQL migration branch and all stored procedures/functions;
-- authoritative MySQL DDL/data dictionary if a MySQL system exists;
+- authorized SQL Server DDL/data dictionary and version/compatibility evidence;
 - C#/XML/runtime query builders and `|sys.*|` replacement behavior;
 - license/company/database-to-feature and report/template mappings;
 - representative golden data and reports for each major flow.
@@ -114,14 +115,6 @@ status.
 ## Phase 3: schema conversion and integrity recovery
 
 Create an explicit mapping for each column and behavior.
-
-### MySQL concerns, if confirmed
-
-- unsigned ranges and identity allocation;
-- `AUTO_INCREMENT`, `tinyint(1)`, enum/set, zero dates, implicit casts;
-- charset/collation and case sensitivity;
-- `ON DUPLICATE KEY`, date/string functions, delimiters, and result sets;
-- SQL mode-dependent grouping/null/truncation behavior.
 
 ### SQL Server concerns already evidenced
 
@@ -233,8 +226,8 @@ See [cutover runbook](../operations/cutover-runbook.md).
 ## Immediate blockers
 
 - Missing `smart_system` archive.
-- Missing authoritative MySQL artifacts or confirmation that SQL Server is the
-  actual source.
+- Missing exact SQL Server version/compatibility/collation evidence and
+  authoritative object definitions.
 - Missing promised PostgreSQL branch and future stored procedures.
 - Missing current menu and effective client query/report/template sets.
 - Missing a running legacy environment and representative golden fixtures.

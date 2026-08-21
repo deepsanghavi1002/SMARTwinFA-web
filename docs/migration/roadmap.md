@@ -85,8 +85,9 @@ evidence registered; project owner approves private repository access.
 
 Deliverables:
 
-- Confirm whether the source is SQL Server, MySQL, both by client/version, or a
-  staged PostgreSQL conversion; record exact versions and dialect per object.
+- Record the confirmed SQL Server-to-PostgreSQL direction, then capture exact
+  SQL Server versions, compatibility levels, collations, and source/target
+  conversion status per object.
 - Obtain/restorably verify `smart_setup`, `smart_system`, representative
   company-year data, the PostgreSQL branch, and all procedures.
 - Export current menu, rights, books, masters, entries, reports, dashboards,

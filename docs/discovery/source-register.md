@@ -12,7 +12,7 @@ Paths shown here are local discovery locations, not repository dependencies.
 | SRC-DB-002 | `smart_setup_postgres_pc.sql` | Restricted configuration/security data | SHA-256 `e3cb5c1dea3f264f8152c734889c1b26319ef8c57e43eea34e8db3d74ca5768b`; PostgreSQL custom archive | Restored in isolated local intake database; raw archive/data remain outside Git |
 | SRC-DB-003 | `account_master_update_query.txt` | Confidential business/query definition | SHA-256 `1b19c434fcdda03fe0131670d9faeabc4ab89dd3b192de6169cc47559407e941` | Reviewed as evidence; raw file not committed |
 | SRC-DB-004 | `smart_system_postgres_pc.sql` | Restricted control-plane data | SHA-256 `e1506122961941a20fbe347b2c85c374d3f7603b0f84329bba2b7255992379f5`; PostgreSQL custom archive | Restored in isolated local intake database; aggregate inventory complete, semantic mapping pending; raw archive/data remain outside Git |
-| SRC-DB-005 | Authoritative MySQL schema/data dictionary, if it exists | Restricted | User described MySQL; no matching source found | Missing / engine decision blocked |
+| SRC-DB-005 | Legacy source-engine decision | Owner-confirmed migration direction | On 2026-08-21 the product owner confirmed SQL Server is the system being migrated out of and PostgreSQL is the destination; no MySQL source is in scope | Confirmed; SQL Server version and object-by-object source/target mapping remain pending |
 | SRC-DB-006 | PostgreSQL migration branch mentioned by user | Confidential source | Not visible in the checked local/fetched branch set | Pending |
 | SRC-DB-007 | Remaining stored procedures/functions | Confidential business logic | Must include source dialect, version, dependencies, owner, and sample contracts | Pending incremental intake |
 | SRC-META-001 | `MenuMaster` and related metadata rows | Confidential application metadata | Present in restored 2026-08-19 `smart_setup` archive; freshness and authority still require owner confirmation | Available locally; classification pending |
@@ -37,8 +37,8 @@ Paths shown here are local discovery locations, not repository dependencies.
 
 ## Open discovery questions
 
-- Is there a separate MySQL implementation, or does “MySQL” refer to the
-  historical SQL Server system?
+- What are the exact SQL Server versions, compatibility levels, collations,
+  and object definitions for each legacy deployment?
 - Is each company-year a database, a schema in `smartwin_data`, or both across
   deployments?
 - Which metadata source is authoritative when C#, `smart_setup`,

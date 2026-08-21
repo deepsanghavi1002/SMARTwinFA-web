@@ -107,8 +107,9 @@ retirement path.
 
 1. The inspected C# is SQL Server/T-SQL (`System.Data.SqlClient`, `.dbo`,
    `TOP`, `ISNULL`, `CONVERT`, SMO, `sa`, MDF/LDF operations).
-2. The user described a MySQL-to-PostgreSQL migration, but no MySQL source was
-   found in the inspected tree.
+2. The product owner confirmed that SQL Server is the legacy source being
+   migrated to PostgreSQL; no MySQL source is in scope. Exact SQL Server
+   versions, compatibility levels, and object definitions remain unavailable.
 3. All three supplied database files are PostgreSQL custom archives and have been
    restored into an isolated local PostgreSQL 18 intake database. Catalog and
    row-count evidence is recorded in the local restore report.
