@@ -19,9 +19,9 @@ integration, cutover, and business signoff remain pending.
 | SYN-10 | Typed archive registry | DB-INTAKE-001 | complete |
 | SYN-11 | Archive checksum validation | DB-INTAKE-001 | complete |
 | SYN-12 | Restore-plan allowlist | DB-INTAKE-001 | complete |
-| SYN-13 | Target type mapping contract | DB-MAP-001 | planned |
-| SYN-14 | Money and rounding contract | ARCH-007 | planned |
-| SYN-15 | Date/time and identifier contract | ARCH-007 | planned |
+| SYN-13 | Target type mapping contract | DB-MAP-001 | complete |
+| SYN-14 | Money and rounding contract | ARCH-007 | complete |
+| SYN-15 | Date/time and identifier contract | ARCH-007 | complete |
 | SYN-16 | Control-plane schema model | DB-CONTROL-001 | planned |
 | SYN-17 | Tenant-aware composite-key contract | DB-CONTROL-001 | planned |
 | SYN-18 | Canonical journal-line balance rule | DB-CANON-001 | planned |
