@@ -3,7 +3,7 @@
 "WEB-001","0","Web baseline","Import latest August 21 web upgrade from legacy commit b3970e9","SRC-WEB-001","Source provenance recorded; legacy/modern UI and Addon prototype build","unit-tested","TBD",""
 "WEB-002","0","Web baseline","Remove wrong D1/SQLite starter database path","WEB-001","No D1/SQLite runtime or package references; PostgreSQL workspace documented","unit-tested","TBD",""
 "WEB-003","0","Web baseline","Replace stale starter tests and fix lint/type errors","WEB-001","Lint, type-check, production build, and rendered tests pass","unit-tested","TBD",""
-"SEC-BASE-001","0","Data safety","Protect dumps, connection.ini, secrets, and private fixtures","REPO-001","Ignore rules, security policy, and clean history scan pass","designed","TBD",""
+"SEC-BASE-001","0","Data safety","Protect dumps, connection.ini, secrets, and private fixtures","REPO-001","Ignore rules, security policy, and tracked-tree safety scan pass","unit-tested","TBD",""
 "CI-001","0","Quality platform","Add clean-install CI for lint, type-check, build, and tests","REPO-001","Required checks pass on a clean hosted runner","designed","TBD",""
 "DISC-DB-001","1","Discovery","Confirm authoritative source engines and versions per deployment/object","MySQL artifacts or owner confirmation","Every source object has engine/version/dialect evidence","blocked","TBD",""
 "DISC-SYS-001","1","Discovery","Obtain and inventory smart_system","SRC-DB-004","Users, rights, companies, years, routing, dashboards, print staging mapped","blocked","TBD",""
