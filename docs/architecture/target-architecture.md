@@ -119,6 +119,12 @@ Each module owns its commands, queries, invariants, permissions, audit events,
 and tests. Direct cross-module table updates are prohibited; use a domain API or
 transactional event contract.
 
+`platform/audit/audit-event.ts` supplies the initial immutable audit-event
+contract: every event carries the full tenant/company/year context, actor,
+resource, correlation ID, outcome, and redacted details. Persistence,
+append-only storage, retention, and transactional outbox delivery remain part
+of the PostgreSQL platform work.
+
 ## Metadata runtime
 
 Preserve the valuable generic behavior of `smart_setup`, but replace raw query

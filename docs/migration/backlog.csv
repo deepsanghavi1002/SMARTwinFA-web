@@ -31,6 +31,7 @@
 "PLAT-DB-001","3","Platform","Implement PostgreSQL pool, TLS, least-privilege roles, timeouts, and context cleanup","ARCH-003","Pool reuse never leaks context; failover/saturation tests pass","discovered","TBD",""
 "PLAT-RLS-001","3","Platform","Implement forced tenant RLS and composite tenant-aware keys","ARCH-001","Cross-tenant read/write/reference tests fail closed","discovered","TBD",""
 "PLAT-AUDIT-001","3","Platform","Implement append-only audit and transactional outbox","ARCH-004","Security/financial/configuration events are durable, ordered, and redacted","discovered","TBD",""
+"AUDIT-CONTRACT-001","3","Platform","Implement source-independent immutable and redacted audit-event contract","ARCH-004","Audit events require tenant/company/year scope, actor, resource, correlation, outcome, and redact sensitive payload fields before persistence/logging","unit-tested","TBD",""
 "PLAT-JOB-001","3","Platform","Implement durable background job worker and idempotency","PLAT-AUDIT-001","Retry/crash/duplicate/concurrency tests pass","discovered","TBD",""
 "JOB-CONTRACT-001","3","Platform","Implement source-independent durable job state and audit contracts","ARCH-006","Queued/claimed/succeeded/failed/cancelled state rules, worker ownership, bounded retries, scope-bound idempotency, and audit events have passing tests","unit-tested","TBD",""
 "PLAT-OBS-001","3","Platform","Implement tenant-safe logs, metrics, traces, and correlation","ARCH-008","SLO dashboards and redaction tests pass","discovered","TBD",""
