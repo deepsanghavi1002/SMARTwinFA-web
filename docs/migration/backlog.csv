@@ -52,6 +52,7 @@
 "DB-COMPAT-001","4","Database","Build server-controlled legacy schema/database compatibility adapter","PLAT-CTX-001","No request-controlled identifier; contract/isolation/timeout tests pass","discovered","TBD",""
 "DB-META-001","4","Metadata runtime","Build versioned definition registry and compiler","ARCH-002","Definitions validate, compile, test, activate, and roll back deterministically","discovered","TBD",""
 "DB-CUSTOM-001","4","Metadata runtime","Build typed custom-field model and legacy addon projection","DB-META-001","Add/change/disable/filter/report behavior passes across representative clients","discovered","TBD",""
+"DB-CUSTOM-INVENTORY-001","4","Metadata runtime","Profile legacy add-on definitions and polymorphic add-on storage","DISC-PG-RESTORE-001","Aggregate-only inventory records definition markers/types and account/product/unscoped storage facts; exceptions are classified without raw metadata/data entering Git","unit-tested","TBD",""
 "DB-PROC-001","4","Database","Classify and resolve all known routine signatures","DISC-PROC-001","Every routine rewritten/tested, retired with evidence, or named blocked","discovered","TBD",""
 "DB-MOVER-001","4","Database","Build resumable migration runner, checkpoint ledger, and quarantine","DB-MAP-001","Clean rerun, failure resume, checksums, and repair audit pass","discovered","TBD",""
 "DB-PARITY-001","4","Database","Build row, relationship, money, stock, report, and hash reconciliation","DISC-DATA-001","Per-tenant/year reconciliation report is deterministic and signed","discovered","TBD",""

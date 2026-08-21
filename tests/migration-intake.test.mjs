@@ -66,3 +66,13 @@ test("documents Account Master integrity exceptions without exposing client rows
   assert.match(report, /no automatic cleanup or constraint migration[\s\S]*authorized/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents polymorphic add-on storage risk without exposing field definitions or values", async () => {
+  const report = await readFile(new URL("../docs/intake/addon-metadata-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /118 add-on definitions/);
+  assert.match(report, /polymorphic legacy projection/i);
+  assert.match(report, /24 unmatched account codes/);
+  assert.match(report, /does not authorize migration writes/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});

@@ -20,6 +20,11 @@
   The aggregate-only evidence is in
   `docs/intake/account-master-integrity-profile-2026-08-21.md`; no target key
   or foreign key is approved yet.
+- Add-ons: the company has 118 add-on definitions, but `addon_data` is a
+  polymorphic account/product projection with dual, unscoped, and unmatched
+  account rows. The safe inventory is in
+  `docs/intake/addon-metadata-profile-2026-08-21.md`; it cannot be treated as a
+  simple Account Master child table.
 - Writes/effects: unknown until save routine and triggers are obtained. Do not
   assume posting or stock effects for master changes.
 - Edit/delete/cancel/lock: unknown; obtain UI tests and database constraints.
