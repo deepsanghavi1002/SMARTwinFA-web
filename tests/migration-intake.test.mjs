@@ -103,3 +103,12 @@ test("documents program metadata integrity risk without exporting source fragmen
   assert.match(report, /no fragment is permitted in the web runtime/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents stored-query quarantine without exporting query text", async () => {
+  const report = await readFile(new URL("../docs/intake/query-metadata-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /216/);
+  assert.match(report, /214 legacy[\s\S]*token/i);
+  assert.match(report, /quarantined from the web runtime/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});
