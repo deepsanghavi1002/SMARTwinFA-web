@@ -1,0 +1,68 @@
+{
+  "catalogVersion": 1,
+  "observedOn": "2026-08-21",
+  "restrictedData": false,
+  "source": {
+    "kind": "isolated-local-postgresql-intake",
+    "archiveHashes": {
+      "companyYear": "ed0124bb02497f397b874370fdbdac9d27febf90f6b677b63585a717398d8d6f",
+      "smartSetup": "e3cb5c1dea3f264f8152c734889c1b26319ef8c57e43eea34e8db3d74ca5768b"
+    }
+  },
+  "structural": {
+    "schemas": [
+      {
+        "name": "rishabh_plastic27",
+        "tables": 75,
+        "columns": 1864,
+        "estimatedRows": 705743,
+        "primaryKeys": 0,
+        "foreignKeys": 0,
+        "views": 0,
+        "triggers": 0
+      },
+      {
+        "name": "smart_setup",
+        "tables": 37,
+        "columns": 940,
+        "estimatedRows": 146964,
+        "primaryKeys": 36,
+        "foreignKeys": 0,
+        "views": 0,
+        "triggers": 0
+      }
+    ]
+  },
+  "metadata": {
+    "counts": {
+      "program_top": 49,
+      "program_body": 1308,
+      "menumaster": 592,
+      "query_table": 216,
+      "database_keys": 45,
+      "entry_control": 704
+    },
+    "logicalKeyRelationships": 45,
+    "accountMaster": {
+      "sourceId": "program_top:14",
+      "fieldCount": 87,
+      "addActiveFields": 76,
+      "updateActiveFields": 76,
+      "compulsoryFields": 27,
+      "validationFields": 4,
+      "lookupQueryFields": 12,
+      "duplicateCheckFields": 2,
+      "fieldTypes": {
+        "D": 3,
+        "I": 15,
+        "N": 16,
+        "T": 53
+      },
+      "updateDefinitionLength": 989,
+      "updateDefinitionChecksum": "78734578ae595c754a2b4e0c9b8772d1",
+      "addonDefinitionLength": 281,
+      "addonDefinitionChecksum": "2218ab9d5e1809921bcb196d62a26eca"
+    }
+  },
+  "catalogHash": "9bf02ec47481acc8e01fc69dfd7d8bb4fd97db5b476f03209d159c9a1ad98d39"
+}

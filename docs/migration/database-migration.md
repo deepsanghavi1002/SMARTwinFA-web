@@ -16,6 +16,40 @@ The program must maintain an object registry with `source_engine`,
 `evidence`. No blanket MySQL conversion or acceptance of dumped PostgreSQL
 routines is allowed until this registry resolves the dialect per object.
 
+## Verified intake progress — 2026-08-21
+
+The two supplied PostgreSQL archives have been restored only into the local,
+isolated `smartwin_data_intake` database. The restore is physically healthy;
+the evidence and archive hashes are in
+[the restore report](../intake/postgres-local-restore-2026-08-21.md).
+
+A repeatable, aggregate-only extractor now produces the committed
+[sanitized metadata catalogue](../intake/postgres-metadata-catalog-2026-08-21.json):
+
+```text
+node scripts/export-postgres-intake-catalog.mjs \
+  --database smartwin_data_intake \
+  --observed-on 2026-08-21
+```
+
+It records table/column/constraint counts plus safe metadata totals and the
+Account Master structural contract. It does not export client rows, raw SQL,
+routine bodies, password values, or connection configuration. The command is
+local discovery tooling, not an app runtime dependency and not a CI database
+test.
+
+This evidence makes the following work executable now:
+
+1. extract the complete sanitized program/menu/key dependency graph;
+2. profile Account Master candidate keys, duplicates, orphans, money, dates,
+   flags, and add-on participation;
+3. convert reviewed metadata into typed target definitions and contract tests.
+
+It does **not** authorize any production migration, procedure execution, raw
+query reuse, or Account Master write path. `smart_system`, source-dialect
+authority, routine behavior, and effective client override evidence are still
+required for those steps.
+
 ## Target data boundaries
 
 - Control plane: tenants, deployment cells, companies, accounting years,

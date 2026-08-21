@@ -18,7 +18,7 @@ the earlier 26-commit prototype history.
 | Home/splash | Prototype | Branded home navigation and contact presentation |
 | Addon Master | Prototype | 8 groups, 27 fields, in-memory CRUD/lookup/validation/print/refresh |
 | Other menu workflows | Placeholder | Selecting an item changes shell state but does not implement the feature |
-| PostgreSQL persistence | Not started | D1/SQLite starter scaffolding was removed to avoid the wrong target |
+| PostgreSQL persistence | Discovery started | Isolated intake is restored and a sanitized structural catalogue is versioned; no application runtime database connection exists |
 | Authentication/RBAC | Not started | Menu rights and direct API enforcement are not implemented |
 | Multi-tenancy | Not started | No tenant boundary, RLS, connection routing, or scoped cache |
 | Automated checks | Baseline | Lint, type-check, production build, and rendered login/application-surface checks pass |
@@ -112,8 +112,11 @@ retirement path.
 3. Both supplied database files are PostgreSQL custom archives and have been
    restored into an isolated local PostgreSQL 18 intake database. Catalog and
    row-count evidence is recorded in the local restore report.
-4. The restored `smart_setup` contains `MenuMaster` and related metadata, but
-   freshness/authority is not confirmed. The `smart_system` archive, promised
+4. The restored `smart_setup` contains 49 program definitions, 1,308 field
+   definitions, 592 menu rows, 216 query definitions, and 45 logical key
+   relationships. Its first safe catalogue and Account Master structural
+   contract are recorded in `docs/intake/postgres-metadata-catalog-2026-08-21.*`.
+   Freshness/authority is not confirmed. The `smart_system` archive, promised
    PostgreSQL branch, and complete effective client query/view sets remain
    absent.
 

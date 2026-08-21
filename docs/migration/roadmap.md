@@ -11,6 +11,41 @@ a rollback path.
 The work is organized around vertical business flows, not copied forms. Stable
 IDs live in [backlog.csv](backlog.csv), while GitHub issues mirror those IDs.
 
+## Verified PostgreSQL intake update — 2026-08-21
+
+The supplied PostgreSQL archives are now restored in an isolated local intake
+database. This changes the next work from "obtain a representative database"
+to "extract and review safe contracts from it"; it does not establish source
+authority or parity. The verified facts are recorded in
+[the restore report](../intake/postgres-local-restore-2026-08-21.md) and the
+[sanitized metadata catalogue](../intake/postgres-metadata-catalog-2026-08-21.md).
+
+| Evidence | Verified fact | Migration consequence |
+|---|---|---|
+| Company-year schema | 75 tables, 705,743 rows, no PK/FK/view/trigger | Profile keys, duplicates, and logical relationships before target constraints. |
+| `smart_setup` | 37 tables, 146,964 rows, 49 program definitions, 1,308 field definitions | Metadata discovery and a controlled first view contract can start. |
+| Account Master | `program_top:14`, 87 fields, 27 compulsory, 12 lookups, 2 duplicate checks | It is the first concrete view-contract candidate; its SQL/write semantics remain unapproved. |
+| Procedures | 283 signatures across 282 names; 263 need repair | Keep procedure execution quarantined; start only dependency/contract review. |
+| Missing control data | `smart_system` is absent | Authentication, rights, company/year routing, dashboards, and print staging remain blocked. |
+| Source dialect | Legacy application is SQL Server/T-SQL; PostgreSQL dumps are converted artifacts | Track dialect per object; do not assume MySQL is the authoritative source. |
+
+### Reprioritized execution path
+
+1. **Metadata evidence (now):** export sanitized menu/program/field/key/query
+   dependency facts; attach each result to a backlog and traceability ID.
+2. **Schema semantics:** profile candidate keys, duplicate/orphan risk, money,
+   dates, flags, and add-on projections for the Account Master data boundary.
+3. **Safe target contracts:** turn reviewed metadata into typed, versioned,
+   parameter-bound definitions and approved override precedence; raw source SQL
+   never becomes web runtime configuration.
+4. **First vertical slice:** implement Account Master read, then write only
+   after `smart_system` permissions, save behavior, and financial side effects
+   have passing contract/parity evidence.
+5. **Scale-out:** repeat the same discovery → contract → migration → parity
+   sequence for Addons, entries, reports, and printing. Do not measure overall
+   completion by screen count: the gates are rules, permissions, data effects,
+   client variants, and reconciliation.
+
 ## Program gates
 
 The release cannot be called complete until:
@@ -66,7 +101,9 @@ Deliverables:
 
 Exit gate: authoritative feature/object/override registries reconcile to source
 counts; every gap has an owner/dependency; no “unknown SQL” remains on the
-critical vertical-slice path.
+critical vertical-slice path. The restored PostgreSQL input enables the
+`smart_setup` and company-schema portions of this gate, but does not close the
+`smart_system`, source-dialect, routine, or effective-client-override portions.
 
 ## Phase 2 — Architecture and domain decisions
 

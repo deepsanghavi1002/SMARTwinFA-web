@@ -37,3 +37,14 @@ test("records sanitized local PostgreSQL restore evidence without claiming parit
   assert.match(report, /Financial parity still[\s\S]*independent totals/);
   assert.doesNotMatch(report, /connection\.ini|Password=/i);
 });
+
+test("retains an aggregate-only metadata catalogue for the first Account Master contract", async () => {
+  const catalogue = JSON.parse(await readFile(new URL("../docs/intake/postgres-metadata-catalog-2026-08-21.json", import.meta.url), "utf8"));
+
+  assert.equal(catalogue.restrictedData, false);
+  assert.equal(catalogue.metadata.accountMaster.sourceId, "program_top:14");
+  assert.equal(catalogue.metadata.accountMaster.fieldCount, 87);
+  assert.equal(catalogue.metadata.accountMaster.lookupQueryFields, 12);
+  assert.match(catalogue.catalogHash, /^[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify(catalogue), /select\s|password|rawSql/i);
+});
