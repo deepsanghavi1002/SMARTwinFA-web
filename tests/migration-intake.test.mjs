@@ -76,3 +76,12 @@ test("documents polymorphic add-on storage risk without exposing field definitio
   assert.match(report, /does not authorize migration writes/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents Account Master type ambiguity without claiming target semantics", async () => {
+  const report = await readFile(new URL("../docs/intake/account-master-type-matrix-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /76 resolve directly/);
+  assert.match(report, /11 do not/);
+  assert.match(report, /does not map legacy codes to target types/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});

@@ -25,6 +25,10 @@
   account rows. The safe inventory is in
   `docs/intake/addon-metadata-profile-2026-08-21.md`; it cannot be treated as a
   simple Account Master child table.
+- Types: 76 of 87 metadata field mappings resolve directly to physical columns;
+  11 require an expression/alias/join contract. The safe type matrix is in
+  `docs/intake/account-master-type-matrix-2026-08-21.md`; no legacy type code is
+  yet a target type decision.
 - Writes/effects: unknown until save routine and triggers are obtained. Do not
   assume posting or stock effects for master changes.
 - Edit/delete/cancel/lock: unknown; obtain UI tests and database constraints.
