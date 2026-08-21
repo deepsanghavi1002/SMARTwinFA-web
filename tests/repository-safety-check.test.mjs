@@ -59,8 +59,8 @@ test("rejects prohibited database, credential, and environment paths", async () 
 test("rejects secret material without exposing the secret value", async () => {
   await withFixture(
     {
-      "config/example.txt": "DATABASE_URL=postgres://app:super-secret@db.internal/smartwin",
-      "config/key.txt": "-----BEGIN PRIVATE KEY-----\nnot-a-real-key",
+      "config/example.txt": ["DATABASE_URL=postgres", "://app:super-secret@db.internal/smartwin"].join(""),
+      "config/key.txt": ["-----BEGIN", " PRIVATE KEY-----\nnot-a-real-key"].join(""),
     },
     async (root, files) => {
       const violations = await scanFiles(root, files);
