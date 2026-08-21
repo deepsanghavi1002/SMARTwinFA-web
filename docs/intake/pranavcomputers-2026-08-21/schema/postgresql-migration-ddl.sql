@@ -1,0 +1,6 @@
+-- SMARTwinFA PostgreSQL migration DDL placeholder.
+-- No authoritative SQL Server schema, backup, or data dictionary was present
+-- in the scoped workspace. No executable PostgreSQL DDL is emitted here so
+-- missing keys, types, constraints, routines, and triggers are not guessed.
+-- Generate reviewed DDL only after schema/object-inventory.csv is reconciled
+-- against an authorized SQL Server export.

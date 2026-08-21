@@ -19,6 +19,7 @@ Paths shown here are local discovery locations, not repository dependencies.
 | SRC-CUST-001 | Effective client query/view variants | Restricted business logic | Need tenant, company/year, effective dates, fields, parameters, and expected outputs | Missing |
 | SRC-PRN-001 | `DOCUMENT_PRINT` mappings and canonical print samples | Restricted client documents | Needed for template and output parity | Missing |
 | SRC-VIDEO-001 | SmartWinFa Software Demo Video folder (16 MP4 recordings) | Restricted visual evidence | Local-only UI recordings catalogued in `docs/discovery/demo-video-register.md`; no video, data, or credentials committed | Reviewed for prototype behavior |
+| SRC-INTAKE-001 | Legacy-author migration intake received 2026-08-21 | Sanitized discovery evidence | SHA-256 and extraction treatment recorded in `docs/intake/pranavcomputers-2026-08-21/PROVENANCE.md`; 22 text files from `migration-intake.zip` plus external artifact manifest | Imported; confirms SQL Server source and enumerates missing database-side artifacts |
 
 ## Intake rules
 

@@ -9,6 +9,7 @@ the backlog, but every issue must keep the stable ID used in this repository.
 - [Source register](discovery/source-register.md)
 - [Demo video register](discovery/demo-video-register.md)
 - [Database inventory](discovery/database-inventory.md)
+- [Legacy-author intake, 2026-08-21](intake/pranavcomputers-2026-08-21/README.md)
 
 ## Architecture
 
