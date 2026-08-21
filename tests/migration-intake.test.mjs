@@ -94,3 +94,12 @@ test("documents menu hierarchy risk without exposing actions or marker values", 
   assert.match(report, /cannot be copied into[\s\S]*the web UI/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents program metadata integrity risk without exporting source fragments", async () => {
+  const report = await readFile(new URL("../docs/intake/program-metadata-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /1,308/);
+  assert.match(report, /five orphan field records/i);
+  assert.match(report, /no fragment is permitted in the web runtime/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});
