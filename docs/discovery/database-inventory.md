@@ -71,11 +71,16 @@ The supplied recipe says to:
 3. Append 33 client/year fields from `addon_fld.fiel_save`.
 4. Apply company/year joins and filters to form the final SELECT.
 
-The stated 87/33 row counts have not been independently verified. The recipe
+The 87 fixed-field count has now been independently verified; the client add-on
+projection still requires a reviewed, per-client contract. The recipe
 also contains a hard-coded year alongside `|sys.yearid|`, unqualified `book`
 and `name` references, and a likely `fiel_pos-'A'` typo. The first migrated
 Account Master contract must prove field order, labels, types, joins, year
 filtering, role visibility, tenant additions, and result parity.
+
+The first aggregate integrity profile found candidate source keys but also five
+duplicate address natural-key groups and three unmatched account references.
+See [the Account Master integrity profile](../intake/account-master-integrity-profile-2026-08-21.md).
 
 ## Procedure risk
 

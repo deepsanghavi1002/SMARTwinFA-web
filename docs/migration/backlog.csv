@@ -48,6 +48,7 @@
 "DB-CONTROL-001","4","Database","Design and migrate control-plane schema","ARCH-001","Tenant/company/year/identity/routing constraints and migrations pass","discovered","TBD",""
 "DB-CANON-001","4","Database","Design canonical accounting/inventory data schema","ARCH-004","ERD, constraints, ownership, and representative load pass","discovered","TBD",""
 "DB-INTEGRITY-001","4","Database","Profile duplicates/orphans and recover enforceable constraints","DB-MAP-001","Invalid rows are repaired/quarantined and target constraints prove clean","discovered","TBD",""
+"DB-ACCOUNT-INTEGRITY-001","4","Database","Profile Account Master candidate keys, relationships, and type-risk boundary","DISC-ACCOUNT-CONTRACT-001","Aggregate profile is reproducible and Git-safe; candidate keys/relationships distinguish review from repair/exception cases; no target constraint is asserted without a decision","unit-tested","TBD",""
 "DB-COMPAT-001","4","Database","Build server-controlled legacy schema/database compatibility adapter","PLAT-CTX-001","No request-controlled identifier; contract/isolation/timeout tests pass","discovered","TBD",""
 "DB-META-001","4","Metadata runtime","Build versioned definition registry and compiler","ARCH-002","Definitions validate, compile, test, activate, and roll back deterministically","discovered","TBD",""
 "DB-CUSTOM-001","4","Metadata runtime","Build typed custom-field model and legacy addon projection","DB-META-001","Add/change/disable/filter/report behavior passes across representative clients","discovered","TBD",""

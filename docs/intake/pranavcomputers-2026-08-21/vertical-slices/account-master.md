@@ -14,6 +14,12 @@
 - Sources: company account-related tables; setup metadata; master grid classes;
   dynamic SQL in forms. One source field mapping is an expression and remains
   explicitly quarantined rather than treated as an identifier.
+- Integrity: `account.code` is a clean profile candidate, but the restored
+  sample has five duplicate `(address.code, address.address_id)` groups and one
+  unmatched account reference in each of address, balance, and interest data.
+  The aggregate-only evidence is in
+  `docs/intake/account-master-integrity-profile-2026-08-21.md`; no target key
+  or foreign key is approved yet.
 - Writes/effects: unknown until save routine and triggers are obtained. Do not
   assume posting or stock effects for master changes.
 - Edit/delete/cancel/lock: unknown; obtain UI tests and database constraints.

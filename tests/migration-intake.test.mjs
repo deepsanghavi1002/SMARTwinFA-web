@@ -57,3 +57,12 @@ test("documents the Account Master structural field contract without asserting f
   assert.match(report, /no target field, lookup, validation,[\s\S]*write command is approved/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents Account Master integrity exceptions without exposing client rows", async () => {
+  const report = await readFile(new URL("../docs/intake/account-master-integrity-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /5 duplicate.*groups/i);
+  assert.match(report, /1 unmatched reference/i);
+  assert.match(report, /no automatic cleanup or constraint migration[\s\S]*authorized/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});
