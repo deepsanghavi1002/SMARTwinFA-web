@@ -1,0 +1,5 @@
+import assert from "node:assert/strict"; import test from "node:test";
+import { compileDefinition, MetadataFlowError, selectRollback, transitionAddon, validateAccount, validateCustomValue } from "../platform/domain/metadata-flow.ts";
+const current={id:"account_form",version:2,active:true,entity:"account" as const,fields:["account_code"]};
+test("compiles metadata, rolls back, and validates typed custom values",()=>{assert.equal(compileDefinition(current).version,2);assert.equal(selectRollback([{...current,version:1},current],2).version,1);assert.equal(validateCustomValue("decimal","12.50"),"12.50");assert.throws(()=>validateCustomValue("decimal","12.500"),MetadataFlowError);});
+test("enforces account fields and addon lifecycle",()=>{assert.equal(validateAccount({account_code:"A1"},["account_code"]).account_code,"A1");assert.throws(()=>validateAccount({},["account_code"]),/missing/);assert.equal(transitionAddon("draft","activate"),"active");assert.throws(()=>transitionAddon("disabled","activate"),/invalid/);});

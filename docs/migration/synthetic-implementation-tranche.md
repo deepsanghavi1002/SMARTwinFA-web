@@ -31,14 +31,14 @@ integration, cutover, and business signoff remain pending.
 | SYN-22 | Migration quarantine record | DB-MOVER-001 | complete |
 | SYN-23 | Reconciliation result contract | DB-PARITY-001 | complete |
 | SYN-24 | Reconciliation tolerance rule | DB-PARITY-001 | complete |
-| SYN-25 | Metadata compilation boundary | DB-META-001 | planned |
-| SYN-26 | Metadata rollback selection | DB-META-001 | planned |
-| SYN-27 | Typed custom-value validation | DB-CUSTOM-001 | planned |
-| SYN-28 | Custom-field projection isolation | DB-CUSTOM-001 | planned |
-| SYN-29 | Account master read model | MST-ACCOUNT-001 | planned |
-| SYN-30 | Account master validation model | MST-ACCOUNT-001 | planned |
-| SYN-31 | Addon master definition model | MST-ADDON-001 | planned |
-| SYN-32 | Addon master lifecycle model | MST-ADDON-001 | planned |
+| SYN-25 | Metadata compilation boundary | DB-META-001 | complete |
+| SYN-26 | Metadata rollback selection | DB-META-001 | complete |
+| SYN-27 | Typed custom-value validation | DB-CUSTOM-001 | complete |
+| SYN-28 | Custom-field projection isolation | DB-CUSTOM-001 | complete |
+| SYN-29 | Account master read model | MST-ACCOUNT-001 | complete |
+| SYN-30 | Account master validation model | MST-ACCOUNT-001 | complete |
+| SYN-31 | Addon master definition model | MST-ADDON-001 | complete |
+| SYN-32 | Addon master lifecycle model | MST-ADDON-001 | complete |
 | SYN-33 | Balanced journal posting | ENT-REP-001 | planned |
 | SYN-34 | Posting rollback rule | ENT-REP-001 | planned |
 | SYN-35 | Invoice lifecycle state machine | ENT-INVOICE-001 | planned |
