@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { analyzeProcedureText } from "../scripts/analyze-procedure-intake.mjs";
+import { analyzeProcedureText, formatRoutineTriageCsv } from "../scripts/analyze-procedure-intake.mjs";
 
 test("reconciles source and target procedure names", () => {
   const source = `
@@ -50,6 +50,41 @@ test("classifies a complete structurally clean conversion without claiming runti
 
   assert.equal(result.classification, "structurally-clean-unverified");
   assert.equal(result.coverage.sourceNameCoveragePercent, 100);
+  assert.equal(result.routineTriage.summary.staticCandidates, 1);
+  assert.equal(result.routineTriage.routines[0].status, "static-candidate");
+});
+
+test("creates a per-routine repair queue with explicit blocker reasons", () => {
+  const source = `
+CREATE PROCEDURE [dbo].[SP_CLEAN] AS SELECT 1;
+CREATE PROCEDURE [dbo].[SP_REPAIR] AS SELECT 1;
+`;
+  const target = `
+CREATE OR REPLACE PROCEDURE sp_clean()
+LANGUAGE plpgsql AS $body$ BEGIN NULL; END; $body$;
+
+CREATE OR REPLACE PROCEDURE sp_repair()
+LANGUAGE plpgsql AS $body$
+BEGIN
+  -- TODO(review): remove the SQL Server fragment
+  EXECUTE 'SELECT TOP 1 * FROM [dbo].account';
+  COMMIT;
+END;
+$body$;
+`;
+  const result = analyzeProcedureText(target, source);
+  const repair = result.routineTriage.routines.find(({ name }) => name === "sp_repair");
+
+  assert.equal(result.routineTriage.summary.routines, 2);
+  assert.equal(result.routineTriage.summary.staticCandidates, 1);
+  assert.equal(result.routineTriage.summary.repairRequired, 1);
+  assert.deepEqual(repair.blockers, ["residual-tsql", "unresolved-todo", "dynamic-sql-review", "transaction-review"]);
+  assert.equal(result.routineTriage.summary.blockerCounts["residual-tsql"], 1);
+
+  const csv = formatRoutineTriageCsv(result);
+  assert.match(csv, /^name,source_name_matched,start_line,lines,status,blockers,/);
+  assert.match(csv, /sp_clean,true,\d+,\d+,static-candidate,/);
+  assert.match(csv, /sp_repair,true,\d+,\d+,repair-required,residual-tsql;unresolved-todo;dynamic-sql-review;transaction-review,/);
 });
 
 test("retains the received procedure bundle analysis as quarantined evidence", async () => {
@@ -62,4 +97,7 @@ test("retains the received procedure bundle analysis as quarantined evidence", a
   assert.equal(analysis.classification, "quarantined-not-deployable");
   assert.ok(analysis.coverage.missingFromPostgres.includes("sp_entry_save"));
   assert.ok(analysis.unresolvedMarkers.todo > 0);
+  assert.equal(analysis.routineTriage.summary.routines, 282);
+  assert.equal(analysis.routineTriage.summary.staticCandidates, 19);
+  assert.equal(analysis.routineTriage.summary.repairRequired, 263);
 });

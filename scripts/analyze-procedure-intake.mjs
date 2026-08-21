@@ -16,6 +16,131 @@ function uniqueNames(matches) {
   return [...new Set(matches.map((name) => name.toLowerCase()))].sort();
 }
 
+const residualPatterns = {
+  alterProcedureDbo: /^\s*ALTER\s+PROCEDURE\s+\[dbo\]/gim,
+  batchGo: /^\s*GO\s*$/gim,
+  dboIdentifiers: /\[dbo\]/gi,
+  sqlServerVariables: /@@[a-z_][a-z0-9_]*/gi,
+  objectIdCalls: /\bOBJECT_ID\s*\(/gi,
+  spExecuteSql: /\bsp_executesql\b/gi,
+  topClauses: /\bTOP\s+(?:\(?\d+\)?|\(?[a-z_][a-z0-9_]*\)?)/gi,
+  isnullCalls: /\bISNULL\s*\(/gi,
+  getdateCalls: /\bGETDATE\s*\(/gi,
+  nvarcharTypes: /\bNVARCHAR\b/gi,
+  sysCatalogReferences: /\bsys\./gi,
+  tempTableTokens: /#[a-z_][a-z0-9_]*/gi,
+};
+
+const unresolvedPatterns = {
+  todo: /\bTODO(?:\([^)]*\))?/gi,
+  dynamicExecute: /\bEXECUTE\s+(?:\(|['"]|[_a-z])/gi,
+  explicitCommit: /^\s*COMMIT\s*;/gim,
+  explicitRollback: /^\s*ROLLBACK\s*;/gim,
+  passwordReferences: /\bpassword\b|u_password|modulepassword/gi,
+  securityDefiner: /\bSECURITY\s+DEFINER\b/gi,
+  searchPathAssignments: /^\s*SET\s+search_path\b/gim,
+};
+
+function countPatterns(text, patterns) {
+  return Object.fromEntries(Object.entries(patterns).map(([name, pattern]) => [name, count(text, pattern)]));
+}
+
+function totalCounts(counts) {
+  return Object.values(counts).reduce((sum, value) => sum + value, 0);
+}
+
+function triagePostgresRoutines(postgresText, sqlServerSet) {
+  const declarationPattern = /^\s*CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+([a-z_][a-z0-9_]*)\s*\(/gim;
+  const declarations = [...postgresText.matchAll(declarationPattern)];
+
+  const routines = declarations.map((declaration, index) => {
+    const name = declaration[1].toLowerCase();
+    const start = declaration.index;
+    const fallbackEnd = declarations[index + 1]?.index ?? postgresText.length;
+    const declarationTail = postgresText.slice(start, fallbackEnd);
+    const openingTag = /\bAS\s+(\$[a-z_][a-z0-9_]*\$)/i.exec(declarationTail);
+    const closingTagIndex = openingTag ? declarationTail.indexOf(`${openingTag[1]};`, openingTag.index + openingTag[0].length) : -1;
+    const end = closingTagIndex >= 0 ? start + closingTagIndex + openingTag[1].length + 1 : fallbackEnd;
+    const body = postgresText.slice(start, end);
+    const residualTsql = countPatterns(body, residualPatterns);
+    const unresolvedMarkers = countPatterns(body, unresolvedPatterns);
+    const blockers = [];
+
+    if (!sqlServerSet.has(name)) blockers.push("no-source-name-match");
+    if (totalCounts(residualTsql)) blockers.push("residual-tsql");
+    if (unresolvedMarkers.todo) blockers.push("unresolved-todo");
+    if (unresolvedMarkers.dynamicExecute) blockers.push("dynamic-sql-review");
+    if (unresolvedMarkers.explicitCommit || unresolvedMarkers.explicitRollback) blockers.push("transaction-review");
+    if (unresolvedMarkers.passwordReferences) blockers.push("credential-security-review");
+    if (unresolvedMarkers.securityDefiner) blockers.push("privilege-review");
+    if (unresolvedMarkers.searchPathAssignments) blockers.push("tenant-isolation-review");
+
+    return {
+      name,
+      sourceNameMatched: sqlServerSet.has(name),
+      startLine: postgresText.slice(0, start).split("\n").length,
+      lines: body.split("\n").length,
+      status: blockers.length ? "repair-required" : "static-candidate",
+      blockers,
+      residualTsql,
+      unresolvedMarkers,
+    };
+  });
+
+  const blockerCounts = {};
+  for (const routine of routines) {
+    for (const blocker of routine.blockers) blockerCounts[blocker] = (blockerCounts[blocker] ?? 0) + 1;
+  }
+
+  return {
+    summary: {
+      routines: routines.length,
+      staticCandidates: routines.filter(({ status }) => status === "static-candidate").length,
+      repairRequired: routines.filter(({ status }) => status === "repair-required").length,
+      blockerCounts: Object.fromEntries(Object.entries(blockerCounts).sort(([left], [right]) => left.localeCompare(right))),
+    },
+    routines,
+  };
+}
+
+function csvCell(value) {
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+export function formatRoutineTriageCsv(analysis) {
+  const headings = [
+    "name",
+    "source_name_matched",
+    "start_line",
+    "lines",
+    "status",
+    "blockers",
+    "todo",
+    "dynamic_execute",
+    "explicit_commit",
+    "explicit_rollback",
+    "password_references",
+    "residual_tsql",
+  ];
+  const rows = analysis.routineTriage.routines.map((routine) => [
+    routine.name,
+    routine.sourceNameMatched,
+    routine.startLine,
+    routine.lines,
+    routine.status,
+    routine.blockers.join(";"),
+    routine.unresolvedMarkers.todo,
+    routine.unresolvedMarkers.dynamicExecute,
+    routine.unresolvedMarkers.explicitCommit,
+    routine.unresolvedMarkers.explicitRollback,
+    routine.unresolvedMarkers.passwordReferences,
+    totalCounts(routine.residualTsql),
+  ]);
+
+  return `${[headings, ...rows].map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+}
+
 export function analyzeProcedureText(postgresText, sqlServerText) {
   const postgresDeclarations = [...postgresText.matchAll(/^\s*CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+([a-z_][a-z0-9_]*)\s*\(/gim)].map((match) => match[1]);
   const sqlServerDeclarations = [...sqlServerText.matchAll(/^\s*(?:CREATE|ALTER)\s+PROCEDURE\s+(?:\[dbo\]\.)?\[?([a-z_][a-z0-9_]*)\]?/gim)].map((match) => match[1]);
@@ -27,30 +152,10 @@ export function analyzeProcedureText(postgresText, sqlServerText) {
   const postgresOnly = postgresNames.filter((name) => !sqlServerSet.has(name));
   const matched = sqlServerNames.filter((name) => postgresSet.has(name));
 
-  const residualTsql = {
-    alterProcedureDbo: count(postgresText, /^\s*ALTER\s+PROCEDURE\s+\[dbo\]/gim),
-    batchGo: count(postgresText, /^\s*GO\s*$/gim),
-    dboIdentifiers: count(postgresText, /\[dbo\]/gi),
-    sqlServerVariables: count(postgresText, /@@[a-z_][a-z0-9_]*/gi),
-    objectIdCalls: count(postgresText, /\bOBJECT_ID\s*\(/gi),
-    spExecuteSql: count(postgresText, /\bsp_executesql\b/gi),
-    topClauses: count(postgresText, /\bTOP\s+(?:\(?\d+\)?|\(?[a-z_][a-z0-9_]*\)?)/gi),
-    isnullCalls: count(postgresText, /\bISNULL\s*\(/gi),
-    getdateCalls: count(postgresText, /\bGETDATE\s*\(/gi),
-    nvarcharTypes: count(postgresText, /\bNVARCHAR\b/gi),
-    sysCatalogReferences: count(postgresText, /\bsys\./gi),
-    tempTableTokens: count(postgresText, /#[a-z_][a-z0-9_]*/gi),
-  };
-  const unresolvedMarkers = {
-    todo: count(postgresText, /\bTODO(?:\([^)]*\))?/gi),
-    dynamicExecute: count(postgresText, /\bEXECUTE\s+(?:\(|[_a-z])/gi),
-    explicitCommit: count(postgresText, /^\s*COMMIT\s*;/gim),
-    explicitRollback: count(postgresText, /^\s*ROLLBACK\s*;/gim),
-    passwordReferences: count(postgresText, /\bpassword\b|u_password|modulepassword/gi),
-    securityDefiner: count(postgresText, /\bSECURITY\s+DEFINER\b/gi),
-    searchPathAssignments: count(postgresText, /^\s*SET\s+search_path\b/gim),
-  };
-  const residualCount = Object.values(residualTsql).reduce((sum, value) => sum + value, 0);
+  const residualTsql = countPatterns(postgresText, residualPatterns);
+  const unresolvedMarkers = countPatterns(postgresText, unresolvedPatterns);
+  const residualCount = totalCounts(residualTsql);
+  const routineTriage = triagePostgresRoutines(postgresText, sqlServerSet);
 
   return {
     classification: residualCount || unresolvedMarkers.todo || missingFromPostgres.length ? "quarantined-not-deployable" : "structurally-clean-unverified",
@@ -64,6 +169,7 @@ export function analyzeProcedureText(postgresText, sqlServerText) {
     },
     residualTsql,
     unresolvedMarkers,
+    routineTriage,
   };
 }
 
@@ -79,9 +185,12 @@ export async function analyzeProcedureFiles(postgresPath, sqlServerPath) {
 }
 
 async function main() {
-  const [postgresPath, sqlServerPath] = process.argv.slice(2);
-  if (!postgresPath || !sqlServerPath) throw new Error("Usage: analyze-procedure-intake.mjs <postgres.sql> <sqlserver.sql>");
-  process.stdout.write(`${JSON.stringify(await analyzeProcedureFiles(postgresPath, sqlServerPath), null, 2)}\n`);
+  const [postgresPath, sqlServerPath, format] = process.argv.slice(2);
+  if (!postgresPath || !sqlServerPath) {
+    throw new Error("Usage: analyze-procedure-intake.mjs <postgres.sql> <sqlserver.sql> [--format=csv]");
+  }
+  const analysis = await analyzeProcedureFiles(postgresPath, sqlServerPath);
+  process.stdout.write(format === "--format=csv" ? formatRoutineTriageCsv(analysis) : `${JSON.stringify(analysis, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
