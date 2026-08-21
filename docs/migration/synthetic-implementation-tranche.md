@@ -39,24 +39,24 @@ integration, cutover, and business signoff remain pending.
 | SYN-30 | Account master validation model | MST-ACCOUNT-001 | complete |
 | SYN-31 | Addon master definition model | MST-ADDON-001 | complete |
 | SYN-32 | Addon master lifecycle model | MST-ADDON-001 | complete |
-| SYN-33 | Balanced journal posting | ENT-REP-001 | planned |
-| SYN-34 | Posting rollback rule | ENT-REP-001 | planned |
-| SYN-35 | Invoice lifecycle state machine | ENT-INVOICE-001 | planned |
-| SYN-36 | Receipt/payment allocation rule | ENT-ACCOUNTING-001 | planned |
-| SYN-37 | Stock voucher movement state | ENT-STOCK-001 | planned |
-| SYN-38 | Production formula/costing contract | ENT-PROD-001 | planned |
-| SYN-39 | Tax submission retry contract | ENT-TAX-001 | planned |
-| SYN-40 | Typed report filter contract | RPT-REP-001 | planned |
-| SYN-41 | Report totals and export contract | RPT-REP-001 | planned |
-| SYN-42 | Accounting report projection | RPT-ACCOUNTING-001 | planned |
-| SYN-43 | Inventory report projection | RPT-INVENTORY-001 | planned |
-| SYN-44 | Dashboard layout resolver | DASH-001 | planned |
-| SYN-45 | Dashboard drill-down permission guard | DASH-001 | planned |
-| SYN-46 | Print job request contract | PRN-REP-001 | planned |
-| SYN-47 | Print output retention lifecycle | PRN-REP-001 | planned |
-| SYN-48 | Year open/lock state machine | UTIL-YEAR-001 | planned |
-| SYN-49 | Destructive-operation approval rule | UTIL-BACKUP-001 | planned |
-| SYN-50 | Import row validation contract | INT-EXCEL-001 | planned |
+| SYN-33 | Balanced journal posting | ENT-REP-001 | complete |
+| SYN-34 | Posting rollback rule | ENT-REP-001 | complete |
+| SYN-35 | Invoice lifecycle state machine | ENT-INVOICE-001 | complete |
+| SYN-36 | Receipt/payment allocation rule | ENT-ACCOUNTING-001 | complete |
+| SYN-37 | Stock voucher movement state | ENT-STOCK-001 | complete |
+| SYN-38 | Production formula/costing contract | ENT-PROD-001 | complete |
+| SYN-39 | Tax submission retry contract | ENT-TAX-001 | complete |
+| SYN-40 | Typed report filter contract | RPT-REP-001 | complete |
+| SYN-41 | Report totals and export contract | RPT-REP-001 | complete |
+| SYN-42 | Accounting report projection | RPT-ACCOUNTING-001 | complete |
+| SYN-43 | Inventory report projection | RPT-INVENTORY-001 | complete |
+| SYN-44 | Dashboard layout resolver | DASH-001 | complete |
+| SYN-45 | Dashboard drill-down permission guard | DASH-001 | complete |
+| SYN-46 | Print job request contract | PRN-REP-001 | complete |
+| SYN-47 | Print output retention lifecycle | PRN-REP-001 | complete |
+| SYN-48 | Year open/lock state machine | UTIL-YEAR-001 | complete |
+| SYN-49 | Destructive-operation approval rule | UTIL-BACKUP-001 | complete |
+| SYN-50 | Import row validation contract | INT-EXCEL-001 | complete |
 | SYN-51 | Import duplicate/quarantine contract | INT-EXCEL-001 | planned |
 | SYN-52 | Delivery authorization/retry contract | INT-DELIVERY-001 | planned |
 | SYN-53 | Override registry closure check | CUST-CLOSE-001 | planned |
