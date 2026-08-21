@@ -85,3 +85,12 @@ test("documents Account Master type ambiguity without claiming target semantics"
   assert.match(report, /does not map legacy codes to target types/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents menu hierarchy risk without exposing actions or marker values", async () => {
+  const report = await readFile(new URL("../docs/intake/menu-metadata-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /592/);
+  assert.match(report, /one orphan hierarchy reference/i);
+  assert.match(report, /cannot be copied into[\s\S]*the web UI/i);
+  assert.doesNotMatch(report, /select\s|password=/i);
+});
