@@ -7,6 +7,7 @@ the backlog, but every issue must keep the stable ID used in this repository.
 
 - [Current state](discovery/current-state.md)
 - [Source register](discovery/source-register.md)
+- [Demo video register](discovery/demo-video-register.md)
 - [Database inventory](discovery/database-inventory.md)
 
 ## Architecture

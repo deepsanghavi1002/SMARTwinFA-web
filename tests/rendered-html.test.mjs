@@ -38,11 +38,12 @@ test("server-renders the SMARTwinFA login shell", async () => {
 });
 
 test("keeps the latest migrated application surface wired into the root route", async () => {
-  const [page, layout, startup, addon, packageJson] = await Promise.all([
+  const [page, layout, startup, addon, demoWorkflows, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../features/startup/StartupGate.tsx", import.meta.url), "utf8"),
     readFile(new URL("../features/addon-master/AddonMaster.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../features/demo-workflows/DemoWorkflow.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
@@ -62,6 +63,7 @@ test("keeps the latest migrated application surface wired into the root route", 
 
   assert.match(page, /<StartupGate>/);
   assert.match(page, /activeItem === "Addon Master"/);
+  assert.match(page, /hasDemoWorkflow\(activeItem\)/);
   assert.match(page, /home-splash/);
   assert.match(startup, /stage.*"login".*"company".*"ready"/s);
   assert.match(addon, /Customer \/ Contact details/);
@@ -69,6 +71,32 @@ test("keeps the latest migrated application surface wired into the root route", 
   for (const action of ["Save", "Cancel", "Delete", "Print", "Refresh"]) {
     assert.match(addon, new RegExp(action));
   }
+  for (const workflow of [
+    "Account Master",
+    "Product Master",
+    "Sale Invoice",
+    "Cash / Bank Voucher",
+    "Journal Voucher",
+    "Discount Voucher",
+    "Product Import from Excel",
+    "Day Book",
+    "Ledger Report",
+    "Outstanding Report",
+    "Trial Balance",
+    "Top Report",
+    "Drop Analysis",
+    "Multiple Invoice PDF",
+    "Pie Chart",
+    "Monthly Closing Stock",
+    "Lock / Unlock Data",
+  ]) {
+    assert.match(demoWorkflows, new RegExp(workflow.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const behavior of ["MasterWorkflow", "InvoiceWorkflow", "VoucherWorkflow", "ImportWorkflow", "ReportWorkflow", "PdfWorkflow", "UtilityWorkflow"]) {
+    assert.match(demoWorkflows, new RegExp(behavior));
+  }
+  assert.match(demoWorkflows, /synthetic data/i);
+  assert.match(demoWorkflows, /matching non-zero debit and credit totals/);
   assert.match(layout, /title:\s*"SMARTwinFA Web"/);
   assert.doesNotMatch(layout, /Starter Project|codex-preview/);
   assert.doesNotMatch(packageJson, /drizzle|sqlite|d1/i);

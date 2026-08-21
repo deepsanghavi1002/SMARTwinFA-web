@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AddonMaster } from "../features/addon-master/AddonMaster";
+import { DemoWorkflow, hasDemoWorkflow } from "../features/demo-workflows/DemoWorkflow";
 import { StartupGate } from "../features/startup/StartupGate";
 
 type Menu = { label: string; children?: string[] };
@@ -68,8 +69,8 @@ export default function Home() {
         <strong>DREAMHOUSE INTERIORS SOLUTIONS (PVT.) LTD.</strong><span>01/Apr/2026 to 31/Mar/2027</span><span>PRANAV</span><span className="running">{activeItem === "Home" ? "" : activeItem}</span>
       </section>
 
-      <section className={`work-area ${activeItem === "Addon Master" ? "workflow-open" : ""}`}>
-        {activeItem === "Addon Master" ? <AddonMaster /> : <div className="home-splash" aria-label="SMART WINFA homepage">
+      <section className={`work-area ${activeItem === "Addon Master" || hasDemoWorkflow(activeItem) ? "workflow-open" : ""}`}>
+        {activeItem === "Addon Master" ? <AddonMaster /> : hasDemoWorkflow(activeItem) ? <DemoWorkflow key={activeItem} activeItem={activeItem} /> : <div className="home-splash" aria-label="SMART WINFA homepage">
           <div className="home-splash-logo" role="img" aria-label="SMART WINFA logo" />
           <aside className="home-credit" aria-label="Developed by Pranav Computers">
             <span>DEVELOPED BY</span>
