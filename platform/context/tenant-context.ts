@@ -8,8 +8,8 @@ export type Membership = {
   subjectId: string;
   tenantId: string;
   active: boolean;
-  companyIds: string[];
-  accountingYearIds: string[];
+  companyIds: readonly string[];
+  accountingYearIds: readonly string[];
 };
 
 export type CompanyYearAccess = {
