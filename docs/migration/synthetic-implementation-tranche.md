@@ -26,9 +26,9 @@ integration, cutover, and business signoff remain pending.
 | SYN-17 | Tenant-aware composite-key contract | DB-CONTROL-001 | planned |
 | SYN-18 | Canonical journal-line balance rule | DB-CANON-001 | planned |
 | SYN-19 | Canonical stock movement rule | DB-CANON-001 | planned |
-| SYN-20 | Transaction idempotency ledger | DB-MOVER-001 | planned |
-| SYN-21 | Migration checkpoint state | DB-MOVER-001 | planned |
-| SYN-22 | Migration quarantine record | DB-MOVER-001 | planned |
+| SYN-20 | Transaction idempotency ledger | DB-MOVER-001 | complete |
+| SYN-21 | Migration checkpoint state | DB-MOVER-001 | complete |
+| SYN-22 | Migration quarantine record | DB-MOVER-001 | complete |
 | SYN-23 | Reconciliation result contract | DB-PARITY-001 | planned |
 | SYN-24 | Reconciliation tolerance rule | DB-PARITY-001 | planned |
 | SYN-25 | Metadata compilation boundary | DB-META-001 | planned |
