@@ -57,13 +57,13 @@ integration, cutover, and business signoff remain pending.
 | SYN-48 | Year open/lock state machine | UTIL-YEAR-001 | complete |
 | SYN-49 | Destructive-operation approval rule | UTIL-BACKUP-001 | complete |
 | SYN-50 | Import row validation contract | INT-EXCEL-001 | complete |
-| SYN-51 | Import duplicate/quarantine contract | INT-EXCEL-001 | planned |
-| SYN-52 | Delivery authorization/retry contract | INT-DELIVERY-001 | planned |
-| SYN-53 | Override registry closure check | CUST-CLOSE-001 | planned |
-| SYN-54 | Client-branch static rule | CUST-REMOVE-001 | planned |
-| SYN-55 | Unit-test evidence registry | QA-UNIT-001 | planned |
-| SYN-56 | Database-contract test harness | QA-DB-001 | planned |
-| SYN-57 | Accessible control manifest | QA-A11Y-001 | planned |
-| SYN-58 | Tenant-safe observability event | PLAT-OBS-001 | planned |
-| SYN-59 | Data classification and lineage contract | AI-DATA-001 | planned |
-| SYN-60 | Synthetic operational-readiness checklist | OPS-OBS-001 | planned |
+| SYN-51 | Import duplicate/quarantine contract | INT-EXCEL-001 | complete |
+| SYN-52 | Delivery authorization/retry contract | INT-DELIVERY-001 | complete |
+| SYN-53 | Override registry closure check | CUST-CLOSE-001 | complete |
+| SYN-54 | Client-branch static rule | CUST-REMOVE-001 | complete |
+| SYN-55 | Unit-test evidence registry | QA-UNIT-001 | complete |
+| SYN-56 | Database-contract test harness | QA-DB-001 | complete |
+| SYN-57 | Accessible control manifest | QA-A11Y-001 | complete |
+| SYN-58 | Tenant-safe observability event | PLAT-OBS-001 | complete |
+| SYN-59 | Data classification and lineage contract | AI-DATA-001 | complete |
+| SYN-60 | Synthetic operational-readiness checklist | OPS-OBS-001 | complete |
