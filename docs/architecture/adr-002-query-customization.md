@@ -66,6 +66,20 @@ String interpolation such as `|sys.yearid|`, unqualified columns, client-name
 branches, and session-dependent `zz_resultset_*` tables are prohibited in the
 target runtime.
 
+## Implemented foundation
+
+`platform/metadata/definition.ts` provides the first source-independent
+registry boundary. It validates a metadata manifest before future persistence
+or compilation, rejects raw SQL properties, restricts identifiers to the
+catalog-shaped format, requires an audit event for write actions, and resolves
+only active/effective definitions with deterministic override precedence:
+global → module → tenant → company → accounting year.
+
+It is deliberately not a SQL compiler or execution path. Client definitions,
+catalog entries, PostgreSQL queries, permissions, source hashes, golden
+fixtures, and approval workflow remain blocked until their authoritative source
+artifacts are received and reviewed.
+
 ## Account Master acceptance example
 
 `MST-ACCOUNT-001` cannot close until tests prove:
