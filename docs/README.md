@@ -11,6 +11,7 @@ the backlog, but every issue must keep the stable ID used in this repository.
 - [Database inventory](discovery/database-inventory.md)
 - [Legacy-author intake, 2026-08-21](intake/pranavcomputers-2026-08-21/README.md)
 - [PostgreSQL procedure conversion intake, 2026-08-21](intake/postgres-procedures-2026-08-21/README.md)
+- [Local PostgreSQL restore evidence, 2026-08-21](intake/postgres-local-restore-2026-08-21.md)
 
 ## Architecture
 

@@ -1,8 +1,9 @@
 # Database inventory and risk baseline
 
-This is a non-sensitive structural inventory derived without restoring or
-executing the supplied archives. Counts should be verified after an isolated
-`pg_restore --list` and catalog-only restore using matching PostgreSQL tooling.
+This is a non-sensitive structural inventory initially derived without
+executing the supplied archives. The object counts were verified after the
+isolated local restore documented in
+[the restore evidence](../intake/postgres-local-restore-2026-08-21.md).
 
 ## Supplied archives
 

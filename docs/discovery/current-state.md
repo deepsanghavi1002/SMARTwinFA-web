@@ -109,10 +109,13 @@ retirement path.
    `TOP`, `ISNULL`, `CONVERT`, SMO, `sa`, MDF/LDF operations).
 2. The user described a MySQL-to-PostgreSQL migration, but no MySQL source was
    found in the inspected tree.
-3. Both supplied database files are already PostgreSQL custom archives.
-4. The `smart_system` archive, the promised PostgreSQL branch, current
-   `MenuMaster` data, every client query set, and remaining procedures have not
-   been supplied.
+3. Both supplied database files are PostgreSQL custom archives and have been
+   restored into an isolated local PostgreSQL 18 intake database. Catalog and
+   row-count evidence is recorded in the local restore report.
+4. The restored `smart_setup` contains `MenuMaster` and related metadata, but
+   freshness/authority is not confirmed. The `smart_system` archive, promised
+   PostgreSQL branch, and complete effective client query/view sets remain
+   absent.
 
 No production database conversion may begin until the authoritative source
 engine and object-by-object dialect are recorded.

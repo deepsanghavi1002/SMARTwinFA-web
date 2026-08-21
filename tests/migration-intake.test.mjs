@@ -26,3 +26,14 @@ test("classifies the source as SQL Server and preserves database blockers", asyn
   assert.match(routines, /Database definition required/);
   assert.match(handoff, /routine bodies,[\s\S]*are absent/i);
 });
+
+test("records sanitized local PostgreSQL restore evidence without claiming parity", async () => {
+  const report = await readFile(new URL("../docs/intake/postgres-local-restore-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /705,743/);
+  assert.match(report, /146,964/);
+  assert.match(report, /283 across 282 names/);
+  assert.match(report, /smart_system` is absent/);
+  assert.match(report, /Financial parity still[\s\S]*independent totals/);
+  assert.doesNotMatch(report, /connection\.ini|Password=/i);
+});
