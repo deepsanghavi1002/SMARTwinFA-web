@@ -1,6 +1,6 @@
 # Local PostgreSQL restore evidence
 
-The two supplied PostgreSQL custom archives were restored on 2026-08-21 into
+The three supplied PostgreSQL custom archives were restored on 2026-08-21 into
 the isolated, local-only database `smartwin_data_intake` on PostgreSQL 18.6.
 No archive, client row, credential, password value, server address, or routine
 body was copied into Git.
@@ -11,10 +11,12 @@ body was copied into Git.
 |---|---|---|---|
 | `rishabh_plastic27_backup.sql` | `ed0124bb02497f397b874370fdbdac9d27febf90f6b677b63585a717398d8d6f` | PostgreSQL 18.4, dumped by 18.3 | Restored without source ownership or ACLs |
 | `smart_setup_postgres_pc.sql` | `e3cb5c1dea3f264f8152c734889c1b26319ef8c57e43eea34e8db3d74ca5768b` | PostgreSQL 18.4, dumped by 18.3 | Restored without source ownership or ACLs |
+| `smart_system_postgres_pc.sql` | `e1506122961941a20fbe347b2c85c374d3f7603b0f84329bba2b7255992379f5` | PostgreSQL 18.4, dumped by 18.3 | Restored without source ownership or ACLs |
 
 The source used the Windows `English_India.1252` monetary locale, which is not
 available on this Mac. During the data stream only, fields matching the exact
-tab-delimited Windows money forms `? 1,234.56` or `?- 1,234.56` were converted
+tab-delimited Indian-rupee (`₹`) money forms rendered locally as `? 1,234.56`
+or `?- 1,234.56` were converted
 to locale-neutral numeric text before PostgreSQL parsed the existing `money`
 columns. The archives were not modified. The company archive required 786,311
 field conversions and `smart_setup` required 2,630. Financial parity still
@@ -35,6 +37,12 @@ requires independent totals and row-level reconciliation.
 | Foreign keys | 0 | 0 |
 | Triggers | 0 | 0 |
 | Procedure signatures | 0 | 283 across 282 names |
+
+The separately supplied `smart_system` archive restored as 24 tables, 855
+columns, and 448 exact rows, with 12 functions, six procedures, three primary
+keys, no foreign keys, and 65 `money` columns. It required 660 temporary
+Indian-rupee monetary-field conversions. Its aggregate-only profile is in
+`docs/intake/smart-system-metadata-profile-2026-08-21.md`.
 
 The procedure-name set exactly matches the received PostgreSQL conversion
 file. `sp_frt_rpt_document_upload` is the single overloaded name and accounts
@@ -57,8 +65,9 @@ the check. The restored database is approximately 161 MB.
    constraints; the archive supplies no company primary or foreign keys.
 3. `smart_setup` metadata can now be inventoried and linked to screens, fields,
    actions, queries, and procedures without committing its rows.
-4. `smart_system` is absent from both archives. Users, permissions, companies,
-   accounting years, routing, dashboards, and shared print staging remain
-   blocked until its archive or schema/configuration export is supplied.
+4. `smart_system` is now locally restored for structural discovery. User,
+   authorization, company/year routing, dashboard, and print behavior still
+   require semantic mapping and runtime parity evidence; its empty security and
+   login record sets cannot prove authorization or authentication behavior.
 5. No procedure may run outside a rollback-only test harness until its dynamic
    SQL, tenant scope, transaction behavior, and write set are reviewed.

@@ -26,7 +26,7 @@ authority or parity. The verified facts are recorded in
 | `smart_setup` | 37 tables, 146,964 rows, 49 program definitions, 1,308 field definitions | Metadata discovery and a controlled first view contract can start. |
 | Account Master | `program_top:14`, 87 fields, 27 compulsory, 12 lookups, 2 duplicate checks | It is the first concrete view-contract candidate; its SQL/write semantics remain unapproved. |
 | Procedures | 283 signatures across 282 names; 263 need repair | Keep procedure execution quarantined; start only dependency/contract review. |
-| Missing control data | `smart_system` is absent | Authentication, rights, company/year routing, dashboards, and print staging remain blocked. |
+| Control-plane intake | `smart_system`: 24 tables, 448 rows, but no security/login records | Structural discovery can proceed; authentication, effective rights, routing, dashboard, and print behavior still require semantic/parity evidence. |
 | Source dialect | Legacy application is SQL Server/T-SQL; PostgreSQL dumps are converted artifacts | Track dialect per object; do not assume MySQL is the authoritative source. |
 
 ### Reprioritized execution path

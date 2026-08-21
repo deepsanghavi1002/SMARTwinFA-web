@@ -109,16 +109,17 @@ retirement path.
    `TOP`, `ISNULL`, `CONVERT`, SMO, `sa`, MDF/LDF operations).
 2. The user described a MySQL-to-PostgreSQL migration, but no MySQL source was
    found in the inspected tree.
-3. Both supplied database files are PostgreSQL custom archives and have been
+3. All three supplied database files are PostgreSQL custom archives and have been
    restored into an isolated local PostgreSQL 18 intake database. Catalog and
    row-count evidence is recorded in the local restore report.
 4. The restored `smart_setup` contains 49 program definitions, 1,308 field
    definitions, 592 menu rows, 216 query definitions, and 45 logical key
    relationships. Its first safe catalogue and Account Master structural
    contract are recorded in `docs/intake/postgres-metadata-catalog-2026-08-21.*`.
-   Freshness/authority is not confirmed. The `smart_system` archive, promised
-   PostgreSQL branch, and complete effective client query/view sets remain
-   absent.
+   Freshness/authority is not confirmed. The `smart_system` archive is now
+   locally restored and structurally profiled, but its authorization/routing
+   semantics, the promised PostgreSQL branch, and complete effective client
+   query/view sets remain unavailable.
 
 No production database conversion may begin until the authoritative source
 engine and object-by-object dialect are recorded.

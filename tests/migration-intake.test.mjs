@@ -33,9 +33,19 @@ test("records sanitized local PostgreSQL restore evidence without claiming parit
   assert.match(report, /705,743/);
   assert.match(report, /146,964/);
   assert.match(report, /283 across 282 names/);
-  assert.match(report, /smart_system` is absent/);
+  assert.match(report, /smart_system` is now locally restored/);
+  assert.match(report, /Indian-rupee/i);
   assert.match(report, /Financial parity still[\s\S]*independent totals/);
   assert.doesNotMatch(report, /connection\.ini|Password=/i);
+});
+
+test("documents smart_system aggregate evidence without exporting control-plane values", async () => {
+  const report = await readFile(new URL("../docs/intake/smart-system-metadata-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /24 \/ 855 \/ 448/);
+  assert.match(report, /security and login record sets/i);
+  assert.match(report, /routines remain quarantined/i);
+  assert.doesNotMatch(report, /password=|select\s/i);
 });
 
 test("retains an aggregate-only metadata catalogue for the first Account Master contract", async () => {
