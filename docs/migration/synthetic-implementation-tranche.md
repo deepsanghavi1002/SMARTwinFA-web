@@ -24,8 +24,8 @@ integration, cutover, and business signoff remain pending.
 | SYN-15 | Date/time and identifier contract | ARCH-007 | complete |
 | SYN-16 | Control-plane schema model | DB-CONTROL-001 | planned |
 | SYN-17 | Tenant-aware composite-key contract | DB-CONTROL-001 | planned |
-| SYN-18 | Canonical journal-line balance rule | DB-CANON-001 | planned |
-| SYN-19 | Canonical stock movement rule | DB-CANON-001 | planned |
+| SYN-18 | Canonical journal-line balance rule | DB-CANON-001 | complete |
+| SYN-19 | Canonical stock movement rule | DB-CANON-001 | complete |
 | SYN-20 | Transaction idempotency ledger | DB-MOVER-001 | complete |
 | SYN-21 | Migration checkpoint state | DB-MOVER-001 | complete |
 | SYN-22 | Migration quarantine record | DB-MOVER-001 | complete |
