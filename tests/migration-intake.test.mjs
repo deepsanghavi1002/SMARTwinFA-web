@@ -112,3 +112,12 @@ test("documents stored-query quarantine without exporting query text", async () 
   assert.match(report, /quarantined from the web runtime/i);
   assert.doesNotMatch(report, /select\s|password=/i);
 });
+
+test("documents logical-key metadata without turning declarations into constraints", async () => {
+  const report = await readFile(new URL("../docs/intake/logical-key-metadata-profile-2026-08-21.md", import.meta.url), "utf8");
+
+  assert.match(report, /45 declarations/i);
+  assert.match(report, /no\s+declared foreign relationships/i);
+  assert.match(report, /not enforced\s+PostgreSQL constraints/i);
+  assert.doesNotMatch(report, /password=|select\s/i);
+});
