@@ -1,0 +1,103 @@
+{
+  "artifacts": {
+    "postgres": {
+      "path": "/Users/rinkalshah/Downloads/postgres-procedures_validated/postgres-procedures_validated.sql",
+      "bytes": 12117884,
+      "sha256": "c523c759b028f3b425b1b02c7aad39924bf428fe013883c3b46676b84f76c9b2"
+    },
+    "sqlServer": {
+      "path": "/Users/rinkalshah/Downloads/postgres-procedures_validated/mssql-all-sp-script.sql",
+      "bytes": 33798842,
+      "sha256": "bfae0e7e424a02a709583f122832d76cfa6b683140eea26fa8092c8e3269e4d3"
+    }
+  },
+  "classification": "quarantined-not-deployable",
+  "source": {
+    "declarations": 329,
+    "uniqueNames": 325
+  },
+  "target": {
+    "declarations": 282,
+    "uniqueNames": 282
+  },
+  "coverage": {
+    "matchedNames": 279,
+    "sourceNameCoveragePercent": 85.85,
+    "missingFromPostgres": [
+      "sp_body_add_update_serial_changes",
+      "sp_create_array",
+      "sp_data_addon_fld",
+      "sp_entry_save",
+      "sp_frt_rpt_auto_discount",
+      "sp_frt_rpt_dpg_stock_value_rep",
+      "sp_frt_rpt_gstr_1",
+      "sp_frt_rpt_gstr_2",
+      "sp_frt_rpt_gstr_3b",
+      "sp_frt_rpt_multi_year_sales_analysis",
+      "sp_frt_rpt_order_reg",
+      "sp_frt_rpt_outstanding_clear",
+      "sp_frt_rpt_prithvi_folder_target",
+      "sp_frt_rpt_prithvi_party_point",
+      "sp_frt_rpt_prithvi_tans_cost",
+      "sp_frt_rpt_receipt_register",
+      "sp_frt_rpt_rpi_autobill",
+      "sp_frt_rpt_rpi_job_setoff",
+      "sp_frt_rpt_rpi_jobout_index",
+      "sp_frt_rpt_rpi_production_planing_setoff",
+      "sp_frt_rpt_rpi_purchase_price",
+      "sp_frt_rpt_rpi_salesman_visit",
+      "sp_frt_rpt_rpi_salesman_visit_monthly",
+      "sp_frt_rpt_rpi_sfg_difference",
+      "sp_frt_rpt_rpi_stock_analysis",
+      "sp_frt_rpt_shah_auto_jv",
+      "sp_frt_rpt_shah_order_clear",
+      "sp_frt_rpt_shah_sale_reg",
+      "sp_frt_rpt_stock_voucher",
+      "sp_frt_rpt_tj_autobill",
+      "sp_frt_rpt_trimurti_batch_stock",
+      "sp_frt_rpt_year_end_jv",
+      "sp_insert_year_end_jv",
+      "sp_master_update_data",
+      "sp_mobile_report",
+      "sp_report_formating",
+      "sp_report_standard",
+      "sp_rpt_mobile_all_report",
+      "sp_smart_help",
+      "sp_std_rpt_mktanalys",
+      "sp_std_rpt_order_reg",
+      "sp_std_rpt_pend_order_reg",
+      "sp_std_rpt_pwiserate",
+      "sp_std_rpt_stock",
+      "sp_surface_auto_cloud_update_stock",
+      "sp_transfer_data"
+    ],
+    "postgresOnly": [
+      "fetchmenu",
+      "getfieldvalidation",
+      "getprogrambody"
+    ]
+  },
+  "residualTsql": {
+    "alterProcedureDbo": 1,
+    "batchGo": 0,
+    "dboIdentifiers": 13,
+    "sqlServerVariables": 27,
+    "objectIdCalls": 17,
+    "spExecuteSql": 454,
+    "topClauses": 649,
+    "isnullCalls": 61,
+    "getdateCalls": 10,
+    "nvarcharTypes": 713,
+    "sysCatalogReferences": 491,
+    "tempTableTokens": 34
+  },
+  "unresolvedMarkers": {
+    "todo": 1586,
+    "dynamicExecute": 6120,
+    "explicitCommit": 15,
+    "explicitRollback": 7,
+    "passwordReferences": 15,
+    "securityDefiner": 0,
+    "searchPathAssignments": 1
+  }
+}
