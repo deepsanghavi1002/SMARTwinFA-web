@@ -157,6 +157,12 @@ Workers claim jobs atomically. Retries are idempotent. Generated artifacts are
 tenant-scoped, encrypted, access-controlled, checksummed, and retained by
 policy. Golden PDF/image comparisons replace assumptions about Crystal output.
 
+The current source-independent job contract in `platform/jobs/job-state.ts`
+models the allowed queued/claimed/succeeded/failed/cancelled transitions,
+bounded retries, claiming-worker ownership, tenant-scoped idempotency keys, and
+auditable lifecycle events. It does not yet persist jobs, lease them atomically
+in PostgreSQL, render documents, or deliver artifacts.
+
 Reports use typed parameters and output contracts. Expensive reports run as
 jobs or against reviewed read models/replicas. Cache keys always include tenant,
 company, accounting year, permission-relevant scope, definition version, and

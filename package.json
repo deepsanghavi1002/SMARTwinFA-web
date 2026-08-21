@@ -9,7 +9,7 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --experimental-strip-types --test tests/rendered-html.test.mjs tests/repository-safety-check.test.mjs tests/ci-workflow.test.mjs tests/metadata-definition.test.mts tests/tenant-context.test.mts",
+    "test": "npm run build && node --experimental-strip-types --test tests/rendered-html.test.mjs tests/repository-safety-check.test.mjs tests/ci-workflow.test.mjs tests/metadata-definition.test.mts tests/tenant-context.test.mts tests/job-state.test.mts",
     "security:check": "node scripts/repository-safety-check.mjs",
     "test:repository-safety": "node --test tests/repository-safety-check.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",

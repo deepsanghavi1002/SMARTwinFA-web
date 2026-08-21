@@ -32,6 +32,7 @@
 "PLAT-RLS-001","3","Platform","Implement forced tenant RLS and composite tenant-aware keys","ARCH-001","Cross-tenant read/write/reference tests fail closed","discovered","TBD",""
 "PLAT-AUDIT-001","3","Platform","Implement append-only audit and transactional outbox","ARCH-004","Security/financial/configuration events are durable, ordered, and redacted","discovered","TBD",""
 "PLAT-JOB-001","3","Platform","Implement durable background job worker and idempotency","PLAT-AUDIT-001","Retry/crash/duplicate/concurrency tests pass","discovered","TBD",""
+"JOB-CONTRACT-001","3","Platform","Implement source-independent durable job state and audit contracts","ARCH-006","Queued/claimed/succeeded/failed/cancelled state rules, worker ownership, bounded retries, scope-bound idempotency, and audit events have passing tests","unit-tested","TBD",""
 "PLAT-OBS-001","3","Platform","Implement tenant-safe logs, metrics, traces, and correlation","ARCH-008","SLO dashboards and redaction tests pass","discovered","TBD",""
 "PLAT-FIXTURE-001","3","Quality platform","Create synthetic fixture factory and disposable PostgreSQL CI","ARCH-007","Clean deterministic database is available to all test layers","discovered","TBD",""
 "META-DEF-001","3","Metadata runtime","Implement source-independent metadata manifest validation and deterministic override resolution","ARCH-002","Manifest rejects raw SQL/unsafe scope, validates action/audit contracts, and resolves active global/module/tenant/company/year overrides deterministically","unit-tested","TBD",""
