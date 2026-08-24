@@ -33,12 +33,52 @@ mobile/query metadata. Neither archive belongs in Git.
 
 ## Integrity model
 
+> **Corrected 2026-08-24.** The conclusions below were originally drawn from
+> the PostgreSQL *archives*. The
+> [gap audit](migration-gap-audit-2026-08-24.md) compared them against the live
+> SQL Server *source* and found that the archives had lost every integrity
+> object. Read the comparison before planning `DB-INTEGRITY-001`.
+
 The samples enforce very little relational integrity in PostgreSQL.
 `database_keys` stores relationship names as application metadata rather than
 database foreign keys. Relationships such as `program_body.program_top_id`,
 security/user IDs, and entry control ownership are not protected by foreign
 keys. Legacy success therefore depends on application order, procedures,
 metadata conventions, and client-specific SQL.
+
+### Source versus archive
+
+Live SQL Server objects compared with the archive counts recorded above:
+
+| Object | Company-year source | Company-year archive | `smart_setup` source | `smart_setup` archive |
+|---|---:|---:|---:|---:|
+| Tables | 78 | 75 | 38 | 37 |
+| Primary keys | **72** | 0 | **35** | 36 |
+| Unique indexes | **164** | 0 | **165** | 0 |
+| Non-clustered indexes | **25** | 0 | **15** | 0 |
+| Identity columns | **82** | 0 | **42** | 36 sequences |
+| Foreign keys | 0 | 0 | 0 | 0 |
+| Check constraints | 0 | 0 | 0 | 0 |
+| Views | 0 | 0 | 0 | 0 |
+| Triggers | 0 | 0 | 0 | 0 |
+
+`smart_system` source: 25 tables, 25 primary keys, 165 unique indexes,
+27 identity columns.
+
+Two consequences:
+
+1. **Candidate-key discovery is largely unnecessary.** The authoritative
+   primary keys, unique indexes, and identity columns exist in SQL Server today
+   and can be extracted directly. Profiling remains necessary only where the
+   source declares no key, and for the 45 logical relationships in
+   `database_keys`.
+2. **The archive is not a faithful structural copy.** It is missing 3 company
+   tables and every index. Any conversion validated only against the archive
+   has been validated against a weaker schema than production.
+
+The absence of foreign keys and check constraints is confirmed as a genuine
+property of the legacy design, not an artifact of the export; those must still
+be recovered by profiling.
 
 Constraints must not simply be added based on names. First measure duplicates,
 orphans, invalid flags, missing required values, and cross-tenant collisions;
@@ -70,13 +110,26 @@ The supplied recipe says to:
 3. Append 33 client/year fields from `addon_fld.fiel_save`.
 4. Apply company/year joins and filters to form the final SELECT.
 
-The stated 87/33 row counts have not been independently verified. The recipe
+The 87 fixed-field count **was independently verified on 2026-08-24**:
+`PROGRAM_TOP_KEY 14` carries exactly 87 `PROGRAM_BODY` rows in the live
+`smart_setup`. The 33 client/year add-on fields remain unverified and are
+per-company data. The recipe
 also contains a hard-coded year alongside `|sys.yearid|`, unqualified `book`
 and `name` references, and a likely `fiel_pos-'A'` typo. The first migrated
 Account Master contract must prove field order, labels, types, joins, year
 filtering, role visibility, tenant additions, and result parity.
 
 ## Procedure risk
+
+> **Sized 2026-08-24.** The live `smart_setup` on SQL Server holds **346
+> routines** (335 procedures, 10 scalar functions, 1 table-valued function). A
+> conversion effort on the legacy workstation (`SRC-PG-001`…`SRC-PG-003`)
+> statically checked **328**, of which **255 pass** and **73 need review**.
+> The archive below holds **283**. Two gaps follow: 18 live routines were never
+> submitted to conversion, and 45 converted routines are absent from the
+> archive. Recorded failure classes include `END IF without IF`, unclosed
+> `BEGIN`, `ELSIF outside IF`, residual `TOP n`, `GOTO (no equivalent)`, `+=`,
+> and up to 32 dynamic-cursor TODOs in a single routine.
 
 The `smart_setup` archive includes 283 signatures:
 

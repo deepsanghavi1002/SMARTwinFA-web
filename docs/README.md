@@ -8,6 +8,9 @@ the backlog, but every issue must keep the stable ID used in this repository.
 - [Current state](discovery/current-state.md)
 - [Source register](discovery/source-register.md)
 - [Database inventory](discovery/database-inventory.md)
+- [Migration gap audit, 2026-08-24](discovery/migration-gap-audit-2026-08-24.md)
+- [Legacy-to-web traceability, 2026-08-24](discovery/legacy-web-traceability-2026-08-24.csv)
+- [Business-owner questions](discovery/business-owner-questions.md)
 
 ## Architecture
 
@@ -21,6 +24,8 @@ the backlog, but every issue must keep the stable ID used in this repository.
 
 - [Roadmap](migration/roadmap.md)
 - [Backlog CSV](migration/backlog.csv)
+- [Backlog delta, 2026-08-24](migration/backlog-delta-2026-08-24.csv)
+- [Next executable slice, 2026-08-24](migration/next-executable-slice-2026-08-24.md)
 - [Feature inventory](migration/feature-inventory.md)
 - [Database migration plan](migration/database-migration.md)
 - [Stored-procedure intake](migration/procedure-intake.md)
