@@ -80,9 +80,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
   }, []);
 
   const viewButton = (
-    <button className={`view-switch ${modernView ? "modern-active" : "legacy-active"}`} type="button" onClick={() => setModernView((current) => !current)} aria-label={modernView ? "Switch to legacy view" : "Switch to modern view"}>
-      <span>Legacy</span>
-      <span>Modern</span>
+    <button className={`view-switch ${modernView ? "modern-active" : "legacy-active"}`} type="button" onClick={() => setModernView((current) => !current)} aria-label={modernView ? "Switch to legacy view" : "Switch to modern view"} aria-pressed={modernView}>
+      <span className="view-switch-state">{modernView ? "Modern view" : "Legacy view"}</span>
+      <span className="view-switch-action">{modernView ? "Switch to legacy" : "Switch to modern"} <b aria-hidden="true">⇄</b></span>
     </button>
   );
   if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div>;
@@ -108,30 +108,32 @@ export function StartupGate({ children }: { children: ReactNode }) {
             }}
           >
             {stage === "login" ? (
-              <Card sx={{ width: "min(860px, 100%)", overflow: "hidden", borderRadius: 2, boxShadow: "0 18px 42px rgba(25, 50, 95, 0.14)" }}>
-                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "280px minmax(0,1fr)" } }}>
+              <Card sx={{ width: "min(920px, 100%)", overflow: "hidden", borderRadius: 3, boxShadow: "0 22px 48px rgba(25, 50, 95, 0.16)" }}>
+                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "310px minmax(0,1fr)" } }}>
                   <Box
                     sx={{
                       p: { xs: 3, md: 4 },
                       color: "#fff",
                       background: "linear-gradient(180deg,#173f7c 0%,#1565c0 72%,#1f8ca5 100%)",
-                      display: "grid",
-                      alignContent: "space-between",
-                      gap: 2,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      minHeight: { md: 448 },
+                      gap: 4,
                     }}
                   >
                     <Stack spacing={2}>
                       <Typography variant="overline" sx={{ opacity: 0.88, letterSpacing: ".12em" }}>SMARTwinFA</Typography>
                       <Typography variant="h5" sx={{ fontWeight: 700 }}>User Login</Typography>
                     </Stack>
-                    <Stack spacing={1} sx={{ alignItems: "flex-start" }}>
-                      <Box className="login-logo" role="img" aria-label="SMARTwinFA logo" />
+                    <Stack spacing={1.25} sx={{ width: "100%", alignItems: "center", textAlign: "center" }}>
+                      <Box component="img" className="login-logo" src="/smartwinfa-logo.svg" alt="SMARTwinFA logo" />
                       <Typography variant="caption" sx={{ color: "#dcecff", letterSpacing: ".14em" }}>DEVELOPED BY</Typography>
                       <Typography variant="body2" sx={{ color: "#fff", fontWeight: 700, letterSpacing: ".03em" }}>PRANAV COMPUTERS</Typography>
                     </Stack>
                   </Box>
-                  <CardContent sx={{ p: { xs: 3, md: 3.5 } }}>
-                    <Stack component="form" spacing={2} onSubmit={(event) => { event.preventDefault(); login(); }}>
+                  <CardContent sx={{ display: "grid", alignContent: "center", p: { xs: 3, md: 4.5 } }}>
+                    <Stack component="form" spacing={1.75} onSubmit={(event) => { event.preventDefault(); login(); }}>
                       <Typography variant="h6" sx={{ color: "#173b57" }}>Sign in</Typography>
                       <TextField label="Today's Date" value={new Date().toLocaleDateString("en-GB")} slotProps={{ htmlInput: { readOnly: true } }} fullWidth />
                       <TextField label="User Name" value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} fullWidth />
@@ -140,8 +142,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         {error}
                       </Typography>
                       <Typography variant="caption" sx={{ color: contextError ? "error.main" : "text.secondary" }}>{contextError || "Migration test access; company and year come from PostgreSQL."}</Typography>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} sx={{ justifyContent: "flex-end" }}>
-                        <Button type="submit" variant="contained">Login</Button>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} sx={{ justifyContent: "flex-end", pt: 0.5 }}>
+                        <Button type="submit" variant="contained" sx={{ minWidth: 128, minHeight: 42 }}>Login</Button>
                       </Stack>
                     </Stack>
                   </CardContent>

@@ -556,3 +556,10 @@ html .modern-view .action-icon{stroke:var(--modern-primary-dark)}
   html .modern-view .home-splash-logo{width:min(74vw,280px);height:auto}
   html .modern-view .home-credit strong{font-size:22px}
 }
+
+/* Startup mode switch: a single, legible toggle rather than two tab fragments. */
+html .modern-view .view-switch{top:18px;right:24px;min-width:238px;height:42px;display:inline-flex;align-items:center;justify-content:space-between;gap:10px;padding:4px;border:1px solid #bfd0de;border-radius:999px;color:#23445f;background:#ffffffed;box-shadow:0 10px 28px #173c5a2b;font-size:12px;backdrop-filter:blur(12px)}
+html .modern-view .view-switch span{display:inline-flex;align-items:center;justify-content:center;min-width:0;height:32px;padding:0 12px;border:0;border-radius:999px;background:transparent;color:#345169;font-weight:700}
+html .modern-view .view-switch .view-switch-state{color:#fff;background:linear-gradient(135deg,#1a5ea8,#0e8da4);box-shadow:inset 0 1px #ffffff45}
+html .modern-view .view-switch .view-switch-action{color:#345169;background:transparent}
+@media(max-width:780px){html .modern-view .view-switch{top:12px;right:12px;min-width:0;height:38px;padding:3px;font-size:10px}html .modern-view .view-switch span{height:30px;padding:0 9px}html .modern-view .view-switch .view-switch-action{font-size:0}html .modern-view .view-switch .view-switch-action b{margin:0;font-size:16px}}

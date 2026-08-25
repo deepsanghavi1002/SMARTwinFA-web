@@ -54,6 +54,7 @@ test("server-renders the SMARTwinFA login shell", async () => {
   assert.match(html, /Developed By/);
   assert.match(html, /PRANAV COMPUTERS/);
   assert.match(html, /aria-label="Switch to modern view"/i);
+  assert.match(html, /Legacy view/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
 });
 
