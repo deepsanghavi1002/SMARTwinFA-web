@@ -1,6 +1,6 @@
 @echo off
 setlocal
-set "APP_URL=http://pinas.local:4173/"
+set "APP_URL=https://smart-winfa.deepsanghavi.org/"
 set "EDGE_64=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
 set "EDGE_32=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
 

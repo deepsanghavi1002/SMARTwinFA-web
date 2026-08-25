@@ -10,7 +10,7 @@ test("Windows launcher installs a desktop shortcut for the Pi-hosted app without
     read("Run-SMARTwinFA.cmd"), read("Install-SMARTwinFA.cmd"), read("Uninstall-SMARTwinFA.cmd"), read("README.md"),
   ]);
 
-  assert.match(run, /APP_URL=http:\/\/pinas\.local:4173\//);
+  assert.match(run, /APP_URL=https:\/\/smart-winfa\.deepsanghavi\.org\//);
   assert.match(run, /--app="%APP_URL%"/);
   assert.match(install, /Run-SMARTwinFA\.cmd/);
   assert.match(install, /Desktop\\SMARTwinFA\.lnk/);

@@ -11,12 +11,14 @@ does **not** install PostgreSQL, copy customer data, or modify the Pi.
    if it appears.
 4. Double-click the new **SMARTwinFA** desktop icon.
 
-The icon launches Microsoft Edge in app mode at `http://pinas.local:4173/`.
+The icon launches Microsoft Edge in app mode at
+`https://smart-winfa.deepsanghavi.org/`.
 All application updates remain on the Pi, so the desktop launcher does not
 need to be reinstalled after normal web releases.
 
-If the Pi cannot be reached, first confirm that the PC is on the same network
-and then open `http://pinas.local:4173/` in Edge to diagnose name resolution.
+If the app cannot be reached, first confirm that the PC has internet access
+and then open `https://smart-winfa.deepsanghavi.org/` in Edge to diagnose the
+connection.
 
 To remove only the local launcher, run `Uninstall-SMARTwinFA.cmd`. It never
 removes the Pi service or any database data.
