@@ -6,8 +6,8 @@ from the legacy repository and adds the architecture, migration controls, and
 quality gates needed to reach production parity.
 
 > **Current status: PostgreSQL-backed prototype, not production software.**
-> The recorded SMARTwinFA workflows use the restored Rishabh clone and are
-> deployed for Pi-based testing. Production authentication, authorization,
+> The recorded SMARTwinFA workflows use an isolated PostgreSQL test environment
+> and are deployed for Pi-based testing. Production authentication, authorization,
 > tenant isolation, statutory integrations, and cutover controls are still not
 > complete. Do not expose this build to the public internet.
 
@@ -52,25 +52,21 @@ docker compose up --build
 
 Health check: `http://localhost:4173/api/health`.
 
-## Local lower environment with Rishabh Plastic data
+## Local developer environment
 
-Use the separate local stack when developing or testing a branch on a PC. It
-starts the web app on `http://localhost:3000`, the legacy API, and a private
-PostgreSQL container preloaded from the approved Rishabh Plastic backup.
+Use Docker Desktop for a self-contained local test environment. It starts the
+web app, API, and private PostgreSQL database together. Each developer uses an
+isolated mock-data seed supplied through the project team; data is never kept
+in GitHub.
 
-The client backup itself is intentionally excluded from GitHub. Docker Desktop
-is the only required installation: copy an authorized backup to the ignored
-local seed path, then start the stack with one command:
+Start the stack:
 
 ```bash
 docker compose --env-file .env.docker -f compose.local.yaml up --build
 ```
 
-Full Windows, macOS, reset, branch-isolation, and pgAdmin instructions are in
-[the local Docker guide](docs/local-docker-rishabh.md).
-
-For the required branch, database-isolation, test, migration, and pull-request
-workflow, see the [developer workflow](docs/development-workflow.md).
+For setup details and the required branch, database-isolation, test, migration,
+and pull-request workflow, see the [developer workflow](docs/development-workflow.md).
 
 For a versioned Pi test deployment with an authorized SSH account:
 

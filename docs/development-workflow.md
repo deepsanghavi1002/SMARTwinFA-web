@@ -12,7 +12,7 @@ project and PostgreSQL volume:
 ```text
 feature branch
   -> web application + legacy API + local PostgreSQL
-  -> private Rishabh Plastic seed copy
+  -> private mock-data seed copy
   -> local browser test
   -> checks, commit, push, pull request
 ```
@@ -23,15 +23,14 @@ source SQL Server as a writable test environment.
 ## One-time setup
 
 1. Install Docker Desktop. It is supported on Windows, macOS, and Linux.
-2. Clone this repository and obtain the approved private Rishabh Plastic
-   PostgreSQL dump from the project owner.
-3. Copy `.env.docker.example` to `.env.docker`.
-4. Place the dump at
-   `database/fixtures/private/rishabh-plastic27.dump`.
+2. Clone this repository and obtain the approved mock-data package from the
+   project team.
+3. Copy `.env.docker.example` to `.env.docker` and follow the included setup
+   note for the mock-data package.
 
-The dump and `.env.docker` are local-only files. Never commit, upload, or put
-them in a pull request. See [local-docker-rishabh.md](local-docker-rishabh.md)
-for platform-specific setup details.
+Mock data and `.env.docker` are local-only files. Never commit, upload, or put
+them in a pull request. See [the local Docker guide](local-docker.md) for the
+short setup reference.
 
 ## Start a feature environment
 
