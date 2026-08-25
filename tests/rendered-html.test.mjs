@@ -100,8 +100,11 @@ test("keeps the latest migrated application surface wired into the root route", 
   assert.match(startupContext, /legacy-postgresql/);
   assert.match(startupContext, /legacyCompanySchema/);
   assert.match(addon, /Real Addon Master/);
-  assert.match(addon, /addon_fld \/ addon_sub/);
-  for (const action of ["Save", "Delete", "Print", "Refresh"]) {
+  assert.match(addon, /Click any cell to edit/);
+  assert.match(addon, /Save definitions/);
+  assert.match(addon, /Save lookup values/);
+  assert.doesNotMatch(addon, /<th>KEY<\/th>/);
+  for (const action of ["Delete", "Print", "Refresh"]) {
     assert.match(addon, new RegExp(action));
   }
   for (const workflow of [
