@@ -70,6 +70,10 @@ PC and run `Install-SMARTwinFA.cmd` once. It creates a desktop shortcut that
 opens the Pi app in its own Edge app window. See the launcher
 [instructions](distribution/windows-launcher/README.md).
 
+For a Mac, use the [macOS launcher folder](distribution/macos-launcher/) and
+run `Install-SMARTwinFA.command`. It installs a local SMARTwinFA app that opens
+the public hosted site in an app-style browser window.
+
 ## Required checks
 
 ```bash
