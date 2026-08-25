@@ -58,10 +58,9 @@ Use the separate local stack when developing or testing a branch on a PC. It
 starts the web app on `http://localhost:3000`, the legacy API, and a private
 PostgreSQL container preloaded from the approved Rishabh Plastic backup.
 
-The client backup itself is intentionally excluded from GitHub. On Windows,
-macOS, or Linux, prepare an authorized copy with
-`node scripts/prepare-rishabh-local-seed.mjs /path/to/backup`, then start the
-stack with one command:
+The client backup itself is intentionally excluded from GitHub. Docker Desktop
+is the only required installation: copy an authorized backup to the ignored
+local seed path, then start the stack with one command:
 
 ```bash
 docker compose --env-file .env.docker -f compose.local.yaml up --build

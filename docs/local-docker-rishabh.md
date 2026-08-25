@@ -21,16 +21,28 @@ startup.
    macOS/Linux:       cp .env.docker.example .env.docker
    ```
 
-4. Prepare the authorized PostgreSQL custom backup. This command works the
-   same in Windows PowerShell, macOS Terminal, and Linux shells:
+4. Copy the authorized PostgreSQL custom backup to
+   `database/fixtures/private/rishabh-plastic27.dump`.
 
-   ```text
-   node scripts/prepare-rishabh-local-seed.mjs /path/to/rishabh_plastic27_backup.sql
+   Windows PowerShell (no Node.js installation required):
+
+   ```powershell
+   New-Item -ItemType Directory -Force database\fixtures\private
+   Copy-Item "C:\path\to\rishabh_plastic27_backup.sql" "database\fixtures\private\rishabh-plastic27.dump"
+   ```
+
+   macOS/Linux:
+
+   ```bash
+   mkdir -p database/fixtures/private
+   cp /path/to/rishabh_plastic27_backup.sql database/fixtures/private/rishabh-plastic27.dump
    ```
 
    The file may be named `.sql`, but it must be the PostgreSQL **custom dump**
-   supplied by the project owner. The command checks its dump header and copies
-   it to `database/fixtures/private/rishabh-plastic27.dump`.
+   supplied by the project owner. Docker validates it while restoring the
+   `rishabh_plastic27` schema. `node scripts/prepare-rishabh-local-seed.mjs`
+   remains an optional cross-platform preflight checker for developers who
+   already have Node.js installed.
 
 ## Start
 
