@@ -22,13 +22,17 @@ const fallbackMenus: Menu[] = [
   { label: "HELP", children: ["Software Videos", "About SMARTwinFA", "Support"] },
 ];
 
-function LegacyMenuTree({ nodes, moduleLabel, onSelect }: { nodes: LegacyMenuNode[]; moduleLabel: string; onSelect: (node: LegacyMenuNode, moduleLabel: string) => void }) {
-  return <>{nodes.map((node) => <div className="legacy-menu-node" key={node.id}>
-    <button type="button" className={node.children.length ? "legacy-menu-branch" : "legacy-menu-leaf"} onClick={() => { if (!node.children.length) onSelect(node, moduleLabel); }}>
+function LegacyMenuTree({ nodes, moduleLabel, onSelect, expandedBranches, toggleBranch, expandBranch }: { nodes: LegacyMenuNode[]; moduleLabel: string; onSelect: (node: LegacyMenuNode, moduleLabel: string) => void; expandedBranches: Set<number>; toggleBranch: (id: number) => void; expandBranch: (id: number) => void }) {
+  return <>{nodes.map((node) => {
+    const branch = node.children.length > 0;
+    const expanded = expandedBranches.has(node.id);
+    return <div className={`legacy-menu-node ${expanded ? "is-expanded" : ""}`} key={node.id} onMouseEnter={() => { if (branch) expandBranch(node.id); }}>
+    <button type="button" className={branch ? "legacy-menu-branch" : "legacy-menu-leaf"} aria-haspopup={branch ? "menu" : undefined} aria-expanded={branch ? expanded : undefined} onClick={() => { if (branch) toggleBranch(node.id); else onSelect(node, moduleLabel); }}>
       <span>{node.label}</span>{node.children.length ? <b>›</b> : null}
     </button>
-    {node.children.length ? <div className="legacy-menu-subtree"><LegacyMenuTree nodes={node.children} moduleLabel={moduleLabel} onSelect={onSelect} /></div> : null}
-  </div>)}</>;
+    {branch ? <div className="legacy-menu-subtree" role="menu"><LegacyMenuTree nodes={node.children} moduleLabel={moduleLabel} onSelect={onSelect} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} /></div> : null}
+  </div>;
+  })}</>;
 }
 
 function LegacyMenuMigrationStatus({ node, moduleLabel }: { node: LegacyMenuNode; moduleLabel: string }) {
@@ -44,6 +48,7 @@ export default function Home() {
   const [legacyMenus, setLegacyMenus] = useState<LegacyMenuNode[] | null>(null);
   const [legacySelection, setLegacySelection] = useState<{ node: LegacyMenuNode; moduleLabel: string; route: LegacyWorkflowRoute | null } | null>(null);
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
+  const [expandedBranches, setExpandedBranches] = useState<Set<number>>(() => new Set());
   const [runtimeContext, setRuntimeContext] = useState<{ company: string; year: string } | null>(null);
   const menuBar = useRef<HTMLDivElement>(null);
   const activeLabel = activeItem.includes("::") ? activeItem.slice(activeItem.lastIndexOf("::") + 2) : activeItem;
@@ -51,6 +56,7 @@ export default function Home() {
     setActiveItem("Home");
     setLegacySelection(null);
     setOpenMenu(null);
+    setExpandedBranches(new Set());
     setSuspendHoverMenu(true);
   };
 
@@ -79,8 +85,13 @@ export default function Home() {
     setLegacySelection({ node, moduleLabel, route: resolveLegacyWorkflow(node, moduleLabel) });
     setActiveItem(`legacy::${node.id}`);
     setOpenMenu(null);
+    setExpandedBranches(new Set());
     setSuspendHoverMenu(true);
   };
+  const toggleBranch = (id: number) => setExpandedBranches((current) => {
+    const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next;
+  });
+  const expandBranch = (id: number) => setExpandedBranches((current) => current.has(id) ? current : new Set([...current, id]));
   const menuRoots = legacyMenus ?? fallbackMenus.map((menu, index) => ({ id: -(index + 1), parentId: null, label: menu.label, program: null, action: null, children: (menu.children ?? []).map((label, childIndex) => ({ id: -((index + 1) * 1000 + childIndex + 1), parentId: -(index + 1), label, program: null, action: null, children: [] })) }));
 
   useEffect(() => {
@@ -107,8 +118,8 @@ export default function Home() {
       <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
         {menuRoots.map((menu) => (
           <div className="menu-root" key={menu.id}>
-            <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
-            <div className={`dropdown legacy-menu-dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu"><LegacyMenuTree nodes={menu.children} moduleLabel={menu.label} onSelect={selectLegacyMenu} /></div>
+            <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setExpandedBranches(new Set()); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
+            <div className={`dropdown legacy-menu-dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu"><LegacyMenuTree nodes={menu.children} moduleLabel={menu.label} onSelect={selectLegacyMenu} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} /></div>
           </div>
         ))}
       </div>
@@ -117,7 +128,7 @@ export default function Home() {
         <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={() => setOpenMenu(null)} />
         <div className="mobile-dropdown" role="menu" aria-label={`${openMenu} menu`}>
           <strong>{openMenu}</strong>
-          {menuRoots.find((menu) => menu.label === openMenu)?.children.map((child) => <button key={child.id} role="menuitem" onClick={() => { if (!child.children.length) selectLegacyMenu(child, openMenu); }} disabled={child.children.length > 0}>{child.label}<b>{child.children.length ? "›" : ""}</b></button>)}
+          <LegacyMenuTree nodes={menuRoots.find((menu) => menu.label === openMenu)?.children ?? []} moduleLabel={openMenu} onSelect={selectLegacyMenu} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} />
         </div>
       </>}
 
