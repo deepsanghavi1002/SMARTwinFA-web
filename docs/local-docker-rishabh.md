@@ -14,26 +14,27 @@ startup.
 
 1. Install Docker Desktop and ensure it is running.
 2. Check out the branch you want to test.
-3. Copy `.env.docker.example` to `.env.docker`.
-4. Put the authorized PostgreSQL custom backup at:
+3. Create the local Docker settings file:
 
    ```text
-   database/fixtures/private/rishabh-plastic27.dump
+   Windows PowerShell: Copy-Item .env.docker.example .env.docker
+   macOS/Linux:       cp .env.docker.example .env.docker
    ```
 
-   On macOS/Linux, the helper can prepare it from the supplied backup:
+4. Prepare the authorized PostgreSQL custom backup. This command works the
+   same in Windows PowerShell, macOS Terminal, and Linux shells:
 
-   ```bash
-   ./scripts/prepare-rishabh-local-seed.sh /path/to/rishabh_plastic27_backup.sql
+   ```text
+   node scripts/prepare-rishabh-local-seed.mjs /path/to/rishabh_plastic27_backup.sql
    ```
 
-   On Windows, copy and rename the authorized file in Explorer. Its extension
-   may be `.sql`, but it must be the PostgreSQL **custom dump** supplied by the
-   project owner.
+   The file may be named `.sql`, but it must be the PostgreSQL **custom dump**
+   supplied by the project owner. The command checks its dump header and copies
+   it to `database/fixtures/private/rishabh-plastic27.dump`.
 
 ## Start
 
-From the repository root:
+From the repository root, in Windows PowerShell, macOS Terminal, or Linux:
 
 ```bash
 docker compose --env-file .env.docker -f compose.local.yaml up --build
