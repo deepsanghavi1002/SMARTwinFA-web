@@ -1,5 +1,5 @@
 "use client";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -20,7 +20,15 @@ import {
   Typography,
   createTheme,
 } from "@mui/material";
-import { accountingYears, companies, mockUser } from "./mock-data";
+
+type StartupContext = {
+  source: "legacy-postgresql";
+  authenticationMode: "migration-test";
+  companies: Array<{ id: string; name: string; code: string; address: string }>;
+  years: Array<{ id: string; label: string }>;
+};
+
+const migrationAccessUser = "SRP";
 
 const modernTheme = createTheme({
   palette: {
@@ -43,9 +51,33 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [username, setUsername] = useState("SRP");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [year, setYear] = useState("2026");
-  const [company, setCompany] = useState("dreamhouse");
+  const [context, setContext] = useState<StartupContext | null>(null);
+  const [contextError, setContextError] = useState("");
+  const [year, setYear] = useState("");
+  const [company, setCompany] = useState("");
   const [modernView, setModernView] = useState(false);
+  const accountingYears = context?.years ?? [];
+  const companies = context?.companies ?? [];
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/legacy/startup", { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as StartupContext | { error?: string };
+        if (!response.ok || !("companies" in body)) throw new Error("error" in body && body.error ? body.error : "Startup data could not be loaded");
+        return body;
+      })
+      .then((body) => {
+        setContext(body);
+        setYear(body.years[0]?.id ?? "");
+        setCompany(body.companies[0]?.id ?? "");
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setContextError(reason instanceof Error ? reason.message : "Startup data could not be loaded");
+      });
+    return () => controller.abort();
+  }, []);
 
   const viewButton = (
     <button className={`view-switch ${modernView ? "modern-active" : "legacy-active"}`} type="button" onClick={() => setModernView((current) => !current)} aria-label={modernView ? "Switch to legacy view" : "Switch to modern view"}>
@@ -55,7 +87,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
   );
   if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div>;
   const login = () => {
-    if (username.trim().toUpperCase() === mockUser.username && password.trim().length > 0) { setError(""); setStage("company"); }
+    if (username.trim().toUpperCase() === migrationAccessUser && password.trim().length > 0) { setError(""); setStage("company"); }
     else setError("Invalid user name or password");
   };
 
@@ -101,12 +133,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
                   <CardContent sx={{ p: { xs: 3, md: 3.5 } }}>
                     <Stack component="form" spacing={2} onSubmit={(event) => { event.preventDefault(); login(); }}>
                       <Typography variant="h6" sx={{ color: "#173b57" }}>Sign in</Typography>
-                      <TextField label="Today's Date" value="19/08/2026" slotProps={{ htmlInput: { readOnly: true } }} fullWidth />
+                      <TextField label="Today's Date" value={new Date().toLocaleDateString("en-GB")} slotProps={{ htmlInput: { readOnly: true } }} fullWidth />
                       <TextField label="User Name" value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} fullWidth />
                       <TextField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
                       <Typography variant="body2" color="error" role="alert" sx={{ minHeight: 24 }}>
                         {error}
                       </Typography>
+                      <Typography variant="caption" sx={{ color: contextError ? "error.main" : "text.secondary" }}>{contextError || "Migration test access; company and year come from PostgreSQL."}</Typography>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} sx={{ justifyContent: "flex-end" }}>
                         <Button type="submit" variant="contained">Login</Button>
                       </Stack>
@@ -173,7 +206,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
                     </Box>
                     <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} sx={{ justifyContent: "flex-end" }}>
                       <Button variant="outlined" onClick={() => setStage("login")}>Exit</Button>
-                      <Button variant="contained" onClick={() => setStage("ready")}>Continue</Button>
+                      <Button variant="contained" disabled={!context || !year || !company} onClick={() => setStage("ready")}>Continue</Button>
                     </Stack>
                   </Stack>
                 </CardContent>
@@ -185,22 +218,26 @@ export function StartupGate({ children }: { children: ReactNode }) {
     );
   }
 
-  return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}<main className="startup-desktop">
-    {stage === "login" ? <section className="login-window" aria-label="User login screen">
-      <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
-      <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-brand"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><div className="developer-credit"><span>Developed By</span><strong>PRANAV COMPUTERS</strong></div></div><form onSubmit={(event) => { event.preventDefault(); login(); }}>
-        <label>Today&apos;s Date:<input value="18/08/2026" readOnly /></label>
-        <label>User Name:<input value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} /></label>
-        <label>Password:<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+  return <div className="view-mode legacy-view">{viewButton}<main className="startup-desktop legacy-startup">
+    {stage === "login" ? <section className="legacy-auth-window" aria-label="User login screen">
+      <aside className="legacy-auth-brand"><div className="legacy-auth-logo" role="img" aria-label="SMARTwinFA logo"/><strong>SMART WINFA</strong><span>Modern Technology ✓</span><small>Simple Accounting. Smart Business.</small></aside>
+      <form className="legacy-auth-form" onSubmit={(event) => { event.preventDefault(); login(); }}>
+        <span className="legacy-screen-caption">User Login Screen</span><h1>Welcome Back!</h1><p>Please login to continue</p>
+        <label><strong>▦ Today&apos;s Date</strong><input value={new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })} readOnly /></label>
+        <label><strong>♙ User Name</strong><input value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} /></label>
+        <label><strong>▢ Password</strong><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         <p className="login-error" role="alert">{error}</p>
-        <button className="login-button" type="submit"><span>➜</span> Login</button>
-      </form></div></div>
-    </section> : <section className="company-window" aria-label="Company selection menu">
-      <div className="startup-title">Select Company <button aria-label="Close" onClick={() => setStage("login")}>×</button></div>
-      <div className="company-panel"><h1>Company Selection Menu</h1>
-        <label><strong>Select Accounting Year</strong><select size={3} value={year} onChange={(event) => setYear(event.target.value)}>{accountingYears.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-        <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id}>{item.name} {item.code}</option>)}</select></label>
-        <div className="company-actions"><button onClick={() => setStage("ready")}>✓ Ok</button><button onClick={() => setStage("login")}>↩ Exit</button></div>
+        <small className="startup-source-status">{contextError || "Migration test access; company and year come from PostgreSQL."}</small>
+        <div className="legacy-auth-actions"><button className="legacy-login-button" type="submit">👤 ▶ LOGIN</button><button type="button">🚪 ✕ CLOSE</button></div>
+        <small>Developed By</small><b>PRANAV COMPUTERS</b>
+      </form>
+    </section> : <section className="legacy-company-window" aria-label="Company selection menu">
+      <aside className="legacy-auth-brand"><div className="legacy-auth-logo" role="img" aria-label="SMARTwinFA logo"/><strong>SMART WINFA</strong><span>Select Your Company</span></aside>
+      <div className="legacy-company-panel"><h1>Company Selection</h1><p>Select accounting year and company to continue</p>
+        <label className="legacy-year-select"><strong>▦ Accounting Year</strong><select size={2} value={year} onChange={(event) => setYear(event.target.value)}>{accountingYears.slice().reverse().map((item) => <option key={item.id} value={item.id}>▣ {item.label}</option>)}</select></label>
+        <div className="legacy-company-grid"><strong>▦ Select Company</strong><div className="legacy-company-grid-head"><span>NAME</span><span>CO_SHORT</span><span>ADDRESS_1</span></div>{companies.map((item) => <button className={company === item.id ? "selected" : ""} key={item.id} type="button" onClick={() => setCompany(item.id)}><span>{item.name}</span><span>{item.code}</span><span>{item.address}</span></button>)}</div>
+        {contextError && <p className="login-error" role="alert">{contextError}</p>}
+        <div className="legacy-company-actions"><button disabled={!context || !year || !company} onClick={() => setStage("ready")}>✓ OK</button><button onClick={() => setStage("login")}>✕ CLOSE</button></div>
       </div>
     </section>}
   </main></div>;

@@ -1,0 +1,2 @@
+import { NextRequest } from "next/server";
+export async function POST(request: NextRequest) { const upstream = process.env.LEGACY_API_URL || "http://legacy-api:8080"; const response = await fetch(`${upstream}/book-lock`, { method: "POST", headers: { "content-type": "application/json" }, body: await request.text(), cache: "no-store" }); return new Response(await response.text(), { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } }); }

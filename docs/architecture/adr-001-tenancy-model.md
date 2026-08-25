@@ -1,6 +1,6 @@
 # ADR-001: Hybrid cell-based tenancy
 
-- Status: Proposed
+- Status: Accepted for implementation; parity assumptions remain reviewable
 - Decision owner: Project architecture/security owners
 - Required before: production schema design
 
@@ -58,10 +58,15 @@ from the membership and the matching company/year must be open and permitted.
 The module also derives tenant/company/year-scoped cache/job keys and
 transaction-local PostgreSQL setting values.
 
-This is a tested contract, not production identity or routing. Real
-memberships, roles, company/year records, cell placement, sessions, PostgreSQL
-transactions, and RLS remain dependent on `smart_system`, the approved control
-plane schema, and the PostgreSQL platform implementation.
+`db/migrations/0001_control_plane.sql` now implements the first PostgreSQL
+control-plane migration: cells, tenants, placement, companies, accounting
+years, identities, sessions, memberships, roles, permissions, audit/outbox,
+jobs, and migration runs. Composite relationships carry tenant scope and the
+tenant-owned tables use forced, default-deny RLS. The migration was applied
+from a clean local database and its RLS behavior was exercised through a
+non-owner `NOSUPERUSER NOBYPASSRLS` role. This establishes the target schema;
+legacy identity, routing, and effective-rights parity remain open evidence
+questions and will be mapped into these contracts when supplied.
 
 ## Revisit criteria
 

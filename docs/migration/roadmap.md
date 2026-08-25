@@ -11,6 +11,22 @@ a rollback path.
 The work is organized around vertical business flows, not copied forms. Stable
 IDs live in [backlog.csv](backlog.csv), while GitHub issues mirror those IDs.
 
+## Recorded-workflow prototype milestone — completed 2026-08-24
+
+The 16 local SMARTwinFA demo recordings are now implemented as connected web
+workflows against the writable PostgreSQL Rishabh clone and deployed to the Pi
+test environment. This includes add-on, account and product masters; sale and
+voucher posting/reversal; Excel product import; the recorded financial and
+stock reports; customer/supplier/item top reports; all seven pie measures;
+multiple-invoice browser PDF output; and lock/unlock updates. The live endpoint
+smoke suite passed all 16 flows on release `20260824-functional-core-12`.
+
+This milestone completes the authorized prototype scope. It is deliberately
+not the production-cutover definition below: unrecorded desktop programs,
+authoritative identity/rights, report/template variants, external statutory
+integrations, reconciliation, and operational readiness remain in their
+respective workstreams.
+
 ## Verified PostgreSQL intake update — 2026-08-21
 
 The supplied PostgreSQL archives are now restored in an isolated local intake
@@ -27,6 +43,7 @@ authority or parity. The verified facts are recorded in
 | Account Master | `program_top:14`, 87 fields, 27 compulsory, 12 lookups, 2 duplicate checks | It is the first concrete view-contract candidate; its SQL/write semantics remain unapproved. |
 | Procedures | 283 signatures across 282 names; 263 need repair | Keep procedure execution quarantined; start only dependency/contract review. |
 | Control-plane intake | `smart_system`: 24 tables, 448 rows, but no security/login records | Structural discovery can proceed; authentication, effective rights, routing, dashboard, and print behavior still require semantic/parity evidence. |
+| Control-plane structural contract | Routing candidates are internally unique; all 19 dashboards contain raw-query slots; shared print staging has no PK/FK; all 4 user rows contain credential material | Keep raw queries and credentials quarantined; use server-owned routing, typed dashboards, and job-scoped print snapshots. Authentication and effective-rights parity remain blocked. |
 | Source dialect | Legacy application is SQL Server/T-SQL; PostgreSQL dumps are converted artifacts | Track dialect per object; do not assume MySQL is the authoritative source. |
 
 ### Reprioritized execution path
@@ -46,277 +63,154 @@ authority or parity. The verified facts are recorded in
    completion by screen count: the gates are rules, permissions, data effects,
    client variants, and reconciliation.
 
-## Program gates
+## Continuous execution model
 
-The release cannot be called complete until:
+Migration is one continuous task organized into five workstreams. A workstream
+is not a stopping point. Work proceeds to the next safe, unblocked item without
+waiting for stage approval. New templates, screenshots, client rules, and other
+evidence are incorporated when supplied; missing non-critical evidence is
+tracked and does not stop unrelated implementation.
 
-- 100% of current menu leaves, dynamic action codes, keyboard shortcuts, and
-  interactive controls are in the traceability registry.
-- 100% of required database objects, metadata definitions, routines, client
-  variants, and document/report templates are classified and resolved.
-- Every supported role and tenant/company/year combination has positive and
-  negative authorization evidence.
-- Every financial flow has data, calculation, report, print, and side-effect
-  parity evidence.
-- No runtime path depends on process-global tenant state, browser-provided
-  schema names, raw SQL interpolation, plaintext secrets, or pooled-session
-  scratch tables.
-- Performance, backup/restore, recovery, isolation, security, UAT, and canary
-  gates pass.
+Progress is measured by source-backed flows that are implemented, tested, and
+deployed—not by the number of small code changes. Read-only discovery, contract
+extraction, implementation, automated verification, Pi deployment, and smoke
+testing repeat continuously within each workstream.
 
-## Phase 0 — Repository and evidence safety
+## Workstream 1 — Source parity and menu navigation
 
-Status: in progress; the new repository, latest UI baseline, initial security
-rules, and planning system are present.
+Status: **in progress**.
 
-Deliverables:
-
-- Preserve latest web source and prototype history.
-- Remove incompatible D1/SQLite starter database artifacts.
-- Establish clean install/lint/type-check/build/test CI.
-- Protect dumps, secrets, `connection.ini`, and private fixtures.
-- Register source artifacts by hash and confidentiality.
-- Establish issue/PR templates, IDs, statuses, owners, and definition of done.
-
-Exit gate: clean repository and CI; confidential inputs absent; all known
-evidence registered; project owner approves private repository access.
-
-## Phase 1 — Authoritative discovery freeze
-
-Deliverables:
-
-- Record the confirmed SQL Server-to-PostgreSQL direction, then capture exact
-  SQL Server versions, compatibility levels, collations, and source/target
-  conversion status per object.
-- Obtain/restorably verify `smart_setup`, `smart_system`, representative
-  company-year data, the PostgreSQL branch, and all procedures.
-- Export current menu, rights, books, masters, entries, reports, dashboards,
-  help, documents, custom fields, key metadata, and update/version rules.
-- Inventory 322 Crystal reports/templates and canonical outputs.
-- Convert 1,977 license checks, 91 license IDs, company/database branches, and
-  custom report folders into a client-override registry.
-- Capture a running legacy environment, supported versions, roles, keyboard
-  paths, screenshots, input/output examples, and golden tenant datasets.
-- Map every menu/button/action to code, metadata, SQL, procedure, table, output,
-  permission, client override, and side effect.
-
-Exit gate: authoritative feature/object/override registries reconcile to source
-counts; every gap has an owner/dependency; no “unknown SQL” remains on the
-critical vertical-slice path. The restored PostgreSQL input enables the
-`smart_setup` and company-schema portions of this gate, but does not close the
-`smart_system`, source-dialect, routine, or effective-client-override portions.
-
-## Phase 2 — Architecture and domain decisions
-
-Deliverables:
-
-- Approve tenancy/cell isolation ADR and company/year target model.
-- Approve identity/session/RBAC model and migration/reset approach for legacy
-  passwords.
-- Define modular domain boundaries and financial posting invariants.
-- Approve PostgreSQL connection roles, pooling, RLS, secrets, and audit model.
-- Define metadata/query compiler, custom fields, override precedence, and
-  version rollout/rollback.
-- Define reporting, dashboard, print job, template, object storage, and
-  retention architecture.
-- Select migration runner, schema migration convention, API contracts, queue,
-  observability, and deployment cell patterns.
-- Define currency/precision/rounding, dates/time zones, collation, IDs,
-  fiscal-year lifecycle, and data retention.
-
-Exit gate: reviewed ADRs, target context/domain model, threat model, initial ERD,
-API conventions, error model, SLO/RPO/RTO targets, and cost/capacity assumptions.
-
-## Phase 3 — Secure platform foundation
-
-Deliverables:
-
-- Real identity/session lifecycle, password reset, lockout, revocation, and
-  audit.
-- Control-plane tenant/company/year catalog and immutable request context.
-- Normalized memberships, roles, permissions, and entitlements.
-- Server/API guards plus direct-route/action denial.
-- PostgreSQL pool with least-privilege roles, transaction-scoped context, RLS,
-  secrets, TLS, timeouts, and safe error redaction.
-- Audit/outbox, background worker, job state, idempotency, correlation IDs,
-  structured logs/metrics/traces.
-- Synthetic fixture factory and disposable PostgreSQL CI environment.
-- Company/year selection that is authorized and idempotent.
-
-Exit gate: end-to-end authenticated shell with no mock credential/data path;
-cross-tenant and privilege-escalation suites pass; context leakage/pool reuse
-tests pass; backup and isolated restore of the foundation schema succeed.
-
-## Phase 4 — Database migration and compatibility toolchain
-
-Deliverables:
-
-- Secure archive inspection/restoration and object registry.
-- Source-to-target type/collation/date/money/key mapping.
-- Canonical schema migrations with tenant-aware constraints and RLS.
-- Legacy compatibility routing adapter, strictly server-catalog controlled.
-- Versioned metadata/query compiler and output contract registry.
-- Procedure intake/classification and static/differential harness.
-- Resumable data mover, checkpoint ledger, quarantine/repair workflow, and
-  reconciliation reports.
-- Captured workload and explain-plan/index review tooling.
-
-Exit gate: representative schemas/data migrate repeatedly from clean state;
-schema/object diffs and reconciliation pass; failure can resume/rollback; no
-unreviewed routine or SQL fragment has runtime permission.
-
-## Phase 5 — Five pattern-setting vertical slices
-
-Implement in order, reusing the platform rather than creating one-off paths:
-
-1. Addon Master: persistent CRUD, lookups, validation, custom-field foundation,
-   audit, concurrency, permissions, legacy/modern UI.
-2. Account Master: 87 standard plus client fields, query compiler, address/
-   balance joins, update behavior, field ordering, client overrides.
-3. Representative financial entry: posting, balances, tax/add-ons, edit/delete,
-   idempotency, rollback, print trigger.
-4. Representative report: typed parameters/output, totals/order/filters,
-   drilldown/export, heavy-job path, client variant.
-5. Representative invoice print: job-scoped snapshot, template/version,
-   renderer, golden artifact, concurrent runs, delivery/retention.
-
-Exit gate: all five satisfy the full definition of done for at least two
-representative tenants/years and roles; patterns/SDKs/templates are documented;
-architecture review authorizes scaling out.
-
-## Phase 6 — Security, setup, and master-data wave
+Outcome: every legacy menu, shortcut, action, program, and client variant opens
+the correct web workflow using authoritative `smart_setup` metadata.
 
 Scope:
 
-- User, role, menu/book/company/year/dashboard rights.
-- Company, year, books/series, parameters, tax/GST/email/document setup.
-- Account, product, address, balance, groups, units, tax/slab, price/cost/formula,
-  discount/scheme/target/commission and remaining generic masters.
-- Opening balances and year/prior-year behavior.
-- Metadata help/lookups, imports/exports, logs, and client custom fields.
+- Reconcile the 592 restored menu records, action codes, program names,
+  shortcuts, visibility rules, and parent/child hierarchy with desktop source.
+- Route known program/action combinations to migrated web workflows; show a
+  precise migration status only for genuinely unimplemented leaves.
+- Inventory source code, metadata, procedures, license/company branches,
+  Crystal reports, templates, and database side effects in one traceability
+  registry.
+- Preserve legacy and modern presentation modes while sharing the same real
+  workflow and data contracts.
 
-Exit gate: every master/setup menu and control mapped and flow-tested; CRUD,
-uniqueness, history, concurrency, permission, import/export, audit, and client
-variant parity signed off.
+Completion evidence: 100% of actionable leaves resolve deterministically;
+navigation, keyboard, visibility, direct-route, and negative-rights tests pass;
+no label collision or mock route remains.
 
-## Phase 7 — Transaction and posting wave
+## Workstream 2 — Masters, setup, security, and opening data
 
-Scope:
+Status: **in progress**.
 
-- Invoice/voucher, cash/bank, receipt/payment, journal, discount/allocation,
-  interest JV, bank/book transfers.
-- Orders, challans, stock vouchers/journals, transport, production planning,
-  formula/manufacturing, approvals, document upload.
-- E-invoice/e-way bill entry-side integration, cancellation, edit/delete,
-  repost, duplicate prevention, period/data locks.
-- Posting, ledger/product ledger, balances, stock/tax effects, and audit.
-
-Exit gate: every transaction state/action has invariants, balanced accounting
-proof, rollback/idempotency/concurrency tests, negative permissions, old/new
-differential data, and representative tenant UAT.
-
-## Phase 8 — Reports, inventory, GST, analysis, and dashboards
+Outcome: all master and setup workflows reproduce desktop read/write behavior
+against real data with validation, rights, audit, and concurrency protection.
 
 Scope:
 
-- Cash/bank/reconciliation, journal/register, ledger/outstanding.
-- Trial balance, profit/loss, balance sheet, annexures, interest/reminders.
-- Stock/rate/product/price/challan/order/ageing/loading/physical/movement/
-  valuation reports.
-- GST reports/utilities, e-invoice/e-way bill reporting and exports.
-- Multi-company/year, budget, tax, gross-profit, sales/product/party/commission
-  analysis.
-- Dashboard cards/grids/charts/filter/drilldown/user customization.
-- PDF/Excel/JSON/XML/print/email and other supported delivery.
+- Complete Account, Product, Addon, address, balance, group, unit, tax, price,
+  formula, discount, scheme, target, commission, company, year, book/series,
+  parameter, GST, email, and document setup workflows.
+- Recreate metadata-driven field order, compulsory fields, lookups, duplicate
+  checks, add-on projections, client overrides, and legacy keyboard flow.
+- Replace quarantined dynamic-SQL saves with typed, parameter-bound commands;
+  preserve legacy soft-delete and financial side effects where verified.
+- Implement user/session lifecycle, roles, menu/book/company/year rights,
+  company/year context, opening balances, audit, import/export, and history.
 
-Exit gate: every report contract has filters/types/order/totals/rounding,
-permission and client override tests; golden results/artifacts pass; report
-cost, concurrency, cache isolation, and peak-period SLOs pass.
+Completion evidence: every master/setup control has source traceability and
+real-data CRUD parity; uniqueness, validation, concurrency, authorization,
+audit, import/export, and client-variant tests pass.
 
-## Phase 9 — Utilities, documents, integrations, and operations
+## Workstream 3 — Transactions, inventory, and financial posting
+
+Status: **pending after the current navigation/master slice, with reusable
+reporting and database foundations already present**.
+
+Outcome: every operational entry produces the same accounting, stock, tax,
+lock, document, and audit effects as the desktop application.
 
 Scope:
 
-- All invoice/document templates and print/delivery channels.
-- Backup/restore, repost, year open, balance transfer, renumber, lock/unlock.
-- Excel/Tally and other file/external integrations.
-- Multiple invoice PDF, product images, logs/reminders/tokens.
-- Destructive-operation approvals, maintenance windows, retries, and recovery.
+- Invoice, receipt/payment, cash/bank, journal, discount/allocation, interest,
+  transfers, orders, challans, stock entries, transport, production,
+  manufacturing, approvals, and uploads.
+- E-invoice/e-way bill creation, cancellation, edit/delete/repost, duplicate
+  prevention, period locks, book numbering, and year behavior.
+- Ledger, product ledger, balances, stock, tax, addon, and downstream document
+  effects with atomic transactions, idempotency, and rollback.
 
-Exit gate: job/audit/idempotency and permission controls pass; golden documents
-and integration contract tests pass; backup/PITR/restore, year-close/open, and
-operational runbooks are proven in rehearsal.
+Completion evidence: every state/action has balanced accounting and inventory
+proof, differential old/new results, failure rollback, concurrency,
+authorization, edit/delete/repost, and representative company/year tests.
 
-## Phase 10 — Client override closure
+## Workstream 4 — Reports, dashboards, documents, and integrations
 
-Deliverables:
+Status: **in progress**; the first real-data register/report family is live.
 
-- Migrate every active license/company/database/query/report/template branch to
-  a versioned override or intentionally retire it with approval.
-- Define effective dates, precedence, owner, fallback, validation, and rollback.
-- Run each supported client/year regression pack and UAT.
-- Remove hard-coded client/schema/year conditions from common runtime code.
+Outcome: all legacy outputs use typed server-owned contracts and reconcile to
+desktop totals, ordering, filters, formatting, and client templates.
 
-Exit gate: override registry reconciles with all discovered branches and
-artifacts; zero unexplained client differences; each active override has passing
-tests and a named owner.
+Scope:
 
-## Phase 11 — Non-functional hardening and release qualification
+- Financial, stock, GST, outstanding, analysis, multi-company/year, dashboard,
+  drilldown, and reconciliation reports.
+- PDF, Excel, JSON, XML, print, email, invoice/document templates, product
+  images, and job-scoped rendering/delivery.
+- Excel/Tally and other file/external integrations, e-invoice/e-way bill
+  exchange, retries, logs, tokens, and retention.
+- Convert active report/query/template/license branches into reviewed,
+  versioned overrides; never execute stored raw SQL in the web runtime.
 
-Deliverables:
+Completion evidence: filters, types, totals, rounding, ordering, permissions,
+client variants, exports, golden artifacts, concurrency, isolation, and
+peak-period performance tests pass.
 
-- Accessibility, keyboard, responsive, supported browser/device qualification.
-- Peak-period, concurrent-tenant, report, import, print, and pool load tests.
-- Threat model, dependency/code/secret scanning, injection, RLS/isolation,
-  privilege, session, export, and audit review.
-- Failure/chaos tests for database/network/worker/object storage/integration.
-- Backup/PITR/restore and disaster-recovery exercises against declared RPO/RTO.
-- Observability dashboards, actionable alerts, on-call/support, data quality,
-  capacity/cost and incident runbooks.
+## Workstream 5 — Validation, operations, deployment, and cutover
 
-Exit gate: SLO/security/recovery/accessibility gates pass; no critical/high
-release blockers; operations and support sign off.
+Status: **continuous validation and Pi deployment active; final cutover
+pending functional parity**.
 
-## Phase 12 — Pilot, progressive cutover, and retirement
+Outcome: the migrated system is secure, recoverable, supportable, reconciled,
+and progressively replaces the desktop application without data loss.
 
-Steps per tenant/company/year:
+Scope:
 
-1. Rehearse full migration and record duration/differences.
-2. Complete UAT and accounting/report/document signoff.
-3. Announce freeze/support/rollback windows.
-4. Final sync under a short source write freeze.
-5. Reconcile and execute explicit go/no-go.
-6. Route through the control catalog; monitor canary metrics/audit/data quality.
-7. Stabilize and obtain signed acceptance before the next cutover.
-8. Retain legacy read-only access for the approved period.
-9. Export/archive, revoke credentials, remove routes/jobs, and decommission with
-   an auditable record.
+- Repeatable schema/data migration, checkpointing, quarantine/repair,
+  reconciliation, backup/restore, PITR, year open/close, repost, renumber, and
+  lock/unlock operations.
+- CI, type checks, unit/contract/differential/end-to-end tests, accessibility,
+  browser/keyboard qualification, load, isolation, security, failure recovery,
+  observability, and support runbooks.
+- Continuously deploy substantial verified increments to the Raspberry Pi test
+  environment and smoke-test real routes and data.
+- Rehearse and execute company/year cutovers with freeze, final sync,
+  reconciliation, explicit go/no-go, canary monitoring, rollback, acceptance,
+  read-only legacy retention, and auditable retirement.
 
-Program exit gate: all supported tenants/years are live and reconciled; legacy
-is read-only then retired; retention/audit obligations are met; unresolved
-backlog is explicitly transferred to post-migration product ownership.
+Completion evidence: all definition-of-done gates pass; every supported
+company/year and role is reconciled and accepted; the legacy system is retired
+only after the approved retention period.
 
-## Tracking and reporting
+## Definition of 100% migration
 
-Weekly program reporting uses counts, not subjective percentages:
+The migration is complete only when:
 
-- controls/flows discovered, implemented, flow-tested, UAT, live;
-- database objects classified/converted/parity-tested/live;
-- 283 initial routine signatures resolved;
-- client overrides discovered/active-tested/retired;
-- reports/templates inventoried/golden-tested/live;
-- tenants/companies/years rehearsed/reconciled/live;
-- open blockers by age/owner/critical path;
-- test pass rate, parity differences, escaped defects, SLO/security findings.
+- 100% of current actionable menu leaves, controls, shortcuts, database
+  objects, routines, client variants, reports, and templates are resolved.
+- Every supported role and company/year combination has positive and negative
+  authorization evidence.
+- Every financial flow has matching data, calculation, posting, report, print,
+  integration, and side-effect evidence.
+- No runtime path uses mock business data, browser-selected schema names,
+  process-global tenant state, raw SQL interpolation, plaintext secrets, or
+  shared-session scratch data.
+- Performance, backup/restore, recovery, security, accessibility, UAT, canary,
+  reconciliation, and rollback gates pass.
 
-Status advances only when the linked evidence for that gate exists.
+## Progress reporting
 
-## Critical external dependencies
-
-- Confirmation and artifacts for the real source database engine(s).
-- `smart_system`, current menu/metadata, PostgreSQL branch, remaining routines,
-  all client override/query/template sets.
-- Running legacy environment and business/accounting subject-matter experts.
-- Representative client/year data under an approved confidentiality process.
-- Decisions on supported clients/features, hosting/residency, SLO/RPO/RTO,
-  identity provider, integrations, and template/rendering technology.
+Report these five workstreams only. Each update summarizes completed flows,
+current continuous work, verified deployment/test results, remaining flow
+counts, and true external blockers. Small implementation steps remain internal
+and do not become approval checkpoints.

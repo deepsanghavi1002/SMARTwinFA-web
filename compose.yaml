@@ -5,5 +5,58 @@ services:
       dockerfile: Dockerfile
     container_name: smartwinfa-web
     restart: unless-stopped
+    environment:
+      SMARTWINFA_RELEASE: ${SMARTWINFA_RELEASE:-pi-test}
+      LEGACY_API_URL: http://legacy-api:8080
     ports:
       - "4173:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      legacy-api:
+        condition: service_healthy
+
+  legacy-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.legacy-api
+    container_name: smartwinfa-legacy-api
+    restart: unless-stopped
+    environment:
+      LEGACY_DATABASE_URL: postgresql://smartwinfa_web:${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}@legacy-db:5432/smartwin_data_intake
+      LEGACY_COMPANY_SCHEMA: ${LEGACY_COMPANY_SCHEMA:-rishabh_plastic27}
+      SMARTWINFA_MASTER_WRITES: ${SMARTWINFA_MASTER_WRITES:-false}
+      SMARTWINFA_ENTRY_WRITES: ${SMARTWINFA_ENTRY_WRITES:-false}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      legacy-db:
+        condition: service_healthy
+
+  legacy-db:
+    image: postgres:18-alpine
+    container_name: smartwinfa-legacy-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smartwin_data_intake
+      POSTGRES_USER: smartwinfa_web
+      POSTGRES_PASSWORD: ${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}
+    volumes:
+      - smartwinfa_legacy_db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartwinfa_web -d smartwin_data_intake"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  smartwinfa_legacy_db:

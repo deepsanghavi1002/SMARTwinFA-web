@@ -2,8 +2,10 @@
 
 This is a migration baseline, not a final product catalog. The historical menu
 snapshot contains about 400 items/350 leaves, while the current web shell shows
-49 labels. Exporting current `MenuMaster` and metadata is required before
-coverage can be declared complete.
+49 labels. The restored PostgreSQL `smart_setup.menumaster` catalog was exposed
+read-only on 2026-08-24 and contains 592 menu records. It is now the source of
+truth for hierarchy and workflow traceability; effective per-user visibility
+still requires authoritative rights evidence.
 
 ## Cross-cutting traceability
 

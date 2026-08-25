@@ -1,0 +1,10 @@
+FROM node:24-bookworm-slim
+ENV NODE_ENV=production
+ENV PORT=8080
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY platform/legacy-db ./platform/legacy-db
+COPY services/legacy-api ./services/legacy-api
+EXPOSE 8080
+CMD ["node", "--experimental-strip-types", "services/legacy-api/server.ts"]

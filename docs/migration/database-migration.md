@@ -63,6 +63,15 @@ required for those steps.
 - Compatibility catalog: temporary mapping from stable IDs to legacy
   database/schema/table/routine names.
 
+The first two executable target migrations now implement the control plane and
+the canonical Account Master, typed custom-value, journal, product, and stock
+movement boundaries. Financial amounts use integer minor units; measured
+quantities use reviewed fixed-scale numerics. Composite relationships preserve
+tenant/company/year scope, tenant tables force RLS, posted journals must balance
+at deferred constraint time, and stock movements cannot create negative stock.
+These are target invariants backed by clean-database tests, not legacy parity
+claims; later source evidence can add mappings and approved exceptions.
+
 The target does not create a new schema/database for every accounting year.
 Large tables may be partitioned only after workload measurement. PostgreSQL's
 [row security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)

@@ -1,434 +1,130 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Autocomplete, Box, Button, Card, CardActions, CardContent, Divider, Stack, TextField, Typography } from "@mui/material";
-import { addonFields, addonGroups, createBlankAddon, initialAddonRecords, stateOptions } from "./mock-data";
-import type { AddonRecord } from "./types";
 
-const fieldSections = [
-  {
-    title: "Customer / Contact details",
-    keys: ["name", "shortName", "contact", "mobile", "telephone", "email", "fax"] as (keyof AddonRecord)[],
-  },
-  {
-    title: "Address / Location details",
-    keys: ["address1", "address2", "address3", "city", "district", "state", "pincode"] as (keyof AddonRecord)[],
-  },
-  {
-    title: "Business / Tax details",
-    keys: ["openingBalance", "margin", "localCode", "stdCode", "vat", "cst", "pan", "aadhaar", "gst", "startDate", "lastDate", "website", "remark"] as (keyof AddonRecord)[],
-  },
-];
+import { useEffect, useMemo, useState } from "react";
 
-const businessSectionGroups = [
-  {
-    title: "Codes & balances",
-    keys: ["openingBalance", "margin", "localCode", "stdCode", "vat", "cst"] as (keyof AddonRecord)[],
-  },
-  {
-    title: "Tax & ID numbers",
-    keys: ["pan", "aadhaar", "gst", "startDate", "lastDate"] as (keyof AddonRecord)[],
-  },
-  {
-    title: "Web & notes",
-    keys: ["website", "remark"] as (keyof AddonRecord)[],
-  },
-];
-
-const sectionGridColumns: Record<string, { xs: string; md: string }> = {
-  "Customer / Contact details": { xs: "1fr", md: "repeat(2,minmax(0,1fr))" },
-  "Address / Location details": { xs: "1fr", md: "repeat(2,minmax(0,1fr))" },
-  "Business / Tax details": { xs: "1fr", md: "repeat(3,minmax(0,1fr))" },
+type AddonRow = {
+  key: number; version: string;
+  relation: string;
+  description: string;
+  shortName: string;
+  storageName: string;
+  type: string;
+  serial: string;
+  required: boolean;
+  masterVisible: boolean;
+  entryPosition: string;
+  lookupValues: number;
 };
-
-const wideFields = new Set<keyof AddonRecord>(["address1", "address2", "address3", "email"]);
-const mediumFields = new Set<keyof AddonRecord>(["contact", "city", "district", "telephone", "mobile", "openingBalance", "margin", "pan", "aadhaar", "gst"]);
-const compactFields = new Set<keyof AddonRecord>(["shortName", "pincode", "localCode", "stdCode", "vat", "cst", "startDate", "lastDate", "fax"]);
-const businessWideFields = new Set<keyof AddonRecord>([]);
-const addressLineFields = new Set<keyof AddonRecord>(["address1", "address2", "address3"]);
-
-function ActionIcon({ kind }: { kind: "save" | "cancel" | "delete" | "print" | "refresh" }) {
-  const paths = {
-    save: <><path d="M5 3h12l2 2v14H5z"/><path d="M8 3v6h8V3M8 19v-6h8v6"/></>,
-    cancel: <><path d="M5 5l14 14M19 5L5 19"/></>,
-    delete: <><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/></>,
-    print: <><path d="M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z"/></>,
-    refresh: <><path d="M19 7V3l-2 2a8 8 0 10 2 10M19 3h-4"/></>,
-  };
-  return <svg className="action-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[kind]}</svg>;
-}
+type AddonPayload = {
+  source: "legacy-postgresql";
+  readOnly: true;
+  writesEnabled: boolean;
+  relations: Array<{ key: string; label: string; fields: number }>;
+  rows: AddonRow[];
+  options: Array<{ code: number; fieldKey: number; name: string; shortName: string; version: string }>;
+  storageOptions: string[];
+};
+type FieldDraft = { relation: string; description: string; shortName: string; storageName: string; type: string; serial: string; required: boolean; masterVisible: boolean; entryPosition: string };
 
 export function AddonMaster() {
-  const rootRef = useRef<HTMLElement>(null);
-  const [records, setRecords] = useState(initialAddonRecords);
-  const [groupId, setGroupId] = useState("architect");
-  const [mode, setMode] = useState<"add" | "update">("add");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const nextId = () => Math.max(0, ...records.map((record) => record.id)) + 1;
-  const [draft, setDraft] = useState(() => createBlankAddon(6, "architect"));
-  const [helpField, setHelpField] = useState<"name" | "state" | null>(null);
-  const [message, setMessage] = useState("Ready");
-  const [isModernView, setIsModernView] = useState(false);
-  const groupRecords = useMemo(() => records.filter((record) => record.groupId === groupId), [records, groupId]);
-  const fieldMap = useMemo(() => Object.fromEntries(addonFields.map((field) => [field.key, field])) as Record<keyof AddonRecord, typeof addonFields[number]>, []);
-  const reset = (group = groupId) => { setDraft(createBlankAddon(nextId(), group)); setSelectedId(null); setMode("add"); setHelpField(null); };
-  const selectRecord = (record: AddonRecord) => { setDraft({ ...record }); setSelectedId(record.id); setMode("update"); setHelpField(null); setMessage(`Selected ${record.name}`); };
-  const save = () => {
-    const name = draft.name.trim();
-    if (!name) return setMessage("Name is required");
-    if (records.some((record) => record.groupId === groupId && record.name.trim().toLowerCase() === name.toLowerCase() && record.id !== selectedId)) return setMessage("This name already exists in the selected addon");
-    const saved = { ...draft, name, groupId };
-    setRecords((current) => mode === "update" ? current.map((record) => record.id === selectedId ? saved : record) : [...current, saved]);
-    setSelectedId(saved.id); setMode("update"); setMessage("Master data saved (mock)");
-  };
-  const remove = () => {
-    if (!selectedId) return setMessage("Select a record to delete");
-    setRecords((current) => current.filter((record) => record.id !== selectedId)); reset(); setMessage("Record deleted (mock)");
-  };
+  const [relation, setRelation] = useState("A");
+  const [payload, setPayload] = useState<AddonPayload | null>(null);
+  const [selectedKey, setSelectedKey] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("Loading real add-on definitions…");
+  const [optionCode, setOptionCode] = useState<number | null>(null);
+  const [optionName, setOptionName] = useState("");
+  const [optionShortName, setOptionShortName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [fieldMode, setFieldMode] = useState<"create" | "update" | null>(null);
+  const [fieldDraft, setFieldDraft] = useState<FieldDraft>({ relation: "A", description: "", shortName: "", storageName: "", type: "T", serial: "0", required: false, masterVisible: true, entryPosition: "" });
 
   useEffect(() => {
-    const updateViewMode = () => {
-      const container = rootRef.current?.closest(".view-mode");
-      setIsModernView(Boolean(container?.classList.contains("modern-view")));
-    };
-    updateViewMode();
-    const observer = new MutationObserver(updateViewMode);
-    const container = rootRef.current?.closest(".view-mode");
-    if (container) observer.observe(container, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    fetch(`/api/legacy/master/addon?relation=${encodeURIComponent(relation)}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as AddonPayload | { error?: string };
+        if (!response.ok || !("rows" in body)) throw new Error("error" in body && body.error ? body.error : "Addon Master could not be loaded");
+        return body;
+      })
+      .then((body) => {
+        setPayload(body);
+        setSelectedKey(body.rows[0]?.key ?? null);
+        setMessage(`${body.rows.length} real add-on field definitions loaded`);
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setError(reason instanceof Error ? reason.message : "Addon Master could not be loaded");
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [relation, reload]);
 
-  return <section className="addon-master" aria-label="Addon sub master" ref={rootRef}>
-    <div className="addon-heading"><strong>SUB MASTER</strong><select aria-label="Addon type" value={groupId} onChange={(event) => { const group = event.target.value; setGroupId(group); reset(group); setMessage("Ready"); }}>{addonGroups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select>{!isModernView && <span><svg className="header-cancel-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" rx="1"/><path d="M5 5l8 8M13 5l-8 8"/></svg>Cancel Both (Add And Update)</span>}</div>
-    <div className="addon-tabs"><button className={mode === "add" ? "active" : ""} onClick={() => reset()}>New(Add)</button><button className={mode === "update" ? "active" : ""} onClick={() => setHelpField("name")}>Update/Delete</button></div>
-    <div className="addon-body">
-      {!isModernView && <div className="addon-form addon-form-legacy">
-        <div className="addon-row addon-column-head"><span>Heading</span><span>Input</span></div>
-        {addonFields.map((field) => <label className="addon-row" key={`legacy-${field.key}`}><span>{field.label}</span><input aria-label={field.label} value={draft[field.key]} onFocus={() => setHelpField(field.help ?? (field.key === "name" ? "name" : null))} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /></label>)}
-      </div>}
-      {isModernView && <Box className="addon-form addon-form-modern" sx={{ display: "grid", gap: 1.2, width: "100%" }}>
-        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2,minmax(0,1fr))" }, gap: 1.4, alignItems: "start" }}>
-          {fieldSections.map((section) => (
-            <Card
-              key={section.title}
-              elevation={0}
-              sx={{
-                borderRadius: 2,
-                border: "1px solid #dfe8ee",
-                background: "linear-gradient(180deg,#ffffff 0%,#f7fbff 100%)",
-                boxShadow: "0 8px 22px #1b415508",
-                height: "100%",
-                overflow: "hidden",
-                gridColumn: section.title === "Business / Tax details"
-                  ? { xs: "auto", lg: "1 / -1" }
-                  : "auto",
-              }}
-            >
-              <CardContent sx={{ p: 1.2, "&:last-child": { pb: 1.2 } }}>
-                <Stack spacing={0.85}>
-                  <Box sx={{ mx: -1.2, mt: -1.2, px: 1.2, py: 0.85, background: "linear-gradient(90deg,#effbf6 0%,#e8f5fb 46%,#edf3ff 100%)", borderBottom: "1px solid #e1edf3" }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "#173b57", letterSpacing: ".01em", fontSize: "0.92rem" }}>
-                      {section.title}
-                    </Typography>
-                  </Box>
-                  {section.title === "Business / Tax details" ? (
-                    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2,minmax(0,1fr))" }, gap: 1 }}>
-                      {businessSectionGroups.map((group) => (
-                        <Box
-                          key={group.title}
-                          sx={{
-                            border: "1px solid #e6eef4",
-                            background: "linear-gradient(180deg,#fbfdff 0%,#f6fafd 100%)",
-                            px: 1.05,
-                            py: 0.9,
-                            gridColumn: group.title === "Web & notes" ? { xs: "auto", lg: "1 / -1" } : "auto",
-                          }}
-                        >
-                          <Typography
-                            sx={{
-                              mb: 0.7,
-                              color: "#173b57",
-                              fontSize: 12.25,
-                              fontWeight: 800,
-                              letterSpacing: ".02em",
-                              textTransform: "none",
-                              lineHeight: 1.2,
-                            }}
-                          >
-                            {group.title}
-                          </Typography>
-                          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,minmax(0,1fr))" }, gap: 0.95 }}>
-                            {group.keys.map((key) => {
-                              const field = fieldMap[key];
-                              const currentValue = draft[field.key] as string;
-                              return (
-                                <Box
-                                  key={field.key}
-                                  sx={{
-                                    width: "100%",
-                                    maxWidth: key === "website"
-                                      ? { xs: "100%", md: 280 }
-                                      : key === "remark"
-                                        ? { xs: "100%", md: 280 }
-                                        : compactFields.has(key)
-                                          ? { xs: "100%", md: 190 }
-                                          : mediumFields.has(key)
-                                            ? { xs: "100%", md: 230 }
-                                            : { xs: "100%", md: 210 },
-                                    gridColumn: key === "remark" ? { xs: "1 / -1", md: "span 2" } : "auto",
-                                  }}
-                                >
-                                  <Typography
-                                    sx={{
-                                      mb: 0.28,
-                                      color: "#6f8595",
-                                      fontSize: 9.5,
-                                      fontWeight: 700,
-                                      letterSpacing: ".08em",
-                                      textTransform: "uppercase",
-                                      lineHeight: 1.2,
-                                    }}
-                                  >
-                                    {field.label.replace("* ", "")}
-                                  </Typography>
-                                  <TextField
-                                    value={currentValue}
-                                    onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
-                                    placeholder={key === "website" ? "https://example.com" : undefined}
-                                    variant="standard"
-                                    size="small"
-                                    fullWidth
-                                    sx={{
-                                      "& .MuiInputBase-root": { minHeight: 34 },
-                                      "& .MuiInputBase-input": { py: 0.42 },
-                                      "& .MuiInput-underline:before": { borderBottomColor: "#c9d7e3" },
-                                      "& .MuiInput-underline:hover:not(.Mui-disabled, .Mui-error):before": { borderBottomColor: "#8fb3cf" },
-                                    }}
-                                  />
-                                </Box>
-                              );
-                            })}
-                          </Box>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                  <Box sx={{ display: "grid", gridTemplateColumns: sectionGridColumns[section.title], gap: 0.95 }}>
-                    {section.keys.map((key) => {
-                      const field = fieldMap[key];
-                      const isRecordLookup = key === "name";
-                      const isStateLookup = key === "state";
-                      const currentValue = draft[field.key] as string;
-                      const isBusinessSection = section.title === "Business / Tax details";
-                      const isAddressLine = addressLineFields.has(key);
-                      const shouldSpanFull = wideFields.has(key) || isRecordLookup || (isBusinessSection && businessWideFields.has(key));
-                      return (
-                        <Box
-                          key={field.key}
-                          sx={{
-                            gridColumn: shouldSpanFull ? { xs: "1 / -1", md: "1 / -1" } : "auto",
-                            width: "100%",
-                            maxWidth: shouldSpanFull
-                              ? (isRecordLookup ? { xs: "100%", md: 420 } : "100%")
-                              : compactFields.has(key)
-                                ? { xs: "100%", md: isBusinessSection ? 190 : 165 }
-                                : mediumFields.has(key)
-                                  ? { xs: "100%", md: isBusinessSection ? 230 : 220 }
-                                  : { xs: "100%", md: isBusinessSection ? 210 : 200 },
-                          }}
-                        >
-                          <Typography sx={{ mb: isAddressLine ? 0.22 : 0.28, color: isAddressLine ? "#6b8190" : "#5d7587", fontSize: isAddressLine ? 9.25 : 10.5, fontWeight: isAddressLine ? 600 : 700, letterSpacing: isAddressLine ? ".02em" : ".04em", textTransform: isAddressLine ? "none" : "uppercase" }}>
-                            {isAddressLine ? field.label.replace("* ", "").replace("Address", "Line") : field.label.replace("* ", "")}
-                          </Typography>
-                          {isRecordLookup ? (
-                            <Autocomplete
-                              freeSolo
-                              options={groupRecords.map((record) => record.name)}
-                              value={draft.name || null}
-                              inputValue={draft.name}
-                              slotProps={{
-                                popper: {
-                                  placement: "bottom-start",
-                                  modifiers: [
-                                    { name: "offset", options: { offset: [0, 6] } },
-                                    { name: "flip", enabled: false },
-                                    { name: "preventOverflow", enabled: false },
-                                  ],
-                                  sx: {
-                                    "& .MuiAutocomplete-paper": {
-                                      borderRadius: 1,
-                                      boxShadow: "0 10px 24px rgba(23,59,87,0.12)",
-                                    },
-                                    "& .MuiAutocomplete-listbox": {
-                                      py: 0.5,
-                                    },
-                                    "& .MuiAutocomplete-option": {
-                                      minHeight: 32,
-                                      fontSize: "0.9rem",
-                                      px: 1.5,
-                                      py: 0.35,
-                                    },
-                                  },
-                                },
-                                paper: {
-                                  sx: { maxHeight: 280, overflow: "auto" },
-                                },
-                              }}
-                              onInputChange={(_, value, reason) => {
-                                if (reason === "reset") return;
-                                setDraft((current) => ({ ...current, name: value }));
-                              }}
-                              onChange={(_, value) => {
-                                const selected = typeof value === "string" ? value : value ?? "";
-                                const matchedRecord = groupRecords.find((record) => record.name === selected);
-                                if (matchedRecord) {
-                                  selectRecord(matchedRecord);
-                                } else {
-                                  setDraft((current) => ({ ...current, name: selected }));
-                                }
-                              }}
-                              renderInput={(params) => (
-                                <TextField
-                                  {...params}
-                                  placeholder="Select or search record"
-                                  variant="standard"
-                                  size="small"
-                                  fullWidth
-                                  sx={{
-                                    "& .MuiInputBase-root": { minHeight: 34 },
-                                    "& .MuiInputBase-input": { py: 0.42 },
-                                    "& .MuiInput-underline:before": { borderBottomColor: "#c9d7e3" },
-                                    "& .MuiInput-underline:hover:not(.Mui-disabled, .Mui-error):before": { borderBottomColor: "#8fb3cf" },
-                                  }}
-                                />
-                              )}
-                            />
-                          ) : isStateLookup ? (
-                            <Autocomplete
-                              freeSolo
-                              options={stateOptions}
-                              value={draft.state || null}
-                              inputValue={draft.state}
-                              slotProps={{
-                                popper: {
-                                  placement: "bottom-start",
-                                  modifiers: [
-                                    { name: "offset", options: { offset: [0, 6] } },
-                                    { name: "flip", enabled: false },
-                                    { name: "preventOverflow", enabled: false },
-                                  ],
-                                  sx: {
-                                    "& .MuiAutocomplete-paper": {
-                                      borderRadius: 1,
-                                      boxShadow: "0 10px 24px rgba(23,59,87,0.12)",
-                                    },
-                                    "& .MuiAutocomplete-listbox": {
-                                      py: 0.5,
-                                    },
-                                    "& .MuiAutocomplete-option": {
-                                      minHeight: 32,
-                                      fontSize: "0.9rem",
-                                      px: 1.5,
-                                      py: 0.35,
-                                    },
-                                  },
-                                },
-                                paper: {
-                                  sx: { maxHeight: 280, overflow: "auto" },
-                                },
-                              }}
-                              onInputChange={(_, value, reason) => {
-                                if (reason === "reset") return;
-                                setDraft((current) => ({ ...current, state: value }));
-                              }}
-                              onChange={(_, value) => {
-                                const selected = typeof value === "string" ? value : value ?? "";
-                                setDraft((current) => ({ ...current, state: selected }));
-                              }}
-                              renderInput={(params) => (
-                                <TextField
-                                  {...params}
-                                  placeholder="Search state"
-                                  variant="standard"
-                                  size="small"
-                                  fullWidth
-                                  sx={{
-                                    "& .MuiInputBase-root": { minHeight: 34 },
-                                    "& .MuiInputBase-input": { py: 0.42 },
-                                    "& .MuiInput-underline:before": { borderBottomColor: "#c9d7e3" },
-                                    "& .MuiInput-underline:hover:not(.Mui-disabled, .Mui-error):before": { borderBottomColor: "#8fb3cf" },
-                                  }}
-                                />
-                              )}
-                            />
-                          ) : (
-                            <TextField
-                              value={currentValue}
-                              onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
-                              placeholder={isAddressLine ? `Address line ${key.slice(-1)}` : undefined}
-                              variant="standard"
-                              size="small"
-                              fullWidth
-                              sx={{
-                                "& .MuiInputBase-root": { minHeight: isAddressLine ? 32 : 34, borderBottom: isAddressLine ? "1px solid #dbe5ec" : undefined },
-                                "& .MuiInputBase-input": { py: isAddressLine ? 0.34 : 0.42 },
-                                "& .MuiInput-underline:before": { borderBottomColor: "#c9d7e3" },
-                                "& .MuiInput-underline:hover:not(.Mui-disabled, .Mui-error):before": { borderBottomColor: "#8fb3cf" },
-                              }}
-                            />
-                          )}
-                        </Box>
-                      );
-                    })}
-                  </Box>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
-          ))}
-        </Box>
-      </Box>}
-      {!isModernView && <aside className="addon-help addon-help-legacy">
-        {helpField === "name" && <><div className="addon-help-head"><span>SELECTED GROUP</span><span>DESCRIPTION</span><span>SHORT</span></div>{groupRecords.map((record) => <button className="addon-help-row" key={`legacy-${record.id}`} onClick={() => selectRecord(record)}><span>{addonGroups.find((group) => group.id === groupId)?.name}</span><b>{record.name}</b><small>{record.shortName}</small></button>)}<p>Total Help Record : {groupRecords.length}</p></>}
-        {helpField === "state" && <><strong>SELECT STATE</strong>{stateOptions.map((state) => <button className="state-help-row" key={`legacy-${state}`} onClick={() => { setDraft((current) => ({ ...current, state })); setHelpField(null); }}><b>{state}</b></button>)}</>}
-      </aside>}
-    </div>
-    {isModernView ? (
-      <CardActions
-        className="addon-actions"
-        sx={{
-          position: "sticky",
-          bottom: 0,
-          justifyContent: "flex-end",
-          alignItems: "center",
-          gap: 2,
-          px: 2.25,
-          py: 1.25,
-          borderTop: "1px solid #dbe6ee",
-          background: "linear-gradient(180deg,#ffffffeb,#f6fbff)",
-          backdropFilter: "blur(10px)",
-        }}
-      >
-        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
-          <Button variant="text" size="small" onClick={() => window.print()} sx={{ color: "#5f7483", minWidth: 0, px: 1.25 }}>
-            Print
-          </Button>
-          <Button variant="text" size="small" onClick={() => setMessage("Data refreshed")} sx={{ color: "#5f7483", minWidth: 0, px: 1.25 }}>
-            Refresh
-          </Button>
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, borderColor: "#dbe6ee" }} />
-          <Button variant="text" size="small" color="error" onClick={remove} sx={{ minWidth: 0, px: 1.25 }}>
-            Delete
-          </Button>
-          <Button variant="outlined" size="small" onClick={() => { reset(); setMessage("Cancelled"); }} sx={{ px: 1.5 }}>
-            Cancel
-          </Button>
-          <Button variant="contained" size="small" onClick={save} sx={{ px: 2 }}>
-            Save
-          </Button>
-        </Box>
-      </CardActions>
-    ) : (
-      <div className="addon-actions"><button type="button" onClick={save}><ActionIcon kind="save" />Save</button><button type="button" onClick={() => { reset(); setMessage("Cancelled"); }}><ActionIcon kind="cancel" />Cancel</button><button type="button" onClick={remove}><ActionIcon kind="delete" />Delete</button><button type="button" onClick={() => window.print()}><ActionIcon kind="print" />Print</button><button type="button" onClick={() => setMessage("Data refreshed")}><ActionIcon kind="refresh" />Refresh</button><span role="status">{message}</span></div>
-    )}
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return payload?.rows ?? [];
+    return payload?.rows.filter((row) => [row.description, row.shortName, row.storageName, row.type].some((value) => value.toLowerCase().includes(needle))) ?? [];
+  }, [payload, query]);
+  const selected = payload?.rows.find((row) => row.key === selectedKey) ?? null;
+  const options = payload?.options.filter((option) => option.fieldKey === selectedKey) ?? [];
+  const selectedOption = options.find((option) => option.code === optionCode) ?? null;
+  const chooseOption = (code: number) => {
+    const option = options.find((item) => item.code === code);
+    setOptionCode(code); setOptionName(option?.name ?? ""); setOptionShortName(option?.shortName ?? "");
+  };
+  const newOption = () => { setOptionCode(null); setOptionName(""); setOptionShortName(""); setMessage("Enter a new lookup value for the selected field"); };
+  const newField = () => { setFieldDraft({ relation, description: "", shortName: "", storageName: payload?.storageOptions[0] ?? "", type: "T", serial: String((payload?.rows.length ?? 0) + 1), required: false, masterVisible: true, entryPosition: "" }); setFieldMode("create"); setMessage("Enter a real add-on field definition backed by an existing addon_data column."); };
+  const editField = () => { if (!selected) return setMessage("Select an add-on field first"); setFieldDraft({ relation: selected.relation, description: selected.description, shortName: selected.shortName, storageName: selected.storageName, type: selected.type || "T", serial: selected.serial || "0", required: selected.required, masterVisible: selected.masterVisible, entryPosition: selected.entryPosition }); setFieldMode("update"); setMessage(`Editing real add-on field ${selected.description}`); };
+  const saveField = async (operation: "create" | "update" | "delete") => {
+    if (!payload?.writesEnabled) return setMessage("Master writes are disabled in this deployment");
+    if (operation !== "create" && !selected) return setMessage("Select an add-on field first");
+    if (operation === "delete" && !window.confirm(`Retire add-on field “${selected?.description}”? Existing values stay intact.`)) return;
+    setSaving(true);
+    try {
+      const response = await fetch("/api/legacy/master/addon", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity: "field", operation, key: selected?.key, version: selected?.version, ...fieldDraft, serial: Number(fieldDraft.serial) }) });
+      const body = await response.json() as { error?: string }; if (!response.ok) throw new Error(body.error || "Add-on field could not be saved");
+      setFieldMode(null); setMessage(operation === "delete" ? "Add-on field retired from real legacy metadata." : `Add-on field ${operation === "create" ? "created" : "updated"} in real legacy metadata.`); setReload((value) => value + 1);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Add-on field could not be saved"); }
+    finally { setSaving(false); }
+  };
+  const saveOption = async (operation: "create" | "update" | "delete") => {
+    if (!selected) return setMessage("Select an add-on field first");
+    if (!payload?.writesEnabled) return setMessage("Master writes are disabled in this deployment");
+    if (operation !== "create" && !selectedOption) return setMessage("Select an existing lookup value first");
+    if (operation === "delete" && !window.confirm(`Delete lookup value “${selectedOption?.name}”? Existing documents keep their stored value.`)) return;
+    setSaving(true);
+    try {
+      const response = await fetch("/api/legacy/master/addon", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation, fieldKey: selected.key, code: selectedOption?.code, version: selectedOption?.version, name: optionName, shortName: optionShortName }) });
+      const body = await response.json() as { error?: string; code?: number };
+      if (!response.ok) throw new Error(body.error || "Add-on value could not be saved");
+      setMessage(operation === "delete" ? "Lookup value soft-deleted from real legacy data" : `Lookup value ${operation === "create" ? "created" : "updated"} in real legacy data`);
+      setOptionCode(null); setOptionName(""); setOptionShortName(""); setReload((value) => value + 1);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Add-on value could not be saved"); }
+    finally { setSaving(false); }
+  };
+
+  return <section className="real-addon-master" aria-label="Real Addon Master">
+    <header>
+      <strong>ADDON MASTER</strong>
+      <label>Relation<select aria-label="Addon relation" value={relation} disabled={loading} onChange={(event) => setRelation(event.target.value)}>
+        {payload?.relations.map((item) => <option key={item.key} value={item.key}>{item.label} ({item.fields})</option>) ?? <><option value="A">Account fields</option><option value="P">Product fields</option></>}
+      </select></label>
+      <input aria-label="Search add-on fields" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find real field definition" />
+      <button type="button" onClick={newField}>＋ New Field</button><button type="button" onClick={newOption}>＋ New Lookup Value</button>
+    </header>
+    {loading && <div className="legacy-empty-state">Loading real add-on metadata and lookup counts…</div>}
+    {error && <div className="legacy-empty-state" role="alert"><strong>Database connection failed</strong><span>{error}</span></div>}
+    {!loading && payload && <div className="real-addon-body">
+      <div className="real-addon-grid"><table><thead><tr><th>KEY</th><th>DESCRIPTION</th><th>SHORT NAME</th><th>STORAGE FIELD</th><th>TYPE</th><th>SERIAL</th><th>REQUIRED</th><th>MASTER</th><th>ENTRY</th><th>LOOKUPS</th></tr></thead><tbody>
+        {rows.map((row) => <tr className={row.key === selectedKey ? "selected" : ""} key={row.key} onClick={() => setSelectedKey(row.key)}><td>{row.key}</td><td>{row.description}</td><td>{row.shortName}</td><td>{row.storageName}</td><td>{row.type}</td><td>{row.serial}</td><td>{row.required ? "Yes" : "No"}</td><td>{row.masterVisible ? "Yes" : "No"}</td><td>{row.entryPosition}</td><td>{row.lookupValues}</td></tr>)}
+      </tbody></table></div>
+      <aside><strong>{fieldMode ? (fieldMode === "create" ? "New add-on field" : "Edit add-on field") : "Connected definition"}</strong>{fieldMode ? <><label>Relation<select aria-label="Add-on field relation" value={fieldDraft.relation} onChange={(event) => setFieldDraft((current) => ({ ...current, relation: event.target.value }))}>{payload.relations.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label><label>Description<input aria-label="Add-on field description" value={fieldDraft.description} maxLength={120} onChange={(event) => setFieldDraft((current) => ({ ...current, description: event.target.value }))} /></label><label>Short name<input aria-label="Add-on field short name" value={fieldDraft.shortName} maxLength={40} onChange={(event) => setFieldDraft((current) => ({ ...current, shortName: event.target.value }))} /></label><label>Storage field<select aria-label="Add-on data storage field" value={fieldDraft.storageName} onChange={(event) => setFieldDraft((current) => ({ ...current, storageName: event.target.value }))}><option value="">Select restored column…</option>{payload.storageOptions.map((column) => <option key={column}>{column}</option>)}</select></label><label>Type<select aria-label="Add-on field type" value={fieldDraft.type} onChange={(event) => setFieldDraft((current) => ({ ...current, type: event.target.value }))}><option value="T">Text</option><option value="M">Lookup</option><option value="N">Number</option><option value="D">Date</option></select></label><label>Serial<input aria-label="Add-on field serial" inputMode="numeric" value={fieldDraft.serial} onChange={(event) => setFieldDraft((current) => ({ ...current, serial: event.target.value }))} /></label><label>Entry position<input aria-label="Add-on field entry position" value={fieldDraft.entryPosition} onChange={(event) => setFieldDraft((current) => ({ ...current, entryPosition: event.target.value }))} /></label><label><input type="checkbox" checked={fieldDraft.required} onChange={(event) => setFieldDraft((current) => ({ ...current, required: event.target.checked }))} /> Required</label><label><input type="checkbox" checked={fieldDraft.masterVisible} onChange={(event) => setFieldDraft((current) => ({ ...current, masterVisible: event.target.checked }))} /> Show in master</label><div><button type="button" disabled={saving} onClick={() => saveField(fieldMode)}>Save field</button><button type="button" onClick={() => setFieldMode(null)}>Cancel</button></div><small>Definitions use the selected real `addon_data` column; no mock fields are created.</small></> : selected ? <><span>Field key: {selected.key}</span><span>Relation: {selected.relation === "A" ? "Account" : selected.relation === "P" ? "Product" : selected.relation}</span><span>Storage: addon_data · {selected.storageName}</span><span>Lookup values: {selected.lookupValues}</span><span>Source: addon_fld / addon_sub</span><button type="button" onClick={editField}>Edit field</button><button type="button" disabled={saving} onClick={() => saveField("delete")}>Retire field</button><label>Lookup value<select aria-label="Existing lookup value" value={optionCode ?? ""} onChange={(event) => chooseOption(Number(event.target.value))}><option value="">New value</option>{options.map((option) => <option key={option.code} value={option.code}>{option.name}</option>)}</select></label><label>Name<input value={optionName} maxLength={120} onChange={(event) => setOptionName(event.target.value)} /></label><label>Short name<input value={optionShortName} maxLength={40} onChange={(event) => setOptionShortName(event.target.value)} /></label><small>{payload.writesEnabled ? "Real-data writes enabled · duplicate and concurrency checks active" : "Real-data writes disabled in this deployment"}</small></> : <span>Select a field definition.</span>}</aside>
+    </div>}
+    <footer><button type="button" disabled={saving} onClick={() => saveOption(selectedOption ? "update" : "create")}>Save</button><button type="button" disabled={saving || !selectedOption} onClick={() => saveOption("delete")}>Delete</button><button type="button" onClick={() => window.print()}>Print</button><button type="button" onClick={() => setReload((value) => value + 1)}>Refresh</button><span role="status">{message}</span></footer>
   </section>;
 }
