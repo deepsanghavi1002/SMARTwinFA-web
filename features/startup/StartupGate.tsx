@@ -55,7 +55,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [contextError, setContextError] = useState("");
   const [year, setYear] = useState("");
   const [company, setCompany] = useState("");
-  const [modernView, setModernView] = useState(false);
+  // Temporarily keep all users in the reviewed legacy layout while screen
+  // alignment issues are being corrected. The modern rendering branch remains
+  // below so the switch can be restored without changing application state.
+  const modernView = false;
   const accountingYears = context?.years ?? [];
   const companies = context?.companies ?? [];
 
@@ -79,13 +82,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, []);
 
-  const viewButton = (
-    <button className={`view-switch ${modernView ? "modern-active" : "legacy-active"}`} type="button" onClick={() => setModernView((current) => !current)} aria-label={modernView ? "Switch to legacy view" : "Switch to modern view"} aria-pressed={modernView}>
-      <span className="view-switch-state">{modernView ? "Modern view" : "Legacy view"}</span>
-      <span className="view-switch-action">{modernView ? "Switch to legacy" : "Switch to modern"} <b aria-hidden="true">⇄</b></span>
-    </button>
-  );
-  if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div>;
+  if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{children}</div>;
   const login = () => {
     if (username.trim().toUpperCase() === migrationAccessUser && password.trim().length > 0) { setError(""); setStage("company"); }
     else setError("Invalid user name or password");
@@ -96,7 +93,6 @@ export function StartupGate({ children }: { children: ReactNode }) {
       <ThemeProvider theme={modernTheme}>
         <CssBaseline />
         <div className="view-mode modern-view">
-          {viewButton}
           <Box
             sx={{
               minHeight: "100vh",
@@ -220,7 +216,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     );
   }
 
-  return <div className="view-mode legacy-view">{viewButton}<main className="startup-desktop legacy-startup">
+  return <div className="view-mode legacy-view"><main className="startup-desktop legacy-startup">
     {stage === "login" ? <section className="legacy-auth-window" aria-label="User login screen">
       <aside className="legacy-auth-brand"><div className="legacy-auth-logo" role="img" aria-label="SMARTwinFA logo"/><strong>SMART WINFA</strong><span>Modern Technology ✓</span><small>Simple Accounting. Smart Business.</small></aside>
       <form className="legacy-auth-form" onSubmit={(event) => { event.preventDefault(); login(); }}>
