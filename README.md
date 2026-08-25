@@ -69,6 +69,9 @@ docker compose --env-file .env.docker -f compose.local.yaml up --build
 Full Windows, macOS, reset, branch-isolation, and pgAdmin instructions are in
 [the local Docker guide](docs/local-docker-rishabh.md).
 
+For the required branch, database-isolation, test, migration, and pull-request
+workflow, see the [developer workflow](docs/development-workflow.md).
+
 For a versioned Pi test deployment with an authorized SSH account:
 
 ```bash
