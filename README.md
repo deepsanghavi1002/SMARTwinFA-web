@@ -7,9 +7,9 @@ quality gates needed to reach production parity.
 
 > **Current status: PostgreSQL-backed prototype, not production software.**
 > The recorded SMARTwinFA workflows use an isolated PostgreSQL test environment
-> and are deployed for Pi-based testing. Production authentication, authorization,
+> with mock data. Production authentication, authorization,
 > tenant isolation, statutory integrations, and cutover controls are still not
-> complete. Do not expose this build to the public internet.
+> complete.
 
 ## What is present today
 
@@ -35,60 +35,18 @@ The imported UI is based on `SMARTwinFA/web` at legacy commit
 `b3970e94991824574fd2106764e1b3e95e377c9e`. Earlier prototype history is also
 preserved in this repository.
 
-## Start locally
+## Run locally
 
-Requirements: Node.js 22.13 or newer.
-
-```bash
-npm ci
-npm run dev
-```
-
-The Pi Docker prototype can be started with:
-
-```bash
-docker compose up --build
-```
-
-Health check: `http://localhost:4173/api/health`.
-
-## Local developer environment
-
-Use Docker Desktop for a self-contained local test environment. It starts the
-web app, API, and private PostgreSQL database together. Each developer uses an
-isolated mock-data seed supplied through the project team; data is never kept
-in GitHub.
-
-Start the stack:
+Install Docker Desktop, then start the complete local environment:
 
 ```bash
 docker compose --env-file .env.docker -f compose.local.yaml up --build
 ```
 
-For setup details and the required branch, database-isolation, test, migration,
-and pull-request workflow, see the [developer workflow](docs/development-workflow.md).
-
-For a versioned Pi test deployment with an authorized SSH account:
-
-```bash
-SMARTWINFA_PI_USER=your-pi-user ./scripts/deploy-pi.sh
-```
-
-The deployer uploads a new release directory, rebuilds only the
-`smartwinfa-web` Compose service, waits for its health contract, and then moves
-the `current` symlink. It retains earlier release directories for rollback.
-
-## Install on a family Windows PC
-
-The Pi-hosted prototype does not need a database installation on the user's
-PC. Copy the [Windows launcher folder](distribution/windows-launcher/) to the
-PC and run `Install-SMARTwinFA.cmd` once. It creates a desktop shortcut that
-opens the Pi app in its own Edge app window. See the launcher
-[instructions](distribution/windows-launcher/README.md).
-
-For a Mac, use the [macOS launcher folder](distribution/macos-launcher/) and
-run `Install-SMARTwinFA.command`. It installs a local SMARTwinFA app that opens
-the public hosted site in an app-style browser window.
+Open [http://localhost:3000](http://localhost:3000). This starts the web app,
+API, and isolated PostgreSQL mock database together. The mock-data package and
+local settings stay outside GitHub. For the short setup and developer workflow,
+see [development-workflow.md](docs/development-workflow.md).
 
 ## Required checks
 
