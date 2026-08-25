@@ -44,13 +44,30 @@ npm ci
 npm run dev
 ```
 
-The Docker prototype can be started with:
+The Pi Docker prototype can be started with:
 
 ```bash
 docker compose up --build
 ```
 
 Health check: `http://localhost:4173/api/health`.
+
+## Local lower environment with Rishabh Plastic data
+
+Use the separate local stack when developing or testing a branch on a PC. It
+starts the web app on `http://localhost:3000`, the legacy API, and a private
+PostgreSQL container preloaded from the approved Rishabh Plastic backup.
+
+The client backup itself is intentionally excluded from GitHub. Once an
+authorized copy has been placed in the ignored local seed path, start the stack
+with one command:
+
+```bash
+docker compose --env-file .env.docker -f compose.local.yaml up --build
+```
+
+Full Windows, macOS, reset, branch-isolation, and pgAdmin instructions are in
+[the local Docker guide](docs/local-docker-rishabh.md).
 
 For a versioned Pi test deployment with an authorized SSH account:
 

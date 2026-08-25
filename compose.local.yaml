@@ -1,0 +1,58 @@
+name: ${COMPOSE_PROJECT_NAME:-smartwinfa-local}
+
+# Developer/lower-environment stack. This intentionally stays separate from
+# compose.yaml, which is used for the Pi deployment.
+services:
+  smartwinfa-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SMARTWINFA_RELEASE: ${SMARTWINFA_RELEASE:-local-rishabh}
+      LEGACY_API_URL: http://legacy-api:8080
+    ports:
+      - "${SMARTWINFA_WEB_PORT:-3000}:3000"
+    depends_on:
+      legacy-api:
+        condition: service_healthy
+
+  legacy-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.legacy-api
+    environment:
+      LEGACY_DATABASE_URL: postgresql://smartwinfa_web:${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}@legacy-db:5432/smartwin_data_intake
+      LEGACY_COMPANY_SCHEMA: ${LEGACY_COMPANY_SCHEMA:-rishabh_plastic27}
+      SMARTWINFA_MASTER_WRITES: ${SMARTWINFA_MASTER_WRITES:-true}
+      SMARTWINFA_ENTRY_WRITES: ${SMARTWINFA_ENTRY_WRITES:-true}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    depends_on:
+      legacy-db:
+        condition: service_healthy
+
+  legacy-db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: smartwin_data_intake
+      POSTGRES_USER: smartwinfa_web
+      POSTGRES_PASSWORD: ${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}
+    ports:
+      - "${SMARTWINFA_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - smartwinfa_local_db:/var/lib/postgresql
+      - ./database/fixtures/private:/seed:ro
+      - ./docker/postgres/init/10-restore-rishabh.sh:/docker-entrypoint-initdb.d/10-restore-rishabh.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartwinfa_web -d smartwin_data_intake"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+volumes:
+  smartwinfa_local_db:
