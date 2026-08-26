@@ -2,7 +2,7 @@
 
 import { chmod, copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import process from "node:process";
 
 const repoRoot = resolve(import.meta.dirname, "..");
