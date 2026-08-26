@@ -1,0 +1,4 @@
+# Keep shell scripts LF-only: they run inside Linux containers and on the Pi,
+# where a CRLF shebang line makes the kernel report "sh\r: not found".
+*.sh text eol=lf
+*.command text eol=lf
