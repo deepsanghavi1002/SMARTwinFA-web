@@ -39,6 +39,33 @@ For separate feature branches on one computer, use a unique
 `.env.docker`. The complete workflow is in
 [development-workflow.md](development-workflow.md).
 
+## The stack needs both intake schemas
+
+The restore expects two custom-format dumps in `database/fixtures/private/`:
+
+| File | Schema | Purpose |
+| --- | --- | --- |
+| `rishabh-plastic27.dump` | `rishabh_plastic27` | Per-company accounting data |
+| `smart-setup.dump` | `smart_setup` | Shared setup/metadata |
+
+Prepare both with:
+
+```bash
+node scripts/prepare-rishabh-local-seed.mjs <company-dump> <smart-setup-dump>
+```
+
+Seeding the company schema alone leaves the menu catalog, account master and
+product master failing with `relation "smart_setup.<table>" does not exist`,
+because those three readers query the shared schema. The restore fails fast if
+either dump is missing.
+
+Both dumps store money columns as pre-formatted currency text whose currency
+symbol was lost to an encoding conversion upstream, so PostgreSQL cannot parse
+them as `money` under any locale. The init script demotes only those columns to
+text, loads them verbatim, then normalizes and promotes them back. Do not
+substitute over the data stream instead: text columns contain the same stray
+bytes and would be corrupted.
+
 ## If PostgreSQL already runs on the host
 
 `SMARTWINFA_POSTGRES_PORT` defaults to `5432`. On a machine that already runs
