@@ -8,7 +8,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      SMARTWINFA_RELEASE: ${SMARTWINFA_RELEASE:-local-rishabh}
+      SMARTWINFA_RELEASE: ${SMARTWINFA_RELEASE:-local-test}
       LEGACY_API_URL: http://legacy-api:8080
     ports:
       - "${SMARTWINFA_WEB_PORT:-3000}:3000"
@@ -22,7 +22,7 @@ services:
       dockerfile: Dockerfile.legacy-api
     environment:
       LEGACY_DATABASE_URL: postgresql://smartwinfa_web:${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}@legacy-db:5432/smartwin_data_intake
-      LEGACY_COMPANY_SCHEMA: ${LEGACY_COMPANY_SCHEMA:-rishabh_plastic27}
+      LEGACY_COMPANY_SCHEMA: ${LEGACY_COMPANY_SCHEMA:-smartwinfa_demo}
       SMARTWINFA_MASTER_WRITES: ${SMARTWINFA_MASTER_WRITES:-true}
       SMARTWINFA_ENTRY_WRITES: ${SMARTWINFA_ENTRY_WRITES:-true}
     healthcheck:
@@ -36,17 +36,23 @@ services:
         condition: service_healthy
 
   legacy-db:
-    image: postgres:18-alpine
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     environment:
       POSTGRES_DB: smartwin_data_intake
       POSTGRES_USER: smartwinfa_web
       POSTGRES_PASSWORD: ${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: --locale=en_IN.utf8
+      SMARTWINFA_COMPANY_DUMP: ${SMARTWINFA_COMPANY_DUMP:?Set SMARTWINFA_COMPANY_DUMP}
+      LEGACY_COMPANY_SCHEMA: ${LEGACY_COMPANY_SCHEMA:-smartwinfa_demo}
     ports:
       - "${SMARTWINFA_POSTGRES_PORT:-5432}:5432"
     volumes:
       - smartwinfa_local_db:/var/lib/postgresql
       - ./database/fixtures/private:/seed:ro
-      - ./docker/postgres/init/10-restore-rishabh.sh:/docker-entrypoint-initdb.d/10-restore-rishabh.sh:ro
+      - ./docker/postgres/init/10-restore-company-seed.sh:/docker-entrypoint-initdb.d/10-restore-company-seed.sh:ro
+      - ./docker/postgres/init/20-restore-platform-metadata.sh:/docker-entrypoint-initdb.d/20-restore-platform-metadata.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U smartwinfa_web -d smartwin_data_intake"]
       interval: 5s

@@ -8,10 +8,10 @@ data belongs in this repository.
 
 1. Install Docker Desktop.
 2. Clone the required branch.
-3. Obtain the approved mock-data package from the project team and place it in
-   the ignored `database/fixtures/private/` folder using the package's setup
-   note.
-4. Copy `.env.docker.example` to `.env.docker`.
+3. Place an approved local PostgreSQL custom dump in the ignored
+   `database/fixtures/private/` folder.
+4. Copy `docker/local-settings.example` to `.env.docker`, then set the dump
+   filename and its schema name in `.env.docker`.
 5. Run:
 
    ```bash
@@ -38,3 +38,19 @@ For separate feature branches on one computer, use a unique
 `COMPOSE_PROJECT_NAME` and different web/PostgreSQL ports in each branch's
 `.env.docker`. The complete workflow is in
 [development-workflow.md](development-workflow.md).
+
+## Using another approved company dataset
+
+Use one isolated Compose project and database volume for each data source. Put
+only an authorised, read-only PostgreSQL custom dump in the private fixture
+folder, then set these two local values:
+
+```text
+SMARTWINFA_COMPANY_DUMP=company-copy.dump
+LEGACY_COMPANY_SCHEMA=company_schema
+```
+
+Never point the application at a live database, commit a dump, or combine data
+from two companies in one test database. A SQL Server backup must first be
+copied into an approved PostgreSQL custom dump; it is not restored directly by
+this Docker stack.

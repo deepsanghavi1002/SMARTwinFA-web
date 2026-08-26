@@ -25,8 +25,8 @@ source SQL Server as a writable test environment.
 1. Install Docker Desktop. It is supported on Windows, macOS, and Linux.
 2. Clone this repository and obtain the approved mock-data package from the
    project team.
-3. Copy `.env.docker.example` to `.env.docker` and follow the included setup
-   note for the mock-data package.
+3. Copy `docker/local-settings.example` to `.env.docker`, then set the local
+   dump filename and PostgreSQL schema for the approved test dataset.
 
 Mock data and `.env.docker` are local-only files. Never commit, upload, or put
 them in a pull request. See [the local Docker guide](local-docker.md) for the

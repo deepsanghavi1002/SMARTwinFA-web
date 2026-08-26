@@ -4,25 +4,27 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("local Docker stack restores the private Rishabh seed and exposes the application on port 3000", async () => {
-  const [compose, restore, envExample, gitignore, seedPreparer] = await Promise.all([
+test("local Docker stack restores a selected private company seed and exposes the application on port 3000", async () => {
+  const [compose, restore, settingsExample, gitignore, seedPreparer] = await Promise.all([
     read("compose.local.yaml"),
-    read("docker/postgres/init/10-restore-rishabh.sh"),
-    read(".env.docker.example"),
+    read("docker/postgres/init/10-restore-company-seed.sh"),
+    read("docker/local-settings.example"),
     read(".gitignore"),
     read("scripts/prepare-rishabh-local-seed.mjs"),
   ]);
 
   assert.match(compose, /SMARTWINFA_WEB_PORT:-3000/);
   assert.match(compose, /SMARTWINFA_POSTGRES_PORT:-5432/);
-  assert.match(compose, /LEGACY_COMPANY_SCHEMA:-rishabh_plastic27/);
+  assert.match(compose, /SMARTWINFA_COMPANY_DUMP/);
+  assert.match(compose, /LEGACY_COMPANY_SCHEMA:-smartwinfa_demo/);
   assert.match(compose, /\.\/database\/fixtures\/private:\/seed:ro/);
-  assert.match(restore, /rishabh-plastic27\.dump/);
+  assert.match(restore, /SMARTWINFA_COMPANY_DUMP/);
+  assert.match(restore, /LEGACY_COMPANY_SCHEMA/);
   assert.match(restore, /pg_restore/);
   assert.match(restore, /--no-owner/);
-  assert.match(envExample, /SMARTWINFA_DB_PASSWORD=/);
+  assert.match(settingsExample, /SMARTWINFA_DB_PASSWORD=/);
+  assert.match(settingsExample, /SMARTWINFA_COMPANY_DUMP=mock-company\.dump/);
   assert.match(gitignore, /\/database\/fixtures\/private\//);
-  assert.match(gitignore, /!\.env\.docker\.example/);
   assert.match(seedPreparer, /PGDMP/);
   assert.match(seedPreparer, /platform\(\) !== "win32"/);
 });
