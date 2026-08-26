@@ -38,3 +38,18 @@ For separate feature branches on one computer, use a unique
 `COMPOSE_PROJECT_NAME` and different web/PostgreSQL ports in each branch's
 `.env.docker`. The complete workflow is in
 [development-workflow.md](development-workflow.md).
+
+## If PostgreSQL already runs on the host
+
+`SMARTWINFA_POSTGRES_PORT` defaults to `5432`. On a machine that already runs
+its own PostgreSQL server, that port is taken and `legacy-db` cannot bind,
+so the stack never becomes healthy. Point the container at a free host port
+in your ignored `.env.docker` instead of stopping the host server:
+
+```bash
+SMARTWINFA_POSTGRES_PORT=55432
+```
+
+Only the published host port changes. The services still reach each other on
+`legacy-db:5432` inside the Compose network, and the host's own PostgreSQL is
+left untouched.
