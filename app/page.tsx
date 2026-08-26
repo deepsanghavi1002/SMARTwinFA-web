@@ -59,6 +59,11 @@ export default function Home() {
     setExpandedBranches(new Set());
     setSuspendHoverMenu(true);
   };
+  const scrollMenu = (direction: -1 | 1) => {
+    const menu = menuBar.current;
+    if (!menu) return;
+    menu.scrollBy({ left: direction * Math.max(240, menu.clientWidth * 0.68), behavior: "smooth" });
+  };
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -113,15 +118,19 @@ export default function Home() {
 
   return <StartupGate>{(
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
-      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
+      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><img className="app-mark" src="/smartwinfa-brand.svg" alt="" aria-hidden="true"/><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
-      <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
-        {menuRoots.map((menu) => (
-          <div className="menu-root" key={menu.id}>
-            <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setExpandedBranches(new Set()); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
-            <div className={`dropdown legacy-menu-dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu"><LegacyMenuTree nodes={menu.children} moduleLabel={menu.label} onSelect={selectLegacyMenu} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} /></div>
-          </div>
-        ))}
+      <div className="menu-strip-shell">
+        <button className="menu-scroll-control menu-scroll-back" type="button" onClick={() => scrollMenu(-1)} aria-label="Show earlier menus">‹</button>
+        <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
+          {menuRoots.map((menu) => (
+            <div className="menu-root" key={menu.id}>
+              <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setExpandedBranches(new Set()); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
+              <div className={`dropdown legacy-menu-dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu"><LegacyMenuTree nodes={menu.children} moduleLabel={menu.label} onSelect={selectLegacyMenu} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} /></div>
+            </div>
+          ))}
+        </div>
+        <button className="menu-scroll-control menu-scroll-forward" type="button" onClick={() => scrollMenu(1)} aria-label="Show more menus">›</button>
       </div>
 
       {openMenu && <>

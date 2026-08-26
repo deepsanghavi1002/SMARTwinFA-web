@@ -123,7 +123,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
                       <Typography variant="h5" sx={{ fontWeight: 700 }}>User Login</Typography>
                     </Stack>
                     <Stack spacing={1.25} sx={{ width: "100%", alignItems: "center", textAlign: "center" }}>
-                      <Box component="img" className="login-logo" src="/smartwinfa-logo.svg" alt="SMARTwinFA logo" />
+                      <Box component="img" className="login-logo" src="/smartwinfa-brand.svg" alt="SMARTwinFA logo" />
                       <Typography variant="caption" sx={{ color: "#dcecff", letterSpacing: ".14em" }}>DEVELOPED BY</Typography>
                       <Typography variant="body2" sx={{ color: "#fff", fontWeight: 700, letterSpacing: ".03em" }}>PRANAV COMPUTERS</Typography>
                     </Stack>
