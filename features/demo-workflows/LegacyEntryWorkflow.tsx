@@ -35,8 +35,7 @@ function EntryHeader({ title, mode, setMode, status }: { title: string; mode: "e
 export function LegacyEntryWorkflow({ kind, voucherType = "cash-bank" }: { kind: EntryKind; voucherType?: VoucherType }) {
   const [context, setContext] = useState<Context | null>(null);
   const [mode, setMode] = useState<"entry" | "register">("entry");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [outcome, setOutcome] = useState<{ key: string; error: string }>({ key: "", error: "" });
   const [status, setStatus] = useState("Loading desktop lookup data…");
   const [book, setBook] = useState(kind === "invoice" ? "8" : String(voucherDefinitions[voucherType].book));
   const [series, setSeries] = useState("");
@@ -50,15 +49,17 @@ export function LegacyEntryWorkflow({ kind, voucherType = "cash-bank" }: { kind:
   const [postedKey, setPostedKey] = useState<number | null>(null);
 
   const definition = kind === "voucher" ? voucherDefinitions[voucherType] : null;
+  const requestKey = kind;
+  const loading = outcome.key !== requestKey;
+  const error = outcome.key === requestKey ? outcome.error : "";
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setError("");
+    const controller = new AbortController();
     fetch(`/api/legacy/transaction/context?kind=${kind}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => { const body = await response.json() as Context | { error?: string }; if (!response.ok || !("parties" in body)) throw new Error("error" in body && body.error ? body.error : "Entry lookups could not be loaded"); return body; })
-      .then((body) => { setContext(body); setStatus(`${body.parties.length.toLocaleString("en-IN")} real accounts${kind === "invoice" ? ` · ${body.products.length.toLocaleString("en-IN")} real products` : ""} available`); })
-      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Entry lookups could not be loaded"); })
-      .finally(() => setLoading(false));
+      .then((body) => { setContext(body); setStatus(`${body.parties.length.toLocaleString("en-IN")} real accounts${kind === "invoice" ? ` · ${body.products.length.toLocaleString("en-IN")} real products` : ""} available`); setOutcome({ key: requestKey, error: "" }); })
+      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setOutcome({ key: requestKey, error: reason instanceof Error ? reason.message : "Entry lookups could not be loaded" }); });
     return () => controller.abort();
-  }, [kind]);
+  }, [requestKey, kind]);
 
   const party = context?.parties.find((candidate) => String(candidate.code) === partyCode) ?? null;
   const itemTotal = useMemo(() => items.reduce((total, line) => total + number(line.quantity) * number(line.rate), 0), [items]);

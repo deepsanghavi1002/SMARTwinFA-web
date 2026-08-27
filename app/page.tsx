@@ -118,7 +118,9 @@ export default function Home() {
 
   return <StartupGate>{(
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
-      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><img className="app-mark" src="/smartwinfa-brand.svg" alt="" aria-hidden="true"/><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
+      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage">{/* eslint-disable-next-line @next/next/no-img-element -- static local SVG brand mark; next/image does not optimise SVG and would only add a loader hop */}
+<img className="app-mark" src="/smartwinfa-brand.svg" alt="" aria-hidden="true"/>
+<strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
       <div className="menu-strip-shell">
         <button className="menu-scroll-control menu-scroll-back" type="button" onClick={() => scrollMenu(-1)} aria-label="Show earlier menus">‹</button>

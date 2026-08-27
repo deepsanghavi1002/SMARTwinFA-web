@@ -26,10 +26,6 @@ function format(column: string, value: string | number | null) {
   return String(value);
 }
 
-function reportDate(row: ReportRow) {
-  return [row.Date, row["Document Date"], row.From, row["First Movement"]].find((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value));
-}
-
 function rowKey(row: ReportRow, index: number) {
   return String(row.Key ?? row["Document Key"] ?? row["Line Key"] ?? row["Target Key"] ?? row["Setup Key"] ?? row.Code ?? index);
 }
@@ -78,13 +74,15 @@ function downloadCsv(title: string, columns: string[], rows: ReportRow[]) {
 }
 
 export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
-  const [payload, setPayload] = useState<ReportPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ key: string; payload: ReportPayload | null; error: string }>({ key: "", payload: null, error: "" });
   const [reload, setReload] = useState(0);
+  const requestKey = `${kind}|${reload}|${filter.from ?? ""}|${filter.upto ?? ""}|${filter.query ?? ""}|${filter.variant ?? ""}`;
+  const settled = result.key === requestKey;
+  const payload = result.payload;
+  const loading = !settled;
+  const error = settled ? result.error : "";
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError("");
     const params = new URLSearchParams();
     if (filter.from) params.set("from", filter.from);
     if (filter.upto) params.set("upto", filter.upto);
@@ -96,11 +94,10 @@ export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
         if (!response.ok || !("rows" in body)) throw new Error("error" in body && body.error ? body.error : "Report could not be loaded");
         return body;
       })
-      .then(setPayload)
-      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Report could not be loaded"); })
-      .finally(() => setLoading(false));
+      .then((body) => setResult({ key: requestKey, payload: body, error: "" }))
+      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setResult((current) => ({ key: requestKey, payload: current.payload, error: reason instanceof Error ? reason.message : "Report could not be loaded" })); });
     return () => controller.abort();
-  }, [kind, reload, filter.from, filter.upto, filter.query, filter.variant]);
+  }, [requestKey, kind, filter.from, filter.upto, filter.query, filter.variant]);
   return { payload, loading, error, refresh: () => setReload((value) => value + 1) };
 }
 
@@ -114,9 +111,17 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
   const [measure, setMeasure] = useState(definition?.measures[0] ?? "Detailed");
   const [selectedKey, setSelectedKey] = useState("");
   const [zoom, setZoom] = useState(false);
+  const [renderedKind, setRenderedKind] = useState(kind);
   const { payload, loading, error, refresh } = useLegacyReport(kind, applied);
 
-  useEffect(() => { setSelection(visualOptions[kind]?.choices[0] ?? "All"); setMeasure(visualOptions[kind]?.measures[0] ?? "Detailed"); setSelectedKey(""); setZoom(false); }, [kind]);
+  if (renderedKind !== kind) {
+    // Reset the per-report view state during render rather than in an effect (react.dev/learn/you-might-not-need-an-effect).
+    setRenderedKind(kind);
+    setSelection(visualOptions[kind]?.choices[0] ?? "All");
+    setMeasure(visualOptions[kind]?.measures[0] ?? "Detailed");
+    setSelectedKey("");
+    setZoom(false);
+  }
 
   const rows = useMemo(() => presentRows(kind, payload?.rows ?? [], selection, measure), [kind, payload?.rows, selection, measure]);
   const selected = rows.find((row, index) => rowKey(row, index) === selectedKey) ?? null;

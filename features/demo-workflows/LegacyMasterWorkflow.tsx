@@ -72,8 +72,7 @@ function RealLegacyMasterWorkflow({ kind }: { kind: MasterKind }) {
   const isProduct = kind === "product";
   const entity = isProduct ? "Product" : "Account";
   const [payload, setPayload] = useState<RealMasterPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [outcome, setOutcome] = useState<{ key: string; error: string }>({ key: "", error: "" });
   const [selectionKey, setSelectionKey] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [remoteQuery, setRemoteQuery] = useState("");
@@ -86,10 +85,11 @@ function RealLegacyMasterWorkflow({ kind }: { kind: MasterKind }) {
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
 
+  const requestKey = `${entity}|${isProduct}|${page}|${reload}|${remoteQuery}|${selectionKey}`;
+  const loading = outcome.key !== requestKey;
+  const error = outcome.key === requestKey ? outcome.error : "";
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
-    setError("");
     const params = new URLSearchParams();
     if (selectionKey !== null) params.set(isProduct ? "group" : "book", String(selectionKey));
     if (isProduct) {
@@ -114,14 +114,14 @@ function RealLegacyMasterWorkflow({ kind }: { kind: MasterKind }) {
         } else {
           setMessage(`${body.rows.length.toLocaleString("en-IN")} real account records loaded`);
         }
+        setOutcome({ key: requestKey, error: "" });
       })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
-        setError(reason instanceof Error ? reason.message : `${entity} Master could not be loaded`);
-      })
-      .finally(() => setLoading(false));
+        setOutcome({ key: requestKey, error: reason instanceof Error ? reason.message : `${entity} Master could not be loaded` });
+      });
     return () => controller.abort();
-  }, [entity, isProduct, page, reload, remoteQuery, selectionKey]);
+  }, [requestKey, entity, isProduct, page, remoteQuery, selectionKey]);
 
   const visibleFields = useMemo(() => payload?.fields.filter((field) => field.gridVisible) ?? [], [payload]);
   const gridWidth = useMemo(

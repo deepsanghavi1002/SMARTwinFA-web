@@ -21,26 +21,26 @@ export function AddonMaster() {
   const [optionEdits, setOptionEdits] = useState<Record<number, OptionDraft>>({});
   const [newField, setNewField] = useState<FieldDraft | null>(null);
   const [newOption, setNewOption] = useState<OptionDraft | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [outcome, setOutcome] = useState<{ key: string; error: string }>({ key: "", error: "" });
   const [message, setMessage] = useState("Loading real add-on definitions…");
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
 
+  const requestKey = `${relation}|${reload}`;
+  const loading = outcome.key !== requestKey;
+  const error = outcome.key === requestKey ? outcome.error : "";
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError("");
     fetch(`/api/legacy/master/addon?relation=${encodeURIComponent(relation)}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as AddonPayload | { error?: string };
         if (!response.ok || !("rows" in body)) throw new Error("error" in body && body.error ? body.error : "Addon Master could not be loaded");
         return body;
       })
-      .then((body) => { setPayload(body); setSelectedKey(body.rows[0]?.key ?? null); setFieldEdits({}); setOptionEdits({}); setNewField(null); setNewOption(null); setMessage(`${body.rows.length} real add-on definitions loaded — click a cell to edit`); })
-      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Addon Master could not be loaded"); })
-      .finally(() => setLoading(false));
+      .then((body) => { setPayload(body); setSelectedKey(body.rows[0]?.key ?? null); setFieldEdits({}); setOptionEdits({}); setNewField(null); setNewOption(null); setMessage(`${body.rows.length} real add-on definitions loaded — click a cell to edit`); setOutcome({ key: requestKey, error: "" }); })
+      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setOutcome({ key: requestKey, error: reason instanceof Error ? reason.message : "Addon Master could not be loaded" }); });
     return () => controller.abort();
-  }, [relation, reload]);
+  }, [requestKey, relation]);
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();

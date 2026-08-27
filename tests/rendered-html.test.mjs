@@ -149,7 +149,7 @@ test("keeps the latest migrated application surface wired into the root route", 
   assert.match(reportWorkflow, /F4 Zoom/);
   assert.match(reportWorkflow, /sales-distribution/);
   assert.match(reportWorkflow, /conic-gradient/);
-  for (const utilityFlow of ["IMPORT DATA FROM EXCEL", "parseXlsx", "PARTYWISE BILL PDF", "LOCK \/ UNLOCK DATA"]) {
+  for (const utilityFlow of ["IMPORT DATA FROM EXCEL", "parseXlsx", "PARTYWISE BILL PDF", "LOCK / UNLOCK DATA"]) {
     assert.match(utilityWorkflows, new RegExp(utilityFlow));
   }
   assert.match(addonMaster, /addon_fld/);

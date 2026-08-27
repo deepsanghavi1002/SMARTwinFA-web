@@ -19,14 +19,15 @@ export function InvoiceRegisterWorkflow() {
   const [query, setQuery] = useState("");
   const [remoteQuery, setRemoteQuery] = useState("");
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [outcome, setOutcome] = useState<{ key: string; error: string }>({ key: "", error: "" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState("Loading real Sale Invoice records…");
 
+  const requestKey = `${page}|${remoteQuery}`;
+  const loading = outcome.key !== requestKey;
+  const error = outcome.key === requestKey ? outcome.error : "";
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError("");
     const params = new URLSearchParams({ page: String(page), pageSize: "100" });
     if (remoteQuery) params.set("q", remoteQuery);
     fetch(`/api/legacy/transaction/invoice?${params}`, { signal: controller.signal, cache: "no-store" })
@@ -35,11 +36,10 @@ export function InvoiceRegisterWorkflow() {
         if (!response.ok || !("rows" in body)) throw new Error("error" in body && body.error ? body.error : "Sale Invoice data could not be loaded");
         return body;
       })
-      .then((body) => { setPayload(body); setSelectedId(body.rows[0]?.id ?? null); setMessage(`${body.rows.length} real invoices shown · ${body.pagination.total.toLocaleString("en-IN")} total`); })
-      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Sale Invoice data could not be loaded"); })
-      .finally(() => setLoading(false));
+      .then((body) => { setPayload(body); setSelectedId(body.rows[0]?.id ?? null); setMessage(`${body.rows.length} real invoices shown · ${body.pagination.total.toLocaleString("en-IN")} total`); setOutcome({ key: requestKey, error: "" }); })
+      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setOutcome({ key: requestKey, error: reason instanceof Error ? reason.message : "Sale Invoice data could not be loaded" }); });
     return () => controller.abort();
-  }, [page, remoteQuery]);
+  }, [requestKey, page, remoteQuery]);
 
   const pagination = payload?.pagination;
   const search = () => { setPage(1); setRemoteQuery(query.trim()); };

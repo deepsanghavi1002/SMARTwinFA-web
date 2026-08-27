@@ -16,8 +16,6 @@ export type LegacyReportPayload = Readonly<{
 
 export type LegacyReportFilter = Readonly<{ from?: string; upto?: string; query?: string; variant?: string }>;
 
-type QueryResult = { columns: string[]; rows: Array<Record<string, string | number | null>>; total: number };
-
 const queryByKind: Record<LegacyReportKind, { title: string; note: string; query: string }> = {
   daybook: {
     title: "DAY BOOK",
