@@ -2,12 +2,14 @@ import { legacyPool } from "./pool.ts";
 import { legacyCompanySchema } from "./company-schema.ts";
 
 const COMPANY_SCHEMA = legacyCompanySchema();
+const SETUP_SCHEMA = "smart_setup";
 
 export type LegacyStartupContext = Readonly<{
   source: "legacy-postgresql";
   authenticationMode: "migration-test";
   companies: ReadonlyArray<Readonly<{ id: string; name: string; code: string; address: string }>>;
   years: ReadonlyArray<Readonly<{ id: string; label: string }>>;
+  users: ReadonlyArray<Readonly<{ loginName: string; displayName: string; userType: string | null; department: string | null }>>;
 }>;
 
 function formatDate(value: string) {
@@ -39,6 +41,15 @@ export async function readLegacyStartupContext(): Promise<LegacyStartupContext> 
       ORDER BY year_id DESC
     `);
     if (!result.rows.length) throw new Error("No accounting year is available in the restored company database");
+    // Real operator list for the login screen. The obfuscated user_pw column is
+    // deliberately never selected, so no credential leaves the database.
+    const users = await client.query<{ login_name: string; user_name: string | null; user_type: string | null; user_dept: string | null }>(`
+      SELECT BTRIM(login_name) AS login_name, NULLIF(BTRIM(user_name), '') AS user_name,
+             NULLIF(BTRIM(user_type), '') AS user_type, NULLIF(BTRIM(user_dept), '') AS user_dept
+      FROM ${SETUP_SCHEMA}.user_master
+      WHERE COALESCE(BTRIM(user_pos), 'A') <> 'D' AND NULLIF(BTRIM(login_name), '') IS NOT NULL
+      ORDER BY login_name
+    `);
     await client.query("COMMIT");
     return {
       source: "legacy-postgresql",
@@ -50,6 +61,7 @@ export async function readLegacyStartupContext(): Promise<LegacyStartupContext> 
         address: "Restored PostgreSQL company database",
       }],
       years: result.rows.map(({ year_id }) => ({ id: year_id, label: yearLabel(year_id) })),
+      users: users.rows.map((row) => ({ loginName: row.login_name, displayName: row.user_name ?? row.login_name, userType: row.user_type, department: row.user_dept })),
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);

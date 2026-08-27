@@ -1,5 +1,5 @@
 "use client";
-import { type ReactNode, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -26,9 +26,24 @@ type StartupContext = {
   authenticationMode: "migration-test";
   companies: Array<{ id: string; name: string; code: string; address: string }>;
   years: Array<{ id: string; label: string }>;
+  users: Array<{ loginName: string; displayName: string; userType: string | null; department: string | null }>;
 };
 
-const migrationAccessUser = "SRP";
+export type StartupSelection = Readonly<{
+  companyId: string;
+  companyName: string;
+  yearId: string;
+  yearLabel: string;
+  loginName: string;
+  displayName: string;
+}>;
+
+const StartupSelectionContext = createContext<StartupSelection | null>(null);
+
+/** The company, accounting year and operator chosen on the startup screens. */
+export function useStartupSelection() {
+  return useContext(StartupSelectionContext);
+}
 
 const modernTheme = createTheme({
   palette: {
@@ -48,13 +63,14 @@ const modernTheme = createTheme({
 
 export function StartupGate({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<"login" | "company" | "ready">("login");
-  const [username, setUsername] = useState("SRP");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [context, setContext] = useState<StartupContext | null>(null);
   const [contextError, setContextError] = useState("");
   const [year, setYear] = useState("");
   const [company, setCompany] = useState("");
+  const [operator, setOperator] = useState<StartupContext["users"][number] | null>(null);
   // Temporarily keep all users in the reviewed legacy layout while screen
   // alignment issues are being corrected. The modern rendering branch remains
   // below so the switch can be restored without changing application state.
@@ -74,6 +90,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
         setContext(body);
         setYear(body.years[0]?.id ?? "");
         setCompany(body.companies[0]?.id ?? "");
+        setUsername((current) => current || body.users[0]?.loginName || "");
       })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
@@ -82,10 +99,28 @@ export function StartupGate({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, []);
 
-  if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{children}</div>;
+  const selectedCompany = companies.find((item) => item.id === company);
+  const selectedYear = accountingYears.find((item) => item.id === year);
+
+  if (stage === "ready" && selectedCompany && selectedYear && operator) {
+    const selection: StartupSelection = {
+      companyId: selectedCompany.id, companyName: selectedCompany.name,
+      yearId: selectedYear.id, yearLabel: selectedYear.label,
+      loginName: operator.loginName, displayName: operator.displayName,
+    };
+    return <StartupSelectionContext.Provider value={selection}><div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{children}</div></StartupSelectionContext.Provider>;
+  }
+
+  // The typed operator is matched against the real user list restored into
+  // smart_setup.user_master. The legacy user_pw column is a fixed-width
+  // obfuscation whose algorithm is not part of this migration, so this stays
+  // migration-test access and never claims to verify a password.
   const login = () => {
-    if (username.trim().toUpperCase() === migrationAccessUser && password.trim().length > 0) { setError(""); setStage("company"); }
-    else setError("Invalid user name or password");
+    if (!context) { setError(contextError || "Startup data is still loading"); return; }
+    const match = context.users.find((item) => item.loginName.toUpperCase() === username.trim().toUpperCase());
+    if (!match) { setError("Invalid user name or password"); return; }
+    if (!password.trim().length) { setError("Invalid user name or password"); return; }
+    setOperator(match); setError(""); setStage("company");
   };
 
   if (modernView) {

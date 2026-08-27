@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AddonMaster } from "../features/addon-master/AddonMaster";
 import { DemoWorkflow, hasDemoWorkflow } from "../features/demo-workflows/DemoWorkflow";
 import { resolveLegacyWorkflow, type LegacyWorkflowRoute } from "../features/navigation/legacy-workflow-router";
-import { StartupGate } from "../features/startup/StartupGate";
+import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
 type LegacyMenuNode = { id: number; parentId: number | null; label: string; program: string | null; action: string | null; children: LegacyMenuNode[] };
 type Menu = { label: string; children?: string[] };
@@ -35,6 +35,16 @@ function LegacyMenuTree({ nodes, moduleLabel, onSelect, expandedBranches, toggle
   })}</>;
 }
 
+function ContextStrip({ running }: { running: string }) {
+  const selection = useStartupSelection();
+  return <section className="context-strip">
+    <strong>▦ {selection?.companyName ?? "Loading restored company…"}</strong>
+    <span>▣ Year: {selection?.yearLabel ?? "Loading…"}</span>
+    <span>♙ User: {selection ? `${selection.displayName} (migration access)` : "…"}</span>
+    <span className="running">{running}</span>
+  </section>;
+}
+
 function LegacyMenuMigrationStatus({ node, moduleLabel }: { node: LegacyMenuNode; moduleLabel: string }) {
   return <section className="real-workflow-pending" aria-label="Legacy workflow migration status">
     <header><strong>{node.label}</strong><span>{moduleLabel} · menu #{node.id}</span></header>
@@ -49,7 +59,7 @@ export default function Home() {
   const [legacySelection, setLegacySelection] = useState<{ node: LegacyMenuNode; moduleLabel: string; route: LegacyWorkflowRoute | null } | null>(null);
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
   const [expandedBranches, setExpandedBranches] = useState<Set<number>>(() => new Set());
-  const [runtimeContext, setRuntimeContext] = useState<{ company: string; year: string } | null>(null);
+
   const menuBar = useRef<HTMLDivElement>(null);
   const activeLabel = activeItem.includes("::") ? activeItem.slice(activeItem.lastIndexOf("::") + 2) : activeItem;
   const goHome = () => {
@@ -99,23 +109,6 @@ export default function Home() {
   const expandBranch = (id: number) => setExpandedBranches((current) => current.has(id) ? current : new Set([...current, id]));
   const menuRoots = legacyMenus ?? fallbackMenus.map((menu, index) => ({ id: -(index + 1), parentId: null, label: menu.label, program: null, action: null, children: (menu.children ?? []).map((label, childIndex) => ({ id: -((index + 1) * 1000 + childIndex + 1), parentId: -(index + 1), label, program: null, action: null, children: [] })) }));
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/legacy/startup", { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        const body = await response.json() as { companies?: Array<{ name: string }>; years?: Array<{ label: string }> };
-        if (!response.ok) throw new Error("Startup context unavailable");
-        setRuntimeContext({
-          company: body.companies?.[0]?.name ?? "Restored company database",
-          year: body.years?.[0]?.label ?? "Accounting year unavailable",
-        });
-      })
-      .catch((reason: unknown) => {
-        if (!(reason instanceof DOMException && reason.name === "AbortError")) setRuntimeContext(null);
-      });
-    return () => controller.abort();
-  }, []);
-
   return <StartupGate>{(
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
       <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage">{/* eslint-disable-next-line @next/next/no-img-element -- static local SVG brand mark; next/image does not optimise SVG and would only add a loader hop */}
@@ -143,9 +136,7 @@ export default function Home() {
         </div>
       </>}
 
-      <section className="context-strip">
-        <strong>▦ {runtimeContext?.company ?? "Loading restored company…"}</strong><span>▣ Year: {runtimeContext?.year ?? "Loading…"}</span><span>♙ User: SRP (migration access)</span><span className="running">{activeItem === "Home" ? "Layout　◉ Color" : `Menu: ${(legacySelection?.node.label ?? activeLabel).toUpperCase().replaceAll(" ", "_")}`}</span>
-      </section>
+      <ContextStrip running={activeItem === "Home" ? "Layout　◉ Color" : `Menu: ${(legacySelection?.node.label ?? activeLabel).toUpperCase().replaceAll(" ", "_")}`} />
 
       <section className={`work-area ${legacySelection || activeLabel === "Addon Master" || hasDemoWorkflow(activeItem) ? "workflow-open" : ""}`}>
         {legacySelection?.route?.kind === "addon" ? <AddonMaster /> : legacySelection?.route?.kind === "demo" ? <DemoWorkflow key={`${legacySelection.node.id}:${legacySelection.route.workflowId}`} activeItem={legacySelection.route.workflowId} /> : legacySelection ? <LegacyMenuMigrationStatus node={legacySelection.node} moduleLabel={legacySelection.moduleLabel} /> : activeLabel === "Addon Master" || activeItem === "Addon Master" ? <AddonMaster /> : hasDemoWorkflow(activeItem) ? <DemoWorkflow key={activeItem} activeItem={activeItem} /> : <div className="home-splash" aria-label="SMART WINFA homepage">
