@@ -19,6 +19,14 @@ const writableColumns = {
   },
 } as const;
 
+// The SQL Server export preserved a few upper-case column names, so PostgreSQL
+// only resolves them when quoted. Every generated identifier is quoted, which
+// also keeps reserved words such as "limit" valid.
+export const physicalColumns: Record<string, string> = { "account.limit": "LIMIT" };
+export function columnRef(table: string, column: string) {
+  return `"${physicalColumns[`${table}.${column}`] ?? column}"`;
+}
+
 const sourceAliases: Record<string, string> = { acc: "account", adr: "address", acb: "ac_balance", pm: "product_master", pbal: "prod_balance", pl: "pricelist" };
 
 export function masterWriteKey(kind: MasterKind, databaseName: string, fieldName: string) {
@@ -67,22 +75,22 @@ function grouped(values: Record<string, string>, table: string) {
 
 async function updateColumns(client: PoolClient, table: string, columns: readonly [string, string][], where: string, whereValues: readonly unknown[]) {
   if (!columns.length) return;
-  const assignments = columns.map(([column], index) => `${column}=$${index + 1}`).join(",");
+  const assignments = columns.map(([column], index) => `${columnRef(table, column)}=$${index + 1}`).join(",");
   await client.query(`UPDATE ${SCHEMA}.${table} SET ${assignments} WHERE ${where}`, [...columns.map(([, value]) => value === "" ? null : value), ...whereValues]);
 }
 
 async function updateAddress(client: PoolClient, code: number, values: Record<string, string>) {
   const columns = grouped(values, "address"); if (!columns.length) return;
-  const updated = await client.query(`UPDATE ${SCHEMA}.address SET ${columns.map(([column], index) => `${column}=$${index + 1}`).join(",")} WHERE code=$${columns.length + 1} AND address_id=1`, [...columns.map(([, value]) => value === "" ? null : value), code]);
+  const updated = await client.query(`UPDATE ${SCHEMA}.address SET ${columns.map(([column], index) => `${columnRef("address", column)}=$${index + 1}`).join(",")} WHERE code=$${columns.length + 1} AND address_id=1`, [...columns.map(([, value]) => value === "" ? null : value), code]);
   if (updated.rowCount) return;
-  await client.query(`INSERT INTO ${SCHEMA}.address(code,address_id,address_key,a_pos,${columns.map(([column]) => column).join(",")}) SELECT $1,1,COALESCE(MAX(address_key),0)+1,'A',${columns.map((_, index) => `$${index + 2}`).join(",")} FROM ${SCHEMA}.address`, [code, ...columns.map(([, value]) => value === "" ? null : value)]);
+  await client.query(`INSERT INTO ${SCHEMA}.address(code,address_id,address_key,a_pos,${columns.map(([column]) => columnRef("address", column)).join(",")}) SELECT $1,1,COALESCE(MAX(address_key),0)+1,'A',${columns.map((_, index) => `$${index + 2}`).join(",")} FROM ${SCHEMA}.address`, [code, ...columns.map(([, value]) => value === "" ? null : value)]);
 }
 
 async function updatePrice(client: PoolClient, code: number, values: Record<string, string>) {
   const columns = grouped(values, "pricelist"); if (!columns.length) return;
   const latest = await client.query<{ pl_key: number }>(`SELECT pl_key FROM ${SCHEMA}.pricelist WHERE prod_id=$1 AND COALESCE(pl_pos,'A')<>'D' ORDER BY pl_wefrom DESC NULLS LAST,pl_key DESC LIMIT 1`, [code]);
   if (latest.rowCount) return updateColumns(client, "pricelist", columns, `pl_key=$${columns.length + 1}`, [latest.rows[0].pl_key]);
-  await client.query(`INSERT INTO ${SCHEMA}.pricelist(pl_key,prod_id,pl_pos,last_savedate,last_savetime,${columns.map(([column]) => column).join(",")}) SELECT COALESCE(MAX(pl_key),0)+1,$1,'A',CURRENT_DATE,to_char(clock_timestamp(),'HH24:MI:SS'),${columns.map((_, index) => `$${index + 2}`).join(",")} FROM ${SCHEMA}.pricelist`, [code, ...columns.map(([, value]) => value === "" ? null : value)]);
+  await client.query(`INSERT INTO ${SCHEMA}.pricelist(pl_key,prod_id,pl_pos,last_savedate,last_savetime,${columns.map(([column]) => columnRef("pricelist", column)).join(",")}) SELECT COALESCE(MAX(pl_key),0)+1,$1,'A',CURRENT_DATE,to_char(clock_timestamp(),'HH24:MI:SS'),${columns.map((_, index) => `$${index + 2}`).join(",")} FROM ${SCHEMA}.pricelist`, [code, ...columns.map(([, value]) => value === "" ? null : value)]);
 }
 
 export async function writeLegacyMaster(kind: MasterKind, raw: unknown) {

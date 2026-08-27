@@ -31,10 +31,14 @@ export async function readLegacyEntryContext(kind: LegacyEntryKind): Promise<Leg
     await client.query("BEGIN READ ONLY");
     await client.query("SET LOCAL statement_timeout = '20000ms'");
     const [books, parties, products] = await Promise.all([
+      // Invoice entry writes prod_ledger and prod_balance, so it may only offer
+      // registers the desktop flags for stock entry (stkm_stkentry = 'Y').
+      // Vouchers post ledger lines only and take the remaining registers.
       client.query<BookRow>(`
         SELECT book_key, NULLIF(BTRIM(book_desc), '') AS label
         FROM ${COMPANY_SCHEMA}.book_properties
         WHERE book_key IN (4, 5, 6, 7, 8, 19)
+          AND COALESCE(BTRIM(stkm_stkentry), 'N') ${kind === "invoice" ? "=" : "<>"} 'Y'
         ORDER BY book_key
       `),
       client.query<PartyRow>(`
