@@ -16,8 +16,6 @@ export type LegacyReportPayload = Readonly<{
 
 export type LegacyReportFilter = Readonly<{ from?: string; upto?: string; query?: string; variant?: string }>;
 
-type QueryResult = { columns: string[]; rows: Array<Record<string, string | number | null>>; total: number };
-
 const queryByKind: Record<LegacyReportKind, { title: string; note: string; query: string }> = {
   daybook: {
     title: "DAY BOOK",
@@ -439,8 +437,12 @@ export async function readLegacyReport(kind: LegacyReportKind, filter: LegacyRep
     if (dateColumn && from) { params.push(from); clauses.push(`NULLIF(NULLIF(source."${dateColumn}", '—'), '')::date >= $${params.length}::date`); }
     if (dateColumn && upto) { params.push(upto); clauses.push(`NULLIF(NULLIF(source."${dateColumn}", '—'), '')::date <= $${params.length}::date`); }
     if (query) { params.push(`%${query}%`); clauses.push(`to_jsonb(source)::text ILIKE $${params.length}`); }
-    const filteredQuery = `SELECT * FROM (${sourceQuery}) source${clauses.length ? ` WHERE ${clauses.join(" AND ")}` : ""} LIMIT 1000`;
-    const result = await client.query<Record<string, string | number | null>>(filteredQuery, params);
+    const filterSql = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+    const filteredQuery = `SELECT * FROM (${sourceQuery}) source${filterSql} LIMIT 1000`;
+    const [result, count] = await Promise.all([
+      client.query<Record<string, string | number | null>>(filteredQuery, params),
+      client.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM (${sourceQuery}) source${filterSql}`, params),
+    ]);
     await client.query("COMMIT");
     return {
       source: "legacy-postgresql",
@@ -448,7 +450,7 @@ export async function readLegacyReport(kind: LegacyReportKind, filter: LegacyRep
       report: { kind, title: definition.title, note: definition.note },
       columns: result.fields.map((field) => field.name),
       rows: result.rows,
-      total: result.rowCount ?? result.rows.length,
+      total: Number(count.rows[0]?.total ?? result.rows.length),
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);

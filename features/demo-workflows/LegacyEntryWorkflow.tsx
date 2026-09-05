@@ -28,6 +28,12 @@ const voucherDefinitions: Record<VoucherType, { title: string; book: number; rep
   discount: { title: "Discount Voucher", book: 5, report: "discount-voucher" },
 };
 
+const voucherBooks: Record<VoucherType, readonly number[]> = {
+  "cash-bank": [4, 6, 7],
+  journal: [19],
+  discount: [5],
+};
+
 function EntryHeader({ title, mode, setMode, status }: { title: string; mode: "entry" | "register"; setMode: (mode: "entry" | "register") => void; status: string }) {
   return <header className="desktop-entry-title"><strong>{title}</strong><nav aria-label={`${title} mode`}><button className={mode === "entry" ? "active" : ""} type="button" onClick={() => setMode("entry")}>Entry</button><button className={mode === "register" ? "active" : ""} type="button" onClick={() => setMode("register")}>Register</button></nav><span>{status}</span></header>;
 }
@@ -48,17 +54,20 @@ export function LegacyEntryWorkflow({ kind, voucherType = "cash-bank" }: { kind:
   const [items, setItems] = useState<ItemLine[]>([blankItem()]);
   const [ledger, setLedger] = useState<LedgerLine[]>([blankLedger()]);
   const [postedKey, setPostedKey] = useState<number | null>(null);
+  const [lookupQuery, setLookupQuery] = useState("");
 
   const definition = kind === "voucher" ? voucherDefinitions[voucherType] : null;
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setError("");
-    fetch(`/api/legacy/transaction/context?kind=${kind}`, { signal: controller.signal, cache: "no-store" })
+    const controller = new AbortController();
+    const params = new URLSearchParams({ kind });
+    if (lookupQuery.trim()) params.set("q", lookupQuery.trim());
+    fetch(`/api/legacy/transaction/context?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => { const body = await response.json() as Context | { error?: string }; if (!response.ok || !("parties" in body)) throw new Error("error" in body && body.error ? body.error : "Entry lookups could not be loaded"); return body; })
       .then((body) => { setContext(body); setStatus(`${body.parties.length.toLocaleString("en-IN")} real accounts${kind === "invoice" ? ` · ${body.products.length.toLocaleString("en-IN")} real products` : ""} available`); })
       .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Entry lookups could not be loaded"); })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [kind]);
+  }, [kind, lookupQuery]);
 
   const party = context?.parties.find((candidate) => String(candidate.code) === partyCode) ?? null;
   const itemTotal = useMemo(() => items.reduce((total, line) => total + number(line.quantity) * number(line.rate), 0), [items]);
@@ -97,8 +106,9 @@ export function LegacyEntryWorkflow({ kind, voucherType = "cash-bank" }: { kind:
     {error && <div className="legacy-empty-state" role="alert"><strong>Database connection failed</strong><span>{error}</span></div>}
     {!loading && context && <main className="desktop-entry-form">
       <section className="desktop-entry-top">
+        <label className="desktop-entry-lookup"><span>Find account / product</span><input value={lookupQuery} onChange={(event) => setLookupQuery(event.target.value)} placeholder="Search name or code across all restored records" /></label>
         <div className="desktop-entry-document">
-          <label><span>Register</span><select value={book} onChange={(event) => setBook(event.target.value)}>{context.books.filter((candidate) => kind === "invoice" ? candidate.key === 8 : true).map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.label} ({candidate.key})</option>)}</select></label>
+          <label><span>Register</span><select value={book} onChange={(event) => setBook(event.target.value)}>{context.books.filter((candidate) => kind === "invoice" ? candidate.key === 8 : voucherBooks[voucherType].includes(candidate.key)).map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.label} ({candidate.key})</option>)}</select></label>
           <label><span>Series</span><input value={series} onChange={(event) => setSeries(event.target.value)} placeholder="Series" /></label>
           <label><span>Ent. Dt.</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
           <label><span>Ent. No.</span><input value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} placeholder="Generated on save" /></label>

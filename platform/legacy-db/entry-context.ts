@@ -25,11 +25,13 @@ type ProductRow = { prod_key: number; label: string | null; uom: string | null; 
  * is being composed. The web form uses these same PostgreSQL facts and posts
  * its supported header, ledger, product and stock movements as one transaction.
  */
-export async function readLegacyEntryContext(kind: LegacyEntryKind): Promise<LegacyEntryContext> {
+export async function readLegacyEntryContext(kind: LegacyEntryKind, rawLookup = ""): Promise<LegacyEntryContext> {
   const client = await legacyPool().connect();
   try {
     await client.query("BEGIN READ ONLY");
     await client.query("SET LOCAL statement_timeout = '20000ms'");
+    const lookup = rawLookup.trim().slice(0, 100);
+    const pattern = `%${lookup}%`;
     const [books, parties, products] = await Promise.all([
       client.query<BookRow>(`
         SELECT book_key, NULLIF(BTRIM(book_desc), '') AS label
@@ -43,9 +45,10 @@ export async function readLegacyEntryContext(kind: LegacyEntryKind): Promise<Leg
         FROM ${COMPANY_SCHEMA}.account a
         LEFT JOIN ${COMPANY_SCHEMA}.address adr ON adr.code = a.code AND adr.address_id = 1
         WHERE COALESCE(a.a_pos, 'A') <> 'D'
+          AND ($1 = '' OR a.name ILIKE $2 OR a.code::text = $1)
         ORDER BY a.name NULLS LAST, a.code
-        LIMIT 600
-      `),
+        LIMIT 500
+      `, [lookup, pattern]),
       kind === "invoice"
         ? client.query<ProductRow>(`
           SELECT pm.prod_key,
@@ -66,9 +69,10 @@ export async function readLegacyEntryContext(kind: LegacyEntryKind): Promise<Leg
             ORDER BY prodbal_key DESC LIMIT 1
           ) balance ON true
           WHERE COALESCE(pm.prod_pos, 'A') <> 'D'
+            AND ($1 = '' OR pm.prod_short ILIKE $2 OR pm.prod_desc ILIKE $2 OR pm.prod_key::text = $1)
           ORDER BY pm.prod_short NULLS LAST, pm.prod_key
-          LIMIT 600
-        `)
+          LIMIT 500
+        `, [lookup, pattern])
         : Promise.resolve({ rows: [] as ProductRow[] }),
     ]);
     await client.query("COMMIT");
@@ -79,7 +83,7 @@ export async function readLegacyEntryContext(kind: LegacyEntryKind): Promise<Leg
       books: books.rows.map((row) => ({ key: row.book_key, label: row.label ?? `BOOK ${row.book_key}` })),
       parties: parties.rows.map((row) => ({ code: row.code, label: row.name ?? `ACCOUNT ${row.code}`, address: row.address })),
       products: products.rows.map((row) => ({ key: row.prod_key, label: row.label ?? `PRODUCT ${row.prod_key}`, uom: row.uom, saleRate: row.sale_rate ?? "0", stock: row.stock ?? "0" })),
-      note: "Desktop lookup facts are loaded from the restored PostgreSQL tables. Supported save, cancellation, stock reversal and print-count updates are written as PostgreSQL transactions.",
+      note: `${lookup ? `Lookup results for “${lookup}”. ` : "Use the lookup box to search all restored accounts and products. "}Desktop lookup facts are loaded from the restored PostgreSQL tables. Supported save, cancellation, stock reversal and print-count updates are written as PostgreSQL transactions.`,
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);

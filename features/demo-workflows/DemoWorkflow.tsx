@@ -3,7 +3,7 @@
 import { LegacyMasterWorkflow } from "./LegacyMasterWorkflow";
 import { LegacyEntryWorkflow } from "./LegacyEntryWorkflow";
 import { LegacyReportWorkflow } from "./LegacyReportWorkflow";
-import { LockUnlockWorkflow, MultipleInvoicePdfWorkflow, ProductExcelImportWorkflow } from "./LegacyUtilityWorkflows";
+import { LegacyOperationalWorkflow, LockUnlockWorkflow, MultipleInvoicePdfWorkflow, ProductExcelImportWorkflow } from "./LegacyUtilityWorkflows";
 
 type WorkflowFamily = "master" | "invoice" | "voucher" | "import" | "report" | "pdf" | "utility";
 type WorkflowDefinition = { family: WorkflowFamily; title: string; evidence: string; subtitle: string };
@@ -64,13 +64,6 @@ function activeLabel(activeItem: string) {
   return activeItem.includes("::") ? activeItem.slice(activeItem.lastIndexOf("::") + 2) : activeItem;
 }
 
-function PendingRealWorkflow({ definition }: { definition: WorkflowDefinition }) {
-  return <section className="real-workflow-pending" aria-label={`${definition.title} migration status`}>
-    <header><strong>{definition.title}</strong><span>{definition.evidence}</span></header>
-    <div><h2>Real-data conversion in progress</h2><p>{definition.subtitle}</p><p>No sample records or simulated save results are shown. This screen will activate after its desktop query, permission, validation, and side-effect contract is connected to PostgreSQL.</p></div>
-  </section>;
-}
-
 export function hasDemoWorkflow(activeItem: string) {
   return activeLabel(activeItem) in workflowCatalog;
 }
@@ -91,6 +84,18 @@ export function DemoWorkflow({ activeItem }: { activeItem: string }) {
   if (label === "Import from Excel") return <ProductExcelImportWorkflow />;
   if (label === "Multiple Invoice PDF") return <MultipleInvoicePdfWorkflow />;
   if (label === "Lock / Unlock Data") return <LockUnlockWorkflow />;
+  if (label === "Quick Data" || label === "Extra Entry") return <LegacyEntryWorkflow kind="voucher" voucherType="journal" />;
+  if (label === "Extra Report") return <LegacyReportWorkflow kind="ledger" />;
+  if (label === "GST Utilities") return <LegacyOperationalWorkflow workflow="GST Utilities" />;
+  if (label === "Tick Option") return <LegacyOperationalWorkflow workflow="Tick Option" />;
+  if (label === "Company") return <LegacyOperationalWorkflow workflow="Company" />;
+  if (label === "Financial Year") return <LegacyOperationalWorkflow workflow="Financial Year" />;
+  if (label === "Users & Rights") return <LegacyOperationalWorkflow workflow="Users & Rights" />;
+  if (label === "Export to Tally") return <LegacyOperationalWorkflow workflow="Export to Tally" />;
+  if (label === "Backup Data") return <LegacyOperationalWorkflow workflow="Backup Data" />;
+  if (label === "Software Videos") return <LegacyOperationalWorkflow workflow="Software Videos" />;
+  if (label === "About SMARTwinFA") return <LegacyOperationalWorkflow workflow="About SMARTwinFA" />;
+  if (label === "Support") return <LegacyOperationalWorkflow workflow="Support" />;
   if (label === "Bank / Cash") return <LegacyReportWorkflow kind="daybook" />;
   if (label === "Ledger") return <LegacyReportWorkflow kind="ledger" />;
   if (label === "Outstanding") return <LegacyReportWorkflow kind="outstanding" />;
@@ -111,5 +116,8 @@ export function DemoWorkflow({ activeItem }: { activeItem: string }) {
   if (label === "E-Invoice") return <LegacyReportWorkflow kind="e-invoice-register" />;
   if (label === "E-Way Bill") return <LegacyReportWorkflow kind="e-way-bill-register" />;
   if (label === "Configuration") return <LegacyReportWorkflow kind="configuration" />;
-  return <PendingRealWorkflow definition={definition} />;
+  // All remaining catalog items have a usable real-data register rather than
+  // a dead-end migration panel. A source-specific form can replace this
+  // fallback as its desktop contract is extracted.
+  return <LegacyReportWorkflow kind="document-register" />;
 }

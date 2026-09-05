@@ -10,11 +10,11 @@ export type ReportFilter = { from?: string; upto?: string; query?: string; varia
 const numeric = new Set(["Debit", "Credit", "Entry Amount", "Setoff", "Prior Setoff", "Pending", "Opening", "Closing", "Reporting Rate", "Closing Value", "Invoice Amount", "Quantity", "Rate", "Value", "Target Quantity", "Target Value", "Target %", "Share %", "Amount"]);
 const visualOptions: Partial<Record<ReportKind, { selection: string; choices: string[]; measure: string; measures: string[]; zoom?: boolean }>> = {
   ledger: { selection: "Account", choices: ["All accounts", "Account-wise", "Book-wise"], measure: "View", measures: ["Ledger", "Narration", "Document"], zoom: true },
-  outstanding: { selection: "Outstanding", choices: ["All", "Sale", "Purchase", "Expense"], measure: "Ageing", measures: ["All days", "30 days", "60 days", "90 days"], zoom: true },
-  "trial-balance": { selection: "Group", choices: ["Account", "Schedule", "Area"], measure: "Format", measures: ["Summary", "Detailed", "With opening"], zoom: true },
+  outstanding: { selection: "Outstanding", choices: ["All"], measure: "Ageing", measures: ["All days"], zoom: true },
+  "trial-balance": { selection: "Group", choices: ["Account"], measure: "Format", measures: ["Detailed"], zoom: true },
   "top-sales": { selection: "Select", choices: ["Customer", "Supplier", "Item"], measure: "Order", measures: ["Value", "Quantity", "Invoices"], zoom: true },
   "partywise-stock": { selection: "Analysis", choices: ["Party", "Item", "Quantity", "Invoice count"], measure: "View", measures: ["Value", "Quantity", "Details"], zoom: true },
-  "closing-stock": { selection: "Stock", choices: ["Closing stock", "Pieces", "Packs", "Value"], measure: "Period", measures: ["Current", "Month-end", "Financial year"], zoom: true },
+  "closing-stock": { selection: "Stock", choices: ["Closing stock", "Value"], measure: "Period", measures: ["Current"], zoom: true },
   "sales-distribution": { selection: "Select", choices: ["Sale amount", "Sale quantity", "Purchase amount", "Purchase quantity", "Expense", "Receipt", "Payment"], measure: "Chart", measures: ["Pie", "Legend", "Table"], zoom: true },
   daybook: { selection: "Book", choices: ["Bank", "Cash", "Discount", "All books"], measure: "Format", measures: ["Detailed", "Summary"], zoom: true },
 };
@@ -24,10 +24,6 @@ function format(column: string, value: string | number | null) {
   if (value === null || value === "") return "—";
   if (numeric.has(column)) return Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return String(value);
-}
-
-function reportDate(row: ReportRow) {
-  return [row.Date, row["Document Date"], row.From, row["First Movement"]].find((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
 function rowKey(row: ReportRow, index: number) {
@@ -84,7 +80,6 @@ export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
   const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError("");
     const params = new URLSearchParams();
     if (filter.from) params.set("from", filter.from);
     if (filter.upto) params.set("upto", filter.upto);
@@ -115,8 +110,6 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
   const [selectedKey, setSelectedKey] = useState("");
   const [zoom, setZoom] = useState(false);
   const { payload, loading, error, refresh } = useLegacyReport(kind, applied);
-
-  useEffect(() => { setSelection(visualOptions[kind]?.choices[0] ?? "All"); setMeasure(visualOptions[kind]?.measures[0] ?? "Detailed"); setSelectedKey(""); setZoom(false); }, [kind]);
 
   const rows = useMemo(() => presentRows(kind, payload?.rows ?? [], selection, measure), [kind, payload?.rows, selection, measure]);
   const selected = rows.find((row, index) => rowKey(row, index) === selectedKey) ?? null;

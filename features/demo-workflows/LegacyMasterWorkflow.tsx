@@ -88,8 +88,6 @@ function RealLegacyMasterWorkflow({ kind }: { kind: MasterKind }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
-    setError("");
     const params = new URLSearchParams();
     if (selectionKey !== null) params.set(isProduct ? "group" : "book", String(selectionKey));
     if (isProduct) {

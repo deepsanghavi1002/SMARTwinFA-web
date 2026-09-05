@@ -42,15 +42,29 @@ export async function postLegacyEntry(raw: unknown) {
     if (duplicate.rowCount) throw new Error("This document number already exists in the selected register");
     const amount = entry.kind === "invoice" ? entry.items!.reduce((sum, line) => sum + line.quantity * line.rate, 0) : entry.ledger!.reduce((sum, line) => sum + line.debit, 0);
     const process = await client.query<{ process_key: number }>(`INSERT INTO ${SCHEMA}.process(process_key,stk_module,doc_no2,book,book_code,p_date,code,il_pos,p_docseries,full_docno,p_bkdbcode,p_amount,delv_days,entry_for,stk_remark,year_id,last_savedate,last_savetime,entry_no,post_date,print_count) VALUES ($1,$2,$3,$4,$5,$6,$7,'A',$8,$9,2,$10,$11,$12,$13,$14,CURRENT_DATE,to_char(clock_timestamp(),'HH24:MI:SS'),$3,$6,0) RETURNING process_key`, [next.rows[0].key, entry.kind === "invoice" ? "S" : "A", documentNumber, entry.book, entry.partyCode, entry.date, entry.partyCode, entry.series, fullDocument, amount, entry.creditDays, entry.kind === "invoice" ? "P" : "A", entry.narration, yearId]);
-    const ledgerLines = entry.kind === "invoice" ? [{ accountCode: entry.partyCode, debit: amount, credit: 0 }] : entry.ledger!;
+    // A sale has to produce both sides of the accounting movement.  The
+    // previous migration insert only created the customer debit, which made a
+    // posted invoice look valid in PROCESS while leaving the ledger unbalanced.
+    // The desktop data identifies the sale-control account by the active
+    // account whose book matches the sale register (normally SALE, book 8).
+    const saleControl = entry.kind === "invoice"
+      ? await client.query<{ code: number }>(`SELECT code FROM ${SCHEMA}.account WHERE book=$1 AND COALESCE(a_pos,'A')<>'D' ORDER BY code LIMIT 1`, [entry.book])
+      : null;
+    if (entry.kind === "invoice" && !saleControl?.rowCount) throw new Error("The selected sale register has no active sale-control account");
+    const ledgerLines = entry.kind === "invoice"
+      ? [{ accountCode: entry.partyCode, debit: amount, credit: 0 }, { accountCode: saleControl!.rows[0].code, debit: 0, credit: amount }]
+      : entry.ledger!;
+    let invoiceLedgerKey: number | null = null;
     for (const line of ledgerLines) {
       const led = await client.query<{ led_key: number }>(`INSERT INTO ${SCHEMA}.ledger(led_key,code,doc_date,doc_no,doc_series,full_docno,amount,book_amt,book,book_code,bk_dbcode,ac_dbcode,narration,post_amt,doc_posting,doc_pos,prod_amt,entry_sty,year_id,credit_days,last_savedate,last_savetime,print_count) SELECT COALESCE(MAX(led_key),0)+1,$1,$2,$3,$4,$5,$6,$6,$7,$1,2,$8,$9,$6,'P','A',$10,'W',$11,$12,CURRENT_DATE,to_char(clock_timestamp(),'HH24:MI:SS'),0 FROM ${SCHEMA}.ledger RETURNING led_key`, [line.accountCode, entry.date, documentNumber, entry.series, fullDocument, line.debit - line.credit, entry.book, line.debit > 0 ? 1 : 2, entry.narration, entry.kind === "invoice" ? amount : 0, yearId, entry.creditDays]);
       await client.query(`INSERT INTO ${SCHEMA}.ledger_post(post_key,led_id,post_code,post_date,post_bookcd,post_book,post_amt,post_dbcode,year_id) SELECT COALESCE(MAX(post_key),0)+1,$1,$2,$3,$2,$4,$5,$6,$7 FROM ${SCHEMA}.ledger_post`, [led.rows[0].led_key, line.accountCode, entry.date, entry.book, Math.abs(line.debit - line.credit), line.debit > 0 ? 1 : 2, yearId]);
+      if (entry.kind === "invoice" && line.accountCode === entry.partyCode && line.debit > 0) invoiceLedgerKey = led.rows[0].led_key;
     }
+    if (entry.kind === "invoice" && !invoiceLedgerKey) throw new Error("Invoice customer ledger line could not be created");
     if (entry.kind === "invoice") for (const [index, line] of entry.items!.entries()) {
       const product = await client.query<{ prod_short: string; bill_desc: string | null; issuuom_id: number | null }>(`SELECT prod_short,bill_desc,issuuom_id FROM ${SCHEMA}.product_master WHERE prod_key=$1 AND COALESCE(prod_pos,'A')<>'D'`, [line.productKey]);
       if (!product.rowCount) throw new Error("A selected product no longer exists");
-      await client.query(`INSERT INTO ${SCHEMA}.prod_ledger(il_key,led_id,il_serial,doc_no1,prod_id,il_prodcd,il_billdesc,quantity,rate,master_rate,il_value,book,book_code,rateuom_id,uomentry_id,type,il_date,stock_nat,code,il_pos,full_docno,inventory,factor,year_id) SELECT COALESCE(MAX(il_key),0)+1,$1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$12,1,$13,'O',$11,'A',$14,'S',1,$15 FROM ${SCHEMA}.prod_ledger`, [process.rows[0].process_key, index + 1, documentNumber, line.productKey, product.rows[0].prod_short, product.rows[0].bill_desc ?? product.rows[0].prod_short, line.quantity, line.rate, line.quantity * line.rate, entry.book, entry.partyCode, product.rows[0].issuuom_id ?? 0, entry.date, fullDocument, yearId]);
+      await client.query(`INSERT INTO ${SCHEMA}.prod_ledger(il_key,led_id,il_serial,doc_no1,prod_id,il_prodcd,il_billdesc,quantity,rate,master_rate,il_value,book,book_code,rateuom_id,uomentry_id,type,il_date,stock_nat,code,il_pos,full_docno,inventory,factor,year_id) SELECT COALESCE(MAX(il_key),0)+1,$1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$12,1,$13,'O',$11,'A',$14,'S',1,$15 FROM ${SCHEMA}.prod_ledger`, [invoiceLedgerKey, index + 1, documentNumber, line.productKey, product.rows[0].prod_short, product.rows[0].bill_desc ?? product.rows[0].prod_short, line.quantity, line.rate, line.quantity * line.rate, entry.book, entry.partyCode, product.rows[0].issuuom_id ?? 0, entry.date, fullDocument, yearId]);
       const stock = await client.query(`UPDATE ${SCHEMA}.prod_balance SET less_pcs=COALESCE(less_pcs,0)+$1,clsg_pcs=COALESCE(clsg_pcs,0)-$1 WHERE prod_id=$2 AND year_id=$3 AND prec_flag='RP'`, [line.quantity, line.productKey, yearId]);
       if (!stock.rowCount) throw new Error("The selected product has no active stock balance");
     }

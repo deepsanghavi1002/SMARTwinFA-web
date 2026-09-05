@@ -29,7 +29,6 @@ export function AddonMaster() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError("");
     fetch(`/api/legacy/master/addon?relation=${encodeURIComponent(relation)}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as AddonPayload | { error?: string };

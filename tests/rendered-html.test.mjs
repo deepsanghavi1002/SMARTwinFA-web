@@ -128,9 +128,9 @@ test("keeps the latest migrated application surface wired into the root route", 
   ]) {
     assert.match(demoWorkflows, new RegExp(workflow.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.match(demoWorkflows, /PendingRealWorkflow/);
+  assert.match(demoWorkflows, /LegacyOperationalWorkflow/);
   assert.match(demoWorkflows, /LegacyEntryWorkflow/);
-  assert.match(demoWorkflows, /No sample records or simulated save results/);
+  assert.match(utilityWorkflows, /Live PostgreSQL utility/);
   assert.doesNotMatch(demoWorkflows, /saved locally|synthetic data|mock PDF/i);
   for (const workbookFlow of ["F4 Update", "Cancel Both", "PRODUCT GROUP", "BOOK / LEDGER", "displayed real"]) {
     assert.match(legacyMaster, new RegExp(workbookFlow));
@@ -149,7 +149,7 @@ test("keeps the latest migrated application surface wired into the root route", 
   assert.match(reportWorkflow, /F4 Zoom/);
   assert.match(reportWorkflow, /sales-distribution/);
   assert.match(reportWorkflow, /conic-gradient/);
-  for (const utilityFlow of ["IMPORT DATA FROM EXCEL", "parseXlsx", "PARTYWISE BILL PDF", "LOCK \/ UNLOCK DATA"]) {
+  for (const utilityFlow of ["IMPORT DATA FROM EXCEL", "parseXlsx", "PARTYWISE BILL PDF", "LOCK / UNLOCK DATA"]) {
     assert.match(utilityWorkflows, new RegExp(utilityFlow));
   }
   assert.match(addonMaster, /addon_fld/);

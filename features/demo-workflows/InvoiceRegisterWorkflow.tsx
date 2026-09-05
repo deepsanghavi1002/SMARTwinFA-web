@@ -26,7 +26,6 @@ export function InvoiceRegisterWorkflow() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError("");
     const params = new URLSearchParams({ page: String(page), pageSize: "100" });
     if (remoteQuery) params.set("q", remoteQuery);
     fetch(`/api/legacy/transaction/invoice?${params}`, { signal: controller.signal, cache: "no-store" })

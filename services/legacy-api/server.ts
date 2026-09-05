@@ -108,7 +108,7 @@ const server = createServer(async (request, response) => {
     const kind = url.searchParams.get("kind");
     if (kind !== "invoice" && kind !== "voucher") return json(response, 404, { error: "Unknown desktop entry kind" });
     try {
-      return json(response, 200, await readLegacyEntryContext(kind as LegacyEntryKind));
+      return json(response, 200, await readLegacyEntryContext(kind as LegacyEntryKind, (url.searchParams.get("q") || "").trim().slice(0, 100)));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Desktop entry lookup data could not be loaded";
       return json(response, 503, { error: message });
