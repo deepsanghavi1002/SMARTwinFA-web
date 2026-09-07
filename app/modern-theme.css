@@ -609,3 +609,22 @@ html .modern-view .status-strip{border-top:1px solid #cfdded;color:#41576b;backg
   }
   html .modern-view .dropdown>button:hover{color:#0b2f66;background:#eef4fc}
 }
+
+/* Sidebar menus expand in place at every level, so a branch's submenu is an
+   indented list rather than a panel floating beside the sidebar. */
+@media(min-width:781px){
+  html .modern-view .dropdown>.menu-branch>button{
+    min-height:46px;padding-inline:34px;border-bottom:1px solid #eef2f7;
+    color:#123a76;background:#fff;font-size:12.5px;font-weight:600
+  }
+  html .modern-view .submenu{
+    position:static;left:auto;top:auto;width:100%;min-width:0;padding:0;
+    border:0;background:#f7fafd;box-shadow:none
+  }
+  html .modern-view .submenu>button,html .modern-view .submenu>.menu-branch>button{
+    min-height:42px;padding-inline:52px;border-bottom:1px solid #eef2f7;
+    color:#28527f;background:transparent;font-size:12px;font-weight:600
+  }
+  html .modern-view .dropdown>.menu-branch>button:hover,
+  html .modern-view .submenu>button:hover{color:#0b2f66;background:#eef4fc}
+}

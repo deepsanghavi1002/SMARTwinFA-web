@@ -4,19 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import { AddonMaster } from "../features/addon-master/AddonMaster";
 import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
-type Menu = { label: string; children?: string[] };
-
-const menus: Menu[] = [
-  { label: "TRANSACTION", children: ["Invoice", "Cash / Bank", "Journal", "Discount", "Register", "Stock Voucher"] },
-  { label: "REPORT", children: ["Bank / Cash", "Journal", "Register", "Ledger", "Outstanding", "Master", "Final Report", "Extra Report"] },
-  { label: "GST", children: ["GST Reports", "E-Invoice", "E-Way Bill", "GST Utilities"] },
-  { label: "INVENTORY", children: ["Stock Reports", "Stock Summary Report", "Partywise Stock", "Stock Voucher", "Master", "Challan", "Order", "Stock Movement", "Monthly Closing Stock"] },
-  { label: "ANALYSIS REP.", children: ["Top Reports", "Drop Analysis", "Daily Transaction", "Target", "Pie Chart"] },
-  { label: "MASTER", children: ["Account Master", "Product Master", "Addon Master", "Book / Series", "Opening Balance"] },
-  { label: "SETUP", children: ["Company", "Financial Year", "Users & Rights", "Configuration"] },
-  { label: "UTILITY", children: ["Import from Excel", "Export to Tally", "Backup Data", "Lock / Unlock Data", "Multiple Invoice PDF"] },
-  { label: "HELP", children: ["Software Videos", "About SMARTwinFA", "Support"] },
-];
+/**
+ * The menu is data, not application code: it is read from
+ * smart_setup.menumaster for the company that was opened, exactly as the
+ * desktop's Main_Menu_New reads it. A client whose menumaster differs sees a
+ * different menu without the software changing, so nothing here is hardcoded.
+ */
+type MenuNode = {
+  id: number;
+  label: string;
+  shortcut: string | null;
+  actionCode: string | null;
+  programName: string | null;
+  children: MenuNode[];
+};
 
 export default function Home() {
   return <StartupGate><MainMenu /></StartupGate>;
@@ -28,27 +29,72 @@ export default function Home() {
  */
 function MainMenu() {
   const selection = useStartupSelection();
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [menus, setMenus] = useState<MenuNode[]>([]);
+  const [menuError, setMenuError] = useState("");
+  const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [openSub, setOpenSub] = useState<number | null>(null);
   const [activeItem, setActiveItem] = useState("Home");
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
   const menuBar = useRef<HTMLDivElement>(null);
+
+  const closeMenus = () => { setOpenMenu(null); setOpenSub(null); };
   const goHome = () => {
     setActiveItem("Home");
-    setOpenMenu(null);
+    closeMenus();
     setSuspendHoverMenu(true);
   };
+  const choose = (node: MenuNode) => {
+    setActiveItem(node.label);
+    closeMenus();
+    setSuspendHoverMenu(true);
+  };
+
+  const companyGroup = selection?.companyGroup ?? "";
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/menu?group=${encodeURIComponent(companyGroup)}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { menus?: MenuNode[]; error?: string };
+        if (!response.ok || !body.menus) throw new Error(body.error || "Menu could not be loaded");
+        return body.menus;
+      })
+      .then((rows) => { setMenus(rows); setMenuError(""); })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setMenuError(reason instanceof Error ? reason.message : "Menu could not be loaded");
+      });
+    return () => controller.abort();
+  }, [companyGroup]);
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
       const target = event.target as Element;
       if (!menuBar.current?.contains(target) && !target.closest(".mobile-dropdown")) {
-        setOpenMenu(null);
+        closeMenus();
         setSuspendHoverMenu(false);
       }
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
+
+  const openRoot = menus.find((menu) => menu.id === openMenu);
+
+  /** One dropdown row: a leaf runs, a branch opens its submenu beside it. */
+  const item = (node: MenuNode) => node.children.length ? (
+    <div className={`menu-branch ${openSub === node.id ? "open-branch" : ""}`} key={node.id}>
+      <button role="menuitem" aria-expanded={openSub === node.id} aria-haspopup="menu" onClick={() => setOpenSub(openSub === node.id ? null : node.id)}>
+        <span />{node.label}<b>›</b>
+      </button>
+      <div className="submenu" role="menu" aria-label={node.label}>
+        {node.children.map((child) => item(child))}
+      </div>
+    </div>
+  ) : (
+    <button key={node.id} role="menuitem" onClick={() => choose(node)}>
+      <span />{node.label}<b>{node.shortcut ?? ""}</b>
+    </button>
+  );
 
   return (
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
@@ -58,19 +104,19 @@ function MainMenu() {
         {/* Sidebar heading; the classic view hides it. */}
         <span className="menu-bar-title" aria-hidden="true">☰ Menu</span>
         {menus.map((menu) => (
-          <div className="menu-root" key={menu.label}>
-            <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
-            <div className={`dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu">{menu.children?.map((child, index) => <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); setSuspendHoverMenu(true); }}><span>{index > 4 ? "✓" : ""}</span>{child}<b>{["REPORT","INVENTORY","MASTER"].includes(menu.label) && index > 3 ? "›" : ""}</b></button>)}</div>
+          <div className="menu-root" key={menu.id}>
+            <button className={openMenu === menu.id ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenSub(null); setOpenMenu(openMenu === menu.id ? null : menu.id); }} role="menuitem" aria-expanded={openMenu === menu.id}>{menu.label}</button>
+            <div className={`dropdown ${openMenu === menu.id ? "open-menu" : ""}`} role="menu">{menu.children.map((child) => item(child))}</div>
           </div>
         ))}
       </div>
 
-      {openMenu && <>
-        <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={() => setOpenMenu(null)} />
-        <div className="mobile-dropdown" role="menu" aria-label={`${openMenu} menu`}>
-          <strong>{openMenu}</strong>
-          {menus.find((menu) => menu.label === openMenu)?.children?.map((child) => (
-            <button key={child} role="menuitem" onClick={() => { setActiveItem(child); setOpenMenu(null); setSuspendHoverMenu(true); }}>{child}<b>›</b></button>
+      {openRoot && <>
+        <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={closeMenus} />
+        <div className="mobile-dropdown" role="menu" aria-label={`${openRoot.label} menu`}>
+          <strong>{openRoot.label}</strong>
+          {openRoot.children.map((child) => (
+            <button key={child.id} role="menuitem" onClick={() => choose(child)}>{child.label}<b>{child.children.length ? "›" : child.shortcut ?? ""}</b></button>
           ))}
         </div>
       </>}
@@ -93,7 +139,7 @@ function MainMenu() {
         {activeItem === "Addon Master" ? <AddonMaster /> : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
       </section>
 
-      <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
+      <footer className="status-strip"><span>{menuError || (activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`)}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
     </main>
   );
 }

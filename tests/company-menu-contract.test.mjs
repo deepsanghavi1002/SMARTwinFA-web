@@ -56,3 +56,24 @@ test("the routes reject a request that names no operator or year", () => {
   assert.match(companiesRoute, /An accounting year is required/);
   assert.match(companiesRoute, /\^\\d\{1,9\}\$/);
 });
+
+const menuCatalog = read("lib/menu-catalog.ts");
+const page = read("app/page.tsx");
+
+// The application menu is data. Main_Menu_New builds it from
+// smart_setup.menumaster, so a client whose menumaster differs must get a
+// different menu without the software changing.
+test("the application menu is read from menumaster, not carried in the page", () => {
+  assert.match(menuCatalog, /\$\{SETUP_SCHEMA\}\.menumaster/);
+  assert.doesNotMatch(page, /"TRANSACTION"|"INVENTORY"|"ANALYSIS REP\."/, "the menu list must not be hard-coded");
+  assert.match(page, /\/api\/menu\?group=/);
+});
+
+// A special menu appears only for a licence listed in MenuVisible, an ordinary
+// one disappears for a licence listed in MenuHide, and MenuDisplay rows belong
+// to the desktop's hidden-book mode.
+test("menu visibility follows the licence rules the desktop applies", () => {
+  assert.match(menuCatalog, /menuspecial \? listed\(row\.menuvisible\) : !listed\(row\.menuhide\)/);
+  assert.match(menuCatalog, /row\.menudisplay/);
+  assert.match(menuCatalog, /` \$\{licence\},`/);
+});

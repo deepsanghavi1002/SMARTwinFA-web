@@ -94,3 +94,22 @@
 .dropdown button:hover{color:#0b2f66;background:#dbe9fb}
 .menu-bar-title{display:none}
 .status-strip span:first-child{text-align:center}
+
+/* ── Menu levels from menumaster ───────────────────────────────────────────
+   menumaster is three levels deep (TRANSACTION › Auto Entry › …), so a branch
+   row opens its own panel beside the dropdown, the way the desktop does. */
+.menu-branch{position:relative}
+.dropdown>.menu-branch>button,.submenu>button,.submenu>.menu-branch>button{
+  width:100%;height:31px;padding:0 8px;display:grid;grid-template-columns:17px 1fr auto;align-items:center;
+  gap:6px;border:0;color:#123a76;background:#fff;text-align:left;font-size:13px;font-weight:600;cursor:pointer
+}
+.dropdown>.menu-branch>button:hover,.submenu>button:hover,.submenu>.menu-branch>button:hover,
+.dropdown>.menu-branch>button:focus,.submenu>button:focus{outline:0;color:#0b2f66;background:#dbe9fb}
+.dropdown>.menu-branch>button b,.submenu>button b{text-align:right;font-size:11px;font-weight:400;opacity:.75}
+.dropdown>button b{font-size:11px;font-weight:400;opacity:.75}
+
+.submenu{display:none;position:absolute;left:100%;top:-4px;z-index:30;min-width:230px;padding:3px;
+  border:1px solid #9fb6d4;background:#fff;box-shadow:0 8px 20px #12305f2e}
+.open-branch>.submenu{display:block}
+.dropdown>button b,.dropdown>.menu-branch>button b,.submenu>button b{white-space:nowrap}
+.dropdown{min-width:236px}

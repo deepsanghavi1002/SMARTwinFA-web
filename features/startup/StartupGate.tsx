@@ -33,6 +33,8 @@ export type StartupSelection = Readonly<{
   companyName: string;
   /** The company's own database name (CO_DATANAME) that routes its data. */
   companySchema: string;
+  /** CO_GROUP, which decides which menus this company may open. */
+  companyGroup: string | null;
   yearKey: number;
   yearId: string;
   yearLabel: string;
@@ -163,6 +165,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       companyId: selectedCompany.id,
       companyName: selectedCompany.name,
       companySchema: selectedCompany.dataName,
+      companyGroup: selectedCompany.group,
       yearKey: selectedYear.key,
       yearId: selectedYear.id,
       yearLabel: selectedYear.label,

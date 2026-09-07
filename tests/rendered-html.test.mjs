@@ -46,19 +46,12 @@ test("keeps the latest migrated application surface wired into the root route", 
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  for (const menu of [
-    "TRANSACTION",
-    "REPORT",
-    "GST",
-    "INVENTORY",
-    "ANALYSIS REP.",
-    "MASTER",
-    "SETUP",
-    "UTILITY",
-    "HELP",
-  ]) {
-    assert.match(page, new RegExp(menu.replace(".", "\\.")));
-  }
+  // The menu roots used to be literals here. They now come from
+  // smart_setup.menumaster for the company that was opened, so the page is
+  // checked for the wiring rather than for any particular menu name.
+  assert.match(page, /\/api\/menu\?group=/);
+  assert.match(page, /menus\.map\(\(menu\) =>/);
+  assert.match(page, /menu-branch/, "menumaster is three levels deep");
 
   assert.match(page, /<StartupGate>/);
   assert.match(page, /activeItem === "Addon Master"/);
