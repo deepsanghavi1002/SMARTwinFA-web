@@ -1,5 +1,5 @@
 "use client";
-import { type ReactNode, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -26,6 +26,25 @@ import {
 type Operator = { userNo: number; loginName: string; displayName: string; userType: string | null; department: string | null };
 type AccountingYear = { key: number; id: string; label: string };
 type Company = { key: number; id: string; name: string; code: string; address: string; group: string | null; dataName: string; available: boolean };
+
+/** The company, accounting year and operator chosen on the startup screens. */
+export type StartupSelection = Readonly<{
+  companyId: string;
+  companyName: string;
+  /** The company's own database name (CO_DATANAME) that routes its data. */
+  companySchema: string;
+  yearKey: number;
+  yearId: string;
+  yearLabel: string;
+  loginName: string;
+  displayName: string;
+}>;
+
+const StartupSelectionContext = createContext<StartupSelection | null>(null);
+
+export function useStartupSelection() {
+  return useContext(StartupSelectionContext);
+}
 
 const modernTheme = createTheme({
   palette: {
@@ -139,7 +158,19 @@ export function StartupGate({ children }: { children: ReactNode }) {
       <span>Modern</span>
     </button>
   );
-  if (stage === "ready") return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div>;
+  if (stage === "ready" && operator && selectedYear && selectedCompany) {
+    const selection: StartupSelection = {
+      companyId: selectedCompany.id,
+      companyName: selectedCompany.name,
+      companySchema: selectedCompany.dataName,
+      yearKey: selectedYear.key,
+      yearId: selectedYear.id,
+      yearLabel: selectedYear.label,
+      loginName: operator.loginName,
+      displayName: operator.displayName,
+    };
+    return <StartupSelectionContext.Provider value={selection}><div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div></StartupSelectionContext.Provider>;
+  }
   // The typed operator is matched against the real user_master list. The
   // legacy user_pw column is a fixed-width obfuscation whose algorithm is not
   // part of this conversion, so the password is required but not verified —

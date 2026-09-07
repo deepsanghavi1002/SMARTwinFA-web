@@ -556,3 +556,56 @@ html .modern-view .action-icon{stroke:var(--modern-primary-dark)}
   html .modern-view .home-splash-logo{width:min(74vw,280px);height:auto}
   html .modern-view .home-credit strong{font-size:22px}
 }
+
+/* ── Main menu, modern style ───────────────────────────────────────────────
+   The desktop's modern layout: a "Menu" sidebar whose groups expand in place
+   instead of flying out, the same dark blue context strip as the classic
+   view, and the SMART WINFA artwork filling the work area. */
+html .modern-view .home-splash{
+  background:#e8f2fb url("/legacy-home-logo.png") center/100% 100% no-repeat;padding:0
+}
+html .modern-view .work-area{background:#e8f2fb}
+
+html .modern-view .context-strip{
+  border-bottom:0;color:#fff;background:#1a4fa5
+}
+html .modern-view .context-strip>*{border-right:1px solid #ffffff2e}
+html .modern-view .context-strip strong{color:#fff}
+html .modern-view .context-tools button{color:#fff}
+@media(min-width:781px){
+  html .modern-view .context-strip{
+    margin:0;width:100%;min-width:0;max-width:none;justify-self:stretch;border-radius:0
+  }
+}
+
+html .modern-view .status-strip{border-top:1px solid #cfdded;color:#41576b;background:#e9f0f8}
+
+@media(min-width:781px){
+  html .modern-view .winfa-window{grid-template-columns:300px minmax(0,1fr)}
+  html .modern-view .menu-bar{
+    gap:0;padding:0;overflow-y:auto;border-right:1px solid #d5e2ef;background:#fff;box-shadow:none
+  }
+  html .modern-view .menu-bar-title{
+    display:block;padding:18px 20px 14px;color:#1a4fa5;font-size:15px;font-weight:700
+  }
+  html .modern-view .menu-root>button{
+    min-height:46px;border-radius:0;border-bottom:1px solid #e6edf5;
+    color:#123a76;font-size:12.5px;font-weight:700;letter-spacing:.02em
+  }
+  html .modern-view .menu-root>button::before{content:"▶ ";font-size:9px;opacity:.7}
+  html .modern-view .menu-root>button::after{content:none}
+  html .modern-view .menu-root>button.open{color:#fff;background:#1f5fc0}
+  html .modern-view .menu-root>button.open::before{content:"▼ ";opacity:1}
+  html .modern-view .menu-root>button:hover{color:#0b2f66;background:#e8f0fb}
+  html .modern-view .menu-root>button.open:hover{color:#fff;background:#1f5fc0}
+  /* Groups open in place rather than as a flyout panel. */
+  html .modern-view .menu-root>.dropdown{
+    position:static;left:auto;top:auto;width:100%;min-width:0;margin:0;padding:0;
+    border:0;border-radius:0;background:#fff;box-shadow:none
+  }
+  html .modern-view .dropdown>button{
+    min-height:46px;padding-inline:34px;border-bottom:1px solid #eef2f7;
+    color:#123a76;font-size:12.5px;font-weight:600
+  }
+  html .modern-view .dropdown>button:hover{color:#0b2f66;background:#eef4fc}
+}

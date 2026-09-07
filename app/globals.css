@@ -66,3 +66,31 @@
 .legacy-view .work-area{background:radial-gradient(circle at 50% 30%,#ffffff 0%,#edf4fc 34%,#d7e7fb 62%,#c8dcf4 100%)}.legacy-view .work-area img{object-fit:cover;object-position:center center;background:#d7e7fb}
 @media(max-width:780px){.view-switch{top:2px;right:105px;min-width:124px;height:23px;padding-inline:8px;font-size:9px}}
 .dropdown{display:none}.dropdown.open-menu{display:block}@media(max-width:780px){.menu-root>.dropdown.open-menu{display:none}}
+
+/* ── Main menu, classic style ──────────────────────────────────────────────
+   Matches the desktop Main_Menu: a dark blue context strip carrying company,
+   year and operator with Layout/Color at the right, a white menu bar of navy
+   uppercase roots, and the SMART WINFA artwork filling the work area. */
+.home-splash{background:#e8f2fb url("/legacy-home-logo.png") center/100% 100% no-repeat}
+.work-area{background:#e8f2fb}
+
+.context-strip{grid-template-columns:minmax(0,auto) auto auto minmax(0,1fr) auto;border-bottom:0;background:#1a4fa5;color:#fff;font-size:12px}
+.context-strip>*{border-right:1px solid #ffffff2e;display:flex;align-items:center;gap:6px}
+.context-strip>*:last-child{border-right:0}
+.context-strip strong{font-weight:600}
+.context-strip .running{justify-content:flex-end;color:#cfe0f7}
+.context-tools{padding:0 6px;gap:14px}
+.context-tools button{padding:2px 6px;border:0;border-radius:3px;color:#fff;background:transparent;font:inherit;cursor:pointer}
+.context-tools button:hover{background:#ffffff26}
+
+.menu-bar{border-bottom:1px solid #c3d3e6;background:#fff}
+.menu-root>button{height:100%;padding:0 14px;border:0;color:#123a76;background:transparent;font:inherit;font-weight:700;font-size:11.5px;letter-spacing:.02em;cursor:pointer}
+.menu-root>button::after{content:" ▾";font-size:9px;opacity:.65}
+.menu-root>button:hover,.menu-root>button.open{color:#fff;background:#1f5fc0}
+.menu-root>button:hover::after,.menu-root>button.open::after{opacity:1}
+
+.dropdown{border:1px solid #9fb6d4;background:#fff;box-shadow:0 8px 20px #12305f2e}
+.dropdown button{padding:5px 12px;color:#123a76;background:#fff;font-weight:600}
+.dropdown button:hover{color:#0b2f66;background:#dbe9fb}
+.menu-bar-title{display:none}
+.status-strip span:first-child{text-align:center}

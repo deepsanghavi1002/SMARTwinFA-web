@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AddonMaster } from "../features/addon-master/AddonMaster";
-import { StartupGate } from "../features/startup/StartupGate";
+import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
 type Menu = { label: string; children?: string[] };
 
@@ -19,6 +19,15 @@ const menus: Menu[] = [
 ];
 
 export default function Home() {
+  return <StartupGate><MainMenu /></StartupGate>;
+}
+
+/**
+ * The main menu shell. It renders inside StartupGate so the context strip can
+ * name the company, accounting year and operator actually chosen at startup.
+ */
+function MainMenu() {
+  const selection = useStartupSelection();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState("Home");
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
@@ -41,11 +50,13 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  return <StartupGate>{(
+  return (
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
       <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
       <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
+        {/* Sidebar heading; the classic view hides it. */}
+        <span className="menu-bar-title" aria-hidden="true">☰ Menu</span>
         {menus.map((menu) => (
           <div className="menu-root" key={menu.label}>
             <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
@@ -65,22 +76,24 @@ export default function Home() {
       </>}
 
       <section className="context-strip">
-        <strong>DREAMHOUSE INTERIORS SOLUTIONS (PVT.) LTD.</strong><span>01/Apr/2026 to 31/Mar/2027</span><span>PRANAV</span><span className="running">{activeItem === "Home" ? "" : activeItem}</span>
+        <strong>▤ {selection?.companyName ?? "…"}</strong>
+        <span>▦ Year: {selection?.yearLabel ?? "…"}</span>
+        <span>♙ User: {selection?.loginName ?? "…"}</span>
+        <span className="running">{activeItem === "Home" ? "" : activeItem}</span>
+        <div className="context-tools">
+          <button type="button">▤ Layout</button>
+          <button type="button">⚙ Color</button>
+        </div>
       </section>
 
       <section className={`work-area ${activeItem === "Addon Master" ? "workflow-open" : ""}`}>
-        {activeItem === "Addon Master" ? <AddonMaster /> : <div className="home-splash" aria-label="SMART WINFA homepage">
-          <div className="home-splash-logo" role="img" aria-label="SMART WINFA logo" />
-          <aside className="home-credit" aria-label="Developed by Pranav Computers">
-            <span>DEVELOPED BY</span>
-            <strong>PRANAV COMPUTERS</strong>
-            <b>MO :9820144816</b>
-            <b>MO :9833844816</b>
-          </aside>
-        </div>}
+        {/* The SMART WINFA artwork already carries the logo, the tagline and
+            the Pranav Computers credit, so it is drawn as one background
+            rather than reassembled from separate elements. */}
+        {activeItem === "Addon Master" ? <AddonMaster /> : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
       </section>
 
-      <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.01</span></footer>
+      <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
     </main>
-  )}</StartupGate>;
+  );
 }
