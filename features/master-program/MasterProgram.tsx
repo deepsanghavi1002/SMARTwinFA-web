@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import type { StartupSelection } from "../startup/StartupGate";
 import { applyPermission, formatDesktopDate, formatDesktopTime, getPermission, parseDesktopDate, runFormula, toDecimal, toInt, toText } from "../../lib/master-program/legacy";
 import type { AddRow, CloudPush, ComboOption, GroupLoad, GroupState, ProgramDefinition, UpdateColumn, UpdateRecord } from "../../lib/master-program/types";
 import { masterCall } from "./api";
+import { Calculator } from "./Calculator";
 import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, keyPress, styleCase, validate } from "./rules";
 
 /**
@@ -28,7 +29,10 @@ type DialogButton = "OK" | "Yes" | "No" | "Cancel";
 type Dialog = { title: string; message: string; buttons: DialogButton[]; input?: boolean; resolve: (answer: DialogButton, text?: string) => void };
 type HelpState = Awaited<ReturnType<typeof fetchHelp>>;
 
-const ROW_HEIGHT = 22;
+const ROW_HEIGHT = 21;
+/** The row indicator column (C1FlexGrid's fixed column): a marker, not a second row number. */
+const INDICATOR_WIDTH = 16;
+const MIN_COLUMN_WIDTH = 30;
 const DELETE_BLOCKED_PROGRAMS = [4, 11, 16, 19, 24, 25, 34, 35, 27, 47];
 const SECOND_RESET_PROGRAMS = [21, 22, 23, 26, 28, 29, 32, 36, 42, 49, 50, 51];
 /** Master_ProgramGrid_KeyUp: the Pause key closes SMARTwinFA for these licences. */
@@ -83,6 +87,65 @@ async function fetchHelp(selection: StartupSelection, programName: string, group
   const body = await masterCall<{ help: { columns: { key: string; caption: string; width: number; align: string; format: string }[]; rows: Record<string, string>[]; frozen: number; total: string } | null }>(selection, programName, "help", {}, group);
   return body.help;
 }
+
+type SortState = { key: string; dir: "asc" | "desc" } | null;
+
+/** Small line icons for the button bars. */
+const ICONS: Record<string, string> = {
+  save: "M4 3h11l4 4v14H4zM8 3v5h7V3M7 21v-7h10v7",
+  print: "M7 8V3h10v5M5 17H3v-8h18v8h-2M7 14h10v7H7z",
+  export: "M4 4h10l5 5v11H4zM14 4v5h5M8 13l3 3 4-5",
+  refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
+  cancel: "M6 6l12 12M18 6L6 18",
+  quit: "M10 4H4v16h6M15 8l4 4-4 4M19 12H9",
+  log: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5",
+  plus: "M12 5v14M5 12h14",
+  list: "M4 6h16M4 12h16M4 18h16",
+  image: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01",
+  search: "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM16 16l4 4",
+  clear: "M4 5h16l-6 7v6l-4 2v-8z",
+};
+function Icon({ name }: { name: string }) {
+  return <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[name]} /></svg>;
+}
+
+/** A calendar button beside a date editor; the typed text stays the editor's value. */
+function DatePick({ value, onPick }: { value: string; onPick: (text: string) => void }) {
+  const picker = useRef<HTMLInputElement>(null);
+  const date = parseDesktopDate(value);
+  const iso = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
+  return (
+    <span className="mp-date-pick">
+      <input
+        ref={picker}
+        type="date"
+        tabIndex={-1}
+        aria-label="Pick a date"
+        value={iso}
+        onChange={(event) => {
+          const [year, month, day] = event.target.value.split("-").map(Number);
+          if (year && month && day) onPick(formatDesktopDate(new Date(year, month - 1, day)));
+          // Back to the cell's editor, so Enter saves the date and Escape cancels it.
+          event.target.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus();
+        }}
+      />
+      <button
+        type="button"
+        className="mp-mini"
+        tabIndex={-1}
+        title="Calendar"
+        aria-label="Open calendar"
+        onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+        onClick={() => { try { picker.current?.showPicker(); } catch { picker.current?.focus(); } }}
+      >
+        <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v5M16 3v5" /></svg>
+      </button>
+    </span>
+  );
+}
+
+/** The value a filter, search or sort reads: the stored one, as the grid shows it. */
+const shownText = (record: UpdateRecord | undefined, column: UpdateColumn) => formatCell(cellOf(record, column.key), column.format).trim();
 
 /** How a stored value shows in a cell, per Setting_GridCol's Format. */
 function formatCell(value: string, format: string): string {
@@ -147,6 +210,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState<{ value: string; addonId: string } | null>(null);
   const [find, setFind] = useState("");
+  // Sorting, per-column filters and column widths the operator sets on the Update grid
+  const [sort, setSort] = useState<SortState>(null);
+  const [filters, setFilters] = useState<Record<string, string[]>>({});
+  const [openFilter, setOpenFilter] = useState<string | null>(null);
+  const [filterSearch, setFilterSearch] = useState("");
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  const [calc, setCalc] = useState<{ grid: "add" | "update"; initial: string; decimals: number } | null>(null);
   const [typed, setTyped] = useState("");
   const [help, setHelp] = useState<HelpState>(null);
   const [helpRow, setHelpRow] = useState<number | null>(null);
@@ -236,6 +306,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       setDeleted(new Set());
       setCellEditable({});
       setHiddenColumns([]);
+      setSort(null);
+      setFilters({});
+      setOpenFilter(null);
+      setFind("");
       setRestore(null);
       const firstVisible = load.columns.find((column) => column.visible && column.editable) ?? load.columns.find((column) => column.visible);
       const zoomRow = zoomAccode > 0 ? load.records.findIndex((record) => keyOf(record, "code") !== undefined && toInt(cellOf(record, "code")) === zoomAccode) : -1;
@@ -277,6 +351,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       .catch(() => undefined);
   }, [def, locked, selection, programName, menuShortName, zoomBook, zoomAccode]);
 
+  // ---- Btn_Master_EditCancel_Click: drop the Update grid's unsaved changes
+  const cancelUpdate = async () => {
+    if ((await ask("Are You Sure Want To Cancel ? ", "Master Edit Cancel", ["Yes", "No"])) !== "Yes") return;
+    setSchemeBoxes({});
+    if (first) await loadGroup(first, second);
+  };
+
   // ---- BtnCancelAddUpdate_Click
   const cancelAll = async () => {
     if ((await ask("Are You Sure Want To Cancel ? ", "Master Cancel", ["Yes", "No"])) !== "Yes") return;
@@ -302,6 +383,71 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const columnByKey = useMemo(() => new Map((grids?.columns ?? []).map((column) => [column.key, column])), [grids]);
   const columnByField = useCallback((name: string) => (grids?.columns ?? []).find((column) => column.key.toLowerCase() === lower(name)), [grids]);
   const liveRows = useMemo(() => records.map((_, index) => index).filter((index) => !deleted.has(index)), [records, deleted]);
+  /**
+   * The rows the Update grid shows, in the order it shows them. Search, filters and sort
+   * read the stored value (the backup), so a row does not jump or vanish while it is edited.
+   */
+  const shownRows = useMemo(() => {
+    const needle = find.trim().toLowerCase();
+    const stored = (row: number) => backup[row] ?? records[row];
+    let rows = liveRows.filter((row) => {
+      for (const [key, allowed] of Object.entries(filters)) {
+        const column = columnByKey.get(key);
+        if (column && !allowed.includes(shownText(stored(row), column))) return false;
+      }
+      return needle === "" || columns.some((column) => shownText(stored(row), column).toLowerCase().includes(needle));
+    });
+    const column = sort ? columnByKey.get(sort.key) : undefined;
+    if (sort && column) {
+      const kind = column.setup.field_type;
+      const compare = (a: number, b: number) => {
+        const left = cellOf(stored(a), column.key);
+        const right = cellOf(stored(b), column.key);
+        if (kind === "D") return (parseDesktopDate(left)?.getTime() ?? 0) - (parseDesktopDate(right)?.getTime() ?? 0);
+        if (kind === "N" || kind === "C" || kind === "I") return toDecimal(left) - toDecimal(right);
+        return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+      };
+      rows = [...rows].sort((a, b) => (sort.dir === "asc" ? compare(a, b) : compare(b, a)));
+    }
+    return rows;
+  }, [liveRows, records, backup, filters, find, sort, columns, columnByKey]);
+  const widthOf = (column: UpdateColumn) => widths[column.key] ?? Math.max(40, column.width || 90);
+
+  /** Distinct stored values of a column, for its filter list. */
+  const valuesOf = (column: UpdateColumn) => {
+    const seen = new Set<string>();
+    for (const row of liveRows) seen.add(shownText(backup[row] ?? records[row], column));
+    return [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
+  };
+  const setColumnFilter = (column: UpdateColumn, next: string[]) => {
+    const all = valuesOf(column);
+    setFilters((current) => {
+      const copy = { ...current };
+      if (next.length === all.length) delete copy[column.key]; else copy[column.key] = next;
+      return copy;
+    });
+  };
+  const toggleFilterValue = (column: UpdateColumn, value: string) => {
+    const chosen = filters[column.key] ?? valuesOf(column);
+    setColumnFilter(column, chosen.includes(value) ? chosen.filter((item) => item !== value) : [...chosen, value]);
+  };
+  const startResize = (column: UpdateColumn, event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = widthOf(column);
+    const move = (moveEvent: MouseEvent) => setWidths((current) => ({ ...current, [column.key]: Math.max(MIN_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX) }));
+    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
+  // An open filter list closes when the click lands anywhere else.
+  useEffect(() => {
+    if (openFilter === null) return;
+    const close = (event: MouseEvent) => { if (!(event.target as Element).closest(".mp-filter, .mp-filter-button")) setOpenFilter(null); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [openFilter]);
   const programId = def?.programId ?? 0;
   const licence = def?.licence ?? 0;
   const imageTab = Boolean(def?.imageReq) && (programId === 8 || programId === 14);
@@ -541,7 +687,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     // keep the cursor in view
     const element = scroller.current;
     if (element) {
-      const top = row * ROW_HEIGHT;
+      const top = Math.max(0, shownRows.indexOf(row)) * ROW_HEIGHT;
       if (top < element.scrollTop) element.scrollTop = top;
       else if (top + ROW_HEIGHT * 2 > element.scrollTop + element.clientHeight) element.scrollTop = top - element.clientHeight + ROW_HEIGHT * 2;
     }
@@ -553,8 +699,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     return next?.key ?? key;
   };
   const neighbourRow = (row: number, step: number) => {
-    const position = liveRows.indexOf(row);
-    const next = liveRows[Math.min(liveRows.length - 1, Math.max(0, position + step))];
+    const position = shownRows.indexOf(row);
+    const next = shownRows[Math.min(shownRows.length - 1, Math.max(0, position + step))];
     return next ?? row;
   };
 
@@ -778,12 +924,12 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     let line = `Book : ${first?.text ?? ""}`;
     line += licence === 14 ? `    | Run Date : ${formatDesktopDate(now)} Time : ${formatDesktopTime(now)}  User : ${meta?.userName ?? ""}` : `    | Run Date : ${formatDesktopDate(now)}    `;
     const right = (column: UpdateColumn) => column.align === "R" || column.format.startsWith("#") || column.format === "N2";
-    printHtml(`Book : ${first?.text ?? ""}`, `<h1>${escapeHtml(meta?.companyName ?? "")}</h1><p>${escapeHtml(line)}</p><table><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.caption)}</th>`).join("")}</tr></thead><tbody>${liveRows.map((row) => `<tr>${columns.map((column) => `<td${right(column) ? ' class="r"' : ""}>${escapeHtml(formatCell(cellOf(records[row], column.key), column.format))}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+    printHtml(`Book : ${first?.text ?? ""}`, `<h1>${escapeHtml(meta?.companyName ?? "")}</h1><p>${escapeHtml(line)}</p><table><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.caption)}</th>`).join("")}</tr></thead><tbody>${shownRows.map((row) => `<tr>${columns.map((column) => `<td${right(column) ? ' class="r"' : ""}>${escapeHtml(formatCell(cellOf(records[row], column.key), column.format))}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
   };
 
   const exportCsv = () => {
     const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const lines = [columns.map((column) => quote(column.caption)).join(","), ...liveRows.map((row) => columns.map((column) => quote(formatCell(cellOf(records[row], column.key), column.format))).join(","))];
+    const lines = [columns.map((column) => quote(column.caption)).join(","), ...shownRows.map((row) => columns.map((column) => quote(formatCell(cellOf(records[row], column.key), column.format))).join(","))];
     const blob = new Blob([String.fromCharCode(0xfeff) + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -846,9 +992,9 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const findNext = () => {
     const needle = find.trim().toUpperCase();
     if (needle === "" || !grids) return;
-    for (let step = 1; step <= records.length; step += 1) {
-      const row = (cursor.row + step) % records.length;
-      if (deleted.has(row)) continue;
+    const start = shownRows.indexOf(cursor.row);
+    for (let step = 1; step <= shownRows.length; step += 1) {
+      const row = shownRows[(start + step) % shownRows.length];
       const hit = columns.find((column) => cellOf(records[row], column.key).toUpperCase().includes(needle));
       if (hit) { void moveTo(row, hit.key); return; }
     }
@@ -1160,22 +1306,27 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   if (fatal) return <div className="mp-screen"><div className="mp-fatal">{fatal}</div></div>;
 
   const firstCombo = def?.firstCombo;
-  const visibleRows = liveRows;
+  const visibleRows = shownRows;
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 5);
   const endIndex = Math.min(visibleRows.length, startIndex + Math.ceil(viewport / ROW_HEIGHT) + 10);
   const frozenCount = grids ? Math.min(grids.frozen, columns.length) : 0;
   const frozenLeft: number[] = [];
-  columns.reduce((left, column, index) => { frozenLeft[index] = left; return left + Math.max(40, column.width || 90); }, 48);
+  columns.reduce((left, column, index) => { frozenLeft[index] = left; return left + widthOf(column); }, INDICATOR_WIDTH);
   const cursorColumn = columnByKey.get(cursor.key);
-
+  const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
+  /** The editor's helpers: a calendar for dates, a calculator for amounts and quantities. */
+  const editorTools = (setup: UpdateColumn["setup"], value: string, onPick: (text: string) => void, grid: "add" | "update") => (
+    <>
+      {setup.field_type === "D" && <DatePick value={value} onPick={onPick} />}
+      {(setup.field_type === "N" || setup.field_type === "C") && (
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => setCalc({ grid, initial: value, decimals: setup.decimal_points })}>
+          <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
+        </button>
+      )}
+    </>
+  );
   return (
     <div className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.heading || title}>
-      <div className="mp-title">
-        <strong>{def?.heading || title}</strong>
-        <span className="mp-rights">{def && def.rights.restricted ? `Rights: ${def.rights.add ? "Add " : ""}${def.rights.edit ? "Edit " : ""}${def.rights.delete ? "Delete" : ""}` : ""}</span>
-        <button type="button" className="mp-close" onClick={() => void leave()} aria-label="Close master">×</button>
-      </div>
-
       <div className="mp-combos">
         {firstCombo && (
           <label className="mp-combo">
@@ -1230,42 +1381,21 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
             </select>
           </label>
         )}
-        {first && !grids && !secondOptions && <button type="button" onClick={() => void loadGroup(first, second)} disabled={Boolean(busy)}>Show</button>}
-        {grids && <button type="button" onClick={() => void cancelAll()}>Cancel</button>}
-        {busy && <span className="mp-busy">{busy}…</span>}
-        {/* Group combo, tabs, find and the Update buttons share one row so the grid gets the height. */}
+        {first && !grids && !secondOptions && <button type="button" className="mp-btn mp-btn-blue" onClick={() => void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="list" />Show</button>}
         {grids && (
-          <div className="mp-tabs" role="tablist">
-            {grids.addTabVisible && <button type="button" role="tab" aria-selected={tab === "add"} className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}>New (Add){restore ? " – View" : ""}</button>}
-            {imageTab && <button type="button" role="tab" aria-selected={tab === "image"} className={tab === "image" ? "active" : ""} onClick={() => setTab("image")}>Image</button>}
-            {grids.updateTabVisible && <button type="button" role="tab" aria-selected={tab === "update"} className={tab === "update" ? "active" : ""} onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}>Update / Delete</button>}
+          <div className="mp-views" role="tablist" aria-label="Master view">
+            {grids.addTabVisible && tab !== "add" && <button type="button" role="tab" aria-selected={false} className="mp-btn mp-btn-green mp-btn-big" onClick={() => setTab("add")}><Icon name="plus" />New Add</button>}
+            {grids.addTabVisible && tab === "add" && <span className="mp-view-now">{restore ? "View (Restore)" : "New Add"}</span>}
+            {grids.updateTabVisible && tab !== "update" && <button type="button" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}><Icon name="list" />Update / Delete</button>}
+            {imageTab && tab !== "image" && <button type="button" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => setTab("image")}><Icon name="image" />Image</button>}
+            <button type="button" className="mp-btn mp-btn-red mp-btn-big" onClick={() => void cancelAll()}><Icon name="cancel" />Cancel Both (Add And Update)</button>
           </div>
         )}
-        {grids && tab === "update" && (
-          <>
-                <input id="mp-find" className="mp-find" placeholder="Find (Ctrl+F, F3 next)" value={find} onChange={(event) => setFind(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F3") { event.preventDefault(); findNext(); } }} />
-                {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
-                  <input
-                    key={box.name}
-                    className="mp-scheme-box"
-                    aria-label={programId === 50 ? "Change rate: +, -, *, / or % then a figure" : box.label}
-                    placeholder={programId === 50 ? "Rate +-*/%" : box.label}
-                    value={schemeBoxes[box.name] ?? ""}
-                    onChange={(event) => setSchemeBoxes((current) => ({ ...current, [box.name]: event.target.value }))}
-                    onBlur={(event) => applySchemeBox(box.name, event.target.value)}
-                    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-                  />
-                ))}
-                <span>{liveRows.length} records{edited.size ? ` · ${edited.size} changed` : ""}{deleted.size ? ` · ${deleted.size} marked for delete` : ""}</span>
-                <span className="mp-spacer" />
-                <button type="button" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}>Save</button>
-                <button type="button" onClick={() => first && void loadGroup(first, second)} disabled={Boolean(busy)}>Refresh</button>
-                <button type="button" onClick={() => void printUpdate()}>Print</button>
-                <button type="button" onClick={exportCsv}>Export</button>
-                {meta?.logFileSpecial && <button type="button" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}>Log</button>}
-                <button type="button" onClick={() => void leave()}>Quit</button>
-          </>
-        )}
+        {busy && <span className="mp-busy">{busy}…</span>}
+        <span className="mp-heading">
+          {def?.heading || title}
+          {def && def.rights.restricted ? ` · Rights: ${def.rights.add ? "Add " : ""}${def.rights.edit ? "Edit " : ""}${def.rights.delete ? "Delete" : ""}` : ""}
+        </span>
       </div>
 
 
@@ -1285,7 +1415,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                           {row.options.map((option, at) => <option key={`${option.value}-${at}`} value={option.text}>{option.text}</option>)}
                         </select>
                       ) : (
-                        <input ref={focusOnMount} className="mp-editor" type={row.setup.force_inputtype === "P" ? "password" : "text"} value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)} />
+                        <span className="mp-editor-wrap">
+                          <input ref={focusOnMount} className="mp-editor" type={row.setup.force_inputtype === "P" ? "password" : "text"} value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)} />
+                          {editorTools(row.setup, addText, setAddText, "add")}
+                        </span>
                       )
                     ) : row.setup.force_inputtype === "P" && row.fieldInput !== "" ? "*********" : row.fieldInput}
                   </td>
@@ -1293,12 +1426,6 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               ))}
             </tbody>
           </table>
-          <div className="mp-actions">
-            <button type="button" id="mp-save" onClick={() => void saveAdd()} disabled={Boolean(busy) || (def ? !def.rights.add : true)}>Save</button>
-            <button type="button" onClick={() => void cancelAdd()}>Cancel</button>
-            {printsMasterSheet && <button type="button" onClick={printMasterSheet}>Print</button>}
-            <button type="button" onClick={() => void leave()}>Quit</button>
-          </div>
         </div>
       )}
 
@@ -1321,18 +1448,50 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               onContextMenu={(event) => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }); }}
             >
               <div className="mp-row mp-head" style={{ top: 0 }}>
-                <div className="mp-cell mp-rownum">#</div>
-                {columns.map((column, index) => (
-                  <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""}`} style={{ width: Math.max(40, column.width || 90), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={column.caption}>{column.caption}</div>
-                ))}
+                <div className="mp-cell mp-rownum" aria-hidden="true" />
+                {columns.map((column, index) => {
+                  const values = openFilter === column.key ? valuesOf(column) : [];
+                  const chosen = filters[column.key] ?? values;
+                  const needle = filterSearch.trim().toLowerCase();
+                  const label = (value: string) => (value === "" ? "(blank)" : value);
+                  const listed = needle ? values.filter((value) => label(value).toLowerCase().includes(needle)) : values;
+                  return (
+                    <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""}`} style={{ width: widthOf(column), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={`${column.caption} · click to sort · ▾ to filter · drag the edge to resize`}>
+                      <button type="button" className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
+                        {column.caption}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
+                      </button>
+                      <button type="button" className="mp-filter-button" aria-label={`Filter ${column.caption}`} onClick={() => { setFilterSearch(""); setOpenFilter(openFilter === column.key ? null : column.key); }}>▾</button>
+                      {openFilter === column.key && (
+                        <div className="mp-filter" role="dialog" aria-label={`Filter ${column.caption}`}>
+                          <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} />
+                          <label className="mp-filter-all">
+                            <input type="checkbox" checked={listed.length > 0 && listed.every((value) => chosen.includes(value))} onChange={(event) => setColumnFilter(column, event.target.checked ? [...new Set([...chosen, ...listed])] : chosen.filter((value) => !listed.includes(value)))} />
+                            <b>{needle ? "(Select all found)" : "(Select all)"}</b>
+                          </label>
+                          <ul>
+                            {listed.map((value) => (
+                              <li key={value || "(blank)"}><label><input type="checkbox" checked={chosen.includes(value)} onChange={() => toggleFilterValue(column, value)} />{value === "" ? <em>(blank)</em> : value}</label></li>
+                            ))}
+                            {listed.length === 0 && <li className="mp-filter-none">No value matches.</li>}
+                          </ul>
+                          <div className="mp-filter-actions">
+                            <button type="button" onClick={() => setColumnFilter(column, values)}>Show all</button>
+                            <button type="button" onClick={() => setOpenFilter(null)}>Close</button>
+                          </div>
+                        </div>
+                      )}
+                      <span className="mp-resize" role="presentation" onMouseDown={(event) => startResize(column, event)} onDoubleClick={() => setWidths((current) => { const copy = { ...current }; delete copy[column.key]; return copy; })} />
+                    </div>
+                  );
+                })}
               </div>
               {visibleRows.slice(startIndex, endIndex).map((row, offset) => {
                 const record = records[row];
                 const position = startIndex + offset;
                 const inSelection = selectionEnd !== null && row >= Math.min(cursor.row, selectionEnd) && row <= Math.max(cursor.row, selectionEnd);
                 return (
-                  <div key={row} className={`mp-row ${row === cursor.row ? "mp-current-row" : ""} ${edited.has(row) ? "mp-edited" : ""} ${inSelection ? "mp-selected" : ""}`} style={{ top: (position + 1) * ROW_HEIGHT }}>
-                    <div className="mp-cell mp-rownum">{position + 1}</div>
+                  <div key={row} className={`mp-row ${position % 2 ? "mp-alt" : ""} ${row === cursor.row ? "mp-current-row" : ""} ${edited.has(row) ? "mp-edited" : ""} ${inSelection ? "mp-selected" : ""}`} style={{ top: (position + 1) * ROW_HEIGHT }}>
+                    <div className="mp-cell mp-rownum" aria-hidden="true">{row === cursor.row ? "▶" : edited.has(row) ? "✎" : ""}</div>
                     {columns.map((column, index) => {
                       const current = row === cursor.row && column.key === cursor.key;
                       const editable = isEditable(row, column);
@@ -1344,7 +1503,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                           aria-selected={current}
                           aria-readonly={!editable}
                           className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : "mp-readonly"}`}
-                          style={{ width: Math.max(40, column.width || 90), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
+                          style={{ width: widthOf(column), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
                           onMouseDown={(event) => { if (event.shiftKey) { setSelectionEnd(row); return; } void moveTo(row, column.key); }}
                           onDoubleClick={() => void startEdit()}
                         >
@@ -1355,7 +1514,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                                 {column.options.map((option, at) => <option key={`${option.value}-${at}`} value={option.text}>{option.text}</option>)}
                               </select>
                             ) : (
-                              <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => void editorKeys(event)} />
+                              <span className="mp-editor-wrap">
+                                <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => void editorKeys(event)} />
+                                {editorTools(column.setup, editText, setEditText, "update")}
+                              </span>
                             )
                           ) : formatCell(cellOf(record, column.key), column.format)}
                         </div>
@@ -1421,6 +1583,58 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               <button type="button" ref={focusOnMount} onClick={() => setLogTable(null)}>Close</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {grids && (
+        <div className="mp-buttons">
+          {tab === "update" && <>
+            <button type="button" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}><Icon name="save" />Save</button>
+            <button type="button" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()}><Icon name="print" />Print</button>
+            <button type="button" className="mp-btn mp-btn-teal" onClick={exportCsv}><Icon name="export" />Export</button>
+            <button type="button" className="mp-btn mp-btn-blue" onClick={() => first && void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="refresh" />Refresh</button>
+            <button type="button" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" />Cancel</button>
+            <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
+            {meta?.logFileSpecial && <button type="button" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}><Icon name="log" />Log</button>}
+            <span className="mp-spacer" />
+            {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
+              <input
+                key={box.name}
+                className="mp-scheme-box"
+                aria-label={programId === 50 ? "Change rate: +, -, *, / or % then a figure" : box.label}
+                placeholder={programId === 50 ? "Rate +-*/%" : box.label}
+                value={schemeBoxes[box.name] ?? ""}
+                onChange={(event) => setSchemeBoxes((current) => ({ ...current, [box.name]: event.target.value }))}
+                onBlur={(event) => applySchemeBox(box.name, event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+              />
+            ))}
+            <label className="mp-search"><Icon name="search" /><input id="mp-find" type="search" placeholder="Search all columns (Ctrl+F)" value={find} onChange={(event) => setFind(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F3") { event.preventDefault(); findNext(); } }} /></label>
+            {filtering && <button type="button" className="mp-btn mp-btn-plain" onClick={() => { setFilters({}); setFind(""); setSort(null); }}><Icon name="clear" />Clear filters</button>}
+            <span className="mp-count">{shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length}`}{edited.size ? ` · ${edited.size} changed` : ""}{deleted.size ? ` · ${deleted.size} to delete` : ""}</span>
+          </>}
+          {tab === "add" && <>
+            <button type="button" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveAdd()} disabled={Boolean(busy) || (def ? !def.rights.add : true)}><Icon name="save" />Save</button>
+            {printsMasterSheet && <button type="button" className="mp-btn mp-btn-blue" onClick={printMasterSheet}><Icon name="print" />Print</button>}
+            <button type="button" className="mp-btn mp-btn-red" onClick={() => void cancelAdd()}><Icon name="cancel" />Cancel</button>
+            <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
+          </>}
+          {tab === "image" && <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>}
+        </div>
+      )}
+
+      {calc && (
+        <div className="mp-calc-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCalc(null); }}>
+          <Calculator
+            initial={calc.initial}
+            decimals={calc.decimals}
+            onClose={() => { setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
+            onUse={(value) => {
+              if (calc.grid === "add") setAddText(value); else setEditText(value);
+              setCalc(null);
+              document.querySelector<HTMLInputElement>(".mp-editor")?.focus();
+            }}
+          />
         </div>
       )}
 

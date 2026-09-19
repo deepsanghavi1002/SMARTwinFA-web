@@ -115,7 +115,7 @@ function MainMenu() {
   );
 
   return (
-    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${running?.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master-open" : ""}`}>
       <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
       <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
