@@ -90,6 +90,131 @@ async function fetchHelp(selection: StartupSelection, programName: string, group
 
 type SortState = { key: string; dir: "asc" | "desc" } | null;
 
+type FilterKind = "text" | "number" | "date";
+type Condition = { op: string; a: string; b: string };
+/** A column's filter: the values left ticked, and up to two conditions joined by And/Or. */
+type ColumnFilter = { values?: string[]; first?: Condition; join?: "and" | "or"; second?: Condition };
+type FilterDraft = { key: string; chosen: string[]; first: Condition; join: "and" | "or"; second: Condition };
+
+const FILTER_OPS: Record<FilterKind, readonly (readonly [string, string])[]> = {
+  text: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["begins", "Begins With"], ["ends", "Ends With"], ["contains", "Contains"], ["notContains", "Does Not Contain"], ["blank", "Is Blank"], ["notBlank", "Is Not Blank"]],
+  number: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["gt", "Greater Than"], ["ge", "Greater Than or Equal To"], ["lt", "Less Than"], ["le", "Less Than or Equal To"], ["between", "Between"], ["blank", "Is Blank or Zero"], ["notBlank", "Is Not Blank or Zero"]],
+  date: [["", "(no condition)"], ["eq", "On"], ["ne", "Not On"], ["lt", "Before"], ["le", "On or Before"], ["gt", "After"], ["ge", "On or After"], ["between", "Between"], ["blank", "Is Blank"], ["notBlank", "Is Not Blank"]],
+};
+const FILTER_TITLE: Record<FilterKind, string> = { text: "Text Filter", number: "Numeric Filter", date: "Date Filter" };
+const NO_VALUE_OPS = ["", "blank", "notBlank"];
+const emptyCondition = (): Condition => ({ op: "", a: "", b: "" });
+
+function filterKind(column: UpdateColumn): FilterKind {
+  const type = column.setup.field_type;
+  if (type === "D") return "date";
+  if (type === "N" || type === "C" || type === "I" || column.format === "N2" || column.format.startsWith("#")) return "number";
+  return "text";
+}
+
+/** One condition against a stored cell value; "a" and "b" are what the operator typed (dates as yyyy-mm-dd). */
+function conditionHolds(kind: FilterKind, condition: Condition, raw: string, shown: string): boolean {
+  const { op, a, b } = condition;
+  if (op === "") return true;
+  if (kind === "number") {
+    const value = toDecimal(raw);
+    const x = toDecimal(a);
+    const y = toDecimal(b);
+    switch (op) {
+      case "eq": return value === x;
+      case "ne": return value !== x;
+      case "gt": return value > x;
+      case "ge": return value >= x;
+      case "lt": return value < x;
+      case "le": return value <= x;
+      case "between": return value >= Math.min(x, y) && value <= Math.max(x, y);
+      case "blank": return raw.trim() === "" || value === 0;
+      case "notBlank": return raw.trim() !== "" && value !== 0;
+      default: return true;
+    }
+  }
+  if (kind === "date") {
+    const date = parseDesktopDate(raw);
+    const day = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
+    if (op === "blank") return day === "";
+    if (op === "notBlank") return day !== "";
+    if (day === "" || a === "") return false;
+    switch (op) {
+      case "eq": return day === a;
+      case "ne": return day !== a;
+      case "gt": return day > a;
+      case "ge": return day >= a;
+      case "lt": return day < a;
+      case "le": return day <= a;
+      case "between": return b !== "" && day >= (a < b ? a : b) && day <= (a < b ? b : a);
+      default: return true;
+    }
+  }
+  const text = shown.toLowerCase();
+  const needle = a.trim().toLowerCase();
+  switch (op) {
+    case "eq": return text === needle;
+    case "ne": return text !== needle;
+    case "begins": return text.startsWith(needle);
+    case "ends": return text.endsWith(needle);
+    case "contains": return text.includes(needle);
+    case "notContains": return !text.includes(needle);
+    case "blank": return text === "";
+    case "notBlank": return text !== "";
+    default: return true;
+  }
+}
+
+function filterHolds(column: UpdateColumn, filter: ColumnFilter, record: UpdateRecord | undefined): boolean {
+  const shown = shownText(record, column);
+  if (filter.values && !filter.values.includes(shown)) return false;
+  if (!filter.first || filter.first.op === "") return true;
+  const kind = filterKind(column);
+  const raw = cellOf(record, column.key);
+  const first = conditionHolds(kind, filter.first, raw, shown);
+  if (!filter.second || filter.second.op === "") return first;
+  const second = conditionHolds(kind, filter.second, raw, shown);
+  return filter.join === "or" ? first || second : first && second;
+}
+
+/**
+ * Lets a small window be dragged by its title bar, so the data behind it can be seen.
+ * Returns the position to apply (null until it is first moved) and the title's handler.
+ */
+function useDraggable() {
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const start = (event: ReactMouseEvent<HTMLElement>) => {
+    if ((event.target as Element).closest("button, input, select")) return;
+    const box = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+    const offsetX = event.clientX - box.left;
+    const offsetY = event.clientY - box.top;
+    event.preventDefault();
+    const move = (moveEvent: MouseEvent) => setPosition({
+      x: Math.min(Math.max(0, moveEvent.clientX - offsetX), window.innerWidth - 60),
+      y: Math.min(Math.max(0, moveEvent.clientY - offsetY), window.innerHeight - 30),
+    });
+    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
+  /** The keyboard way to move it: arrow keys shift the window 20px. */
+  const nudge = (event: ReactKeyboardEvent<HTMLElement>) => {
+    const step = ({ ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] } as Record<string, [number, number]>)[event.key];
+    if (!step) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const box = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+    setPosition((current) => {
+      const from = current ?? { x: box.left, y: box.top };
+      return { x: Math.min(Math.max(0, from.x + step[0]), window.innerWidth - 60), y: Math.min(Math.max(0, from.y + step[1]), window.innerHeight - 30) };
+    });
+  };
+  const style = position ? { position: "fixed" as const, left: position.x, top: position.y, right: "auto", bottom: "auto", transform: "none" } : undefined;
+  /** Spread on the title bar: drag it, or focus it and use the arrow keys. */
+  const handle = { role: "button" as const, tabIndex: 0, "aria-label": "Move this window: drag, or use the arrow keys", onMouseDown: start, onKeyDown: nudge };
+  return { style, start, handle, reset: () => setPosition(null) };
+}
+
 /** Small line icons for the button bars. */
 const ICONS: Record<string, string> = {
   save: "M4 3h11l4 4v14H4zM8 3v5h7V3M7 21v-7h10v7",
@@ -104,6 +229,8 @@ const ICONS: Record<string, string> = {
   image: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01",
   search: "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM16 16l4 4",
   clear: "M4 5h16l-6 7v6l-4 2v-8z",
+  columns: "M4 4h16v16H4zM9.5 4v16M14.5 4v16",
+  move: "M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3",
 };
 function Icon({ name }: { name: string }) {
   return <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[name]} /></svg>;
@@ -212,7 +339,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [find, setFind] = useState("");
   // Sorting, per-column filters and column widths the operator sets on the Update grid
   const [sort, setSort] = useState<SortState>(null);
-  const [filters, setFilters] = useState<Record<string, string[]>>({});
+  const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
+  const [filterDraft, setFilterDraft] = useState<FilterDraft | null>(null);
+  const [columnChooser, setColumnChooser] = useState(false);
+  /** A row reached by clicking or arrowing (not by finishing an edit): typing there searches first. */
+  const findMode = useRef(true);
+  const helpDrag = useDraggable();
+  const calcDrag = useDraggable();
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [filterSearch, setFilterSearch] = useState("");
   const [widths, setWidths] = useState<Record<string, number>>({});
@@ -308,6 +441,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       setHiddenColumns([]);
       setSort(null);
       setFilters({});
+      findMode.current = true;
+      setTyped("");
       setOpenFilter(null);
       setFind("");
       setRestore(null);
@@ -391,9 +526,9 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const needle = find.trim().toLowerCase();
     const stored = (row: number) => backup[row] ?? records[row];
     let rows = liveRows.filter((row) => {
-      for (const [key, allowed] of Object.entries(filters)) {
+      for (const [key, filter] of Object.entries(filters)) {
         const column = columnByKey.get(key);
-        if (column && !allowed.includes(shownText(stored(row), column))) return false;
+        if (column && !filterHolds(column, filter, stored(row))) return false;
       }
       return needle === "" || columns.some((column) => shownText(stored(row), column).toLowerCase().includes(needle));
     });
@@ -419,17 +554,35 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     for (const row of liveRows) seen.add(shownText(backup[row] ?? records[row], column));
     return [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   };
-  const setColumnFilter = (column: UpdateColumn, next: string[]) => {
+  /** Opens a column's filter list with its current settings as an editable draft. */
+  const openFilterFor = (column: UpdateColumn) => {
+    if (openFilter === column.key) { setOpenFilter(null); return; }
+    const current = filters[column.key];
+    setFilterSearch("");
+    setFilterDraft({ key: column.key, chosen: current?.values ?? valuesOf(column), first: current?.first ?? emptyCondition(), join: current?.join ?? "and", second: current?.second ?? emptyCondition() });
+    setOpenFilter(column.key);
+  };
+  /** Apply: the draft becomes the column's filter; nothing ticked-out and no condition means no filter. */
+  const applyFilter = (column: UpdateColumn) => {
+    if (!filterDraft) return;
     const all = valuesOf(column);
+    const usable = (condition: Condition) => condition.op !== "" && (NO_VALUE_OPS.includes(condition.op) || (condition.a.trim() !== "" && (condition.op !== "between" || condition.b.trim() !== "")));
+    const next: ColumnFilter = {};
+    if (filterDraft.chosen.length !== all.length) next.values = filterDraft.chosen;
+    if (usable(filterDraft.first)) {
+      next.first = filterDraft.first;
+      if (usable(filterDraft.second)) { next.join = filterDraft.join; next.second = filterDraft.second; }
+    }
     setFilters((current) => {
       const copy = { ...current };
-      if (next.length === all.length) delete copy[column.key]; else copy[column.key] = next;
+      if (next.values || next.first) copy[column.key] = next; else delete copy[column.key];
       return copy;
     });
+    setOpenFilter(null);
   };
-  const toggleFilterValue = (column: UpdateColumn, value: string) => {
-    const chosen = filters[column.key] ?? valuesOf(column);
-    setColumnFilter(column, chosen.includes(value) ? chosen.filter((item) => item !== value) : [...chosen, value]);
+  const clearFilter = (column: UpdateColumn) => {
+    setFilters((current) => { const copy = { ...current }; delete copy[column.key]; return copy; });
+    setOpenFilter(null);
   };
   const startResize = (column: UpdateColumn, event: ReactMouseEvent) => {
     event.preventDefault();
@@ -519,6 +672,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   };
 
   const startEdit = async (initial?: string) => {
+    findMode.current = false;
+    setTyped("");
     const column = columnByKey.get(cursor.key);
     if (!column || !records[cursor.row] || !isEditable(cursor.row, column)) return;
     if (!(await beforeEdit(cursor.row, column))) return;
@@ -945,15 +1100,16 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const column = columnByKey.get(cursor.key);
     const ctrl = event.ctrlKey || event.metaKey;
     switch (event.key) {
-      case "ArrowDown": event.preventDefault(); if (event.shiftKey) setSelectionEnd(neighbourRow(selectionEnd ?? cursor.row, 1)); else await moveTo(neighbourRow(cursor.row, 1), cursor.key); return;
-      case "ArrowUp": event.preventDefault(); if (event.shiftKey) setSelectionEnd(neighbourRow(selectionEnd ?? cursor.row, -1)); else await moveTo(neighbourRow(cursor.row, -1), cursor.key); return;
-      case "ArrowRight": case "Tab": event.preventDefault(); await moveTo(cursor.row, neighbourColumn(cursor.key, event.shiftKey ? -1 : 1)); return;
-      case "ArrowLeft": event.preventDefault(); await moveTo(cursor.row, neighbourColumn(cursor.key, -1)); return;
-      case "PageDown": event.preventDefault(); await moveTo(neighbourRow(cursor.row, Math.floor(viewport / ROW_HEIGHT)), cursor.key); return;
-      case "PageUp": event.preventDefault(); await moveTo(neighbourRow(cursor.row, -Math.floor(viewport / ROW_HEIGHT)), cursor.key); return;
+      case "ArrowDown": event.preventDefault(); findMode.current = true; setTyped(""); if (event.shiftKey) setSelectionEnd(neighbourRow(selectionEnd ?? cursor.row, 1)); else await moveTo(neighbourRow(cursor.row, 1), cursor.key); return;
+      case "ArrowUp": event.preventDefault(); findMode.current = true; setTyped(""); if (event.shiftKey) setSelectionEnd(neighbourRow(selectionEnd ?? cursor.row, -1)); else await moveTo(neighbourRow(cursor.row, -1), cursor.key); return;
+      case "ArrowRight": case "Tab": event.preventDefault(); setTyped(""); await moveTo(cursor.row, neighbourColumn(cursor.key, event.shiftKey ? -1 : 1)); return;
+      case "ArrowLeft": event.preventDefault(); setTyped(""); await moveTo(cursor.row, neighbourColumn(cursor.key, -1)); return;
+      case "PageDown": event.preventDefault(); findMode.current = true; setTyped(""); await moveTo(neighbourRow(cursor.row, Math.floor(viewport / ROW_HEIGHT)), cursor.key); return;
+      case "PageUp": event.preventDefault(); findMode.current = true; setTyped(""); await moveTo(neighbourRow(cursor.row, -Math.floor(viewport / ROW_HEIGHT)), cursor.key); return;
       case "Enter":
         event.preventDefault();
-        if (column && isEditable(cursor.row, column) && programId !== 38 && grids.columns.length > 10) await startEdit();
+        setTyped("");
+        if (column && isEditable(cursor.row, column) && (findMode.current || (programId !== 38 && grids.columns.length > 10))) await startEdit();
         else await moveTo(cursor.row, neighbourColumn(cursor.key, 1));
         return;
       case "F2": event.preventDefault(); await startEdit(); return;
@@ -971,8 +1127,25 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     }
     if (ctrl && event.key.toLowerCase() === "c") { event.preventDefault(); await navigator.clipboard?.writeText(cellOf(records[cursor.row], cursor.key)).catch(() => undefined); await copyCell(); return; }
     if (ctrl && event.key.toLowerCase() === "v") { event.preventDefault(); await pasteCell(); return; }
+    if (findMode.current && typed !== "" && (event.key === "Backspace" || event.key === "Escape")) {
+      event.preventDefault();
+      const search = event.key === "Escape" ? "" : typed.slice(0, -1);
+      setTyped(search);
+      if (search !== "" && column) {
+        const found = shownRows.find((row) => shownText(records[row], column).toUpperCase().startsWith(search));
+        if (found !== undefined) await moveTo(found, cursor.key);
+      }
+      return;
+    }
     if (event.key.length === 1 && !ctrl && !event.altKey) {
       event.preventDefault();
+      if (findMode.current && column) {
+        // Search the current column in the order shown; a key that finds nothing is dropped.
+        const search = typed + event.key.toUpperCase();
+        const found = shownRows.find((row) => shownText(records[row], column).toUpperCase().startsWith(search));
+        if (found !== undefined) { setTyped(search); if (found !== cursor.row) await moveTo(found, cursor.key); }
+        return;
+      }
       if (column && isEditable(cursor.row, column)) {
         const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: "", yearStart: yearStartText }, event.key);
         if (outcome.message) { await ask(outcome.message, "Typed Character not allowed"); return; }
@@ -1288,12 +1461,12 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   };
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
-  const escapeState = useRef({ editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose });
-  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose }; });
+  const escapeState = useRef({ editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: false });
+  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const state = escapeState.current;
-      if (event.key === "Escape" && !state.editing && !state.addEditing && !state.dialog) void state.leave();
+      if (event.key === "Escape" && !state.editing && !state.addEditing && !state.dialog && !state.busyElsewhere) void state.leave();
       if (event.key === "Pause" && PAUSE_EXIT_LICENCES.includes(state.licence)) state.close();
     };
     window.addEventListener("keydown", onKey);
@@ -1315,14 +1488,29 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const cursorColumn = columnByKey.get(cursor.key);
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
   /** The editor's helpers: a calendar for dates, a calculator for amounts and quantities. */
+  const clearButton = (onPick: (text: string) => void, what: string) => (
+    <button
+      type="button"
+      className="mp-mini mp-mini-clear"
+      tabIndex={-1}
+      title={`Clear the ${what}`}
+      aria-label={`Clear the ${what}`}
+      onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+      onClick={(event) => { onPick(""); event.currentTarget.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
+    >
+      <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+    </button>
+  );
   const editorTools = (setup: UpdateColumn["setup"], value: string, onPick: (text: string) => void, grid: "add" | "update") => (
     <>
       {setup.field_type === "D" && <DatePick value={value} onPick={onPick} />}
+      {setup.field_type === "D" && clearButton(onPick, "date")}
       {(setup.field_type === "N" || setup.field_type === "C") && (
         <button type="button" className="mp-mini" tabIndex={-1} title="Calculator" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => setCalc({ grid, initial: value, decimals: setup.decimal_points })}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
         </button>
       )}
+      {(setup.field_type === "N" || setup.field_type === "C") && clearButton(onPick, "figure")}
     </>
   );
   return (
@@ -1450,33 +1638,68 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               <div className="mp-row mp-head" style={{ top: 0 }}>
                 <div className="mp-cell mp-rownum" aria-hidden="true" />
                 {columns.map((column, index) => {
-                  const values = openFilter === column.key ? valuesOf(column) : [];
-                  const chosen = filters[column.key] ?? values;
+                  const draft = openFilter === column.key && filterDraft?.key === column.key ? filterDraft : null;
+                  const values = draft ? valuesOf(column) : [];
                   const needle = filterSearch.trim().toLowerCase();
                   const label = (value: string) => (value === "" ? "(blank)" : value);
                   const listed = needle ? values.filter((value) => label(value).toLowerCase().includes(needle)) : values;
+                  const kind = filterKind(column);
+                  const setDraft = (change: Partial<FilterDraft>) => setFilterDraft((current) => (current ? { ...current, ...change } : current));
+                  const conditionRow = (which: "first" | "second") => {
+                    const condition = draft![which];
+                    const set = (change: Partial<Condition>) => setDraft({ [which]: { ...condition, ...change } });
+                    const inputType = kind === "date" ? "date" : "text";
+                    return (
+                      <div className="mp-filter-condition">
+                        <select aria-label={`${FILTER_TITLE[kind]} ${which === "first" ? "condition" : "second condition"}`} value={condition.op} onChange={(event) => set({ op: event.target.value })}>
+                          {FILTER_OPS[kind].map(([op, text]) => <option key={op} value={op}>{text}</option>)}
+                        </select>
+                        {!NO_VALUE_OPS.includes(condition.op) && (
+                          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="Value" placeholder="Value" value={condition.a} onChange={(event) => set({ a: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); }} />
+                        )}
+                        {condition.op === "between" && (
+                          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="And value" placeholder="and" value={condition.b} onChange={(event) => set({ b: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); }} />
+                        )}
+                      </div>
+                    );
+                  };
                   return (
                     <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""}`} style={{ width: widthOf(column), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={`${column.caption} · click to sort · ▾ to filter · drag the edge to resize`}>
                       <button type="button" className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                         {column.caption}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                       </button>
-                      <button type="button" className="mp-filter-button" aria-label={`Filter ${column.caption}`} onClick={() => { setFilterSearch(""); setOpenFilter(openFilter === column.key ? null : column.key); }}>▾</button>
-                      {openFilter === column.key && (
+                      <button type="button" className="mp-filter-button" aria-label={`Filter ${column.caption}`} onClick={() => openFilterFor(column)}>▾</button>
+                      {draft && (
                         <div className="mp-filter" role="dialog" aria-label={`Filter ${column.caption}`}>
-                          <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} />
+                          <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); if (event.key === "Escape") setOpenFilter(null); }} />
                           <label className="mp-filter-all">
-                            <input type="checkbox" checked={listed.length > 0 && listed.every((value) => chosen.includes(value))} onChange={(event) => setColumnFilter(column, event.target.checked ? [...new Set([...chosen, ...listed])] : chosen.filter((value) => !listed.includes(value)))} />
-                            <b>{needle ? "(Select all found)" : "(Select all)"}</b>
+                            <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => setDraft({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
+                            <b>{needle ? "(Select all found)" : "(Select All)"}</b>
+                            <span className="mp-filter-count">{listed.filter((value) => draft.chosen.includes(value)).length}/{listed.length}</span>
                           </label>
                           <ul>
                             {listed.map((value) => (
-                              <li key={value || "(blank)"}><label><input type="checkbox" checked={chosen.includes(value)} onChange={() => toggleFilterValue(column, value)} />{value === "" ? <em>(blank)</em> : value}</label></li>
+                              <li key={value || "(blank)"}><label><input type="checkbox" checked={draft.chosen.includes(value)} onChange={() => setDraft({ chosen: draft.chosen.includes(value) ? draft.chosen.filter((item) => item !== value) : [...draft.chosen, value] })} />{value === "" ? <em>(blank)</em> : value}</label></li>
                             ))}
                             {listed.length === 0 && <li className="mp-filter-none">No value matches.</li>}
                           </ul>
+                          <div className="mp-filter-conditions">
+                            <b className="mp-filter-kind">{kind === "number" ? "Σ " : kind === "date" ? "📅 " : "T "}{FILTER_TITLE[kind]}</b>
+                            {conditionRow("first")}
+                            {draft.first.op !== "" && (
+                              <>
+                                <div className="mp-filter-join" role="radiogroup" aria-label="Join the two conditions">
+                                  <label><input type="radio" checked={draft.join === "and"} onChange={() => setDraft({ join: "and" })} />And</label>
+                                  <label><input type="radio" checked={draft.join === "or"} onChange={() => setDraft({ join: "or" })} />Or</label>
+                                </div>
+                                {conditionRow("second")}
+                              </>
+                            )}
+                          </div>
                           <div className="mp-filter-actions">
-                            <button type="button" onClick={() => setColumnFilter(column, values)}>Show all</button>
-                            <button type="button" onClick={() => setOpenFilter(null)}>Close</button>
+                            <button type="button" className="mp-filter-apply" onClick={() => applyFilter(column)}>✔ Apply</button>
+                            <button type="button" onClick={() => clearFilter(column)}>✖ Clear</button>
+                            <button type="button" onClick={() => setOpenFilter(null)}>Cancel</button>
                           </div>
                         </div>
                       )}
@@ -1504,7 +1727,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                           aria-readonly={!editable}
                           className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : "mp-readonly"}`}
                           style={{ width: widthOf(column), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
-                          onMouseDown={(event) => { if (event.shiftKey) { setSelectionEnd(row); return; } void moveTo(row, column.key); }}
+                          onMouseDown={(event) => { if (event.shiftKey) { setSelectionEnd(row); return; } if (row !== cursor.row) { findMode.current = true; setTyped(""); } void moveTo(row, column.key); }}
                           onDoubleClick={() => void startEdit()}
                         >
                           {current && editing ? (
@@ -1529,8 +1752,11 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
             </div>
           </div>
           {help && help.columns.length > 0 && helpRow !== null && cursorColumn && toText(cursorColumn.setup.help_query) !== "" && (
-            <div className="mp-help">
-              <div className="mp-help-title">{help.total}<button type="button" onClick={() => setHelpRow(null)} aria-label="Close help">×</button></div>
+            <div className="mp-help" style={helpDrag.style}>
+              <div className="mp-help-title mp-drag-handle" {...helpDrag.handle} onDoubleClick={helpDrag.reset} title="Drag to move · double-click to put back">
+                <span><Icon name="move" />{help.total}</span>
+                <button type="button" onClick={() => setHelpRow(null)} aria-label="Close help">×</button>
+              </div>
               <table>
                 <thead><tr>{help.columns.map((column) => <th key={column.key} style={{ width: column.width || 90 }}>{column.caption}</th>)}</tr></thead>
                 <tbody>
@@ -1549,6 +1775,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               <button type="button" disabled={!copied} onClick={() => { setMenu(null); void pasteCell(); }}>Paste</button>
               <button type="button" onClick={() => { setMenu(null); if (cursor.key) setHiddenColumns((current) => [...current, cursor.key]); }}>Hide Column</button>
               <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns((current) => current.slice(0, -1)); }}>Visible Column</button>
+              <button type="button" onClick={() => { setMenu(null); setColumnChooser(true); }}>Hide / Show Columns…</button>
+              <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns([]); }}>Show All Columns</button>
               <button type="button" onClick={() => { setMenu(null); setCell(cursor.row, cursor.key, cellOf(backup[cursor.row], cursor.key)); }}>Restore Cell Value</button>
               <button type="button" onClick={() => { setMenu(null); void deleteSelected("row"); }}>Delete Row</button>
               <button type="button" onClick={() => { setMenu(null); void deleteSelected("selection"); }}>Delete Selection</button>
@@ -1596,6 +1824,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
             <button type="button" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" />Cancel</button>
             <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
             {meta?.logFileSpecial && <button type="button" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}><Icon name="log" />Log</button>}
+            <button type="button" className="mp-btn mp-btn-plain" onClick={() => setColumnChooser(true)} title="Hide or show several columns"><Icon name="columns" />Columns{hiddenColumns.length ? ` (${hiddenColumns.length} hidden)` : ""}</button>
             <span className="mp-spacer" />
             {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
               <input
@@ -1623,9 +1852,37 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         </div>
       )}
 
+      {columnChooser && grids && (
+        <div className="mp-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setColumnChooser(false); }}>
+          <div className="mp-dialog mp-columns" role="dialog" aria-modal="true" aria-label="Hide or show columns">
+            <strong>Hide / Show Columns</strong>
+            <ul>
+              {grids.columns.filter((column) => column.visible).map((column) => {
+                const shown = !hiddenColumns.includes(column.key);
+                const last = shown && columns.length === 1;
+                return (
+                  <li key={column.key}>
+                    <label>
+                      <input type="checkbox" checked={shown} disabled={last} onChange={() => setHiddenColumns((current) => (shown ? [...current, column.key] : current.filter((key) => key !== column.key)))} />
+                      {column.caption || column.key}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mp-dialog-buttons">
+              <button type="button" onClick={() => setHiddenColumns([])}>Show all</button>
+              <button type="button" ref={focusOnMount} onClick={() => setColumnChooser(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {calc && (
         <div className="mp-calc-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCalc(null); }}>
           <Calculator
+            style={calcDrag.style}
+            dragHandle={calcDrag.handle}
             initial={calc.initial}
             decimals={calc.decimals}
             onClose={() => { setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
@@ -1640,7 +1897,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
 
       <div className="mp-status">
         <span>{rowStatus}</span>
-        <span className="mp-message">{message}</span>
+        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message}</span>
         <span>{hotKeys}</span>
         {warnings.length > 0 && <span className="mp-warn" title={warnings.join("\n")}>{warnings.length} setup query warning{warnings.length === 1 ? "" : "s"}</span>}
       </div>

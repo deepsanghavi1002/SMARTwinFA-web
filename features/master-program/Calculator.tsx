@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { CSSProperties, HTMLAttributes, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { evaluate } from "./calculate";
 
 /**
@@ -12,7 +12,7 @@ import { evaluate } from "./calculate";
 
 const KEYS = ["7", "8", "9", "/", "4", "5", "6", "*", "1", "2", "3", "-", "0", ".", "%", "+"];
 
-export function Calculator({ initial, decimals, onUse, onClose }: { initial: string; decimals: number; onUse: (value: string) => void; onClose: () => void }) {
+export function Calculator({ initial, decimals, onUse, onClose, style, dragHandle }: { initial: string; decimals: number; onUse: (value: string) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement> }) {
   const [expression, setExpression] = useState(initial.replace(/,/g, ""));
   const box = useRef<HTMLInputElement>(null);
   // The cell's value starts selected, so typing replaces it and a key button adds to it.
@@ -27,7 +27,8 @@ export function Calculator({ initial, decimals, onUse, onClose }: { initial: str
     if (event.key === "Escape") { event.preventDefault(); onClose(); }
   };
   return (
-    <div className="mp-calc" role="dialog" aria-label="Calculator">
+    <div className="mp-calc" role="dialog" aria-label="Calculator" style={style}>
+      <div className="mp-calc-title mp-drag-handle" {...dragHandle} title="Drag to move">Calculator</div>
       <input
         className="mp-calc-input"
         aria-label="Expression"
@@ -42,9 +43,10 @@ export function Calculator({ initial, decimals, onUse, onClose }: { initial: str
         <button type="button" onClick={() => setExpression((current) => current + "(")}>(</button>
         <button type="button" onClick={() => setExpression((current) => current + ")")}>)</button>
         <button type="button" onClick={() => setExpression((current) => current.slice(0, -1))} aria-label="Backspace">⌫</button>
-        <button type="button" onClick={() => setExpression("")}>C</button>
+        <button type="button" onClick={() => { setExpression(""); box.current?.focus(); }} title="Clear the figure">C</button>
       </div>
       <div className="mp-calc-actions">
+        <button type="button" className="mp-btn mp-btn-plain" onClick={() => onUse("")} title="Empty the cell">Clear Field</button>
         <button type="button" className="mp-btn mp-btn-green" disabled={result === null} onClick={apply}>Use</button>
         <button type="button" className="mp-btn mp-btn-red" onClick={onClose}>Close</button>
       </div>
