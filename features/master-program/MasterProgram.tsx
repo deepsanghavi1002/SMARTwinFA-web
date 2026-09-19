@@ -1233,15 +1233,41 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         {first && !grids && !secondOptions && <button type="button" onClick={() => void loadGroup(first, second)} disabled={Boolean(busy)}>Show</button>}
         {grids && <button type="button" onClick={() => void cancelAll()}>Cancel</button>}
         {busy && <span className="mp-busy">{busy}…</span>}
+        {/* Group combo, tabs, find and the Update buttons share one row so the grid gets the height. */}
+        {grids && (
+          <div className="mp-tabs" role="tablist">
+            {grids.addTabVisible && <button type="button" role="tab" aria-selected={tab === "add"} className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}>New (Add){restore ? " – View" : ""}</button>}
+            {imageTab && <button type="button" role="tab" aria-selected={tab === "image"} className={tab === "image" ? "active" : ""} onClick={() => setTab("image")}>Image</button>}
+            {grids.updateTabVisible && <button type="button" role="tab" aria-selected={tab === "update"} className={tab === "update" ? "active" : ""} onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}>Update / Delete</button>}
+          </div>
+        )}
+        {grids && tab === "update" && (
+          <>
+                <input id="mp-find" className="mp-find" placeholder="Find (Ctrl+F, F3 next)" value={find} onChange={(event) => setFind(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F3") { event.preventDefault(); findNext(); } }} />
+                {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
+                  <input
+                    key={box.name}
+                    className="mp-scheme-box"
+                    aria-label={programId === 50 ? "Change rate: +, -, *, / or % then a figure" : box.label}
+                    placeholder={programId === 50 ? "Rate +-*/%" : box.label}
+                    value={schemeBoxes[box.name] ?? ""}
+                    onChange={(event) => setSchemeBoxes((current) => ({ ...current, [box.name]: event.target.value }))}
+                    onBlur={(event) => applySchemeBox(box.name, event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+                  />
+                ))}
+                <span>{liveRows.length} records{edited.size ? ` · ${edited.size} changed` : ""}{deleted.size ? ` · ${deleted.size} marked for delete` : ""}</span>
+                <span className="mp-spacer" />
+                <button type="button" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}>Save</button>
+                <button type="button" onClick={() => first && void loadGroup(first, second)} disabled={Boolean(busy)}>Refresh</button>
+                <button type="button" onClick={() => void printUpdate()}>Print</button>
+                <button type="button" onClick={exportCsv}>Export</button>
+                {meta?.logFileSpecial && <button type="button" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}>Log</button>}
+                <button type="button" onClick={() => void leave()}>Quit</button>
+          </>
+        )}
       </div>
 
-      {grids && (
-        <div className="mp-tabs" role="tablist">
-          {grids.addTabVisible && <button type="button" role="tab" aria-selected={tab === "add"} className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}>New (Add){restore ? " – View" : ""}</button>}
-          {imageTab && <button type="button" role="tab" aria-selected={tab === "image"} className={tab === "image" ? "active" : ""} onClick={() => setTab("image")}>Image</button>}
-          {grids.updateTabVisible && <button type="button" role="tab" aria-selected={tab === "update"} className={tab === "update" ? "active" : ""} onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}>Update / Delete</button>}
-        </div>
-      )}
 
       {grids && tab === "add" && (
         <div className="mp-add" ref={addFocus} role="grid" aria-label="New (Add)" tabIndex={0} onKeyDown={(event) => void addKeys(event)}>
@@ -1278,29 +1304,6 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
 
       {grids && tab === "update" && (
         <div className="mp-update">
-          <div className="mp-toolbar">
-            <input id="mp-find" className="mp-find" placeholder="Find (Ctrl+F, F3 next)" value={find} onChange={(event) => setFind(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F3") { event.preventDefault(); findNext(); } }} />
-            {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
-              <input
-                key={box.name}
-                className="mp-scheme-box"
-                aria-label={programId === 50 ? "Change rate: +, -, *, / or % then a figure" : box.label}
-                placeholder={programId === 50 ? "Rate +-*/%" : box.label}
-                value={schemeBoxes[box.name] ?? ""}
-                onChange={(event) => setSchemeBoxes((current) => ({ ...current, [box.name]: event.target.value }))}
-                onBlur={(event) => applySchemeBox(box.name, event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-              />
-            ))}
-            <span>{liveRows.length} records{edited.size ? ` · ${edited.size} changed` : ""}{deleted.size ? ` · ${deleted.size} marked for delete` : ""}</span>
-            <span className="mp-spacer" />
-            <button type="button" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}>Save</button>
-            <button type="button" onClick={() => first && void loadGroup(first, second)} disabled={Boolean(busy)}>Refresh</button>
-            <button type="button" onClick={() => void printUpdate()}>Print</button>
-            <button type="button" onClick={exportCsv}>Export</button>
-            {meta?.logFileSpecial && <button type="button" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}>Log</button>}
-            <button type="button" onClick={() => void leave()}>Quit</button>
-          </div>
           <div
             className="mp-scroll"
             ref={scroller}
