@@ -671,13 +671,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     return !cancel;
   };
 
-  const startEdit = async (initial?: string) => {
+  const startEdit = async (initial?: string, at: Cell = cursor) => {
     findMode.current = false;
     setTyped("");
-    const column = columnByKey.get(cursor.key);
-    if (!column || !records[cursor.row] || !isEditable(cursor.row, column)) return;
-    if (!(await beforeEdit(cursor.row, column))) return;
-    const value = cellOf(records[cursor.row], column.key);
+    const column = columnByKey.get(at.key);
+    if (!column || !records[at.row] || !isEditable(at.row, column)) return;
+    if (!(await beforeEdit(at.row, column))) return;
+    const value = cellOf(records[at.row], column.key);
     setEditText(initial !== undefined ? initial : value);
     setEditing(true);
   };
@@ -687,8 +687,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const column = columnByKey.get(cursor.key);
     const row = cursor.row;
     if (!column || !grids || !meta) { setEditing(false); return true; }
-    let text = editText;
     const record = records[row];
+    // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
+    if (editText === cellOf(record, column.key)) { setEditing(false); return true; }
+    let text = editText;
     const outcome = validate({
       setup: column.setup, masterGrid: false, programId, licence, coGstReq: meta.coGstReq, label: column.caption,
       fieldValue: (name) => cellOf(record, name),
@@ -754,24 +756,24 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   };
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
-  const moveTo = async (row: number, key: string) => {
-    if (!grids || !meta || busy) return;
-    if (editing && !(await commitEdit())) return;
+  const moveTo = async (row: number, key: string): Promise<boolean> => {
+    if (!grids || !meta || busy) return false;
+    if (editing && !(await commitEdit())) return false;
     const oldRow = cursor.row;
     const oldColumn = columnByKey.get(cursor.key);
     const newColumn = columnByKey.get(key);
-    if (!newColumn || row < 0 || row >= records.length) return;
+    if (!newColumn || row < 0 || row >= records.length) return false;
     const oldRecord = records[oldRow];
 
     if (oldColumn && oldRecord && (oldRow !== row || oldColumn.key !== key)) {
       if (cellOf(oldRecord, oldColumn.key) !== "" && toText(oldColumn.setup.duplichk_fldname1) !== "" && duplicateInGrid(records, help?.rows ?? null, oldRow, cellOf(oldRecord, oldColumn.key), oldColumn.setup)) {
         await ask("Duplicate Master Found...", "Warning");
-        return;
+        return false;
       }
       if (oldColumn.setup.field_type === "D" && first?.text === "(blank)" && cellOf(oldRecord, oldColumn.key).trim() !== "" && dateOutsideYear(cellOf(oldRecord, oldColumn.key), yearStartText, yearEndText)) {
         await ask("Date should be allowed only Within Accounting year...", "Date Validation");
         setCell(oldRow, oldColumn.key, yearStartText);
-        return;
+        return false;
       }
       // AfterRowColChange: a typed password is kept aside and masked.
       if (oldColumn.setup.force_inputtype === "P" && cellOf(oldRecord, oldColumn.key) !== "*********") {
@@ -846,12 +848,31 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       if (top < element.scrollTop) element.scrollTop = top;
       else if (top + ROW_HEIGHT * 2 > element.scrollTop + element.clientHeight) element.scrollTop = top - element.clientHeight + ROW_HEIGHT * 2;
     }
+    return true;
   };
 
   const neighbourColumn = (key: string, step: number) => {
     const index = columns.findIndex((column) => column.key === key);
     const next = columns[Math.min(columns.length - 1, Math.max(0, index + step))];
     return next?.key ?? key;
+  };
+  /** Where Enter goes after an edit: the next editable field, else the next row's first one. */
+  const nextEditable = (row: number, key: string, step: 1 | -1): Cell | null => {
+    let current = row;
+    let index = columns.findIndex((column) => column.key === key) + step;
+    for (let rowsTried = 0; rowsTried < 3; ) {
+      if (index >= columns.length || index < 0) {
+        const position = shownRows.indexOf(current) + step;
+        if (position < 0 || position >= shownRows.length) return null;
+        current = shownRows[position];
+        index = step === 1 ? 0 : columns.length - 1;
+        rowsTried += 1;
+      }
+      const column = columns[index];
+      if (column && isEditable(current, column)) return { row: current, key: column.key };
+      index += step;
+    }
+    return null;
   };
   const neighbourRow = (row: number, step: number) => {
     const position = shownRows.indexOf(row);
@@ -1109,8 +1130,11 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       case "Enter":
         event.preventDefault();
         setTyped("");
-        if (column && isEditable(cursor.row, column) && (findMode.current || (programId !== 38 && grids.columns.length > 10))) await startEdit();
-        else await moveTo(cursor.row, neighbourColumn(cursor.key, 1));
+        if (column && isEditable(cursor.row, column)) await startEdit();
+        else {
+          const next = nextEditable(cursor.row, cursor.key, 1);
+          if (next && (await moveTo(next.row, next.key))) await startEdit(undefined, next);
+        }
         return;
       case "F2": event.preventDefault(); await startEdit(); return;
       case "F3": event.preventDefault(); findNext(); return;
@@ -1182,7 +1206,9 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       event.preventDefault();
       if (await commitEdit()) {
         gridFocus.current?.focus();
-        if (event.key === "Tab" || grids?.columns.length) await moveTo(cursor.row, neighbourColumn(cursor.key, event.shiftKey ? -1 : 1));
+        // Editing carries on: the next editable field opens by itself, wrapping to the next row.
+        const next = nextEditable(cursor.row, cursor.key, event.shiftKey ? -1 : 1);
+        if (next && (await moveTo(next.row, next.key))) await startEdit(undefined, next);
       }
       return;
     }
