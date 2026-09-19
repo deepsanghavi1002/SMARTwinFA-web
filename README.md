@@ -5,10 +5,46 @@ SMARTwinFA financial accounting product. It preserves the latest web upgrade
 from the legacy repository and adds the architecture, migration controls, and
 quality gates needed to reach production parity.
 
-> **Current status: prototype, not production software.** The login, company
-> selection, navigation, and Addon Master currently use mock/in-memory data.
-> There is no production authentication, authorization, PostgreSQL persistence,
-> or tenant isolation yet. Do not expose this build to the public internet.
+> **Current status: PostgreSQL-backed prototype, not production software.**
+> The recorded SMARTwinFA workflows use an isolated PostgreSQL test environment
+> with mock data. Production authentication, authorization,
+> tenant isolation, statutory integrations, and cutover controls are still not
+> complete.
+
+## September 2026 integration: reviewed master migration
+
+PR #2 adopts `pranavcomputers`' reviewed `feature/generic-master-program`
+implementation as the application baseline. Conflicting screens, startup,
+styles, master behavior and migration documents keep that branch's versions.
+Non-conflicting infrastructure, intake evidence and tests from main remain.
+The older feature list below describes the initial prototype, not the current menu.
+
+The active UI now reads operators, years, companies and menus from PostgreSQL,
+and opens the generic master editor for MASTER menu entries. Other workflows
+show a not-yet-built screen; retaining old service files does not wire them into
+Dad's new menu. This is a substantial migration, not just a view toggle.
+
+**Do not expose this prototype publicly.** Startup still accepts an unverified
+password and request-supplied operator identity. All generic master requests
+are disabled by default. `SMARTWINFA_TRUSTED_LOCAL_MODE=true` explicitly opts
+into isolated development with disposable data; it is not an authentication
+solution. Existing startup/legacy endpoints also need authenticated sessions
+and authorization before public use. The two save checks hardened here validate
+the program/module pair against the visible menu and require both edit and
+delete permissions for a mixed save; they do not constitute a full security audit.
+
+Compose now supplies the direct PostgreSQL settings used by the reviewed UI.
+It still requires restored `smart_system`, `smart_setup`, and company schemas;
+an empty PostgreSQL container is not sufficient. No production database restore
+or application deployment is performed by this integration.
+
+Integration verification: clean dependency install, build, 143 automated tests,
+TypeScript, ESLint, repository safety and both Compose configuration checks
+passed locally. Tests include rendered login HTML and default denial of the
+generic master API, not real database saves or browser acceptance. Dependency
+audit reports 13 findings (12 high, 1 low) in the development/build dependency
+graph, including Vinext and React server components; some are runtime-relevant
+despite their package classification. Resolve these before public deployment.
 
 ## What is present today
 
@@ -24,25 +60,28 @@ quality gates needed to reach production parity.
 - A traceable, phased migration plan covering the metadata runtime, database
   rules, client-specific queries, permissions, reports, printing, testing,
   rollout, and future AI readiness.
+- An executable PostgreSQL control-plane migration with tenant-aware composite
+  relationships, forced RLS, identity/session/RBAC storage, audit/outbox,
+  durable-job, and migration-ledger foundations.
+- A canonical accounting/inventory migration for Account Master, typed custom
+  values, balanced journals, Product Master, and non-negative stock movements.
 
 The imported UI is based on `SMARTwinFA/web` at legacy commit
 `b3970e94991824574fd2106764e1b3e95e377c9e`. Earlier prototype history is also
 preserved in this repository.
 
-## Start locally
+## Run locally
 
-Requirements: Node.js 22.13 or newer.
-
-```bash
-npm ci
-npm run dev
-```
-
-The Docker prototype can be started with:
+Install Docker Desktop, then start the complete local environment:
 
 ```bash
-docker compose up --build
+docker compose --env-file .env.docker -f compose.local.yaml up --build
 ```
+
+Open [http://localhost:3000](http://localhost:3000). This starts the web app,
+API, and isolated PostgreSQL mock database together. The mock-data package and
+local settings stay outside GitHub. For the short setup and developer workflow,
+see [development-workflow.md](docs/development-workflow.md).
 
 ## Required checks
 

@@ -119,6 +119,12 @@ Each module owns its commands, queries, invariants, permissions, audit events,
 and tests. Direct cross-module table updates are prohibited; use a domain API or
 transactional event contract.
 
+`platform/audit/audit-event.ts` supplies the initial immutable audit-event
+contract: every event carries the full tenant/company/year context, actor,
+resource, correlation ID, outcome, and redacted details. Persistence,
+append-only storage, retention, and transactional outbox delivery remain part
+of the PostgreSQL platform work.
+
 ## Metadata runtime
 
 Preserve the valuable generic behavior of `smart_setup`, but replace raw query
@@ -132,6 +138,13 @@ fragments and opaque numeric flags with contracts:
 - `report_definition` and template version;
 - tenant/company/year overrides with precedence and effective dates;
 - compiler status, contract hash, deployment, rollback, and audit records.
+
+Custom fields use a separate typed definition contract. A field belongs to one
+canonical entity—not a legacy polymorphic row—and declares value type,
+type-specific constraints, allowed product surfaces, scope, permissions, and
+audit event. Sparse values may be stored during transition, but any field used
+for joins, uniqueness, range filters, financial rules, or high-volume reports
+must receive an explicit typed/indexed projection after review.
 
 Definitions progress through draft, validated, approved, active, and retired.
 The compiler accepts only supported operators, catalog-owned identifiers, and
@@ -156,6 +169,12 @@ print_artifact
 Workers claim jobs atomically. Retries are idempotent. Generated artifacts are
 tenant-scoped, encrypted, access-controlled, checksummed, and retained by
 policy. Golden PDF/image comparisons replace assumptions about Crystal output.
+
+The current source-independent job contract in `platform/jobs/job-state.ts`
+models the allowed queued/claimed/succeeded/failed/cancelled transitions,
+bounded retries, claiming-worker ownership, tenant-scoped idempotency keys, and
+auditable lifecycle events. It does not yet persist jobs, lease them atomically
+in PostgreSQL, render documents, or deliver artifacts.
 
 Reports use typed parameters and output contracts. Expensive reports run as
 jobs or against reviewed read models/replicas. Cache keys always include tenant,

@@ -1,0 +1,8 @@
+services:
+  # Production/Pi override: keep SMARTwinFA's PostgreSQL files on the selected SSD
+  # without moving the host's shared Docker data root or unrelated containers.
+  legacy-db:
+    volumes:
+      - type: bind
+        source: ${SMARTWINFA_SSD_DB_PATH:?Set SMARTWINFA_SSD_DB_PATH}
+        target: /var/lib/postgresql

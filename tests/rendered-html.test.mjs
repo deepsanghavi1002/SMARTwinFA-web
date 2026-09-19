@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
+async function render(path = "/", init = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
+    new Request(`http://localhost${path}`, {
       headers: { accept: "text/html" },
+      ...init,
     }),
     {
       ASSETS: {
@@ -22,6 +23,19 @@ async function render() {
     },
   );
 }
+
+test("generic master requests fail closed before database access by default", async () => {
+  const previous = process.env.SMARTWINFA_TRUSTED_LOCAL_MODE;
+  delete process.env.SMARTWINFA_TRUSTED_LOCAL_MODE;
+  try {
+    const response = await render("/api/master-program", { method: "POST", body: "{}" });
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /disabled until authenticated sessions/);
+  } finally {
+    if (previous === undefined) delete process.env.SMARTWINFA_TRUSTED_LOCAL_MODE;
+    else process.env.SMARTWINFA_TRUSTED_LOCAL_MODE = previous;
+  }
+});
 
 test("server-renders the SMARTwinFA login shell", async () => {
   const response = await render();

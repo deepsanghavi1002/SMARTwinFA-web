@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check repository safety
+        run: npm run security:check
+
       - name: Lint
         run: npm run lint
 
@@ -37,4 +40,6 @@ jobs:
         run: npm test
 
       - name: Validate Compose configuration
+        env:
+          SMARTWINFA_DB_PASSWORD: ci-config-validation-only
         run: docker compose config --quiet

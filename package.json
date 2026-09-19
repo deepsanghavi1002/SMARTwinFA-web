@@ -9,7 +9,11 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/company-menu-contract.test.mjs tests/sys-values.test.mjs tests/calculator.test.mjs",
+    "test": "npm run build && node --experimental-strip-types --test tests/*.test.mjs tests/*.test.mts",
+    "security:check": "node scripts/repository-safety-check.mjs",
+    "procedures:analyze": "node scripts/analyze-procedure-intake.mjs",
+    "clone:sqlserver-source": "node scripts/clone-rishabh-sqlserver-to-postgres.mjs",
+    "test:repository-safety": "node --test tests/repository-safety-check.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit --incremental false"
   },
@@ -18,6 +22,7 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^9.4.0",
     "@mui/material": "^9.3.1",
+    "mssql": "11.0.1",
     "pg": "^8.23.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"

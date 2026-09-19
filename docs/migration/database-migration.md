@@ -2,19 +2,54 @@
 
 ## Baseline decision gate: identify the real source dialect
 
-Current evidence conflicts:
+The migration direction is confirmed; object-level conversion evidence remains incomplete:
 
 | Evidence | Dialect/state |
 |---|---|
 | Inspected C# legacy branch | SQL Server/T-SQL (`SqlClient`, `.dbo`, `TOP`, `ISNULL`, `CONVERT`, SMO, MDF/LDF) |
-| User migration description | MySQL to PostgreSQL |
+| Product-owner confirmation (2026-08-21) | SQL Server is the legacy source; PostgreSQL is the destination; MySQL is out of scope |
 | Two supplied “.sql” files | PostgreSQL custom-format archives, already containing converted objects/data |
 | Procedures inside `smart_setup` archive | PostgreSQL wrappers with substantial T-SQL still embedded in dynamic text |
 
 The program must maintain an object registry with `source_engine`,
 `source_version`, `source_object`, `target_object`, `conversion_status`, and
-`evidence`. No blanket MySQL conversion or acceptance of dumped PostgreSQL
-routines is allowed until this registry resolves the dialect per object.
+`evidence`. No blanket acceptance of dumped PostgreSQL routines is allowed
+until this registry resolves the source/target mapping and conversion status per
+object.
+
+## Verified intake progress — 2026-08-21
+
+The two supplied PostgreSQL archives have been restored only into the local,
+isolated `smartwin_data_intake` database. The restore is physically healthy;
+the evidence and archive hashes are in
+[the restore report](../intake/postgres-local-restore-2026-08-21.md).
+
+A repeatable, aggregate-only extractor now produces the committed
+[sanitized metadata catalogue](../intake/postgres-metadata-catalog-2026-08-21.json):
+
+```text
+node scripts/export-postgres-intake-catalog.mjs \
+  --database smartwin_data_intake \
+  --observed-on 2026-08-21
+```
+
+It records table/column/constraint counts plus safe metadata totals and the
+Account Master structural contract. It does not export client rows, raw SQL,
+routine bodies, password values, or connection configuration. The command is
+local discovery tooling, not an app runtime dependency and not a CI database
+test.
+
+This evidence makes the following work executable now:
+
+1. extract the complete sanitized program/menu/key dependency graph;
+2. profile Account Master candidate keys, duplicates, orphans, money, dates,
+   flags, and add-on participation;
+3. convert reviewed metadata into typed target definitions and contract tests.
+
+It does **not** authorize any production migration, procedure execution, raw
+query reuse, or Account Master write path. `smart_system`, source-dialect
+authority, routine behavior, and effective client override evidence are still
+required for those steps.
 
 ## Target data boundaries
 
@@ -27,6 +62,15 @@ routines is allowed until this registry resolves the dialect per object.
   dashboard, help, and override manifests.
 - Compatibility catalog: temporary mapping from stable IDs to legacy
   database/schema/table/routine names.
+
+The first two executable target migrations now implement the control plane and
+the canonical Account Master, typed custom-value, journal, product, and stock
+movement boundaries. Financial amounts use integer minor units; measured
+quantities use reviewed fixed-scale numerics. Composite relationships preserve
+tenant/company/year scope, tenant tables force RLS, posted journals must balance
+at deferred constraint time, and stock movements cannot create negative stock.
+These are target invariants backed by clean-database tests, not legacy parity
+claims; later source evidence can add mappings and approved exceptions.
 
 The target does not create a new schema/database for every accounting year.
 Large tables may be partitioned only after workload measurement. PostgreSQL's
@@ -60,7 +104,7 @@ Obtain and catalog:
 - current menu, entry, master, report, dashboard, help, book, security, document,
   custom-field, and key metadata;
 - the PostgreSQL migration branch and all stored procedures/functions;
-- authoritative MySQL DDL/data dictionary if a MySQL system exists;
+- authorized SQL Server DDL/data dictionary and version/compatibility evidence;
 - C#/XML/runtime query builders and `|sys.*|` replacement behavior;
 - license/company/database-to-feature and report/template mappings;
 - representative golden data and reports for each major flow.
@@ -80,14 +124,6 @@ status.
 ## Phase 3: schema conversion and integrity recovery
 
 Create an explicit mapping for each column and behavior.
-
-### MySQL concerns, if confirmed
-
-- unsigned ranges and identity allocation;
-- `AUTO_INCREMENT`, `tinyint(1)`, enum/set, zero dates, implicit casts;
-- charset/collation and case sensitivity;
-- `ON DUPLICATE KEY`, date/string functions, delimiters, and result sets;
-- SQL mode-dependent grouping/null/truncation behavior.
 
 ### SQL Server concerns already evidenced
 
@@ -199,8 +235,8 @@ See [cutover runbook](../operations/cutover-runbook.md).
 ## Immediate blockers
 
 - Missing `smart_system` archive.
-- Missing authoritative MySQL artifacts or confirmation that SQL Server is the
-  actual source.
+- Missing exact SQL Server version/compatibility/collation evidence and
+  authoritative object definitions.
 - Missing promised PostgreSQL branch and future stored procedures.
 - Missing current menu and effective client query/report/template sets.
 - Missing a running legacy environment and representative golden fixtures.

@@ -1,0 +1,3 @@
+import assert from "node:assert/strict";import test from "node:test";import * as w from "../platform/domain/workflow-contracts.ts";
+test("enforces representative transactional workflows",()=>{assert.equal(w.postBalanced(10,10),"posted");assert.throws(()=>w.postBalanced(10,9));assert.equal(w.invoiceState("draft","issue"),"issued");assert.equal(w.allocatePayment(10,3),7);assert.equal(w.retryTax("failed",1),"pending");});
+test("enforces reports, operations, imports and delivery",()=>{assert.equal(w.reportTotal([1,2]),3);assert.deepEqual(w.typedReportFilter("status","open"),{field:"status",value:"open"});assert.equal(w.yearState(true,"lock"),false);assert.equal(w.importKeySeen(new Set(["a"]),"a"),"quarantine");assert.equal(w.deliveryAttempt(true,1),"queued");});

@@ -1,0 +1,11 @@
+metadata_id,logical_area,source_tables_or_objects,source_location,required_fields,status,sanitization_requirement,owner
+M001,Menu hierarchy,MenuMaster and related setup tables,SMARTwinFA/Prj_Menu; SMARTwinFA/Prj_Forms,IDs order labels parent visibility permissions,Not exported,Remove credentials and client rows,Web navigation owner
+M002,Program metadata,program_top/program_body,SMARTwinFA/Prj_Forms; Data Logic Layer,program IDs order labels flags query references,Not exported,Sanitize labels/client text as needed,Application owner
+M003,Addon fields,account/product addon metadata,SMARTwinFA/Prj_Forms; @Classes,field IDs order types labels flags,Not exported,No client financial rows,Master-data owner
+M004,Entry metadata,entry/book/series/setup metadata,SMARTwinFA/Prj_Forms/Entry.cs; Cls_Entry.cs,field order validation flags books series,Not exported,No personal or financial rows,Accounting owner
+M005,Report metadata,report properties controls output columns styles help,SMARTwinFA/Prj_Reports/Report_Combine.cs,IDs order types labels formulas queries permissions effective dates,Not exported,Sanitize query literals and client text,Reporting owner
+M006,Dashboard metadata,USER_DASHBOARD and DASHBOARD_DETAIL,SMARTwinFA/Prj_Forms/Dashboard.cs; Optimize_Dashboard_Indexes.sql,menu component title layout SQL query visibility order,Not exported,Remove user identifiers and client data,Dashboard owner
+M007,Document mappings,Crystal templates and print books,SMARTwinFA/REPORT; Crystal_ReportViewer.cs,template path menu book parameters formulas copies,Partially present as binaries,No protected samples,Reporting owner
+M008,Company/year routing,COMPANY and CNAME,SMARTwinFA/Prj_Forms/Setup_CompanySelect.cs; Dashboard.cs,company key database year dates group bill name,Not exported,Hash or remove client names,Data migration owner
+M009,Users/rights,user and security metadata,Data Logic Layer/Dll_Users.cs; Setup_Security.cs,IDs roles rights effective dates,Not exported,Never export passwords; document hash algorithm,Security owner
+M010,Client overrides,license and configuration fields,@Library/Lib_GlobalVariables.cs; app.config,license flags feature branches effective dates,Not exported,Remove client rows and credentials,Product owner

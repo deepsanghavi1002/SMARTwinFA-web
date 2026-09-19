@@ -1,4 +1,5 @@
 import type { Client } from "pg";
+import { requiredEditRights } from "./access";
 import type { SysValueContext } from "../sys-values";
 import { isNumeric, parseDesktopDate, removeTableAlias, runFormula, securityRead, securityWrite, toDecimal, toInt, toText, writePw, formatDesktopDate, formatDesktopTime } from "./legacy";
 import { displayValue, Loader, loadContext, prepareProgram, replaceControlValues } from "./load";
@@ -715,9 +716,10 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
   const prepared = await prepareProgram(loader, request.programName, request.group);
   const { programId, top } = prepared;
 
-  const anyDelete = request.records.some((record) => record.deleted);
-  const rights = await checkRights(loader, programId, request.menuShortName, request.group, anyDelete && request.records.every((record) => record.deleted) ? "delete" : "edit", request.passwords ?? {});
-  if (rights) return rights;
+  for (const kind of requiredEditRights(request.records)) {
+    const rights = await checkRights(loader, programId, request.menuShortName, request.group, kind, request.passwords ?? {});
+    if (rights) return rights;
+  }
 
   // Func_BlankFieldValidation(c1dg_UpdateGrid, ..., true, "c") over edited rows
   let blankMessage = "Fill The Following Fields And Try Again\n\n";

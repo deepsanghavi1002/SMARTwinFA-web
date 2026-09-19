@@ -1,0 +1,9 @@
+#!/bin/zsh
+
+APP_URL="https://smart-winfa.deepsanghavi.org/"
+
+if open -Ra "Google Chrome"; then
+  open -na "Google Chrome" --args --app="$APP_URL"
+else
+  open "$APP_URL"
+fi

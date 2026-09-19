@@ -1,4 +1,6 @@
 import { transaction } from "@/lib/db";
+import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { readMenuCatalog } from "@/lib/menu-catalog";
 import { addGridBeforeEdit, checkStateChange, defaAddValue, defaAgainst, defaFixValue, deleteBlocked, duplicateQuery, helpGrid, onChangeReplace, plywoodConversion, recordExist, stateShortCode, uomFormula } from "@/lib/master-program/events";
 import type { EventRequest } from "@/lib/master-program/events";
 import { productImage, readMasterLog, verifyModulePassword, zoomBook } from "@/lib/master-program/extras";
@@ -27,6 +29,9 @@ const headers = { "cache-control": "no-store" };
 const WRITES = new Set(["add-save", "edit-save"]);
 
 export async function POST(request: Request) {
+  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
+    return Response.json({ error: "Master migration is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
+  }
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -44,6 +49,10 @@ export async function POST(request: Request) {
   try {
     const result = await transaction(async (client) => {
       const session = await readSession(client, key);
+      if (["program", "module-password", "add-save", "edit-save", "cloud-push"].includes(body.action) &&
+          !allowedMasterMenu(await readMenuCatalog(session.companyGroup), body.programName, String(body.menuShortName ?? ""))) {
+        throw new Error("The requested master program and module are not in this company's visible menu");
+      }
       const loader = new Loader(client, session);
       const group = body.group as GroupState;
       const event = (): EventRequest => ({ programName: body.programName, group, masterGrid: body.masterGrid === true, row: body.row as EventRequest["row"] });

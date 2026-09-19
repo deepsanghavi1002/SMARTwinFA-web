@@ -1,6 +1,6 @@
 # ADR-003: PostgreSQL connection and security model
 
-- Status: Proposed
+- Status: Accepted for implementation; operational role provisioning pending
 - Required before: first persistent vertical slice
 
 ## Decision
@@ -73,3 +73,13 @@ values trigger reset rather than re-storage.
 - Backup with RLS-safe role and successful isolated restore drill.
 - Connection leakage test proving one request cannot inherit another tenant's
   context.
+
+## Implemented foundation
+
+Migration `0001_control_plane.sql` revokes public schema/table/function access,
+forces RLS on tenant-owned control, audit, job, and migration tables, and reads
+scope only from transaction-local `app.*` settings. A clean local PostgreSQL
+apply plus a non-owner runtime-role probe verified default-deny reads, matching
+tenant reads, and denial of a cross-tenant insert. Production role creation,
+TLS, pool limits, failover, secret-provider integration, and the full isolation
+matrix remain deployment and integration gates.

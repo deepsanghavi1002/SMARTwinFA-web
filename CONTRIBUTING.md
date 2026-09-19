@@ -11,6 +11,9 @@ permissions, tests, and acceptance evidence in the issue or traceability row.
 
 - Use short-lived branches prefixed with `codex/`, `feature/`, `fix/`, or the
   team's approved equivalent.
+- Follow [the developer workflow](docs/development-workflow.md). Each branch
+  must use its own local Compose project and PostgreSQL volume; never test
+  writes against a shared, Pi, or source database.
 - Keep commits scoped to one behaviorally meaningful slice.
 - Do not mix client data, generated builds, local configuration, or unrelated
   legacy cleanup into a product change.

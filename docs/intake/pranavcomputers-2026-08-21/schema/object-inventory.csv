@@ -1,0 +1,12 @@
+object_id,database_or_schema,object_name,object_type,engine,source_evidence,definition_status,dependencies,migration_status,owner
+S001,smart_system,dbo.USER_DASHBOARD,table,SQL Server,SMARTwinFA/Optimize_Dashboard_Indexes.sql and dashboard source,Definition missing,USER_DASHBOARD index recommendation,Await authorized schema export,Database owner
+S002,smart_system,dbo.DASHBOARD_DETAIL,table,SQL Server,SMARTwinFA/Optimize_Dashboard_Indexes.sql and dashboard source,Definition missing,DASHBOARD_DETAIL index recommendation,Await authorized schema export,Database owner
+S003,company/year,dbo.PROD_LEDGER,table,SQL Server,Optimize_Dashboard_Indexes.sql commented recommendation and dashboard source,Definition missing,company database routing,Await authorized schema export,Accounting database owner
+S004,company/year,dbo.PROCESS,table,SQL Server,Optimize_Dashboard_Indexes.sql commented recommendation and dashboard source,Definition missing,company database routing,Await authorized schema export,Accounting database owner
+S005,company/year,dbo.ACCOUNT,table,SQL Server,inline SQL in entry/report/dashboard source,Definition missing,accounting/report routines,Await authorized schema export,Accounting database owner
+S006,company/year,dbo.LEDGER,table,SQL Server,inline SQL in entry/report/dashboard source,Definition missing,accounting/report routines,Await authorized schema export,Accounting database owner
+S007,company/year,dbo.ADDRESS,table,SQL Server,Crystal_ReportViewer.cs,Definition missing,email/report delivery,Await authorized schema export,Database owner
+S008,smart_system,dbo.COMPANY,table,SQL Server,Dashboard.cs and Crystal_ReportViewer.cs,Definition missing,company/year routing and contact data,Await authorized schema export,Database owner
+S009,smart_system,dbo.CNAME,table,SQL Server,Dashboard.cs,Definition missing,company/year routing,Await authorized schema export,Database owner
+S010,smart_setup,report metadata objects,table set,SQL Server,Report_Combine.cs commented and active references,Definition missing,report routines and dynamic SQL,Await authorized metadata export,Reporting database owner
+S011,all logical databases,stored procedures,procedure set,SQL Server,Dll_*.cs and SQL wrapper source,Definition missing,application callers,Await authorized routine export,Database owner
