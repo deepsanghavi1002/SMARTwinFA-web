@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AddonMaster } from "../features/addon-master/AddonMaster";
+import { MasterProgram } from "../features/master-program/MasterProgram";
 import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
 /**
@@ -16,6 +16,8 @@ type MenuNode = {
   shortcut: string | null;
   actionCode: string | null;
   programName: string | null;
+  actionMenu: string | null;
+  menuShortName: string | null;
   children: MenuNode[];
 };
 
@@ -33,18 +35,24 @@ function MainMenu() {
   const [menuError, setMenuError] = useState("");
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [openSub, setOpenSub] = useState<number | null>(null);
-  const [activeItem, setActiveItem] = useState("Home");
+  /**
+   * The menu row the user opened. The whole node is kept, not just its label:
+   * programName is the stable identifier the desktop dispatches on, and two
+   * menus can carry the same label ("Master" appears under Addon and Product).
+   */
+  const [running, setRunning] = useState<MenuNode | null>(null);
+  const activeItem = running?.label ?? "Home";
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
   const menuBar = useRef<HTMLDivElement>(null);
 
   const closeMenus = () => { setOpenMenu(null); setOpenSub(null); };
   const goHome = () => {
-    setActiveItem("Home");
+    setRunning(null);
     closeMenus();
     setSuspendHoverMenu(true);
   };
   const choose = (node: MenuNode) => {
-    setActiveItem(node.label);
+    setRunning(node);
     closeMenus();
     setSuspendHoverMenu(true);
   };
@@ -79,6 +87,16 @@ function MainMenu() {
   }, []);
 
   const openRoot = menus.find((menu) => menu.id === openMenu);
+
+  /**
+   * Which screen the chosen menu row maps to. Every MASTER row runs the one generic master
+   * screen for the program_top program its ActionMenu names, as Main_Menu_New opens
+   * Master_ProgramGrid; other rows are answered honestly rather than dropped, so a menu
+   * that does nothing can be told apart from one that is broken.
+   */
+  const screen = running === null ? "home"
+    : running.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master"
+    : "pending";
 
   /** One dropdown row: a leaf runs, a branch opens its submenu beside it. */
   const item = (node: MenuNode) => node.children.length ? (
@@ -132,14 +150,31 @@ function MainMenu() {
         </div>
       </section>
 
-      <section className={`work-area ${activeItem === "Addon Master" ? "workflow-open" : ""}`}>
+      <section className={`work-area ${screen === "master" ? "workflow-open" : ""}`}>
         {/* The SMART WINFA artwork already carries the logo, the tagline and
             the Pranav Computers credit, so it is drawn as one background
             rather than reassembled from separate elements. */}
-        {activeItem === "Addon Master" ? <AddonMaster /> : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
+        {screen === "master" ? <MasterProgram key={running!.id} programName={running!.actionMenu!} menuShortName={running!.menuShortName ?? ""} title={running!.label} onClose={goHome} />
+          : screen === "pending" ? <NotBuiltYet node={running!} />
+          : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
       </section>
 
-      <footer className="status-strip"><span>{menuError || (activeItem === "Home" ? "Select menu to start" : `Selected: ${activeItem}`)}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
+      <footer className="status-strip"><span>{menuError || (running === null ? "Select menu to start" : screen === "pending" ? `${running.label} - screen not built yet (${running.programName ?? "no program"})` : `Running: ${running.label}`)}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
     </main>
+  );
+}
+
+/** Shown for a menu row whose screen has not been written yet. */
+function NotBuiltYet({ node }: { node: MenuNode }) {
+  return (
+    <div className="not-built">
+      <strong>{node.label}</strong>
+      <p>This screen has not been built in the web version yet.</p>
+      <dl>
+        <dt>Program</dt><dd>{node.programName ?? "-"}</dd>
+        <dt>Type</dt><dd>{node.actionCode ?? "-"}</dd>
+      </dl>
+      <small>It still runs in the Windows program. Menu row #{node.id}.</small>
+    </div>
   );
 }

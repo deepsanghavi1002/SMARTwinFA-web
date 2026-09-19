@@ -77,3 +77,24 @@ export async function readOnly<T>(run: (client: Client) => Promise<T>) {
     }
   });
 }
+
+/**
+ * Runs work that writes inside one transaction: it commits only when `run` returns, and
+ * rolls back on any error. `readOnlyWork` keeps a request that only reads from being able
+ * to write. The master screens' queries can take longer than the startup ones, so they get
+ * a longer statement timeout.
+ */
+export async function transaction<T>(run: (client: Client) => Promise<T>, options: { readOnlyWork?: boolean; timeoutMs?: number } = {}) {
+  return withClient(async (client) => {
+    await client.query(options.readOnlyWork ? "BEGIN READ ONLY" : "BEGIN");
+    await client.query(`SET LOCAL statement_timeout = '${Math.max(1000, Math.trunc(options.timeoutMs ?? 30000))}ms'`);
+    try {
+      const result = await run(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    }
+  });
+}

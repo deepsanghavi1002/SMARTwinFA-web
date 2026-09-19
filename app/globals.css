@@ -113,3 +113,188 @@
 .open-branch>.submenu{display:block}
 .dropdown>button b,.dropdown>.menu-branch>button b,.submenu>button b{white-space:nowrap}
 .dropdown{min-width:236px}
+
+.not-built{height:100%;display:grid;align-content:center;justify-items:center;gap:9px;padding:24px;text-align:center;color:#1b2b3d}
+.not-built strong{font-size:19px;color:#12456f}
+.not-built p{margin:0;font-size:12px}
+.not-built dl{margin:4px 0 0;display:grid;grid-template-columns:auto auto;gap:2px 14px;font-size:11px}
+.not-built dt{color:#4a6274;text-align:right}
+.not-built dd{margin:0;font-family:Consolas,monospace;text-align:left}
+.not-built small{color:#546a7a;font-size:10px}
+
+/* Update / Delete spreadsheet grid */
+/* The spreadsheet has to scroll inside itself, so every box between the window and the
+   record list needs a real height to divide up. `min-height` only sets a floor: the
+   screen grew to fit all 342 records instead, which left the heading row scrolling away
+   with the page. A definite height in grid mode bounds the chain, and one bounded row
+   track hands that height down to the scroller. Only the grid view is pinned this way -
+   the form keeps growing as it did. */
+.addon-master-grid{height:100%;min-height:0}
+.addon-body-grid{grid-template-columns:1fr!important;grid-template-rows:minmax(0,1fr)!important}
+.addon-back{margin-left:auto;margin-right:7px;height:22px;padding:0 10px;border:1px solid #839796;background:#e6eceb;font-size:10px;cursor:pointer}
+.xl-grid-wrap{min-width:0;min-height:0;display:flex;flex-direction:column;background:#dce5e4}
+.xl-toolbar{display:flex;align-items:center;gap:6px;padding:4px 7px;border-bottom:1px solid #8fa3a2;background:#d2dcdc}
+.xl-toolbar button,.xl-toolbar select{height:22px;border:1px solid #879b99;background:#e6eceb;font-size:10px;cursor:pointer}
+.xl-toolbar button{padding:0 9px}
+.xl-toolbar button:disabled{opacity:.45;cursor:default}
+.xl-search{width:210px;height:22px;padding:0 7px;border:1px solid #879b99;background:#fff;font-size:11px}
+.xl-count{font-size:10px;color:#3d5254}
+.xl-freeze{display:inline-flex;align-items:center;gap:4px;font-size:10px}
+.xl-scroll{flex:1 1 auto;min-height:0;overflow:auto;background:#fff}
+.xl-grid{border-collapse:separate;border-spacing:0;font-size:11px;table-layout:fixed}
+.xl-grid th,.xl-grid td{position:relative;max-width:0;padding:2px 6px;border-right:1px solid #c3d0cf;border-bottom:1px solid #c3d0cf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:#fff}
+/* The heading cell must not clip: its filter list hangs below it, and cells inherit
+   `overflow:hidden` so the whole panel was being cut away - it opened, but every click
+   landed on the record cell behind it. The label keeps its own ellipsis, so the heading
+   still truncates without the cell clipping. */
+.xl-grid thead th{position:sticky;top:0;z-index:3;overflow:visible;border-bottom:1px solid #7e9391;background:#c5d1d0;font-size:10px;font-weight:600;cursor:grab}
+.xl-grid thead th.xl-has-filter{background:#a8d8db}
+.xl-grid th.xl-frozen,.xl-grid td.xl-frozen{position:sticky;z-index:2;box-shadow:1px 0 0 #7e9391}
+.xl-grid thead th.xl-frozen{z-index:4}
+.xl-grid td.xl-frozen{background:#f2f7f6}
+.xl-rownum{position:sticky;left:0;z-index:2;width:40px;min-width:40px;color:#5a6f70;background:#eaf0ef!important;text-align:right}
+.xl-grid thead .xl-rownum{z-index:4;background:#c5d1d0!important}
+.xl-head-label{max-width:calc(100% - 16px);padding:0;display:inline-flex;align-items:center;gap:3px;overflow:hidden;border:0;background:transparent;color:inherit;font:inherit;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.xl-head-label i{font-style:normal;font-size:8px}
+.xl-filter-button{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:14px;height:15px;padding:0;border:0;background:transparent;font-size:9px;line-height:1;cursor:pointer}
+/* The panel itself no longer scrolls - only its value list does, so the search box and
+   the select-all row stay put while a long list of values moves under them. */
+.xl-filter{position:absolute;left:0;top:100%;z-index:9;width:max(210px,100%);border:1px solid #687c7b;background:#fff;box-shadow:2px 3px 6px #1c292933;font-weight:400;cursor:default}
+.xl-filter-find{padding:4px;border-bottom:1px solid #c3d0cf;background:#eef3f2}
+.xl-filter-find input{width:100%;height:21px;padding:0 6px;border:1px solid #9aacab;background:#fff;font-size:10px;font-family:inherit}
+.xl-filter-all{border-bottom:1px solid #c3d0cf;background:#f6f9f9}
+.xl-filter-all label{padding:4px 6px}
+.xl-filter-all b{font-weight:700}
+.xl-filter-count{margin-left:auto;color:#6a7d7e}
+.xl-filter-none{padding:8px 6px;color:#6a7d7e;font-size:10px}
+.xl-filter-actions{display:flex;gap:5px;padding:4px;border-top:1px solid #c3d0cf;background:#eef3f2}
+.xl-filter-actions button{height:20px;padding:0 8px;border:1px solid #9aacab;background:#e6eceb;font-size:10px;cursor:pointer}
+.xl-filter ul{margin:0;padding:3px;list-style:none;max-height:190px;overflow:auto}
+.xl-filter label{display:flex;align-items:center;gap:5px;padding:2px 3px;font-size:10px;cursor:pointer}
+.xl-filter label:hover{background:#dcebea}
+.xl-filter em{color:#6a7d7e}
+.xl-resize{position:absolute;right:-3px;top:0;width:7px;height:100%;cursor:col-resize;user-select:none}
+.xl-grid tbody tr:hover td{background:#eef6f6}
+.xl-grid tbody tr:hover td.xl-frozen{background:#e3efee}
+.xl-grid tbody tr.xl-selected td{color:#fff;background:#15779b}
+.xl-grid tbody tr:focus-visible{outline:2px solid #15779b;outline-offset:-2px}
+.xl-empty{padding:16px!important;color:#5a6f70;text-align:center!important}
+.xl-footer{display:flex;justify-content:space-between;padding:3px 8px;border-top:1px solid #8fa3a2;background:#d6dfde;font-size:10px}
+/* Edit in grid, tick-select, bulk actions and the unsaved-changes bar. */
+.xl-mode,.xl-export{border-color:#2f7f91!important;background:#bfe6ea!important}
+.xl-mode-on{background:#5aa6ad!important;color:#fff;font-weight:700}
+.xl-tick{position:sticky;left:0;z-index:2;width:28px;min-width:28px;padding:0!important;background:#eaf0ef!important;text-align:center!important}
+.xl-grid thead .xl-tick{z-index:4;background:#c5d1d0!important}
+.xl-tick input{margin:0;cursor:pointer}
+.xl-rownum-open{cursor:pointer;text-decoration:underline}
+.xl-grid tbody tr.xl-ticked td{background:#e4f2f5}
+.xl-grid tbody tr.xl-ticked td.xl-frozen{background:#d7ebef}
+.xl-num{text-align:right!important;font-variant-numeric:tabular-nums}
+.xl-bulkbar{display:flex;align-items:center;gap:7px;padding:5px 8px;border-bottom:1px solid #2f7f91;background:#15779b;color:#fff;font-size:10px}
+.xl-bulkbar button{height:21px;padding:0 9px;border:1px solid #b9dde6;background:#2b8fb3;color:#fff;font-size:10px;cursor:pointer}
+.xl-bulkbar button.danger{border-color:#f0c2c2;background:#a33232}
+.xl-bulkbar button:disabled{opacity:.5;cursor:default}
+.xl-bulk-hint{margin-left:auto}
+.xl-grid td.xl-dirty{background:#fdf4e3}
+.xl-grid td.xl-dirty::after{content:"";position:absolute;top:0;right:0;border:5px solid transparent;border-top-color:#c9821b;border-right-color:#c9821b}
+.xl-grid td.xl-bad{background:#f9e2e2}
+.xl-grid td.xl-bad::after{border-top-color:#a33232;border-right-color:#a33232}
+/* The editor paints its own colours instead of inheriting the cell's. On the selected
+   row the cell text is white, so an input that only set a white background inherited
+   white text onto it - the value was there the whole time but invisible, and only showed
+   once the edit finished and the cell went back to being an ordinary one. */
+.xl-grid td.xl-editing{padding:0!important;color:#101c20;background:#fff;box-shadow:inset 0 0 0 2px #15779b}
+.xl-cell-input{width:100%;height:100%;min-height:20px;padding:0 5px;border:0;outline:none;color:#101c20;background:#fff;font:inherit;font-size:11px}
+.xl-cell-input::selection{color:#fff;background:#15779b}
+/* A changed or refused cell has to stay readable on the selected row too, which paints
+   every one of its cells blue on white. */
+.xl-grid tbody tr.xl-selected td.xl-dirty{color:#101c20;background:#fdf4e3}
+.xl-grid tbody tr.xl-selected td.xl-bad{color:#7d2020;background:#f9e2e2}
+.xl-savebar{display:flex;align-items:center;gap:8px;padding:5px 8px;border-top:1px solid #c9821b;background:#fdf1dc;color:#6b4a11;font-size:10px}
+.xl-savebar-bad{border-top-color:#a33232;background:#f9e2e2;color:#7d2020}
+.xl-savebar button{height:22px;padding:0 11px;border:1px solid #9aacab;background:#e6eceb;font-size:10px;cursor:pointer}
+.xl-savebar button:disabled{opacity:.45;cursor:default}
+.xl-savebar .xl-save{border-color:#2e7d4f;background:#cdeed6;font-weight:700}
+.xl-savebar-spacer{margin-left:auto}
+.xl-problem{font-weight:700}
+.addon-data-error{padding:5px 9px;border-bottom:1px solid #c78b8b;background:#f7e0e0;color:#7d2020;font-size:11px}
+/* Generic master screen (Master_ProgramGrid) */
+.mp-screen{position:relative;min-height:100%;height:100%;display:grid;grid-template-rows:30px auto auto minmax(0,1fr) 24px;background:#cbd4d5;color:#1b2a2b;font-size:11px}
+.mp-title{display:flex;align-items:center;gap:10px;padding:0 8px;border-bottom:1px solid #8fa3a2;background:linear-gradient(#e3eaea,#c9d4d3)}
+.mp-title strong{font-size:12px;letter-spacing:.02em}
+.mp-rights{color:#56696a;font-size:10px}
+.mp-close{margin-left:auto;width:22px;height:20px;border:1px solid #879b99;background:#e6eceb;cursor:pointer}
+.mp-combos{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid #8fa3a2;background:#d6dfde}
+.mp-combo{display:flex;align-items:center;gap:6px}
+.mp-combo span{font-weight:600}
+.mp-combo select,.mp-combo input{min-width:260px;height:23px;border:1px solid #687f7d;background:#fff;font-size:11px}
+.mp-combos button,.mp-actions button,.mp-toolbar button,.mp-dialog-buttons button{height:23px;padding:0 12px;border:1px solid #687f7d;background:linear-gradient(#eef3f2,#cfd9d8);font-size:11px;cursor:pointer}
+.mp-combos button:disabled,.mp-actions button:disabled,.mp-toolbar button:disabled{opacity:.5;cursor:default}
+.mp-busy{color:#15779b;font-weight:600}
+.mp-tabs{display:flex;gap:2px;padding:4px 8px 0;background:#d6dfde;border-bottom:1px solid #8fa3a2}
+.mp-tabs button{height:24px;padding:0 14px;border:1px solid #8fa3a2;border-bottom:0;background:#c4cfce;font-size:11px;cursor:pointer}
+.mp-tabs button.active{background:#fff;font-weight:700}
+.mp-add{min-height:0;display:grid;grid-template-rows:minmax(0,1fr) 34px;outline:none;overflow:hidden}
+.mp-add-grid{width:100%;max-width:760px;border-collapse:collapse;align-self:start;overflow:auto;display:block;max-height:100%;background:#fff}
+.mp-add-grid th,.mp-add-grid td{height:22px;padding:1px 6px;border:1px solid #c3d0cf;text-align:left;white-space:nowrap}
+.mp-add-grid thead th{position:sticky;top:0;background:#c5d1d0;z-index:1}
+.mp-add-head{width:260px;min-width:260px;background:#eef3f2;font-weight:600}
+.mp-add-grid td:last-child{width:480px;min-width:320px}
+.mp-add-grid tr.mp-current td{background:#d6ecf5}
+.mp-add-grid tr.mp-current td.mp-add-head{background:#b8dcea}
+.mp-readonly{color:#566a6b;background:#f5fbf8!important}
+.mp-yellow{background:#fff59d!important}
+.mp-editor{width:100%;height:19px;border:1px solid #15779b;background:#fff;font-size:11px;font-family:inherit}
+.mp-actions{display:flex;align-items:center;gap:8px;padding:0 8px;border-top:1px solid #8fa3a2;background:#d2dcdc}
+.mp-update{position:relative;min-height:0;display:grid;grid-template-rows:32px minmax(0,1fr)}
+.mp-toolbar{display:flex;align-items:center;gap:8px;padding:0 8px;border-bottom:1px solid #8fa3a2;background:#d2dcdc}
+.mp-find{width:220px;height:22px;padding:0 6px;border:1px solid #879b99;font-size:11px}
+.mp-spacer{flex:1}
+.mp-scroll{position:relative;min-height:0;overflow:auto;background:#fff}
+.mp-grid{position:relative;min-width:max-content;outline:none}
+.mp-row{position:absolute;left:0;display:flex;height:22px;min-width:max-content}
+.mp-head{position:sticky!important;z-index:5;background:#c5d1d0;font-weight:600}
+.mp-cell{flex:none;height:22px;padding:2px 5px;border-right:1px solid #c3d0cf;border-bottom:1px solid #c3d0cf;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;background:#fff;cursor:default}
+.mp-head .mp-cell{background:#c5d1d0}
+.mp-rownum{position:sticky;left:0;z-index:3;width:48px;color:#5a6f70;background:#eaf0ef!important;text-align:right}
+.mp-frozen{position:sticky;z-index:2;background:#f2f7f6}
+.mp-head .mp-frozen{z-index:6;background:#c5d1d0}
+.mp-row.mp-current-row .mp-cell{background:#e8f4f9}
+.mp-row.mp-edited .mp-rownum{background:#ffe7a8!important}
+.mp-row.mp-selected .mp-cell{background:#cfe5f3}
+.mp-cell.mp-current{outline:2px solid #15779b;outline-offset:-2px;background:#d6ecf5}
+.mp-cell .mp-editor{height:18px;margin:-1px -4px;width:calc(100% + 8px)}
+.mp-help{position:absolute;right:12px;bottom:12px;z-index:8;max-width:70%;max-height:45%;overflow:auto;border:1px solid #687c7b;background:#fff;box-shadow:2px 3px 8px #1c292944}
+.mp-help-title{display:flex;justify-content:space-between;padding:3px 6px;background:#c5d1d0;font-weight:600}
+.mp-help-title button{border:0;background:transparent;cursor:pointer}
+.mp-help table{border-collapse:collapse}
+.mp-help th,.mp-help td{padding:1px 5px;border:1px solid #d3dddc;white-space:nowrap}
+.mp-help tr.mp-current-row td{background:#15779b;color:#fff}
+.mp-menu{position:fixed;z-index:30;display:grid;min-width:150px;border:1px solid #687c7b;background:#fff;box-shadow:2px 3px 8px #1c292944}
+.mp-menu button{height:24px;padding:0 10px;border:0;background:transparent;text-align:left;font-size:11px;cursor:pointer}
+.mp-menu button:hover{background:#dcebea}
+.mp-status{display:flex;align-items:center;gap:14px;padding:0 8px;border-top:1px solid #8fa3a2;background:#d2dcdc;font-size:10px;overflow:hidden;white-space:nowrap}
+.mp-message{flex:1;overflow:hidden;text-overflow:ellipsis}
+.mp-warn{color:#8a4b00;cursor:help}
+.mp-fatal{margin:20px;padding:12px;border:1px solid #b04a4a;background:#fff0f0;color:#7a1f1f}
+.mp-dialog-backdrop{position:fixed;inset:0;z-index:40;display:grid;place-items:center;background:#0f1f2040}
+.mp-dialog{min-width:320px;max-width:min(560px,92vw);display:grid;gap:10px;padding:12px 14px;border:1px solid #475c5d;background:#eef3f2;box-shadow:3px 4px 14px #0006}
+.mp-dialog pre{margin:0;max-height:50vh;overflow:auto;white-space:pre-wrap;font-family:inherit;font-size:12px}
+.mp-dialog input{height:24px;border:1px solid #687f7d}
+.mp-dialog-buttons{display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:780px){.mp-combo select,.mp-combo input{min-width:0;width:100%}.mp-combo{width:100%}.mp-add-head{width:140px;min-width:140px}.mp-find{width:120px}}
+
+/* Master program: module password lock, image tab, edit-log viewer, program 39/50 boxes */
+.mp-locked > :not(.mp-title):not(.mp-dialog-backdrop) { display: none; }
+.mp-image { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 12px; overflow: auto; }
+.mp-image img { max-width: 100%; max-height: 70vh; object-fit: contain; border: 1px solid #c8c8c8; background: #fff; }
+.mp-image-empty { color: #666; }
+.mp-scheme-box { width: 96px; }
+.mp-log { width: min(1200px, 96vw); max-height: 90vh; display: flex; flex-direction: column; }
+.mp-log-scroll { overflow: auto; flex: 1; min-height: 120px; }
+.mp-log table { border-collapse: collapse; font-size: 12px; }
+.mp-log th, .mp-log td { border: 1px solid #c8c8c8; padding: 2px 6px; white-space: nowrap; text-align: left; }
+.mp-log th { position: sticky; top: 0; background: #dfe6f3; }
+.mp-log td.mp-log-yellow { background: #ffff00; }
+.mp-log td.mp-log-green { background: #00a000; color: #fff; }
+.mp-log td.mp-log-red { background: #e00000; color: #fff; }

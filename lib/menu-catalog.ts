@@ -25,6 +25,10 @@ export type MenuNode = Readonly<{
   shortcut: string | null;
   actionCode: string | null;
   programName: string | null;
+  /** ActionMenu: for a MASTER row, the program_top program the screen runs. */
+  actionMenu: string | null;
+  /** MenuShortName: the module name menu rights are stored under ("Menu-" + this). */
+  menuShortName: string | null;
   children: ReadonlyArray<MenuNode>;
 }>;
 
@@ -33,6 +37,7 @@ type MenuRow = {
   parentid: number | null;
   menutext: string | null;
   actioncode: string | null;
+  actionmenu: string | null;
   menuprogname: string | null;
   menushortname: string | null;
   menuhide: string | null;
@@ -67,7 +72,7 @@ export async function readMenuCatalog(companyGroup: string | null): Promise<Menu
   const SETUP_SCHEMA = setupSchema();
   return readOnly(async (client) => {
     const result = await client.query<MenuRow>(
-      `SELECT menuid, parentid, menutext, actioncode, menuprogname, menushortname,
+      `SELECT menuid, parentid, menutext, actioncode, actionmenu, menuprogname, menushortname,
               menuhide, menuvisible, menuspecial, menudisplay, shortcutkey
        FROM ${SETUP_SCHEMA}.menumaster
        ORDER BY menuid`,
@@ -90,6 +95,8 @@ export async function readMenuCatalog(companyGroup: string | null): Promise<Menu
         shortcut: row.shortcutkey?.trim() || null,
         actionCode: row.actioncode?.trim() || null,
         programName: row.menuprogname?.trim() || null,
+        actionMenu: row.actionmenu?.trim() || null,
+        menuShortName: row.menushortname?.trim() || null,
         children: build(row.menuid),
       }));
 

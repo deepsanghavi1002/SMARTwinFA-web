@@ -44,9 +44,16 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    // Bind the IPv4 loopback explicitly. Firefox resolves `localhost` to
+    // 127.0.0.1 per RFC 6761 and does not fall back to ::1, which is what Vite
+    // binds by default on Node 17+. Without this the dev server is unreachable
+    // in Firefox even though it works in Chrome.
+    server: {
+      host: "127.0.0.1",
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),

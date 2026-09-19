@@ -49,3 +49,5 @@ yarn-error.log*
 *_backup.sql
 *_postgres_pc.sql
 connection.ini
+.scratch/
+tsconfig.tsbuildinfo

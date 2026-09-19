@@ -38,11 +38,11 @@ test("server-renders the SMARTwinFA login shell", async () => {
 });
 
 test("keeps the latest migrated application surface wired into the root route", async () => {
-  const [page, layout, startup, addon, packageJson] = await Promise.all([
+  const [page, layout, startup, master, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../features/startup/StartupGate.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../features/addon-master/AddonMaster.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../features/master-program/MasterProgram.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
@@ -54,13 +54,17 @@ test("keeps the latest migrated application surface wired into the root route", 
   assert.match(page, /menu-branch/, "menumaster is three levels deep");
 
   assert.match(page, /<StartupGate>/);
-  assert.match(page, /activeItem === "Addon Master"/);
+  // Every MASTER menu row opens the one generic master for its ActionMenu program.
+  assert.match(page, /actionCode\?\.toUpperCase\(\) === "MASTER" && running\.actionMenu/);
+  assert.match(page, /<MasterProgram /);
   assert.match(page, /home-splash/);
   assert.match(startup, /stage.*"login".*"company".*"ready"/s);
-  assert.match(addon, /Customer \/ Contact details/);
-  assert.match(addon, /Business \/ Tax details/);
-  for (const action of ["Save", "Cancel", "Delete", "Print", "Refresh"]) {
-    assert.match(addon, new RegExp(action));
+  for (const action of ["Save", "Cancel", "Refresh", "Export", "Quit", "Delete Row", "Hide Column", "Restore Cell Value"]) {
+    assert.match(master, new RegExp(action));
+  }
+  // Print, image tab, edit log, module password, program 39/50 boxes, zoom and the Ezeone push.
+  for (const action of ["Print", "Image", "Log", "module-password", "product-image", "master-log", "zoom-book", "cloud-push", "SCH_SALEHO", "PL_SRATE"]) {
+    assert.match(master, new RegExp(action));
   }
   assert.match(layout, /title:\s*"SMARTwinFA Web"/);
   assert.doesNotMatch(layout, /Starter Project|codex-preview/);

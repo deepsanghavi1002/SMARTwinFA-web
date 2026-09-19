@@ -1,7 +1,12 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Autocomplete, Box, Button, Card, CardActions, CardContent, Divider, Stack, TextField, Typography } from "@mui/material";
-import { addonFields, addonGroups, createBlankAddon, initialAddonRecords, stateOptions } from "./mock-data";
+import { MasterUpdateGrid } from "../masters/MasterUpdateGrid";
+import { addonColumnOf, addonFields, addonGridFields, createBlankAddon, stateOptions } from "./mock-data";
+import { useStartupSelection } from "../startup/StartupGate";
+import type { MasterFieldRule, PublicProgramBodySetup } from "../../lib/master-rules";
+import type { MasterEdit } from "../masters/types";
+import type { AddonGroup } from "./types";
 import type { AddonRecord } from "./types";
 
 const fieldSections = [
@@ -59,24 +64,36 @@ function ActionIcon({ kind }: { kind: "save" | "cancel" | "delete" | "print" | "
 
 export function AddonMaster() {
   const rootRef = useRef<HTMLElement>(null);
-  const [records, setRecords] = useState(initialAddonRecords);
-  const [groupId, setGroupId] = useState("architect");
+  const selection = useStartupSelection();
+  const schema = selection?.companySchema ?? "";
+  /** Addons and their records both come from the opened company's schema. */
+  const [groups, setGroups] = useState<AddonGroup[]>([]);
+  const [records, setRecords] = useState<AddonRecord[]>([]);
+  const [groupId, setGroupId] = useState<number | null>(null);
+  const [dataError, setDataError] = useState("");
   const [mode, setMode] = useState<"add" | "update">("add");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const nextId = () => Math.max(0, ...records.map((record) => record.id)) + 1;
-  const [draft, setDraft] = useState(() => createBlankAddon(6, "architect"));
+  const [draft, setDraft] = useState(() => createBlankAddon(0, 0));
   const [helpField, setHelpField] = useState<"name" | "state" | null>(null);
+  /** In update mode: the spreadsheet of every record, or the form for the row picked from it. */
+  const [updateView, setUpdateView] = useState<"grid" | "form">("grid");
   const [message, setMessage] = useState("Ready");
   const [isModernView, setIsModernView] = useState(false);
-  const groupRecords = useMemo(() => records.filter((record) => record.groupId === groupId), [records, groupId]);
+  /** Derived rather than stored, so no effect has to set it synchronously. */
+  const loading = schema !== "" && groups.length === 0 && dataError === "";
+
+  // The API already returns only the chosen addon's live records.
+  const groupRecords = records;
+  const groupName = useMemo(() => groups.find((group) => group.id === groupId)?.name ?? "", [groups, groupId]);
   const fieldMap = useMemo(() => Object.fromEntries(addonFields.map((field) => [field.key, field])) as Record<keyof AddonRecord, typeof addonFields[number]>, []);
-  const reset = (group = groupId) => { setDraft(createBlankAddon(nextId(), group)); setSelectedId(null); setMode("add"); setHelpField(null); };
-  const selectRecord = (record: AddonRecord) => { setDraft({ ...record }); setSelectedId(record.id); setMode("update"); setHelpField(null); setMessage(`Selected ${record.name}`); };
+  const reset = (group = groupId ?? 0) => { setDraft(createBlankAddon(nextId(), group)); setSelectedId(null); setMode("add"); setHelpField(null); setUpdateView("grid"); };
+  const selectRecord = (record: AddonRecord) => { setDraft({ ...record }); setSelectedId(record.id); setMode("update"); setHelpField(null); setUpdateView("form"); setMessage(`Selected ${record.name}`); };
   const save = () => {
     const name = draft.name.trim();
     if (!name) return setMessage("Name is required");
-    if (records.some((record) => record.groupId === groupId && record.name.trim().toLowerCase() === name.toLowerCase() && record.id !== selectedId)) return setMessage("This name already exists in the selected addon");
-    const saved = { ...draft, name, groupId };
+    if (records.some((record) => record.name.trim().toLowerCase() === name.toLowerCase() && record.id !== selectedId)) return setMessage("This name already exists in the selected addon");
+    const saved = { ...draft, name, groupId: groupId ?? 0 };
     setRecords((current) => mode === "update" ? current.map((record) => record.id === selectedId ? saved : record) : [...current, saved]);
     setSelectedId(saved.id); setMode("update"); setMessage("Master data saved (mock)");
   };
@@ -84,6 +101,109 @@ export function AddonMaster() {
     if (!selectedId) return setMessage("Select a record to delete");
     setRecords((current) => current.filter((record) => record.id !== selectedId)); reset(); setMessage("Record deleted (mock)");
   };
+
+  /**
+   * The grid's own Save and Delete.
+   *
+   * They change the records held in this screen and nothing else, exactly as the form's
+   * save and remove above do: the addon master is read out of the company schema but
+   * nothing in the web app writes back to it yet. When the write path exists these two
+   * are where it is called, and the grid already awaits them.
+   */
+  const commitGridEdits = (edits: MasterEdit<AddonRecord>[]) => {
+    const changed = edits.reduce((total, edit) => total + Object.keys(edit.changes).length, 0);
+    setRecords((current) => current.map((record) => {
+      const edit = edits.find((candidate) => candidate.id === record.id);
+      return edit ? { ...record, ...edit.changes } : record;
+    }));
+    setMessage(`${changed} change${changed === 1 ? "" : "s"} applied to ${edits.length} record${edits.length === 1 ? "" : "s"} (mock)`);
+  };
+  const deleteGridRows = (ids: number[]) => {
+    setRecords((current) => current.filter((record) => !ids.includes(record.id)));
+    if (selectedId !== null && ids.includes(selectedId)) reset();
+    setMessage(`${ids.length} record${ids.length === 1 ? "" : "s"} deleted (mock)`);
+  };
+
+  /**
+   * How this master's columns are set up - what may be typed into each one.
+   *
+   * It is read from smart_setup.program_body, the same table the desktop reads, so the
+   * grid refuses the same characters the Windows program refuses. If the read fails the
+   * grid still works: the field list's own traits stand in.
+   */
+  const [masterSetup, setMasterSetup] = useState<MasterFieldRule<PublicProgramBodySetup>[]>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/master-rules?program=MASTER_ADDON_SUB", { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { fields?: MasterFieldRule<PublicProgramBodySetup>[]; error?: string };
+        if (!response.ok || !body.fields) throw new Error(body.error || "Master setup could not be read");
+        return body.fields;
+      })
+      .then(setMasterSetup)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
+  /**
+   * The column order stays the field list's, never program_body's: the shared form
+   * addresses its rows by position, so only the per-column rules are taken from the
+   * setup, not the ordering.
+   */
+  const gridFields = useMemo(() => {
+    if (masterSetup.length === 0) return addonGridFields;
+    const byColumn = new Map(masterSetup.map((field) => [field.column, field]));
+    return addonGridFields.map((field) => {
+      const setup = byColumn.get(addonColumnOf[field.key] ?? "");
+      if (!setup) return field;
+      return { ...field, rules: setup.rules, readOnly: field.readOnly || !setup.editable };
+    });
+  }, [masterSetup]);
+
+  // The addon list for the company that was opened at startup.
+  useEffect(() => {
+    if (!schema) return;
+    const controller = new AbortController();
+    fetch(`/api/addon-master?schema=${encodeURIComponent(schema)}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { groups?: AddonGroup[]; error?: string };
+        if (!response.ok || !body.groups) throw new Error(body.error || "Addon list could not be loaded");
+        return body.groups;
+      })
+      .then((rows) => {
+        setGroups(rows);
+        setDataError("");
+        setGroupId((current) => current ?? rows[0]?.id ?? null);
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setDataError(reason instanceof Error ? reason.message : "Addon list could not be loaded");
+      })
+    return () => controller.abort();
+  }, [schema]);
+
+  // The records of whichever addon is showing.
+  useEffect(() => {
+    if (!schema || groupId === null) return;
+    const controller = new AbortController();
+    fetch(`/api/addon-master?schema=${encodeURIComponent(schema)}&group=${groupId}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { records?: AddonRecord[]; error?: string };
+        if (!response.ok || !body.records) throw new Error(body.error || "Addon records could not be loaded");
+        return body.records;
+      })
+      .then((rows) => {
+        setRecords(rows);
+        setDataError("");
+        setMessage(`${rows.length} record${rows.length === 1 ? "" : "s"} read from ${schema}`);
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setRecords([]);
+        setDataError(reason instanceof Error ? reason.message : "Addon records could not be loaded");
+      })
+    return () => controller.abort();
+  }, [schema, groupId]);
 
   useEffect(() => {
     const updateViewMode = () => {
@@ -97,15 +217,30 @@ export function AddonMaster() {
     return () => observer.disconnect();
   }, []);
 
-  return <section className="addon-master" aria-label="Addon sub master" ref={rootRef}>
-    <div className="addon-heading"><strong>SUB MASTER</strong><select aria-label="Addon type" value={groupId} onChange={(event) => { const group = event.target.value; setGroupId(group); reset(group); setMessage("Ready"); }}>{addonGroups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select>{!isModernView && <span><svg className="header-cancel-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" rx="1"/><path d="M5 5l8 8M13 5l-8 8"/></svg>Cancel Both (Add And Update)</span>}</div>
-    <div className="addon-tabs"><button className={mode === "add" ? "active" : ""} onClick={() => reset()}>New(Add)</button><button className={mode === "update" ? "active" : ""} onClick={() => setHelpField("name")}>Update/Delete</button></div>
-    <div className="addon-body">
-      {!isModernView && <div className="addon-form addon-form-legacy">
+  return <section className={`addon-master ${mode === "update" && updateView === "grid" ? "addon-master-grid" : ""}`} aria-label="Addon sub master" ref={rootRef}>
+    <div className="addon-heading"><strong>SUB MASTER</strong><select aria-label="Addon type" value={groupId ?? ""} onChange={(event) => { const group = Number(event.target.value); setGroupId(group); reset(group); setMessage("Ready"); }}>{groups.length === 0 && <option value="">{loading ? "Loading…" : "No addon found"}</option>}{groups.map((group) => <option value={group.id} key={group.id}>{group.name}{group.rows === undefined ? "" : ` (${group.rows})`}</option>)}</select>{!isModernView && <span><svg className="header-cancel-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" rx="1"/><path d="M5 5l8 8M13 5l-8 8"/></svg>Cancel Both (Add And Update)</span>}</div>
+    <div className="addon-tabs"><button className={mode === "add" ? "active" : ""} onClick={() => reset()}>New(Add)</button><button className={mode === "update" ? "active" : ""} onClick={() => { setMode("update"); setUpdateView("grid"); setHelpField(null); }}>Update/Delete</button>
+      {mode === "update" && updateView === "form" && <button className="addon-back" type="button" onClick={() => setUpdateView("grid")}>◀ Back to list</button>}</div>
+    {dataError !== "" && <div className="addon-data-error" role="alert">{dataError}</div>}
+    <div className={`addon-body ${mode === "update" && updateView === "grid" ? "addon-body-grid" : ""}`}>
+      {mode === "update" && updateView === "grid" && (
+        <MasterUpdateGrid
+          fields={gridFields}
+          records={groupRecords}
+          selectedId={selectedId}
+          onSelect={selectRecord}
+          groupName={groupName}
+          storageKey="addon-sub"
+          exportName={groupName || "addon"}
+          onCommit={commitGridEdits}
+          onDelete={deleteGridRows}
+        />
+      )}
+      {!(mode === "update" && updateView === "grid") && !isModernView && <div className="addon-form addon-form-legacy">
         <div className="addon-row addon-column-head"><span>Heading</span><span>Input</span></div>
         {addonFields.map((field) => <label className="addon-row" key={`legacy-${field.key}`}><span>{field.label}</span><input aria-label={field.label} value={draft[field.key]} onFocus={() => setHelpField(field.help ?? (field.key === "name" ? "name" : null))} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /></label>)}
       </div>}
-      {isModernView && <Box className="addon-form addon-form-modern" sx={{ display: "grid", gap: 1.2, width: "100%" }}>
+      {!(mode === "update" && updateView === "grid") && isModernView && <Box className="addon-form addon-form-modern" sx={{ display: "grid", gap: 1.2, width: "100%" }}>
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2,minmax(0,1fr))" }, gap: 1.4, alignItems: "start" }}>
           {fieldSections.map((section) => (
             <Card
@@ -387,8 +522,8 @@ export function AddonMaster() {
           ))}
         </Box>
       </Box>}
-      {!isModernView && <aside className="addon-help addon-help-legacy">
-        {helpField === "name" && <><div className="addon-help-head"><span>SELECTED GROUP</span><span>DESCRIPTION</span><span>SHORT</span></div>{groupRecords.map((record) => <button className="addon-help-row" key={`legacy-${record.id}`} onClick={() => selectRecord(record)}><span>{addonGroups.find((group) => group.id === groupId)?.name}</span><b>{record.name}</b><small>{record.shortName}</small></button>)}<p>Total Help Record : {groupRecords.length}</p></>}
+      {!(mode === "update" && updateView === "grid") && !isModernView && <aside className="addon-help addon-help-legacy">
+        {helpField === "name" && <><div className="addon-help-head"><span>SELECTED GROUP</span><span>DESCRIPTION</span><span>SHORT</span></div>{groupRecords.map((record) => <button className="addon-help-row" key={`legacy-${record.id}`} onClick={() => selectRecord(record)}><span>{groupName}</span><b>{record.name}</b><small>{record.shortName}</small></button>)}<p>Total Help Record : {groupRecords.length}</p></>}
         {helpField === "state" && <><strong>SELECT STATE</strong>{stateOptions.map((state) => <button className="state-help-row" key={`legacy-${state}`} onClick={() => { setDraft((current) => ({ ...current, state })); setHelpField(null); }}><b>{state}</b></button>)}</>}
       </aside>}
     </div>

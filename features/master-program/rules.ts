@@ -1,0 +1,299 @@
+import { applyStyleCase, getPermission, isNumeric, keyRefused, parseDesktopDate, toDecimal, toText, validateContactNumber } from "../../lib/master-program/legacy";
+import type { PublicProgramBodySetup } from "../../lib/master-rules";
+
+/**
+ * The grid events of Master_ProgramGrid that need no database, for both grids.
+ *
+ * Update grid: C1dg_UpdateGrid_KeyPressEdit, SetupEditor, ValidateEdit, Duplicate_checking,
+ * Func_CheckValuePresence, Func_GetCarryString. Add grid: the C1dg_MasterGrid versions,
+ * which differ in small ways the functions take as a flag. Anything that reads a table is
+ * asked of /api/master-program by the screen; these return what the C# decides from the
+ * cells alone.
+ */
+
+export type Setup = PublicProgramBodySetup;
+
+export type KeyContext = Readonly<{
+  setup: Setup;
+  masterGrid: boolean;
+  programId: number;
+  licence: number;
+  /** The cell's stored value and the editor text before this key. */
+  cellValue: string;
+  editorText: string;
+  /** tarikh1 as dd/MMM/yyyy. */
+  yearStart: string;
+}>;
+
+export type KeyOutcome = Readonly<{
+  /** e.Handled: the key does not reach the editor. */
+  refused: boolean;
+  /** A message box the desktop shows for this key. */
+  message?: string;
+  /** Text the editor (and cell) is set to instead. */
+  replaceWith?: string;
+  /** Ctrl+Z: restore the backup value. */
+  restore?: boolean;
+}>;
+
+/**
+ * C1dg_UpdateGrid_KeyPressEdit / C1dg_MasterGrid_KeyPressEdit for one typed character.
+ * The two differ: the Add grid checks the input type before the allowed lists, blanks a
+ * filled date on space without asking whether it is compulsory, and has no Ctrl+Z.
+ */
+export function keyPress(context: KeyContext, key: string): KeyOutcome {
+  const { setup } = context;
+  let refused = false;
+  let message: string | undefined;
+  let replaceWith: string | undefined;
+  let restore = false;
+
+  if (key === "'") {
+    message = "Single Quotation Character not allowed...";
+    refused = true;
+  }
+  if (key === " " && !setup.allow_space) {
+    if (setup.field_type === "D") {
+      if (context.masterGrid) {
+        if (context.cellValue.trim() !== "" && context.editorText !== "") replaceWith = "";
+        else if (context.cellValue.trim() === "") replaceWith = context.yearStart;
+      } else if (context.cellValue.trim() !== "") {
+        replaceWith = setup.value_compulsory ? context.yearStart : "";
+      } else {
+        replaceWith = context.yearStart;
+      }
+    }
+    refused = true;
+  }
+  if (!context.masterGrid && key === "\u001a") {
+    restore = true;
+    refused = true;
+  }
+
+  const numericRefusal = () => {
+    if (setup.force_inputtype !== "N") return false;
+    const allowMinus = !setup.number_positiveonly && key === "-";
+    const allowDot = setup.decimal_points > 0 && key === ".";
+    const digit = key >= "0" && key <= "9";
+    return !(digit || allowMinus || allowDot || key === "\u007f" || key === "\b");
+  };
+  const lists = () => {
+    if (toText(setup.value_allowed) !== "" && keyRefused(setup.value_allowed, key, true, context.programId)) refused = true;
+    if (toText(setup.value_notallowed) !== "" && keyRefused(setup.value_notallowed, key, false, context.programId)) {
+      message = `This Character not allowed ==> ${setup.value_notallowed.split("|").join("")}`;
+      refused = true;
+    }
+  };
+  if (context.masterGrid) {
+    if (numericRefusal()) refused = true;
+    lists();
+  } else {
+    lists();
+    if (numericRefusal()) refused = true;
+  }
+  return { refused, message, replaceWith, restore };
+}
+
+/** SetupEditor and AfterEdit's style_case, which the web applies as the value is committed. */
+export function styleCase(setup: Setup, value: string, licence: number): string {
+  return applyStyleCase(setup.style_case, value, licence, setup.combo_value);
+}
+
+export type ValidateContext = Readonly<{
+  setup: Setup;
+  masterGrid: boolean;
+  programId: number;
+  licence: number;
+  coGstReq: boolean;
+  /** Head label for messages (Add grid) or the column heading (Update grid). */
+  label: string;
+  /** The value of another field on the same record: previous Add row / column by name. */
+  fieldValue(name: string): string;
+  /** The Add grid's previous row input (e.Row - 1), which P_REG and GST read. */
+  previousInput?: string;
+  /** Update grid column caption by field name, for Func_CheckValuePresence's messages. */
+  captionOf?(name: string): string;
+  /** Every value of a column in the Update grid, for Func_CheckValuePresence. */
+  columnValues?(name: string): readonly string[];
+  /** The row the edit is on in the Update grid (1-based), for the "same as" rule. */
+  rowIndex?: number;
+}>;
+
+export type ValidateOutcome = Readonly<{ ok: boolean; message?: string; title?: string; replaceWith?: string }>;
+
+const fail = (message: string, title: string): ValidateOutcome => ({ ok: false, message, title });
+
+/**
+ * C1dg_UpdateGrid_ValidateEdit / C1dg_MasterGrid_ValidateEdit, the checks that read only
+ * the grid. The screen asks the server for sys.checkstateid, sys.checkgststateid, the
+ * duplicate_query and the duplicate checks against the help grid, in the order the C#
+ * runs them, after these pass.
+ */
+export function validate(context: ValidateContext, typed: string): ValidateOutcome {
+  const { setup } = context;
+  const text = typed;
+
+  if (toText(setup.must_contain) !== "" && text.length > 0) {
+    for (const character of setup.must_contain) {
+      if (!text.includes(character)) return fail(`${context.masterGrid ? "Row" : "Column"} Must Contain ==> ${setup.must_contain}`, "Must Contain following Character");
+    }
+  }
+
+  if (context.masterGrid && setup.field_validation === "sys.checkpresence" && text !== "" && toText(setup.value_search_infld) !== "") {
+    const message = checkValuePresence(context, text.toUpperCase(), setup.value_search_infld.trim(), setup.database_name.trim(), undefined);
+    if (message !== "") return fail(message, `Error In ${setup.database_name.trim()}`);
+  }
+
+  if (setup.field_validation.toLowerCase() === "sys.validcontactnumber" && text.length > 0) {
+    // The Update grid separates a name with ';', the Add grid with ':'.
+    const result = validateContactNumber(text, setup.field_length_min, context.masterGrid ? ":" : ";", ",", setup.head_label);
+    if (!result.ok) return fail(result.message, "Invalid Contact Info");
+  }
+
+  if (setup.value_compulsory) {
+    const blank = text.trim() === "";
+    if (context.masterGrid) {
+      if ((blank && setup.combo_value.trim() !== "L") || (text === "0" && setup.combo_value.trim() !== "L" && setup.combo_value.trim() !== "X")) return fail("Compulsory Column", "Compulsory Column");
+    } else if (blank && setup.combo_value.trim() !== "L") {
+      return fail("Compulsory Column", "Compulsory Column");
+    }
+  }
+
+  const min = setup.field_length_min;
+  if (min > 0 && (context.masterGrid ? text.length : text.trim().length) > 0 && (context.masterGrid ? text.length : text.trim().length) < min) {
+    return fail(`Minimum Length of Column Must be ${min}`, "Minimum Length");
+  }
+
+  const registerCheck = () => {
+    if (context.programId === 14 && setup.field_name === "P_REG" && context.coGstReq && text.length > 0) {
+      if (toText(context.previousInput) === "" && text === "REGISTER") return fail("If GST No Blank Than Select Other Than REGISTER", "Register Selection");
+    }
+    return null;
+  };
+  const maxCheck = () => {
+    const max = setup.field_length_max;
+    if (max > 0 && (context.masterGrid ? text.length : text.trim().length) > max) return fail(`Maximum Length of Column Must be ${max}`, "Maximum Length");
+    return null;
+  };
+  // The Update grid checks the maximum before P_REG, the Add grid after it.
+  const ordered = context.masterGrid ? [registerCheck, maxCheck] : [maxCheck, registerCheck];
+  for (const check of ordered) {
+    const outcome = check();
+    if (outcome) return outcome;
+  }
+
+  if (setup.number_range_upto > 0 && text.trim().length > 0 && toDecimal(text) > setup.number_range_upto) {
+    return fail(`Range ${setup.number_range_from} To ${setup.number_range_upto}`, "Validation");
+  }
+
+  if (!context.masterGrid && setup.field_validation === "sys.checkpresence" && text !== "" && toText(setup.value_search_infld) !== "") {
+    const message = checkValuePresence(context, text, setup.value_search_infld.trim(), setup.database_name.trim(), context.rowIndex);
+    if (message !== "") return fail(message, `Error In ${setup.database_name.trim()}`);
+  }
+
+  return { ok: true };
+}
+
+/** Master_ProgramGrid.Func_CheckValuePresence against the Update grid. */
+export function checkValuePresence(context: ValidateContext, value: string, searchField: string, formName: string, rowIndex: number | undefined): string {
+  const values = context.columnValues?.(searchField);
+  if (!values) return "";
+  const found = values.findIndex((candidate) => candidate === value);
+  const caption = context.captionOf?.(searchField) ?? searchField;
+  if (found === -1) return `${caption} : ${value} Wasn't Found In ${formName}`;
+  if (rowIndex !== undefined && found + 1 === rowIndex) return `You Can't Use ${context.label} Same As ${caption}`;
+  return "";
+}
+
+/** sys.checkgststateid: the first two characters must be the state's opt_short. */
+export function gstStateMismatch(typed: string, stateShort: string): { mismatch: boolean; corrected: string } {
+  if (typed.length < 2 || !isNumeric(typed.slice(0, 2), true) || stateShort === "") return { mismatch: false, corrected: typed };
+  if (stateShort === typed.slice(0, 2)) return { mismatch: false, corrected: typed };
+  return { mismatch: true, corrected: typed.split(typed.slice(0, 2)).join(stateShort) };
+}
+
+/**
+ * Func_GetCarryString. On the Update grid the fields are columns of one record; on the Add
+ * grid they are rows, read by field name. A single field without "|" is the value as is.
+ */
+export function carryString(carryFields: string, separator: string, valueOf: (name: string) => string | undefined): string {
+  const sep = separator === "" ? " " : separator;
+  if (carryFields.includes("|")) {
+    let carry = "";
+    for (const name of carryFields.split("|")) {
+      if (name === "") continue;
+      const value = valueOf(name);
+      if (value !== undefined && value !== "") carry += value + sep;
+    }
+    return carry === "" ? "" : carry.slice(0, -1);
+  }
+  return carryFields !== "" ? (valueOf(carryFields) ?? "").trim() !== "" ? valueOf(carryFields) ?? "" : "" : "";
+}
+
+/**
+ * Master_ProgramGrid.Duplicate_checking on the Update grid: another row with the same
+ * value in duplichk_fldname1 (and, when set, matching fldname2/3 with a different key).
+ * Returns true when the desktop says "Duplicate Master Found...".
+ */
+export function duplicateInGrid(
+  records: readonly Readonly<Record<string, string>>[],
+  help: readonly Readonly<Record<string, string>>[] | null,
+  currentIndex: number,
+  text: string,
+  setup: Setup,
+): boolean {
+  const search = text.trim();
+  if (search === "" || toText(setup.duplichk_fldname1) === "") return false;
+  const f1 = setup.duplichk_fldname1.toLowerCase();
+  const f2 = toText(setup.duplichk_fldname2).toLowerCase();
+  const f3 = toText(setup.duplichk_fldname3).toLowerCase();
+  const pk = toText(setup.duplichk_pkfldname).toLowerCase();
+  const pick = (row: Readonly<Record<string, string>> | undefined, name: string) => {
+    if (!row) return "";
+    const key = Object.keys(row).find((candidate) => candidate.toLowerCase() === name);
+    return key ? row[key] : "";
+  };
+  const current = records[currentIndex];
+  // FindRow searches from the row after the current one and wraps round to the start.
+  const order = [...records.keys()].slice(currentIndex + 1).concat([...records.keys()].slice(0, currentIndex + 1));
+  for (const index of order) {
+    if (index === currentIndex) continue;
+    const row = records[index];
+    if (pick(row, f1).trim().toUpperCase() !== search.toUpperCase()) continue;
+    const helpRow = help?.[index];
+    if (f2 !== "") {
+      if (pick(helpRow ?? row, f2) === pick(current, f2)) {
+        if (f3 !== "") {
+          if (pick(helpRow ?? row, f3) === pick(current, f3) && pick(helpRow ?? row, pk) !== pick(current, pk)) return true;
+        } else if (pick(helpRow ?? row, pk) === pick(current, pk)) {
+          return true;
+        }
+      }
+    } else if (search.toUpperCase() === pick(row, f1).toUpperCase()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Add grid: another Update grid record already holds this value in duplichk_fldname1. */
+export function duplicateAgainstUpdate(records: readonly Readonly<Record<string, string>>[], fieldName: string, text: string, restoreRow: number | null): boolean {
+  const name = fieldName.toLowerCase();
+  const found = records.findIndex((record) => {
+    const key = Object.keys(record).find((candidate) => candidate.toLowerCase() === name);
+    return key ? record[key].trim().toUpperCase() === text.trim().toUpperCase() : false;
+  });
+  if (found < 0) return false;
+  return restoreRow === null ? true : restoreRow !== found;
+}
+
+/** "Date should be allowed only Within Accounting year" (BeforeRowColChange, Update grid, blank group). */
+export function dateOutsideYear(value: string, yearStart: string, yearEnd: string): boolean {
+  const date = parseDesktopDate(value);
+  const from = parseDesktopDate(yearStart);
+  const to = parseDesktopDate(yearEnd);
+  if (!date || !from || !to) return false;
+  return date > to || date < from;
+}
+
+export { getPermission };
