@@ -189,7 +189,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         setDef(body.program);
         setMeta({ yearStart: body.yearStart, yearEnd: body.yearEnd, coStateName: body.coStateName, coGstReq: body.coGstReq, partyAccode: body.partyAccode, productCode: body.productCode, logFileSpecial: body.logFileSpecial, companyName: body.companyName, userName: body.userName });
         setWarnings(body.warnings);
-        if (body.program.firstCombo?.options.length && !body.program.firstCombo.bound) setFirst(body.program.firstCombo.options[0]);
+        // A bound combo shows its first row once its DataSource is set, as a combo_list one does.
+        if (body.program.firstCombo?.options.length) setFirst(body.program.firstCombo.options[0]);
         if (!body.program.needsModulePassword) { setLocked(false); return; }
         // Main_Menu_New asks the module password before the form opens.
         void (async () => {
@@ -1183,11 +1184,21 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               <>
                 <input
                   list="mp-first-options"
-                  value={firstTyped || first?.text || ""}
+                  // The chosen group shows as the placeholder so the list is not filtered down to it.
+                  value={firstTyped}
+                  placeholder={first?.text ?? "Type or pick…"}
                   disabled={Boolean(grids) || Boolean(busy)}
-                  onChange={(event) => setFirstTyped(event.target.value)}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setFirstTyped(text);
+                    // Picking from the list (not typing) chooses the group at once, as Leave would.
+                    const picked = !(event.nativeEvent instanceof InputEvent) || event.nativeEvent.inputType === "insertReplacementText";
+                    const option = picked ? firstCombo.options.find((candidate) => candidate.text === text) : undefined;
+                    if (option) { setFirstTyped(""); chooseFirst(option); }
+                  }}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
+                    if (firstTyped.trim() === "" && first) { chooseFirst(first); return; }
                     const option = firstCombo.options.find((candidate) => candidate.text.toUpperCase() === firstTyped.trim().toUpperCase());
                     if (option) { setFirstTyped(""); chooseFirst(option); }
                   }}

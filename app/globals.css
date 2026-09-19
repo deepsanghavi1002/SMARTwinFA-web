@@ -298,3 +298,4 @@
 .mp-log td.mp-log-yellow { background: #ffff00; }
 .mp-log td.mp-log-green { background: #00a000; color: #fff; }
 .mp-log td.mp-log-red { background: #e00000; color: #fff; }
+.mp-combo input::placeholder{color:inherit;opacity:1}
