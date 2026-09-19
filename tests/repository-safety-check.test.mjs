@@ -28,6 +28,7 @@ test("allows sanitized source and documentation files", async () => {
     {
       "README.md": "Use synthetic fixtures only.",
       "docs/migration.md": "No client data is stored here.",
+      ".env.docker.example": "SMARTWINFA_TRUSTED_LOCAL_MODE=false",
     },
     async (root, files) => {
       assert.deepEqual(await scanFiles(root, files), []);
@@ -61,6 +62,7 @@ test("rejects secret material without exposing the secret value", async () => {
     {
       "config/example.txt": ["DATABASE_URL=postgres", "://app:super-secret@db.internal/smartwin"].join(""),
       "config/key.txt": ["-----BEGIN", " PRIVATE KEY-----\nnot-a-real-key"].join(""),
+      ".env.docker.example": ["DATABASE_URL=postgres", "://app:super-secret@db.internal/smartwin"].join(""),
     },
     async (root, files) => {
       const violations = await scanFiles(root, files);
@@ -69,6 +71,7 @@ test("rejects secret material without exposing the secret value", async () => {
         [
           ["config/example.txt", "database connection string with credentials"],
           ["config/key.txt", "private key material"],
+          [".env.docker.example", "database connection string with credentials"],
         ],
       );
       assert.doesNotMatch(JSON.stringify(violations), /super-secret/);

@@ -2,10 +2,18 @@
 
 This is a migration baseline, not a final product catalog. The historical menu
 snapshot contains about 400 items/350 leaves, while the current web shell shows
-49 labels. The restored PostgreSQL `smart_setup.menumaster` catalog was exposed
-read-only on 2026-08-24 and contains 592 menu records. It is now the source of
-truth for hierarchy and workflow traceability; effective per-user visibility
-still requires authoritative rights evidence.
+49 labels — and those 49 are a hard-coded constant in `app/page.tsx`, not data.
+
+**Updated 2026-08-24.** The live `MenuMaster` holds **592 rows** and is
+readable on both SQL Server instances, so the menu export is no longer blocked;
+see the [gap audit](../discovery/migration-gap-audit-2026-08-24.md). Program
+metadata is live as well (`PROGRAM_TOP` 49, `PROGRAM_BODY` 1,308,
+`ENTRY_CONTROL` 704, `QUERY_TABLE` 216). Coverage still cannot be declared
+complete until that metadata is exported, sanitized, and reconciled against
+this inventory.
+
+Per-capability legacy-to-web tracing now lives in
+[the traceability register](../discovery/legacy-web-traceability-2026-08-24.csv).
 
 ## Cross-cutting traceability
 

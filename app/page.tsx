@@ -1,75 +1,84 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AddonMaster } from "../features/addon-master/AddonMaster";
-import { DemoWorkflow, hasDemoWorkflow } from "../features/demo-workflows/DemoWorkflow";
-import { resolveLegacyWorkflow, type LegacyWorkflowRoute } from "../features/navigation/legacy-workflow-router";
-import { StartupGate } from "../features/startup/StartupGate";
+import { MasterProgram } from "../features/master-program/MasterProgram";
+import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
-type LegacyMenuNode = { id: number; parentId: number | null; label: string; program: string | null; action: string | null; children: LegacyMenuNode[] };
-type Menu = { label: string; children?: string[] };
-
-const fallbackMenus: Menu[] = [
-  { label: "TRANSACTION", children: ["Invoice", "Cash / Bank", "Journal", "Discount", "Register", "Stock Voucher"] },
-  { label: "REPORT", children: ["Bank / Cash", "Journal", "Register", "Ledger", "Outstanding", "Master", "Final Report", "Extra Report"] },
-  { label: "GST", children: ["GST Reports", "E-Invoice", "E-Way Bill", "GST Utilities"] },
-  { label: "INVENTORY", children: ["Stock Reports", "Stock Summary Report", "Partywise Stock", "Stock Voucher", "Master", "Challan", "Order", "Stock Movement", "Monthly Closing Stock"] },
-  { label: "ANALYSIS REP.", children: ["Top Reports", "Drop Analysis", "Daily Transaction", "Target", "Pie Chart"] },
-  { label: "SPECIAL", children: ["Quick Data", "Entry Approved", "Tick Option", "Last Year Detail", "Extra Entry"] },
-  { label: "MASTER", children: ["Account Master", "Product Master", "Addon Master", "Book / Series", "Opening Balance"] },
-  { label: "SETUP", children: ["Company", "Financial Year", "Users & Rights", "Configuration"] },
-  { label: "UTILITY", children: ["Import from Excel", "Export to Tally", "Backup Data", "Lock / Unlock Data", "Multiple Invoice PDF"] },
-  { label: "HELP", children: ["Software Videos", "About SMARTwinFA", "Support"] },
-];
-
-function LegacyMenuTree({ nodes, moduleLabel, onSelect, expandedBranches, toggleBranch, expandBranch }: { nodes: LegacyMenuNode[]; moduleLabel: string; onSelect: (node: LegacyMenuNode, moduleLabel: string) => void; expandedBranches: Set<number>; toggleBranch: (id: number) => void; expandBranch: (id: number) => void }) {
-  return <>{nodes.map((node) => {
-    const branch = node.children.length > 0;
-    const expanded = expandedBranches.has(node.id);
-    return <div className={`legacy-menu-node ${expanded ? "is-expanded" : ""}`} key={node.id} onMouseEnter={() => { if (branch) expandBranch(node.id); }}>
-    <button type="button" className={branch ? "legacy-menu-branch" : "legacy-menu-leaf"} aria-haspopup={branch ? "menu" : undefined} aria-expanded={branch ? expanded : undefined} onClick={() => { if (branch) toggleBranch(node.id); else onSelect(node, moduleLabel); }}>
-      <span>{node.label}</span>{node.children.length ? <b>›</b> : null}
-    </button>
-    {branch ? <div className="legacy-menu-subtree" role="menu"><LegacyMenuTree nodes={node.children} moduleLabel={moduleLabel} onSelect={onSelect} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} /></div> : null}
-  </div>;
-  })}</>;
-}
-
-function LegacyMenuMigrationStatus({ node, moduleLabel }: { node: LegacyMenuNode; moduleLabel: string }) {
-  return <section className="real-workflow-pending" aria-label="Legacy workflow migration status">
-    <header><strong>{node.label}</strong><span>{moduleLabel} · menu #{node.id}</span></header>
-    <div><h2>Legacy workflow catalogued</h2><p>Desktop program: {node.program ?? "not recorded"} · action: {node.action ?? "not recorded"}.</p><p>This leaf is sourced from the restored MenuMaster hierarchy. Its form, inputs, side effects, permissions, and reports are now tracked for conversion; no sample records or simulated completion are shown.</p></div>
-  </section>;
-}
+/**
+ * The menu is data, not application code: it is read from
+ * smart_setup.menumaster for the company that was opened, exactly as the
+ * desktop's Main_Menu_New reads it. A client whose menumaster differs sees a
+ * different menu without the software changing, so nothing here is hardcoded.
+ */
+type MenuNode = {
+  id: number;
+  label: string;
+  shortcut: string | null;
+  actionCode: string | null;
+  programName: string | null;
+  actionMenu: string | null;
+  menuShortName: string | null;
+  children: MenuNode[];
+};
 
 export default function Home() {
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [activeItem, setActiveItem] = useState("Home");
-  const [legacyMenus, setLegacyMenus] = useState<LegacyMenuNode[] | null>(null);
-  const [legacySelection, setLegacySelection] = useState<{ node: LegacyMenuNode; moduleLabel: string; route: LegacyWorkflowRoute | null } | null>(null);
+  return <StartupGate><MainMenu /></StartupGate>;
+}
+
+/**
+ * The main menu shell. It renders inside StartupGate so the context strip can
+ * name the company, accounting year and operator actually chosen at startup.
+ */
+function MainMenu() {
+  const selection = useStartupSelection();
+  const [menus, setMenus] = useState<MenuNode[]>([]);
+  const [menuError, setMenuError] = useState("");
+  const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [openSub, setOpenSub] = useState<number | null>(null);
+  /**
+   * The menu row the user opened. The whole node is kept, not just its label:
+   * programName is the stable identifier the desktop dispatches on, and two
+   * menus can carry the same label ("Master" appears under Addon and Product).
+   */
+  const [running, setRunning] = useState<MenuNode | null>(null);
+  const activeItem = running?.label ?? "Home";
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
-  const [expandedBranches, setExpandedBranches] = useState<Set<number>>(() => new Set());
-  const [runtimeContext, setRuntimeContext] = useState<{ company: string; year: string } | null>(null);
   const menuBar = useRef<HTMLDivElement>(null);
-  const activeLabel = activeItem.includes("::") ? activeItem.slice(activeItem.lastIndexOf("::") + 2) : activeItem;
+
+  const closeMenus = () => { setOpenMenu(null); setOpenSub(null); };
   const goHome = () => {
-    setActiveItem("Home");
-    setLegacySelection(null);
-    setOpenMenu(null);
-    setExpandedBranches(new Set());
+    setRunning(null);
+    closeMenus();
     setSuspendHoverMenu(true);
   };
-  const scrollMenu = (direction: -1 | 1) => {
-    const menu = menuBar.current;
-    if (!menu) return;
-    menu.scrollBy({ left: direction * Math.max(240, menu.clientWidth * 0.68), behavior: "smooth" });
+  const choose = (node: MenuNode) => {
+    setRunning(node);
+    closeMenus();
+    setSuspendHoverMenu(true);
   };
+
+  const companyGroup = selection?.companyGroup ?? "";
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/menu?group=${encodeURIComponent(companyGroup)}`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { menus?: MenuNode[]; error?: string };
+        if (!response.ok || !body.menus) throw new Error(body.error || "Menu could not be loaded");
+        return body.menus;
+      })
+      .then((rows) => { setMenus(rows); setMenuError(""); })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setMenuError(reason instanceof Error ? reason.message : "Menu could not be loaded");
+      });
+    return () => controller.abort();
+  }, [companyGroup]);
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
       const target = event.target as Element;
       if (!menuBar.current?.contains(target) && !target.closest(".mobile-dropdown")) {
-        setOpenMenu(null);
+        closeMenus();
         setSuspendHoverMenu(false);
       }
     };
@@ -77,87 +86,95 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/legacy/menu", { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => { const body = await response.json() as { roots?: LegacyMenuNode[] }; if (!response.ok || !body.roots) throw new Error("Menu catalog unavailable"); return body.roots; })
-      .then(setLegacyMenus)
-      .catch(() => setLegacyMenus(null));
-    return () => controller.abort();
-  }, []);
+  const openRoot = menus.find((menu) => menu.id === openMenu);
 
-  const selectLegacyMenu = (node: LegacyMenuNode, moduleLabel: string) => {
-    setLegacySelection({ node, moduleLabel, route: resolveLegacyWorkflow(node, moduleLabel) });
-    setActiveItem(`legacy::${node.id}`);
-    setOpenMenu(null);
-    setExpandedBranches(new Set());
-    setSuspendHoverMenu(true);
-  };
-  const toggleBranch = (id: number) => setExpandedBranches((current) => {
-    const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next;
-  });
-  const expandBranch = (id: number) => setExpandedBranches((current) => current.has(id) ? current : new Set([...current, id]));
-  const menuRoots = legacyMenus ?? fallbackMenus.map((menu, index) => ({ id: -(index + 1), parentId: null, label: menu.label, program: null, action: null, children: (menu.children ?? []).map((label, childIndex) => ({ id: -((index + 1) * 1000 + childIndex + 1), parentId: -(index + 1), label, program: null, action: null, children: [] })) }));
+  /**
+   * Which screen the chosen menu row maps to. Every MASTER row runs the one generic master
+   * screen for the program_top program its ActionMenu names, as Main_Menu_New opens
+   * Master_ProgramGrid; other rows are answered honestly rather than dropped, so a menu
+   * that does nothing can be told apart from one that is broken.
+   */
+  const screen = running === null ? "home"
+    : running.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master"
+    : "pending";
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/legacy/startup", { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        const body = await response.json() as { companies?: Array<{ name: string }>; years?: Array<{ label: string }> };
-        if (!response.ok) throw new Error("Startup context unavailable");
-        setRuntimeContext({
-          company: body.companies?.[0]?.name ?? "Restored company database",
-          year: body.years?.[0]?.label ?? "Accounting year unavailable",
-        });
-      })
-      .catch((reason: unknown) => {
-        if (!(reason instanceof DOMException && reason.name === "AbortError")) setRuntimeContext(null);
-      });
-    return () => controller.abort();
-  }, []);
+  /** One dropdown row: a leaf runs, a branch opens its submenu beside it. */
+  const item = (node: MenuNode) => node.children.length ? (
+    <div className={`menu-branch ${openSub === node.id ? "open-branch" : ""}`} key={node.id}>
+      <button role="menuitem" aria-expanded={openSub === node.id} aria-haspopup="menu" onClick={() => setOpenSub(openSub === node.id ? null : node.id)}>
+        <span />{node.label}<b>›</b>
+      </button>
+      <div className="submenu" role="menu" aria-label={node.label}>
+        {node.children.map((child) => item(child))}
+      </div>
+    </div>
+  ) : (
+    <button key={node.id} role="menuitem" onClick={() => choose(node)}>
+      <span />{node.label}<b>{node.shortcut ?? ""}</b>
+    </button>
+  );
 
-  return <StartupGate>{(
-    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""}`}>
-      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><img className="app-mark" src="/smartwinfa-brand.svg" alt="" aria-hidden="true"/><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
+  return (
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${running?.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master-open" : ""}`}>
+      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
-      <div className="menu-strip-shell">
-        <button className="menu-scroll-control menu-scroll-back" type="button" onClick={() => scrollMenu(-1)} aria-label="Show earlier menus">‹</button>
-        <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
-          {menuRoots.map((menu) => (
-            <div className="menu-root" key={menu.id}>
-              <button className={openMenu === menu.label ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setExpandedBranches(new Set()); setOpenMenu(openMenu === menu.label ? null : menu.label); }} role="menuitem" aria-expanded={openMenu === menu.label}>{menu.label}</button>
-              <div className={`dropdown legacy-menu-dropdown ${openMenu === menu.label ? "open-menu" : ""}`} role="menu"><LegacyMenuTree nodes={menu.children} moduleLabel={menu.label} onSelect={selectLegacyMenu} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} /></div>
-            </div>
-          ))}
-        </div>
-        <button className="menu-scroll-control menu-scroll-forward" type="button" onClick={() => scrollMenu(1)} aria-label="Show more menus">›</button>
+      <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
+        {/* Sidebar heading; the classic view hides it. */}
+        <span className="menu-bar-title" aria-hidden="true">☰ Menu</span>
+        {menus.map((menu) => (
+          <div className="menu-root" key={menu.id}>
+            <button className={openMenu === menu.id ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenSub(null); setOpenMenu(openMenu === menu.id ? null : menu.id); }} role="menuitem" aria-expanded={openMenu === menu.id}>{menu.label}</button>
+            <div className={`dropdown ${openMenu === menu.id ? "open-menu" : ""}`} role="menu">{menu.children.map((child) => item(child))}</div>
+          </div>
+        ))}
       </div>
 
-      {openMenu && <>
-        <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={() => setOpenMenu(null)} />
-        <div className="mobile-dropdown" role="menu" aria-label={`${openMenu} menu`}>
-          <strong>{openMenu}</strong>
-          <LegacyMenuTree nodes={menuRoots.find((menu) => menu.label === openMenu)?.children ?? []} moduleLabel={openMenu} onSelect={selectLegacyMenu} expandedBranches={expandedBranches} toggleBranch={toggleBranch} expandBranch={expandBranch} />
+      {openRoot && <>
+        <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={closeMenus} />
+        <div className="mobile-dropdown" role="menu" aria-label={`${openRoot.label} menu`}>
+          <strong>{openRoot.label}</strong>
+          {openRoot.children.map((child) => (
+            <button key={child.id} role="menuitem" onClick={() => choose(child)}>{child.label}<b>{child.children.length ? "›" : child.shortcut ?? ""}</b></button>
+          ))}
         </div>
       </>}
 
       <section className="context-strip">
-        <strong>▦ {runtimeContext?.company ?? "Loading restored company…"}</strong><span>▣ Year: {runtimeContext?.year ?? "Loading…"}</span><span>♙ User: SRP (migration access)</span><span className="running">{activeItem === "Home" ? "Layout　◉ Color" : `Menu: ${(legacySelection?.node.label ?? activeLabel).toUpperCase().replaceAll(" ", "_")}`}</span>
+        <strong>▤ {selection?.companyName ?? "…"}</strong>
+        <span>▦ Year: {selection?.yearLabel ?? "…"}</span>
+        <span>♙ User: {selection?.loginName ?? "…"}</span>
+        <span className="running">{activeItem === "Home" ? "" : activeItem}</span>
+        <div className="context-tools">
+          <button type="button">▤ Layout</button>
+          <button type="button">⚙ Color</button>
+        </div>
       </section>
 
-      <section className={`work-area ${legacySelection || activeLabel === "Addon Master" || hasDemoWorkflow(activeItem) ? "workflow-open" : ""}`}>
-        {legacySelection?.route?.kind === "addon" ? <AddonMaster /> : legacySelection?.route?.kind === "demo" ? <DemoWorkflow key={`${legacySelection.node.id}:${legacySelection.route.workflowId}`} activeItem={legacySelection.route.workflowId} /> : legacySelection ? <LegacyMenuMigrationStatus node={legacySelection.node} moduleLabel={legacySelection.moduleLabel} /> : activeLabel === "Addon Master" || activeItem === "Addon Master" ? <AddonMaster /> : hasDemoWorkflow(activeItem) ? <DemoWorkflow key={activeItem} activeItem={activeItem} /> : <div className="home-splash" aria-label="SMART WINFA homepage">
-          <div className="home-brand"><div className="home-splash-logo" role="img" aria-label="SMART WINFA logo" /><strong>SMART WINFA</strong><span>Modern Technology. Simple Accounting. Smart Business. ●</span></div>
-          <aside className="home-credit" aria-label="Developed by Pranav Computers">
-            <span>DEVELOPED BY</span>
-            <strong>PRANAV COMPUTERS</strong>
-            <b>MO :9820144816</b>
-            <b>MO :9833844816</b>
-          </aside>
-        </div>}
+      <section className={`work-area ${screen === "master" ? "workflow-open" : ""}`}>
+        {/* The SMART WINFA artwork already carries the logo, the tagline and
+            the Pranav Computers credit, so it is drawn as one background
+            rather than reassembled from separate elements. */}
+        {screen === "master" ? <MasterProgram key={running!.id} programName={running!.actionMenu!} menuShortName={running!.menuShortName ?? ""} title={running!.label} onClose={goHome} />
+          : screen === "pending" ? <NotBuiltYet node={running!} />
+          : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
       </section>
 
-      <footer className="status-strip"><span>{activeItem === "Home" ? "Select menu to start" : legacySelection?.route?.kind === "demo" && legacySelection.route.assumed ? `Prototype assumption: ${legacySelection.node.label} → ${legacySelection.route.workflowId}` : `Selected: ${legacySelection?.node.label ?? activeLabel}`}</span><span>Caps</span><span>Num</span><span>{legacyMenus ? `${legacyMenus.length} root menus` : "Loading menu"}</span><span>2026.01</span></footer>
+      <footer className="status-strip"><span>{menuError || (running === null ? "Select menu to start" : screen === "pending" ? `${running.label} - screen not built yet (${running.programName ?? "no program"})` : `Running: ${running.label}`)}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
     </main>
-  )}</StartupGate>;
+  );
+}
+
+/** Shown for a menu row whose screen has not been written yet. */
+function NotBuiltYet({ node }: { node: MenuNode }) {
+  return (
+    <div className="not-built">
+      <strong>{node.label}</strong>
+      <p>This screen has not been built in the web version yet.</p>
+      <dl>
+        <dt>Program</dt><dd>{node.programName ?? "-"}</dd>
+        <dt>Type</dt><dd>{node.actionCode ?? "-"}</dd>
+      </dl>
+      <small>It still runs in the Windows program. Menu row #{node.id}.</small>
+    </div>
+  );
 }

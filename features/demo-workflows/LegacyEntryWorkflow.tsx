@@ -51,6 +51,7 @@ export function LegacyEntryWorkflow({ kind, voucherType = "cash-bank" }: { kind:
 
   const definition = kind === "voucher" ? voucherDefinitions[voucherType] : null;
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Retained prototype resets request status when its query changes.
     const controller = new AbortController(); setLoading(true); setError("");
     fetch(`/api/legacy/transaction/context?kind=${kind}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => { const body = await response.json() as Context | { error?: string }; if (!response.ok || !("parties" in body)) throw new Error("error" in body && body.error ? body.error : "Entry lookups could not be loaded"); return body; })

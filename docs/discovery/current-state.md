@@ -1,6 +1,8 @@
 # Current-state inventory
 
-Last updated: 2026-08-21.
+Last updated: 2026-08-24 (verified by the
+[migration gap audit](migration-gap-audit-2026-08-24.md) at web commit
+`000b150`).
 
 ## Web baseline
 
@@ -18,7 +20,7 @@ the earlier 26-commit prototype history.
 | Home/splash | Prototype | Branded home navigation and contact presentation |
 | Addon Master | Prototype | 8 groups, 27 fields, in-memory CRUD/lookup/validation/print/refresh |
 | Other menu workflows | Placeholder | Selecting an item changes shell state but does not implement the feature |
-| PostgreSQL persistence | Discovery started | Isolated intake is restored and a sanitized structural catalogue is versioned; no application runtime database connection exists |
+| PostgreSQL persistence | Not started | D1/SQLite starter scaffolding was removed to avoid the wrong target |
 | Authentication/RBAC | Not started | Menu rights and direct API enforcement are not implemented |
 | Multi-tenancy | Not started | No tenant boundary, RLS, connection routing, or scoped cache |
 | Automated checks | Baseline | Lint, type-check, production build, and rendered login/application-surface checks pass |
@@ -103,24 +105,52 @@ report folders and templates add another layer. These branches must become
 explicit tenant overrides with owners, versions, effective dates, tests, and a
 retirement path.
 
-## Critical unresolved facts
+## Critical facts — resolved 2026-08-24
+
+The [migration gap audit](migration-gap-audit-2026-08-24.md) resolved the
+previously blocking questions against the running legacy installation.
 
 1. The inspected C# is SQL Server/T-SQL (`System.Data.SqlClient`, `.dbo`,
-   `TOP`, `ISNULL`, `CONVERT`, SMO, `sa`, MDF/LDF operations).
-2. The product owner confirmed that SQL Server is the legacy source being
-   migrated to PostgreSQL; no MySQL source is in scope. Exact SQL Server
-   versions, compatibility levels, and object definitions remain unavailable.
-3. All three supplied database files are PostgreSQL custom archives and have been
-   restored into an isolated local PostgreSQL 18 intake database. Catalog and
-   row-count evidence is recorded in the local restore report.
-4. The restored `smart_setup` contains 49 program definitions, 1,308 field
-   definitions, 592 menu rows, 216 query definitions, and 45 logical key
-   relationships. Its first safe catalogue and Account Master structural
-   contract are recorded in `docs/intake/postgres-metadata-catalog-2026-08-21.*`.
-   Freshness/authority is not confirmed. The `smart_system` archive is now
-   locally restored and structurally profiled, but its authorization/routing
-   semantics, the promised PostgreSQL branch, and complete effective client
-   query/view sets remain unavailable.
+   `TOP`, `ISNULL`, `CONVERT`, SMO, `sa`, MDF/LDF operations). **Confirmed by
+   the runtime:** SQL Server 2008 R2 (archive instance, 148 databases) and
+   SQL Server 2022 Express (active instance, 32 databases) are both running.
+2. **No MySQL exists.** No service, client, server, or data directory is
+   present anywhere on the authorized workstation. "MySQL migration" is
+   terminology, not a source engine.
+3. Both originally supplied database files are PostgreSQL custom archives; a
+   third (`smart_system`) has since been supplied and restored.
+4. **`smart_system` is live**, not missing: 25 tables, 25 primary keys,
+   26 procedures. Current `MenuMaster` data is live (592 rows). A PostgreSQL
+   conversion covering 328 routines exists on the legacy workstation
+   (`SRC-PG-001`…`SRC-PG-003`).
+5. **Company-year data are separate physical databases** named
+   `<CLIENT>_<YY>`, with optional `_BIGLOG` and `_IMAGE` companions — not
+   schemas inside one database.
+6. **The populated rights store is `smart_setup`, not `smart_system`.**
+   `SMART_SETUP.SECURITY` holds 465 rows and `SMART_SETUP.USER_MASTER` holds 8,
+   while `SMART_SYSTEM.SECURITY` and `SMART_SYSTEM.LOGIN` are empty. The legacy
+   runtime model described above must be read with this correction, and
+   `ARCH-005` and `SEC-WAVE-001` planned accordingly.
+7. **The PostgreSQL archives lost every integrity object.** A representative
+   company-year database carries 72 primary keys, 164 unique indexes, and 82
+   identity columns in SQL Server, and none of them survive in the archive,
+   which is also missing 3 tables. Foreign keys and check constraints are
+   genuinely absent from both.
 
-No production database conversion may begin until the authoritative source
-engine and object-by-object dialect are recorded.
+Remaining engine work is object-by-object dialect classification, not
+source-engine discovery. Client query sets and the balance of the routines are
+still outstanding.
+
+## Unmerged platform work
+
+Two branches carry roughly 15.7k lines that `main` does not have:
+`codex/metadata-contract-foundation` and `codex/source-engine-confirmation`.
+They add a `platform/` layer (context resolution, RBAC, session lifecycle,
+scoped transactions, audit, jobs, metadata registry, custom fields), profiling
+scripts, and `docs/intake/` evidence including an isolated PostgreSQL 18.6
+restore of all three archives.
+
+No module under `app/` or `features/` imports any of them, so under the
+[definition of done](../migration/definition-of-done.md) they are
+`unit-tested` — not integrated, and not production-implemented. They must be
+merged or explicitly closed before further platform work begins.

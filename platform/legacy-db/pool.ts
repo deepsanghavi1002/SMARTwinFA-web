@@ -3,7 +3,6 @@ import pg from "pg";
 const { Pool } = pg;
 
 declare global {
-  // eslint-disable-next-line no-var
   var smartwinfaLegacyPool: pg.Pool | undefined;
 }
 

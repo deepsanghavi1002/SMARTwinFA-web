@@ -557,9 +557,74 @@ html .modern-view .action-icon{stroke:var(--modern-primary-dark)}
   html .modern-view .home-credit strong{font-size:22px}
 }
 
-/* Startup mode switch: a single, legible toggle rather than two tab fragments. */
-html .modern-view .view-switch{top:18px;right:24px;min-width:238px;height:42px;display:inline-flex;align-items:center;justify-content:space-between;gap:10px;padding:4px;border:1px solid #bfd0de;border-radius:999px;color:#23445f;background:#ffffffed;box-shadow:0 10px 28px #173c5a2b;font-size:12px;backdrop-filter:blur(12px)}
-html .modern-view .view-switch span{display:inline-flex;align-items:center;justify-content:center;min-width:0;height:32px;padding:0 12px;border:0;border-radius:999px;background:transparent;color:#345169;font-weight:700}
-html .modern-view .view-switch .view-switch-state{color:#fff;background:linear-gradient(135deg,#1a5ea8,#0e8da4);box-shadow:inset 0 1px #ffffff45}
-html .modern-view .view-switch .view-switch-action{color:#345169;background:transparent}
-@media(max-width:780px){html .modern-view .view-switch{top:12px;right:12px;min-width:0;height:38px;padding:3px;font-size:10px}html .modern-view .view-switch span{height:30px;padding:0 9px}html .modern-view .view-switch .view-switch-action{font-size:0}html .modern-view .view-switch .view-switch-action b{margin:0;font-size:16px}}
+/* ── Main menu, modern style ───────────────────────────────────────────────
+   The desktop's modern layout: a "Menu" sidebar whose groups expand in place
+   instead of flying out, the same dark blue context strip as the classic
+   view, and the SMART WINFA artwork filling the work area. */
+html .modern-view .home-splash{
+  background:#e8f2fb url("/legacy-home-logo.png") center/100% 100% no-repeat;padding:0
+}
+html .modern-view .work-area{background:#e8f2fb}
+
+html .modern-view .context-strip{
+  border-bottom:0;color:#fff;background:#1a4fa5
+}
+html .modern-view .context-strip>*{border-right:1px solid #ffffff2e}
+html .modern-view .context-strip strong{color:#fff}
+html .modern-view .context-tools button{color:#fff}
+@media(min-width:781px){
+  html .modern-view .context-strip{
+    margin:0;width:100%;min-width:0;max-width:none;justify-self:stretch;border-radius:0
+  }
+}
+
+html .modern-view .status-strip{border-top:1px solid #cfdded;color:#41576b;background:#e9f0f8}
+
+@media(min-width:781px){
+  html .modern-view .winfa-window{grid-template-columns:300px minmax(0,1fr)}
+  html .modern-view .menu-bar{
+    gap:0;padding:0;overflow-y:auto;border-right:1px solid #d5e2ef;background:#fff;box-shadow:none
+  }
+  html .modern-view .menu-bar-title{
+    display:block;padding:18px 20px 14px;color:#1a4fa5;font-size:15px;font-weight:700
+  }
+  html .modern-view .menu-root>button{
+    min-height:46px;border-radius:0;border-bottom:1px solid #e6edf5;
+    color:#123a76;font-size:12.5px;font-weight:700;letter-spacing:.02em
+  }
+  html .modern-view .menu-root>button::before{content:"▶ ";font-size:9px;opacity:.7}
+  html .modern-view .menu-root>button::after{content:none}
+  html .modern-view .menu-root>button.open{color:#fff;background:#1f5fc0}
+  html .modern-view .menu-root>button.open::before{content:"▼ ";opacity:1}
+  html .modern-view .menu-root>button:hover{color:#0b2f66;background:#e8f0fb}
+  html .modern-view .menu-root>button.open:hover{color:#fff;background:#1f5fc0}
+  /* Groups open in place rather than as a flyout panel. */
+  html .modern-view .menu-root>.dropdown{
+    position:static;left:auto;top:auto;width:100%;min-width:0;margin:0;padding:0;
+    border:0;border-radius:0;background:#fff;box-shadow:none
+  }
+  html .modern-view .dropdown>button{
+    min-height:46px;padding-inline:34px;border-bottom:1px solid #eef2f7;
+    color:#123a76;font-size:12.5px;font-weight:600
+  }
+  html .modern-view .dropdown>button:hover{color:#0b2f66;background:#eef4fc}
+}
+
+/* Sidebar menus expand in place at every level, so a branch's submenu is an
+   indented list rather than a panel floating beside the sidebar. */
+@media(min-width:781px){
+  html .modern-view .dropdown>.menu-branch>button{
+    min-height:46px;padding-inline:34px;border-bottom:1px solid #eef2f7;
+    color:#123a76;background:#fff;font-size:12.5px;font-weight:600
+  }
+  html .modern-view .submenu{
+    position:static;left:auto;top:auto;width:100%;min-width:0;padding:0;
+    border:0;background:#f7fafd;box-shadow:none
+  }
+  html .modern-view .submenu>button,html .modern-view .submenu>.menu-branch>button{
+    min-height:42px;padding-inline:52px;border-bottom:1px solid #eef2f7;
+    color:#28527f;background:transparent;font-size:12px;font-weight:600
+  }
+  html .modern-view .dropdown>.menu-branch>button:hover,
+  html .modern-view .submenu>button:hover{color:#0b2f66;background:#eef4fc}
+}

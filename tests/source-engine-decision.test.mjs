@@ -11,7 +11,8 @@ test("records SQL Server to PostgreSQL as the confirmed migration direction", as
     readFile(new URL("docs/migration/backlog.csv", root), "utf8"),
   ]);
 
-  assert.match(sourceRegister, /SQL Server is the system being migrated out of and PostgreSQL is the destination/);
+  assert.match(sourceRegister, /SQL Server\/T-SQL evidence/);
+  assert.match(sourceRegister, /PostgreSQL 18 service and data directory \(migration target\)/);
   assert.match(databasePlan, /SQL Server is the legacy source; PostgreSQL is the destination; MySQL is out of scope/);
   assert.match(backlog, /"DISC-DB-001"[\s\S]*"discovered"/);
 });

@@ -88,6 +88,7 @@ function RealLegacyMasterWorkflow({ kind }: { kind: MasterKind }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Retained prototype resets request status when its query changes.
     setLoading(true);
     setError("");
     const params = new URLSearchParams();

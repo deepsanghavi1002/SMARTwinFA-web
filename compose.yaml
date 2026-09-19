@@ -8,6 +8,12 @@ services:
     environment:
       SMARTWINFA_RELEASE: ${SMARTWINFA_RELEASE:-pi-test}
       LEGACY_API_URL: http://legacy-api:8080
+      DB_HOST: legacy-db
+      DB_PORT: 5432
+      DB_NAME: smartwin_data_intake
+      DB_USER: smartwinfa_web
+      DB_PASSWORD: ${SMARTWINFA_DB_PASSWORD:?Set SMARTWINFA_DB_PASSWORD}
+      SMARTWINFA_TRUSTED_LOCAL_MODE: ${SMARTWINFA_TRUSTED_LOCAL_MODE:-false}
     ports:
       - "4173:3000"
     healthcheck:

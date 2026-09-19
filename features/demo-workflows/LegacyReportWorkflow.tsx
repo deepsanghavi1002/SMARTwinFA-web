@@ -26,10 +26,6 @@ function format(column: string, value: string | number | null) {
   return String(value);
 }
 
-function reportDate(row: ReportRow) {
-  return [row.Date, row["Document Date"], row.From, row["First Movement"]].find((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value));
-}
-
 function rowKey(row: ReportRow, index: number) {
   return String(row.Key ?? row["Document Key"] ?? row["Line Key"] ?? row["Target Key"] ?? row["Setup Key"] ?? row.Code ?? index);
 }
@@ -84,6 +80,7 @@ export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
   const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Retained prototype resets request status when its query changes.
     setLoading(true); setError("");
     const params = new URLSearchParams();
     if (filter.from) params.set("from", filter.from);
@@ -116,6 +113,7 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
   const [zoom, setZoom] = useState(false);
   const { payload, loading, error, refresh } = useLegacyReport(kind, applied);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- Preserve the old report component's reset-on-kind behavior; it is not routed by the reviewed UI.
   useEffect(() => { setSelection(visualOptions[kind]?.choices[0] ?? "All"); setMeasure(visualOptions[kind]?.measures[0] ?? "Detailed"); setSelectedKey(""); setZoom(false); }, [kind]);
 
   const rows = useMemo(() => presentRows(kind, payload?.rows ?? [], selection, measure), [kind, payload?.rows, selection, measure]);

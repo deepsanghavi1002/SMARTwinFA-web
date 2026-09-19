@@ -31,7 +31,9 @@ export async function scanFiles(root, files) {
 
   for (const file of files) {
     const relativePath = normalizeRelativePath(file);
-    const matchedPathRule = prohibitedPathRules.find(([, pattern]) => pattern.test(relativePath));
+    // The reviewed template is public configuration, but still scan its contents.
+    const matchedPathRule = prohibitedPathRules.find(([rule, pattern]) =>
+      pattern.test(relativePath) && !(rule === "environment file" && relativePath === ".env.docker.example"));
 
     if (matchedPathRule) {
       violations.push({ file: relativePath, rule: matchedPathRule[0] });

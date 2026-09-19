@@ -60,7 +60,7 @@ function normalized(value: string | null | undefined) {
 
 function prototypeRoute(item: LegacyWorkflowMenuItem, moduleLabel: string): LegacyWorkflowRoute {
   const action = normalized(item.action);
-  const module = normalized(moduleLabel);
+  const moduleName = normalized(moduleLabel);
   const label = normalized(item.label);
   const program = normalized(item.program);
 
@@ -70,11 +70,11 @@ function prototypeRoute(item: LegacyWorkflowMenuItem, moduleLabel: string): Lega
     return { kind: "demo", workflowId: "Account Master", assumed: true };
   }
   if (action === "entry") return { kind: "demo", workflowId: program === "voucher" ? "Cash / Bank" : "Invoice", assumed: true };
-  if (module.includes("gst") || /gst|eway|e-invoice|einvoice/.test(program + label)) return { kind: "demo", workflowId: /eway/.test(program + label) ? "E-Way Bill" : /einvoice|e-invoice/.test(program + label) ? "E-Invoice" : "GST Reports", assumed: true };
-  if (module.includes("inventory") || /stock|product|production|mould|packing/.test(program + label)) return { kind: "demo", workflowId: "Stock Movement", assumed: true };
-  if (module.includes("analysis") || /analysis|dashboard|chart|sale/.test(program + label)) return { kind: "demo", workflowId: "Top Reports", assumed: true };
-  if (module.includes("report") || action === "report" || action.includes("report")) return { kind: "demo", workflowId: "TRANSACTION::Register", assumed: true };
-  if (module.includes("setup") || module.includes("utility") || /setup|user|rights|backup|import|restore|token|transfer|repost/.test(program + label + action)) return { kind: "demo", workflowId: "Configuration", assumed: true };
+  if (moduleName.includes("gst") || /gst|eway|e-invoice|einvoice/.test(program + label)) return { kind: "demo", workflowId: /eway/.test(program + label) ? "E-Way Bill" : /einvoice|e-invoice/.test(program + label) ? "E-Invoice" : "GST Reports", assumed: true };
+  if (moduleName.includes("inventory") || /stock|product|production|mould|packing/.test(program + label)) return { kind: "demo", workflowId: "Stock Movement", assumed: true };
+  if (moduleName.includes("analysis") || /analysis|dashboard|chart|sale/.test(program + label)) return { kind: "demo", workflowId: "Top Reports", assumed: true };
+  if (moduleName.includes("report") || action === "report" || action.includes("report")) return { kind: "demo", workflowId: "TRANSACTION::Register", assumed: true };
+  if (moduleName.includes("setup") || moduleName.includes("utility") || /setup|user|rights|backup|import|restore|token|transfer|repost/.test(program + label + action)) return { kind: "demo", workflowId: "Configuration", assumed: true };
   return { kind: "demo", workflowId: "TRANSACTION::Register", assumed: true };
 }
 

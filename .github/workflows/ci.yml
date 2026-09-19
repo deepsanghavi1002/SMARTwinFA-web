@@ -40,4 +40,6 @@ jobs:
         run: npm test
 
       - name: Validate Compose configuration
+        env:
+          SMARTWINFA_DB_PASSWORD: ci-config-validation-only
         run: docker compose config --quiet
