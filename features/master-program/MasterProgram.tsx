@@ -8,6 +8,7 @@ import { applyPermission, formatDesktopDate, formatDesktopTime, getPermission, p
 import type { AddRow, CloudPush, ComboOption, GroupLoad, GroupState, ProgramDefinition, UpdateColumn, UpdateRecord } from "../../lib/master-program/types";
 import { masterCall } from "./api";
 import { Calculator } from "./Calculator";
+import { CalendarPopup } from "./CalendarPopup";
 import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, keyPress, styleCase, validate } from "./rules";
 
 /**
@@ -236,40 +237,6 @@ function Icon({ name }: { name: string }) {
   return <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[name]} /></svg>;
 }
 
-/** A calendar button beside a date editor; the typed text stays the editor's value. */
-function DatePick({ value, onPick }: { value: string; onPick: (text: string) => void }) {
-  const picker = useRef<HTMLInputElement>(null);
-  const date = parseDesktopDate(value);
-  const iso = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
-  return (
-    <span className="mp-date-pick">
-      <input
-        ref={picker}
-        type="date"
-        tabIndex={-1}
-        aria-label="Pick a date"
-        value={iso}
-        onChange={(event) => {
-          const [year, month, day] = event.target.value.split("-").map(Number);
-          if (year && month && day) onPick(formatDesktopDate(new Date(year, month - 1, day)));
-          // Back to the cell's editor, so Enter saves the date and Escape cancels it.
-          event.target.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus();
-        }}
-      />
-      <button
-        type="button"
-        className="mp-mini"
-        tabIndex={-1}
-        title="Calendar"
-        aria-label="Open calendar"
-        onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-        onClick={() => { try { picker.current?.showPicker(); } catch { picker.current?.focus(); } }}
-      >
-        <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v5M16 3v5" /></svg>
-      </button>
-    </span>
-  );
-}
 
 /** The value a filter, search or sort reads: the stored one, as the grid shows it. */
 const shownText = (record: UpdateRecord | undefined, column: UpdateColumn) => formatCell(cellOf(record, column.key), column.format).trim();
@@ -346,10 +313,12 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const findMode = useRef(true);
   const helpDrag = useDraggable();
   const calcDrag = useDraggable();
+  const calendarDrag = useDraggable();
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [filterSearch, setFilterSearch] = useState("");
   const [widths, setWidths] = useState<Record<string, number>>({});
-  const [calc, setCalc] = useState<{ grid: "add" | "update"; initial: string; decimals: number } | null>(null);
+  const [calc, setCalc] = useState<{ grid: "add" | "update"; initial: string; decimals: number; caretAtEnd?: boolean } | null>(null);
+  const [calendar, setCalendar] = useState<{ grid: "add" | "update"; initial: string; left: number; top: number } | null>(null);
   const [typed, setTyped] = useState("");
   const [help, setHelp] = useState<HelpState>(null);
   const [helpRow, setHelpRow] = useState<number | null>(null);
@@ -1202,6 +1171,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const column = columnByKey.get(cursor.key);
     if (!column) return;
     if (event.key === "Escape") { event.preventDefault(); setEditing(false); gridFocus.current?.focus(); return; }
+    if (toolKeys(event, column.setup, editText, setEditText, "update")) return;
     if (event.key === "Enter" || event.key === "Tab") {
       event.preventDefault();
       if (await commitEdit()) {
@@ -1453,6 +1423,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     };
     if (addEditing) {
       if (event.key === "Escape") { event.preventDefault(); setAddEditing(false); addFocus.current?.focus(); return; }
+      if (row && toolKeys(event, row.setup, addText, setAddText, "add")) return;
       if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (event.target instanceof HTMLSelectElement && (event.key === "ArrowDown" || event.key === "ArrowUp")) return;
         event.preventDefault();
@@ -1488,7 +1459,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
   const escapeState = useRef({ editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: false });
-  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null }; });
+  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null || calendar !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const state = escapeState.current;
@@ -1514,12 +1485,46 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const cursorColumn = columnByKey.get(cursor.key);
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
   /** The editor's helpers: a calendar for dates, a calculator for amounts and quantities. */
+  /** Opens the calendar just under the open editor (above it when there is no room below). */
+  const openCalendar = (grid: "add" | "update", value: string) => {
+    const box = document.querySelector(".mp-editor")?.getBoundingClientRect();
+    const width = 236;
+    const height = 290;
+    const left = box ? Math.min(Math.max(4, box.left), window.innerWidth - width - 4) : (window.innerWidth - width) / 2;
+    const top = box ? (box.bottom + height + 4 < window.innerHeight ? box.bottom + 2 : Math.max(4, box.top - height - 2)) : (window.innerHeight - height) / 2;
+    calendarDrag.reset();
+    setCalendar({ grid, initial: value, left, top });
+  };
+  const refocusEditor = () => {
+    const focus = () => document.querySelector<HTMLInputElement>(".mp-editor")?.focus();
+    focus();
+    setTimeout(focus, 0);
+  };
+
+  /**
+   * The editor's tools from the keyboard: Alt+Down opens the calendar on a date, Alt+C the
+   * calculator on an amount (as does typing + * / =), and Ctrl+Delete empties the field.
+   */
+  const toolKeys = (event: ReactKeyboardEvent, setup: UpdateColumn["setup"], value: string, setValue: (text: string) => void, grid: "add" | "update"): boolean => {
+    const isDate = setup.field_type === "D";
+    const isNumber = setup.field_type === "N" || setup.field_type === "C";
+    if (event.ctrlKey && event.key === "Delete") { event.preventDefault(); setValue(""); return true; }
+    if (isDate && event.altKey && event.key === "ArrowDown") { event.preventDefault(); openCalendar(grid, value); return true; }
+    if (isNumber && event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); setCalc({ grid, initial: value, decimals: setup.decimal_points }); return true; }
+    if (isNumber && !event.ctrlKey && !event.altKey && !event.metaKey && ["+", "*", "/", "="].includes(event.key)) {
+      event.preventDefault();
+      setCalc({ grid, initial: event.key === "=" ? value : `${value}${event.key}`, decimals: setup.decimal_points, caretAtEnd: event.key !== "=" });
+      return true;
+    }
+    return false;
+  };
+
   const clearButton = (onPick: (text: string) => void, what: string) => (
     <button
       type="button"
       className="mp-mini mp-mini-clear"
       tabIndex={-1}
-      title={`Clear the ${what}`}
+      title={`Clear the ${what} (Ctrl+Delete)`}
       aria-label={`Clear the ${what}`}
       onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onClick={(event) => { onPick(""); event.currentTarget.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
@@ -1529,10 +1534,14 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   );
   const editorTools = (setup: UpdateColumn["setup"], value: string, onPick: (text: string) => void, grid: "add" | "update") => (
     <>
-      {setup.field_type === "D" && <DatePick value={value} onPick={onPick} />}
+      {setup.field_type === "D" && (
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => openCalendar(grid, value)}>
+          <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v5M16 3v5" /></svg>
+        </button>
+      )}
       {setup.field_type === "D" && clearButton(onPick, "date")}
       {(setup.field_type === "N" || setup.field_type === "C") && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => setCalc({ grid, initial: value, decimals: setup.decimal_points })}>
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => setCalc({ grid, initial: value, decimals: setup.decimal_points })}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
         </button>
       )}
@@ -1904,12 +1913,30 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         </div>
       )}
 
+      {calendar && (
+        <div className="mp-calc-backdrop mp-cal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setCalendar(null); refocusEditor(); } }}>
+          <CalendarPopup
+            initial={parseDesktopDate(calendar.initial)}
+            style={calendarDrag.style ?? { position: "fixed", left: calendar.left, top: calendar.top }}
+            dragHandle={calendarDrag.handle}
+            onClose={() => { setCalendar(null); refocusEditor(); }}
+            onPick={(date) => {
+              const text = date ? formatDesktopDate(date) : "";
+              if (calendar.grid === "add") setAddText(text); else setEditText(text);
+              setCalendar(null);
+              refocusEditor();
+            }}
+          />
+        </div>
+      )}
+
       {calc && (
         <div className="mp-calc-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCalc(null); }}>
           <Calculator
             style={calcDrag.style}
             dragHandle={calcDrag.handle}
             initial={calc.initial}
+            caretAtEnd={calc.caretAtEnd}
             decimals={calc.decimals}
             onClose={() => { setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
             onUse={(value) => {
@@ -1924,7 +1951,12 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       <div className="mp-status">
         <span>{rowStatus}</span>
         <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message}</span>
-        <span>{hotKeys}</span>
+        <span>{(() => {
+          const setup = editing ? cursorColumn?.setup : addEditing ? addRows[addCursor]?.setup : undefined;
+          if (setup?.field_type === "D") return "Alt+↓ Calendar · Ctrl+Del Clear";
+          if (setup?.field_type === "N" || setup?.field_type === "C") return "Alt+C or + * / = Calculator · Ctrl+Del Clear";
+          return hotKeys;
+        })()}</span>
         {warnings.length > 0 && <span className="mp-warn" title={warnings.join("\n")}>{warnings.length} setup query warning{warnings.length === 1 ? "" : "s"}</span>}
       </div>
 

@@ -12,11 +12,17 @@ import { evaluate } from "./calculate";
 
 const KEYS = ["7", "8", "9", "/", "4", "5", "6", "*", "1", "2", "3", "-", "0", ".", "%", "+"];
 
-export function Calculator({ initial, decimals, onUse, onClose, style, dragHandle }: { initial: string; decimals: number; onUse: (value: string) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement> }) {
+export function Calculator({ initial, decimals, onUse, onClose, style, dragHandle, caretAtEnd = false }: { initial: string; decimals: number; onUse: (value: string) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement>; caretAtEnd?: boolean }) {
   const [expression, setExpression] = useState(initial.replace(/,/g, ""));
   const box = useRef<HTMLInputElement>(null);
-  // The cell's value starts selected, so typing replaces it and a key button adds to it.
-  useEffect(() => { box.current?.focus(); box.current?.select(); }, []);
+  // The cell's value starts selected, so typing replaces it; opened by typing an operator
+  // (1250*), the caret waits at the end for the next figure.
+  useEffect(() => {
+    const input = box.current;
+    if (!input) return;
+    input.focus();
+    if (caretAtEnd) input.setSelectionRange(input.value.length, input.value.length); else input.select();
+  }, [caretAtEnd]);
   const result = evaluate(expression);
   const places = Math.max(0, Math.min(6, decimals));
   const shown = result === null ? "" : result.toFixed(places);
