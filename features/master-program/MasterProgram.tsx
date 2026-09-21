@@ -4,11 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import type { StartupSelection } from "../startup/StartupGate";
-import { applyPermission, formatDesktopDate, formatDesktopTime, getPermission, parseDesktopDate, runFormula, toDecimal, toInt, toText } from "../../lib/master-program/legacy";
+import { applyPermission, formatDesktopDate, getPermission, parseDesktopDate, runFormula, toDecimal, toInt, toText } from "../../lib/master-program/legacy";
 import type { AddRow, CloudPush, ComboOption, GroupLoad, GroupState, ProgramDefinition, UpdateColumn, UpdateRecord } from "../../lib/master-program/types";
 import { masterCall } from "./api";
 import { Calculator } from "./Calculator";
 import { CalendarPopup } from "./CalendarPopup";
+import { PrintPreview } from "./PrintPreview";
+import { printHtmlDocument, readPrintSetup, savePrintSetup } from "./printFrame";
+import type { PrintSetup } from "./printFrame";
+import { previewPages, printDocument } from "../../lib/export/pages";
+import { pdf } from "../../lib/export/pdf";
+import type { PdfOptions } from "../../lib/export/pdf";
+import { download, safeFileName } from "../../lib/export/table";
+import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
+import { xlsx } from "../../lib/export/xlsx";
 import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, keyPress, styleCase, validate } from "./rules";
 
 /**
@@ -231,6 +240,9 @@ const ICONS: Record<string, string> = {
   search: "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM16 16l4 4",
   clear: "M4 5h16l-6 7v6l-4 2v-8z",
   columns: "M4 4h16v16H4zM9.5 4v16M14.5 4v16",
+  preview: "M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  excel: "M4 3h11l5 5v13H4zM8 11l4 6M12 11l-4 6M14 3v5h6",
+  pdf: "M4 3h11l5 5v13H4zM14 3v5h6M8 13h1.5a1.5 1.5 0 0 1 0 3H8v-3zM8 16v2",
   move: "M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3",
 };
 function Icon({ name }: { name: string }) {
@@ -316,8 +328,16 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const calendarDrag = useDraggable();
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [filterSearch, setFilterSearch] = useState("");
+  /** The value last clicked in the open filter list, where a Shift+click range starts. */
+  const filterAnchor = useRef<string | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [calc, setCalc] = useState<{ grid: "add" | "update"; initial: string; decimals: number; caretAtEnd?: boolean } | null>(null);
+  /** The page setup last chosen in Preview or for a PDF (this browser only), used by Print and PDF too. */
+  const [printSetup, setPrintSetup] = useState<PrintSetup | null>(() => (typeof window === "undefined" ? null : readPrintSetup()));
+  const rememberSetup = (setup: PrintSetup) => { setPrintSetup(setup); savePrintSetup(setup); };
+  const [pdfChoice, setPdfChoice] = useState<PrintSetup | null>(null);
+  /** Print preview: the grid frozen as it was when opened, and the page setup chosen. */
+  const [preview, setPreview] = useState<{ table: ExportTable; options: PdfOptions; name: string } | null>(null);
   const [calendar, setCalendar] = useState<{ grid: "add" | "update"; initial: string; left: number; top: number } | null>(null);
   const [typed, setTyped] = useState("");
   const [help, setHelp] = useState<HelpState>(null);
@@ -520,12 +540,20 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   /** Distinct stored values of a column, for its filter list. */
   const valuesOf = (column: UpdateColumn) => {
     const seen = new Set<string>();
-    for (const row of liveRows) seen.add(shownText(backup[row] ?? records[row], column));
+    const needle = find.trim().toLowerCase();
+    const others = Object.entries(filters).filter(([key]) => key !== column.key);
+    for (const row of liveRows) {
+      const stored = backup[row] ?? records[row];
+      const kept = others.every(([key, filter]) => { const other = columnByKey.get(key); return !other || filterHolds(other, filter, stored); });
+      if (!kept || (needle !== "" && !columns.some((shown) => shownText(stored, shown).toLowerCase().includes(needle)))) continue;
+      seen.add(shownText(stored, column));
+    }
     return [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   };
   /** Opens a column's filter list with its current settings as an editable draft. */
   const openFilterFor = (column: UpdateColumn) => {
     if (openFilter === column.key) { setOpenFilter(null); return; }
+    filterAnchor.current = null;
     const current = filters[column.key];
     setFilterSearch("");
     setFilterDraft({ key: column.key, chosen: current?.values ?? valuesOf(column), first: current?.first ?? emptyCondition(), join: current?.join ?? "and", second: current?.second ?? emptyCondition() });
@@ -1065,11 +1093,84 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const printUpdate = async () => {
     if (liveRows.length === 0) { await ask("Can't open print priview as update grid is blank", "Print failed!!"); return; }
     if (printsMasterSheet) { printMasterSheet(); return; }
+    // The same pages as Print Preview, in the page setup last chosen.
+    const options = pdfOptions();
+    printHtmlDocument(printDocument(exportName(), previewPages(buildExportTable(), options), options.orientation));
+  };
+
+  // ---- Excel, PDF and print preview of the Update grid, as shown (columns, filters, sort)
+  const decimalsOf = (column: UpdateColumn): number => {
+    if (column.format === "N2") return 2;
+    const places = /^#,##0\.(0+)$/.exec(column.format);
+    if (places) return places[1].length;
+    if (column.format.startsWith("#")) return 0;
+    return column.setup.field_type === "N" || column.setup.field_type === "C" ? Math.max(0, column.setup.decimal_points) : 0;
+  };
+  const buildExportTable = (): ExportTable => {
+    const exportColumns: ExportColumn[] = columns.map((column) => {
+      const kind = filterKind(column);
+      return {
+        caption: column.caption || column.key,
+        kind,
+        decimals: kind === "number" ? decimalsOf(column) : 0,
+        align: kind === "number" ? "right" : kind === "date" ? "center" : column.align === "C" ? "center" : column.align === "R" ? "right" : "left",
+        width: widthOf(column),
+      };
+    });
+    const rows: ExportCell[][] = shownRows.map((row) => columns.map((column, index) => {
+      const raw = cellOf(records[row], column.key).trim();
+      if (raw === "") return null;
+      if (exportColumns[index].kind === "number") { const value = toDecimal(raw.replace(/,/g, "")); return Number.isFinite(value) ? value : raw; }
+      if (exportColumns[index].kind === "date") return parseDesktopDate(raw) ?? raw;
+      return formatCell(raw, column.format);
+    }));
+    // Totals for amounts and quantities (not for serial numbers or codes).
+    const summed = columns.map((column) => (column.setup.field_type === "N" || column.setup.field_type === "C")
+      && column.format !== "#,###"
+      && !/(^|_)(SR_?NO|SERIAL|KEY|CODE|ID|NO)$/i.test(lower(column.setup.field_name)));
+    const totals = summed.some(Boolean) ? columns.map((_, index) => (summed[index] ? rows.reduce((sum, row) => sum + (typeof row[index] === "number" ? (row[index] as number) : 0), 0) : null)) : undefined;
+    const group = [first?.text, second?.text].filter(Boolean).join(" / ");
+    return {
+      company: meta?.companyName ?? "",
+      title: def?.heading || title,
+      subtitle: [],
+      titleRight: firstCombo ? `${firstCombo.label}: ${group}` : group,
+      footerCenter: shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length} records (filtered)${sort ? ", sorted" : ""}`,
+      columns: exportColumns,
+      rows,
+      totals,
+    };
+  };
+  const exportName = () => {
     const now = new Date();
-    let line = `Book : ${first?.text ?? ""}`;
-    line += licence === 14 ? `    | Run Date : ${formatDesktopDate(now)} Time : ${formatDesktopTime(now)}  User : ${meta?.userName ?? ""}` : `    | Run Date : ${formatDesktopDate(now)}    `;
-    const right = (column: UpdateColumn) => column.align === "R" || column.format.startsWith("#") || column.format === "N2";
-    printHtml(`Book : ${first?.text ?? ""}`, `<h1>${escapeHtml(meta?.companyName ?? "")}</h1><p>${escapeHtml(line)}</p><table><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.caption)}</th>`).join("")}</tr></thead><tbody>${shownRows.map((row) => `<tr>${columns.map((column) => `<td${right(column) ? ' class="r"' : ""}>${escapeHtml(formatCell(cellOf(records[row], column.key), column.format))}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+    return safeFileName(`${def?.heading || title} - ${first?.text ?? ""} - ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
+  };
+  const printedLine = () => { const now = new Date(); return `Printed ${formatDesktopDate(now)} ${now.toTimeString().slice(0, 5)} by ${meta?.userName ?? ""}`; };
+  const pdfOptions = (): PdfOptions => ({
+    orientation: printSetup?.orientation ?? (columns.reduce((sum, column) => sum + widthOf(column), 0) > 700 ? "landscape" : "portrait"),
+    fontSize: printSetup?.fontSize ?? 8,
+    totals: printSetup?.totals ?? true,
+    footer: printedLine(),
+  });
+  const noRows = async () => { if (shownRows.length > 0) return false; await ask("There are no records to export.", "Export"); return true; };
+  const exportExcel = async () => {
+    if (await noRows()) return;
+    download(xlsx(buildExportTable(), first?.text || "Master"), `${exportName()}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  };
+  /** PDF asks for the page setup first, offering the one last used (in Preview or here). */
+  const exportPdf = async () => {
+    if (await noRows()) return;
+    const { orientation, fontSize, totals } = pdfOptions();
+    setPdfChoice({ orientation, fontSize, totals });
+  };
+  const savePdf = (setup: PrintSetup) => {
+    rememberSetup(setup);
+    setPdfChoice(null);
+    download(pdf(buildExportTable(), { ...setup, footer: printedLine() }), `${exportName()}.pdf`, "application/pdf");
+  };
+  const openPreview = async () => {
+    if (await noRows()) return;
+    setPreview({ table: buildExportTable(), options: pdfOptions(), name: exportName() });
   };
 
   const exportCsv = () => {
@@ -1459,7 +1560,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
   const escapeState = useRef({ editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: false });
-  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null || calendar !== null }; });
+  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null || calendar !== null || preview !== null || pdfChoice !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const state = escapeState.current;
@@ -1710,11 +1811,30 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                           <label className="mp-filter-all">
                             <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => setDraft({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
                             <b>{needle ? "(Select all found)" : "(Select All)"}</b>
+                            <span className="mp-filter-tip">Shift+click: range</span>
                             <span className="mp-filter-count">{listed.filter((value) => draft.chosen.includes(value)).length}/{listed.length}</span>
                           </label>
                           <ul>
                             {listed.map((value) => (
-                              <li key={value || "(blank)"}><label><input type="checkbox" checked={draft.chosen.includes(value)} onChange={() => setDraft({ chosen: draft.chosen.includes(value) ? draft.chosen.filter((item) => item !== value) : [...draft.chosen, value] })} />{value === "" ? <em>(blank)</em> : value}</label></li>
+                              <li key={value || "(blank)"}>
+                                <button
+                                  type="button"
+                                  role="checkbox"
+                                  aria-checked={draft.chosen.includes(value)}
+                                  className="mp-filter-value"
+                                  onClick={(event) => {
+                                    const tick = !draft.chosen.includes(value);
+                                    const from = filterAnchor.current === null ? -1 : listed.indexOf(filterAnchor.current);
+                                    const to = listed.indexOf(value);
+                                    // Shift+click: everything from the last clicked value to this one takes this one's new state.
+                                    const range = event.shiftKey && from >= 0 ? listed.slice(Math.min(from, to), Math.max(from, to) + 1) : [value];
+                                    setDraft({ chosen: tick ? [...new Set([...draft.chosen, ...range])] : draft.chosen.filter((item) => !range.includes(item)) });
+                                    filterAnchor.current = value;
+                                  }}
+                                >
+                                  <span className="mp-filter-box" aria-hidden="true">{draft.chosen.includes(value) ? "✓" : ""}</span>{value === "" ? <em>(blank)</em> : value}
+                                </button>
+                              </li>
                             ))}
                             {listed.length === 0 && <li className="mp-filter-none">No value matches.</li>}
                           </ul>
@@ -1854,7 +1974,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
           {tab === "update" && <>
             <button type="button" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}><Icon name="save" />Save</button>
             <button type="button" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()}><Icon name="print" />Print</button>
-            <button type="button" className="mp-btn mp-btn-teal" onClick={exportCsv}><Icon name="export" />Export</button>
+            <button type="button" className="mp-btn mp-btn-blue" onClick={() => void openPreview()} title="See the pages before printing"><Icon name="preview" />Preview</button>
+            <button type="button" className="mp-btn mp-btn-excel" onClick={() => void exportExcel()} title="Save the grid as an Excel workbook (.xlsx)"><Icon name="excel" />Excel</button>
+            <button type="button" className="mp-btn mp-btn-pdf" onClick={() => void exportPdf()} title="Save the grid as a PDF report"><Icon name="pdf" />PDF</button>
+            <button type="button" className="mp-btn mp-btn-teal" onClick={exportCsv} title="Save the grid as a CSV text file"><Icon name="export" />CSV</button>
             <button type="button" className="mp-btn mp-btn-blue" onClick={() => first && void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="refresh" />Refresh</button>
             <button type="button" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" />Cancel</button>
             <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
@@ -1884,6 +2007,35 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
             <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
           </>}
           {tab === "image" && <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>}
+        </div>
+      )}
+
+      {preview && <PrintPreview table={preview.table} initialOptions={preview.options} title={preview.name} onOptionsChange={({ orientation, fontSize, totals }) => rememberSetup({ orientation, fontSize, totals })} onClose={() => { setPreview(null); gridFocus.current?.focus(); }} />}
+
+      {pdfChoice && (
+        <div className="mp-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPdfChoice(null); }}>
+          <div className="mp-dialog mp-pdf-choice" role="dialog" aria-modal="true" aria-label="Save as PDF">
+            <strong>Save as PDF</strong>
+            <div className="mp-pdf-orientation" role="radiogroup" aria-label="Page">
+              {(["portrait", "landscape"] as const).map((orientation) => (
+                <label key={orientation} className={pdfChoice.orientation === orientation ? "mp-chosen" : ""}>
+                  <input type="radio" name="pdf-orientation" checked={pdfChoice.orientation === orientation} onChange={() => setPdfChoice({ ...pdfChoice, orientation })} />
+                  <span className={`mp-sheet mp-sheet-${orientation}`} aria-hidden="true" />
+                  {orientation === "portrait" ? "Portrait" : "Landscape"}
+                </label>
+              ))}
+            </div>
+            <label className="mp-pdf-row">Font
+              <select value={pdfChoice.fontSize} onChange={(event) => setPdfChoice({ ...pdfChoice, fontSize: Number(event.target.value) })}>
+                {[6, 7, 8, 9, 10, 11].map((size) => <option key={size} value={size}>{size} pt</option>)}
+              </select>
+            </label>
+            <label className="mp-pdf-row"><input type="checkbox" checked={pdfChoice.totals} onChange={(event) => setPdfChoice({ ...pdfChoice, totals: event.target.checked })} />Totals row</label>
+            <div className="mp-dialog-buttons">
+              <button type="button" ref={focusOnMount} onClick={() => savePdf(pdfChoice)}>Save PDF</button>
+              <button type="button" onClick={() => setPdfChoice(null)}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 
