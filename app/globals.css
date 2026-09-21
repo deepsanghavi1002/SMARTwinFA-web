@@ -525,3 +525,9 @@
 .mp-filter-box{display:inline-grid;place-items:center;flex:none;width:13px;height:13px;border:1px solid #6d93c4;border-radius:2px;background:#fff;color:#1f64c8;font-size:10px;font-weight:700;line-height:1}
 .mp-filter-value[aria-checked="true"] .mp-filter-box{background:#1f64c8;border-color:#1f64c8;color:#fff}
 .mp-filter-tip{margin-left:auto;color:#6a7d91;font-size:9.5px;font-weight:400}
+
+/* round 6: help list beside the New Add grid, with a note (an existing entry is shown in red) */
+.mp-add{position:relative}
+.mp-add .mp-help{top:8px;right:12px;bottom:auto;max-height:calc(100% - 16px)}
+.mp-help-note{padding:3px 8px;border-bottom:1px solid #c7d7ea;background:#eef4fb;color:#0d3a73;font-weight:600;white-space:nowrap}
+.mp-help-note.mp-help-warn{background:#fde2e4;color:#a8202e}

@@ -250,6 +250,34 @@ function Icon({ name }: { name: string }) {
 }
 
 
+/**
+ * DECIMAL_POINTS: a number typed with more places than the field allows is rounded to them
+ * (half away from zero, as the desktop's number styles show it) and written with exactly
+ * that many places. Fields of type N and C only; anything that is not a number is left as is.
+ */
+export function roundToPlaces(text: string, setup: Pick<UpdateColumn["setup"], "field_type" | "decimal_points">): string {
+  if (setup.field_type !== "N" && setup.field_type !== "C") return text;
+  const raw = text.replace(/,/g, "").trim();
+  if (raw === "" || !/^[-+]?(\d+\.?\d*|\.\d+)$/.test(raw)) return text;
+  const places = Math.max(0, Math.min(6, setup.decimal_points || 0));
+  if (setup.field_type === "C" && places === 0) return text;
+  const factor = 10 ** places;
+  const value = Number(raw);
+  const rounded = (Math.sign(value) * Math.round(Math.abs(value) * factor + 1e-9)) / factor;
+  return rounded.toFixed(places);
+}
+
+/** FIELD_TOOLTIPS as shown in the status row: the text without its leading "SELECT", options split by " / ". */
+export function tooltipText(tooltip: string | null | undefined): string {
+  const text = (tooltip ?? "").trim().replace(/^SELECT\s+/i, "");
+  return text.split("|").map((part) => part.trim()).filter(Boolean).join(" / ");
+}
+
+const alignOf = (align: string | null | undefined): "left" | "right" | "center" => {
+  const code = (align ?? "").trim().toUpperCase();
+  return code === "R" ? "right" : code === "C" || code === "M" ? "center" : "left";
+};
+
 /** The value a filter, search or sort reads: the stored one, as the grid shows it. */
 const shownText = (record: UpdateRecord | undefined, column: UpdateColumn) => formatCell(cellOf(record, column.key), column.format).trim();
 
@@ -600,6 +628,27 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   }, [openFilter]);
   const programId = def?.programId ?? 0;
   const licence = def?.licence ?? 0;
+
+  /**
+   * C1dg_MasterGrid_NewRowColDisplay: on the New Add grid, a field with a help list shows it
+   * when the cursor reaches it (on the row holding the current value) and on every key typed
+   * (on the first entry that starts with the text so far), so an existing master is seen
+   * before a duplicate is typed. Where DUPLICHK_FLDNAME2 is set the entry must also belong to
+   * the group chosen in the first combo.
+   */
+  const addHelp = useMemo(() => {
+    if (tab !== "add" || !help || help.columns.length === 0) return null;
+    const row = addRows[addCursor];
+    if (!row || toText(row.setup.help_query) === "") return null;
+    const f1 = toText(row.setup.duplichk_fldname1).toLowerCase();
+    const f2 = toText(row.setup.duplichk_fldname2).toLowerCase();
+    const typedText = (addEditing ? addText : row.fieldInput).trim().toUpperCase();
+    if (f1 === "" || typedText === "") return { row: -1, exact: false, typed: typedText };
+    const inGroup = (helpRecord: Readonly<Record<string, string>>) => f2 === "" || !first || [first.value, first.text].includes(cellOf(helpRecord, f2));
+    const found = help.rows.findIndex((helpRecord) => inGroup(helpRecord) && (addEditing ? cellOf(helpRecord, f1).toUpperCase().startsWith(typedText) : cellOf(helpRecord, f1).toUpperCase() === typedText));
+    const exact = found >= 0 && cellOf(help.rows[found], f1).trim().toUpperCase() === typedText && !(restore && restore.row === found);
+    return { row: found, exact, typed: typedText };
+  }, [tab, help, addRows, addCursor, addEditing, addText, first, restore]);
   const imageTab = Boolean(def?.imageReq) && (programId === 8 || programId === 14);
 
   // ---- C1dg_UpdateGrid_BeforeRowColChange, image part: product_image for the product row
@@ -723,7 +772,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       if (option && option.value !== "" && text.toLowerCase() !== "(blank)" && toInt(option.value) > 0) setBackupCell(row, column.key, option.value);
       else if (text === "(blank)") setBackupCell(row, column.key, "");
     }
-    text = styleCase(column.setup, text, licence);
+    text = roundToPlaces(styleCase(column.setup, text, licence), column.setup);
     let next: UpdateRecord = { ...record, [column.key]: text };
     if (changed) markEdited(row);
     setEditing(false);
@@ -830,7 +879,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         getPermission(permissionSource(record), "C", column.setup.run_compulsory_field, column.setup.run_compulsory_cond, false, false);
       }
       if (programId === 34) setCellEditable((current) => ({ ...current, [permissionKey]: true }));
-      if (column.statusDisplay !== "") setMessage(column.statusDisplay);
+      setMessage([tooltipText(column.setup.field_tooltips), column.statusDisplay].filter(Boolean).join("   ·   "));
       // NewRowColDisplay: position the help grid on this value.
       if (help && toText(column.setup.duplichk_fldname1) !== "" && cellOf(record, column.key) !== "") {
         const f1 = column.setup.duplichk_fldname1.toLowerCase();
@@ -1317,7 +1366,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const old = addRows[addCursor];
     const row = addRows[index];
     setRowStatus(`${index + 1}/${addRows.length}`);
-    if (row.statusDisplay !== "") setMessage(row.statusDisplay);
+    setMessage([tooltipText(row.setup.field_tooltips), row.statusDisplay].filter(Boolean).join("   ·   "));
     if (toText(row.setup.defa_fixvalue) !== "") {
       const value = (await call<{ value: string }>("defa-fixvalue", { masterGrid: true, row: addEventRow(index, row.fieldInput) })).value;
       if (row.setup.field_type === "D") { const date = parseDesktopDate(value); if (date) setAdd(index, { fieldInput: formatDesktopDate(date) }); }
@@ -1440,6 +1489,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       else if (caseName === "U" || caseName === "A") text = licence === 71 && row.comboKind === "N" ? styleCase({ ...row.setup, style_case: "P" }, text, licence) : caseName === "U" ? text.toUpperCase() : text;
       else if (caseName === "L") text = text.toLowerCase();
     }
+    text = roundToPlaces(text, row.setup);
     if (row.setup.field_type === "D") {
       if (text === "") text = "";
       else { const date = parseDesktopDate(text); if (date) text = programId === 52 ? `${formatDesktopDate(date)} ${date.toTimeString().slice(0, 8)}` : formatDesktopDate(date); }
@@ -1584,6 +1634,30 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const frozenLeft: number[] = [];
   columns.reduce((left, column, index) => { frozenLeft[index] = left; return left + widthOf(column); }, INDICATOR_WIDTH);
   const cursorColumn = columnByKey.get(cursor.key);
+  /** The help list window: centred on one entry, with a note under the title for the New Add grid. */
+  const helpWindow = (focusRow: number, note: { text: string; warn: boolean } | null) => {
+    if (!help || help.columns.length === 0) return null;
+    const from = focusRow >= 0 ? Math.max(0, focusRow - 3) : 0;
+    return (
+      <div className="mp-help" style={helpDrag.style}>
+        <div className="mp-help-title mp-drag-handle" {...helpDrag.handle} onDoubleClick={helpDrag.reset} title="Drag to move · double-click to put back">
+          <span><Icon name="move" />{help.total}</span>
+          {tab === "update" && <button type="button" onClick={() => setHelpRow(null)} aria-label="Close help">×</button>}
+        </div>
+        {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
+        <table>
+          <thead><tr>{help.columns.map((column) => <th key={column.key} style={{ width: column.width || 90 }}>{column.caption}</th>)}</tr></thead>
+          <tbody>
+            {help.rows.slice(from, from + 15).map((helpRecord, index) => (
+              <tr key={from + index} className={from + index === focusRow ? "mp-current-row" : ""}>
+                {help.columns.map((column) => <td key={column.key} style={{ textAlign: column.align === "R" ? "right" : "left" }}>{formatCell(helpRecord[column.key] ?? "", column.format)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
   /** The editor's helpers: a calendar for dates, a calculator for amounts and quantities. */
   /** Opens the calendar just under the open editor (above it when there is no room below). */
@@ -1628,7 +1702,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       title={`Clear the ${what} (Ctrl+Delete)`}
       aria-label={`Clear the ${what}`}
       onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-      onClick={(event) => { onPick(""); event.currentTarget.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
+      onClick={(event) => { event.stopPropagation(); onPick(""); event.currentTarget.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
     >
       <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
     </button>
@@ -1636,13 +1710,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const editorTools = (setup: UpdateColumn["setup"], value: string, onPick: (text: string) => void, grid: "add" | "update") => (
     <>
       {setup.field_type === "D" && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => openCalendar(grid, value)}>
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); openCalendar(grid, value); }}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v5M16 3v5" /></svg>
         </button>
       )}
       {setup.field_type === "D" && clearButton(onPick, "date")}
       {(setup.field_type === "N" || setup.field_type === "C") && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => setCalc({ grid, initial: value, decimals: setup.decimal_points })}>
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); setCalc({ grid, initial: value, decimals: setup.decimal_points }); }}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
         </button>
       )}
@@ -1731,7 +1805,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               {addRows.map((row, index) => row.visible && (
                 <tr key={`${row.fieldName}-${index}`} className={index === addCursor ? "mp-current" : ""}>
                   <td role="gridcell" onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`mp-add-head ${row.setup.program_top_id === 48 || row.setup.program_top_id === 49 ? "mp-yellow" : ""}`}>{row.headLabel}</td>
-                  <td role="gridcell" aria-readonly={!row.editable} onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`${row.editable ? "" : "mp-readonly"} ${row.styleName}`}>
+                  <td role="gridcell" aria-readonly={!row.editable} title={tooltipText(row.setup.field_tooltips) || undefined} style={{ textAlign: alignOf(row.setup.add_grid_align) }} onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`${row.editable ? "" : "mp-readonly"} ${row.styleName}`}>
                     {addEditing && index === addCursor ? (
                       row.options ? (
                         <select ref={focusOnMount} className="mp-editor" value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)}>
@@ -1739,8 +1813,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                           {row.options.map((option, at) => <option key={`${option.value}-${at}`} value={option.text}>{option.text}</option>)}
                         </select>
                       ) : (
-                        <span className="mp-editor-wrap">
-                          <input ref={focusOnMount} className="mp-editor" type={row.setup.force_inputtype === "P" ? "password" : "text"} value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)} />
+                        <span className="mp-editor-wrap" role="presentation" onClick={(event) => event.stopPropagation()}>
+                          <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)} />
                           {editorTools(row.setup, addText, setAddText, "add")}
                         </span>
                       )
@@ -1750,6 +1824,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               ))}
             </tbody>
           </table>
+          {addHelp && helpWindow(addHelp.row, addHelp.typed === ""
+            ? { text: "Existing entries (type to search)", warn: false }
+            : addHelp.exact
+              ? { text: `"${addHelp.typed}" already exists`, warn: true }
+              : addHelp.row >= 0
+                ? { text: `Nearest existing entry for "${addHelp.typed}"`, warn: false }
+                : { text: `No existing entry starts with "${addHelp.typed}"`, warn: false })}
         </div>
       )}
 
@@ -1906,24 +1987,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               })}
             </div>
           </div>
-          {help && help.columns.length > 0 && helpRow !== null && cursorColumn && toText(cursorColumn.setup.help_query) !== "" && (
-            <div className="mp-help" style={helpDrag.style}>
-              <div className="mp-help-title mp-drag-handle" {...helpDrag.handle} onDoubleClick={helpDrag.reset} title="Drag to move · double-click to put back">
-                <span><Icon name="move" />{help.total}</span>
-                <button type="button" onClick={() => setHelpRow(null)} aria-label="Close help">×</button>
-              </div>
-              <table>
-                <thead><tr>{help.columns.map((column) => <th key={column.key} style={{ width: column.width || 90 }}>{column.caption}</th>)}</tr></thead>
-                <tbody>
-                  {help.rows.slice(Math.max(0, helpRow - 3), helpRow + 12).map((helpRecord, index) => (
-                    <tr key={index} className={Math.max(0, helpRow - 3) + index === helpRow ? "mp-current-row" : ""}>
-                      {help.columns.map((column) => <td key={column.key} style={{ textAlign: column.align === "R" ? "right" : "left" }}>{formatCell(helpRecord[column.key] ?? "", column.format)}</td>)}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {help && helpRow !== null && cursorColumn && toText(cursorColumn.setup.help_query) !== "" && helpWindow(helpRow, null)}
           {menu && (
             <div className="mp-menu" style={{ left: menu.x, top: menu.y }} onMouseLeave={() => setMenu(null)}>
               <button type="button" onClick={() => { setMenu(null); void copyCell(); }}>Copy</button>

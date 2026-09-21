@@ -144,6 +144,17 @@ export function validate(context: ValidateContext, typed: string): ValidateOutco
     if (message !== "") return fail(message, `Error In ${setup.database_name.trim()}`);
   }
 
+  // The desktop checks these only as keys are typed; a value that arrives whole (the
+  // calculator, a paste) is checked here too, so it cannot slip past them.
+  if (setup.number_positiveonly && text.trim() !== "" && isNumeric(text.replace(/,/g, "").trim(), true) && toDecimal(text.replace(/,/g, "")) < 0) {
+    return fail("Only positive value allowed in this column", "Positive Value Only");
+  }
+  for (const character of text) {
+    const notAllowed = toText(setup.value_notallowed) !== "" && keyRefused(setup.value_notallowed, character, false, context.programId);
+    const notInAllowed = toText(setup.value_allowed) !== "" && keyRefused(setup.value_allowed, character, true, context.programId);
+    if (notAllowed || notInAllowed) return fail(`This Character not allowed ==> ${character === " " ? "(space)" : character}`, "Character Not Allowed");
+  }
+
   if (setup.field_validation.toLowerCase() === "sys.validcontactnumber" && text.length > 0) {
     // The Update grid separates a name with ';', the Add grid with ':'.
     const result = validateContactNumber(text, setup.field_length_min, context.masterGrid ? ":" : ";", ",", setup.head_label);
