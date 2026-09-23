@@ -178,11 +178,16 @@ export function validate(context: ValidateContext, typed: string): ValidateOutco
 
   // The desktop checks these only as keys are typed; a value that arrives whole (the
   // calculator, a paste) is checked here too, so it cannot slip past them.
-  if (setup.number_positiveonly && (text.includes("-") || (text.trim() !== "" && isNumeric(text.replace(/,/g, "").trim(), true) && toDecimal(text.replace(/,/g, "")) < 0))) {
-    return fail("Only positive value allowed in this column", "Positive Value Only");
-  }
-  if (isNumberField(setup) && (text.match(/\./g)?.length ?? 0) > 1) {
-    return fail("Only one decimal point is allowed in a number", "Invalid Number");
+  // A list column (combo_value L, Q or X) shows a choice's name ("E - DIRECT EXPENSES") while it
+  // stores the choice's id: the number rules are for the id, never the name.
+  const listColumn = ["L", "Q", "X"].includes(toText(setup.combo_value).trim().toUpperCase());
+  if (!listColumn) {
+    if (setup.number_positiveonly && (text.includes("-") || (text.trim() !== "" && isNumeric(text.replace(/,/g, "").trim(), true) && toDecimal(text.replace(/,/g, "")) < 0))) {
+      return fail("Only positive value allowed in this column", "Positive Value Only");
+    }
+    if (isNumberField(setup) && (text.match(/\./g)?.length ?? 0) > 1) {
+      return fail("Only one decimal point is allowed in a number", "Invalid Number");
+    }
   }
   for (const character of text) {
     const notAllowed = toText(setup.value_notallowed) !== "" && keyRefused(setup.value_notallowed, character, false, context.programId);

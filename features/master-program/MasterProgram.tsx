@@ -20,6 +20,7 @@ import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/tab
 import { xlsx } from "../../lib/export/xlsx";
 import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, isNumberField as isNumberSetup, keyPress, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
 import { HelpList } from "./HelpList";
+import { GridCombo } from "./GridCombo";
 import { isMessageBoxOpen, messageBox } from "../ui/MessageBox";
 import type { MessageButton } from "../ui/MessageBox";
 import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
@@ -344,6 +345,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  /** Where an open combo cell's list sits on screen (it opens as a list under the cell, or above it near the bottom). */
+  const [comboAt, setComboAt] = useState<{ left: number; top: number; width: number; rows: number } | null>(null);
+  /** A letter typed on a combo cell: its list opens searching for it. */
+  const [comboStart, setComboStart] = useState("");
   const [dataAtBegin, setDataAtBegin] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState<{ value: string; addonId: string } | null>(null);
@@ -802,7 +807,11 @@ Refresh anyway?`
     let cancel = false;
     if (toText(column.setup.status_against_fld) !== "" && toText(first?.value) !== "") {
       const answer = getPermission(permissionSource(record), "E", column.setup.status_against_fld.trim(), column.setup.enable_for.trim(), false, false);
-      cancel = answer.toUpperCase().includes("E");
+      // Func_GetPermission answers "E" (enabled) or "D" (disabled). The C# line reads
+      // e.Cancel = answer.Contains("E"), which refuses exactly the fields that are enabled
+      // (Schedule, and State or TDS on an "A" account) and opens the disabled ones; the edit
+      // is refused only when the field is disabled for this row.
+      cancel = answer.toUpperCase().includes("D");
       if (column.setup.rec_found_forquery) {
         setCellEditable((current) => ({ ...current, [`${row}:${column.key}`]: false }));
         cancel = true;
@@ -822,7 +831,42 @@ Refresh anyway?`
     const value = cellOf(records[at.row], column.key);
     setEditText(initial !== undefined ? initial : value);
     if (initial !== undefined) followHelp(column.key, initial);
+    if (column.options) {
+      const box = document.querySelector(`.mp-grid [data-cell="${at.row}:${CSS.escape(at.key)}"]`)?.getBoundingClientRect();
+      const rows = Math.min(10, Math.max(2, column.options.length));
+      const height = rows * 22 + 62;
+      if (box) {
+        const below = box.bottom + height < window.innerHeight - 4;
+        // Wide enough for the longest choice (tick, padding and scrollbar included), never
+        // narrower than the column; it starts at the column's left edge unless the screen
+        // runs out on the right, and then it moves left only as far as it has to.
+        const width = Math.min(window.innerWidth - 8, Math.max(box.width, 200, longestText(column.options.map((option) => option.text)) + 64));
+        const left = Math.max(4, Math.min(box.left, window.innerWidth - width - 4));
+        setComboAt({ left, top: below ? box.bottom + 2 : Math.max(4, box.top - height - 2), width, rows });
+      } else setComboAt(null);
+    }
     setEditing(true);
+  };
+
+  /** A canvas used only to measure text. */
+  const measure = useRef<CanvasRenderingContext2D | null>(null);
+  /** The widest of some texts as the grid's font draws them, in pixels. */
+  const longestText = (texts: readonly string[]) => {
+    measure.current ??= document.createElement("canvas").getContext("2d");
+    const context = measure.current;
+    if (!context) return Math.max(0, ...texts.map((text) => text.length)) * 7;
+    const cell = document.querySelector(".mp-grid .mp-cell");
+    context.font = `700 ${cell ? getComputedStyle(cell).fontSize : "11px"} ${cell ? getComputedStyle(cell).fontFamily : "sans-serif"}`;
+    return Math.ceil(Math.max(0, ...texts.map((text) => context.measureText(text).width)));
+  };
+
+  /** A combo cell: an editable column whose setup gives it a list (combo_value L, Q or X). */
+  const isComboCell = (row: number, column: UpdateColumn | undefined) => Boolean(column?.options && column.options.length > 0 && isEditable(row, column));
+  /** Opens a combo cell's list at (row, key), moving there first. */
+  const openCombo = async (row: number, key: string) => {
+    if (editing && cursor.row === row && cursor.key === key) return;
+    setComboStart("");
+    if (await moveTo(row, key)) await startEdit(undefined, { row, key });
   };
 
   /**
@@ -838,14 +882,16 @@ Refresh anyway?`
   const dateText = (text: string, date: Date) => (/\d{1,2}:\d{2}/.test(text) ? text : formatDesktopDate(date));
 
   /** C1dg_UpdateGrid_ValidateEdit then AfterEdit. Returns false when the edit is refused. */
-  const commitEdit = async (): Promise<boolean> => {
+  const commitEdit = async (typedText?: string): Promise<boolean> => {
+    /** The text to commit: a combo's choice arrives directly, before the render that would hold it. */
+    const entered = typedText ?? editText;
     const column = columnByKey.get(cursor.key);
     const row = cursor.row;
     if (!column || !grids || !meta) { setEditing(false); return true; }
     const record = records[row];
     // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
-    if (editText === cellOf(record, column.key)) { setEditing(false); return true; }
-    let text = editText;
+    if (entered === cellOf(record, column.key)) { setEditing(false); return true; }
+    let text = entered;
     if (column.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, dataAtBegin);
       if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
@@ -928,6 +974,26 @@ Refresh anyway?`
       (gridFocus.current ?? addFocus.current)?.focus({ preventScroll: true });
     }, 0);
   }
+
+  /**
+   * Scrolls the grid sideways so the whole of a column is in sight: past the frozen columns on
+   * the left, and not cut off on the right (a column wider than the view shows from its start).
+   */
+  const showWholeColumn = (element: HTMLElement, key: string) => {
+    const index = columns.findIndex((candidate) => candidate.key === key);
+    if (index < 0) return;
+    const frozen = grids ? Math.min(grids.frozen, columns.length) : 0;
+    if (index < frozen) return; // a frozen column never scrolls away
+    let left = INDICATOR_WIDTH;
+    for (let at = 0; at < index; at += 1) left += widthOf(columns[at]);
+    const right = left + widthOf(columns[index]);
+    let frozenRight = INDICATOR_WIDTH;
+    for (let at = 0; at < frozen; at += 1) frozenRight += widthOf(columns[at]);
+    const shownFrom = element.scrollLeft + frozenRight;
+    const shownTo = element.scrollLeft + element.clientWidth;
+    if (right > shownTo) element.scrollLeft = right - element.clientWidth;
+    if (left < element.scrollLeft + frozenRight || left < shownFrom) element.scrollLeft = Math.max(0, left - frozenRight);
+  };
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
   const moveTo = async (row: number, key: string): Promise<boolean> => {
@@ -1022,6 +1088,7 @@ Refresh anyway?`
       const top = Math.max(0, shownRows.indexOf(row)) * ROW_HEIGHT;
       if (top < element.scrollTop) element.scrollTop = top;
       else if (top + ROW_HEIGHT * 2 > element.scrollTop + element.clientHeight) element.scrollTop = top - element.clientHeight + ROW_HEIGHT * 2;
+      showWholeColumn(element, column.key);
     }
     return true;
   };
@@ -1159,6 +1226,16 @@ Refresh anyway?`
     setSaveAfterCommit(false);
     void saveUpdateRef.current();
   }, [saveAfterCommit, editing]);
+
+  /** A choice taken from a combo list: commit it, then carry on as Enter / Tab would (step 0 stays). */
+  const finishCombo = async (text: string, step: 0 | 1 | -1) => {
+    setEditText(text);
+    if (!(await commitEdit(text))) return;
+    gridFocus.current?.focus({ preventScroll: true });
+    if (step === 0) return;
+    const next = nextEditable(cursor.row, cursor.key, step);
+    if (next && (await moveTo(next.row, next.key))) { setComboStart(""); await startEdit(undefined, next); }
+  };
 
   // ---- MnuCopy_Click / MnuPaste_Click
   const copyCell = async () => {
@@ -1408,7 +1485,7 @@ Refresh anyway?`
       case "Enter":
         event.preventDefault();
         setTyped("");
-        if (column && isEditable(cursor.row, column)) await startEdit();
+        if (column && isEditable(cursor.row, column)) { setComboStart(""); await startEdit(); }
         else {
           const next = nextEditable(cursor.row, cursor.key, 1);
           if (next && (await moveTo(next.row, next.key))) await startEdit(undefined, next);
@@ -1416,10 +1493,11 @@ Refresh anyway?`
         return;
       case "F2": event.preventDefault(); await startEdit(); return;
       case "F3": event.preventDefault(); findNext(); return;
-      case "F4": event.preventDefault(); restoreToAdd(); return;
+      case "F4": event.preventDefault(); if (isComboCell(cursor.row, column)) { setComboStart(""); await startEdit(); } else restoreToAdd(); return;
       case "F5": event.preventDefault(); document.getElementById("mp-save")?.focus(); return;
       case "Delete": event.preventDefault(); await deleteSelected("key"); return;
     }
+    if (event.altKey && event.key === "ArrowDown" && isComboCell(cursor.row, column)) { event.preventDefault(); setComboStart(""); await startEdit(); return; }
     if (ctrl && event.key.toLowerCase() === "f") { event.preventDefault(); document.getElementById("mp-find")?.focus(); return; }
     if (ctrl && event.key.toLowerCase() === "a") {
       event.preventDefault();
@@ -1447,6 +1525,12 @@ Refresh anyway?`
         const search = typed + event.key.toUpperCase();
         const found = shownRows.find((row) => shownText(records[row], column).toUpperCase().startsWith(search));
         if (found !== undefined) { setTyped(search); if (found !== cursor.row) await moveTo(found, cursor.key); }
+        return;
+      }
+      if (column && isComboCell(cursor.row, column)) {
+        // A combo opens on the first choice starting with the letter typed (else on its value).
+        setComboStart(event.key);
+        await startEdit();
         return;
       }
       if (column && isEditable(cursor.row, column)) {
@@ -2109,10 +2193,11 @@ Refresh anyway?`
                         <div
                           key={column.key}
                           role="gridcell"
+                          data-cell={`${row}:${column.key}`}
                           tabIndex={-1}
                           aria-selected={current}
                           aria-readonly={!editable}
-                          className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : "mp-readonly"}`}
+                          className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : "mp-readonly"} ${editable && column.options?.length ? "mp-combo-cell" : ""}`}
                           style={{ width: widthOf(column), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
                           onMouseDown={(event) => {
                             // While a cell is open the keyboard stays in its editor, so a refused
@@ -2135,17 +2220,31 @@ Refresh anyway?`
                         >
                           {current && editing ? (
                             column.options ? (
-                              <select ref={focusOnMount} className="mp-editor" value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => void editorKeys(event)} onBlur={() => { if (!isMessageBoxOpen()) void commitEdit(); }}>
-                                {!column.options.some((option) => option.text === editText) && <option value={editText}>{editText}</option>}
-                                {column.options.map((option, at) => <option key={`${option.value}-${at}`} value={option.text}>{option.text}</option>)}
-                              </select>
+                              <GridCombo
+                                options={column.options}
+                                current={editText}
+                                startWith={comboStart}
+                                place={comboAt}
+                                onPick={(text, step) => void finishCombo(text, step)}
+                                onCancel={() => { setEditing(false); gridFocus.current?.focus({ preventScroll: true }); }}
+                              />
                             ) : (
                               <span className="mp-editor-wrap">
                                 <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(column.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(column.setup) ? "c" : undefined} value={editText} onChange={(event) => { if (!typingAllowed(column.setup, editText, event.target.value)) return; setEditText(event.target.value); followHelp(column.key, event.target.value); }} onKeyDown={(event) => void editorKeys(event)} />
                                 {editorTools(column.setup, editText, setEditText, "update")}
                               </span>
                             )
-                          ) : formatCell(cellOf(record, column.key), column.format)}
+                          ) : (
+                            <>
+                              {formatCell(cellOf(record, column.key), column.format)}
+                              {editable && column.options?.length ? (
+                                <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
+                                  onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); void openCombo(row, column.key); }}>
+                                  <svg className="ui-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
+                                </span>
+                              ) : null}
+                            </>
+                          )}
                         </div>
                       );
                     })}

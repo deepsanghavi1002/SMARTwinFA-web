@@ -611,3 +611,76 @@
 .mp-dialog-buttons .mp-columns-show:hover{background:linear-gradient(#34b45a,#1f8b40)}
 .mp-dialog-buttons .mp-columns-close:hover{background:linear-gradient(#e8495a,#c42636)}
 .mp-columns li label:hover{background:#fff1b0}
+
+/* Combo cells (combo_value L / Q / X): a ▾ shows they hold a list; the list opens under the cell. */
+.mp-cell.mp-combo-cell{position:relative;padding-right:18px}
+.mp-combo-arrow{position:absolute;right:1px;top:1px;bottom:1px;width:15px;display:grid;place-items:center;border-left:1px solid #c7d7ea;background:#eef4fb;color:#1f64b8;font-size:10px;cursor:pointer}
+.mp-combo-arrow:hover{background:#1f64b8;color:#fff}
+.mp-cell select.mp-combo-list{z-index:50;min-height:0;padding:1px 0;border:1px solid #1f64b8;background:#fff;box-shadow:0 6px 16px #0b1a2e40;font-size:11px;overflow-y:auto}
+.mp-cell select.mp-combo-list option{padding:1px 6px}
+.mp-cell select.mp-combo-list option:checked{background:#1f64b8 linear-gradient(#1f64b8,#1f64b8);color:#fff}
+/* The open list never takes the current row's white text: dark on white, the chosen one white on blue. */
+.mp-grid .mp-cell select.mp-combo-list,.mp-grid .mp-cell select.mp-combo-list option{color:#10233d;background:#fff;font-weight:400}
+.mp-grid .mp-cell select.mp-combo-list option:checked,.mp-grid .mp-cell select.mp-combo-list:focus option:checked{color:#fff;background:#1f64b8 linear-gradient(#1f64b8,#1f64b8)}
+.mp-grid .mp-cell select.mp-combo-list option:hover{background:#dbe9fb}
+
+/* Grid combo (features/master-program/GridCombo): the value held stays in sight while choosing. */
+.mp-grid-combo{position:fixed;z-index:1000;display:flex;flex-direction:column;border:1px solid #1f64b8;border-radius:3px;background:#fff;box-shadow:0 8px 22px #0b1a2e55;font-size:11px;color:#10233d;overflow:hidden}
+.mp-grid-combo-now{padding:3px 8px;background:#fff4c2;border-bottom:1px solid #e6cf6a;color:#5a4300;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-grid-combo ul{margin:0;padding:2px 0;list-style:none;overflow-y:auto}
+.mp-grid-combo li{display:flex;align-items:center;height:20px;padding:0 8px 0 2px;white-space:nowrap;cursor:pointer;color:#10233d;background:#fff}
+.mp-grid-combo li.mp-grid-combo-current{font-weight:700;background:#fffbe6}
+.mp-grid-combo li.mp-grid-combo-active{background:#1f64b8;color:#fff}
+.mp-grid-combo-tick{width:16px;flex:none;text-align:center;color:#1f8b40;font-weight:700}
+.mp-grid-combo li.mp-grid-combo-active .mp-grid-combo-tick{color:#fff}
+.mp-grid-combo-none{color:#6b7c93!important;cursor:default!important}
+.mp-grid-combo-keys{padding:2px 8px;border-top:1px solid #e3ebf5;background:#f5f8fc;color:#56657a;font-size:10px;white-space:nowrap}
+.mp-grid .mp-cell .mp-grid-combo-input{color:#10233d;background:#fff}
+.mp-grid .mp-cell .mp-grid-combo-input::placeholder{color:#10233d;opacity:.8;font-style:italic}
+
+/* ── Modern combo look: chevrons, rounded lists, marked matches (grid combo and top combo) ── */
+.ui-chevron,.ui-check,.ui-search{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ui-check{width:13px;height:13px;stroke-width:2.4}
+@keyframes ui-drop{from{opacity:0;transform:translateY(-4px)}}
+
+/* The arrow on a combo cell: quiet until the row is hovered or current. */
+.mp-cell.mp-combo-cell{padding-right:22px}
+.mp-combo-arrow{right:2px;top:2px;bottom:2px;width:17px;border:0;border-radius:4px;background:transparent;color:#7b93b3;opacity:.55;transition:background .12s,color .12s,opacity .12s}
+.mp-row:hover .mp-combo-arrow,.mp-row.mp-current-row .mp-combo-arrow{opacity:1;background:#e3edfa;color:#1f64b8}
+.mp-cell.mp-current .mp-combo-arrow{background:#1f64b8;color:#fff}
+.mp-combo-arrow:hover{background:#1f64b8!important;color:#fff!important;opacity:1}
+
+/* The cell while its list is open: a search box with an icon and an up-chevron. */
+.mp-grid-combo-field{display:flex;align-items:center;gap:3px;height:19px;margin:-1px -4px;width:calc(100% + 8px);padding:0 4px;border:1px solid #1f64b8;border-radius:3px;background:#fff;color:#1f64b8;box-shadow:0 0 0 2px #1f64b833}
+.mp-grid .mp-cell .mp-grid-combo-field .mp-grid-combo-input{flex:1;min-width:0;height:17px;margin:0;width:auto;border:0;outline:none;padding:0;background:transparent}
+
+/* The list. */
+.mp-grid-combo{border:1px solid #b9cbe4;border-radius:8px;box-shadow:0 12px 32px #0b1a2e40,0 2px 6px #0b1a2e26;animation:ui-drop .12s ease-out}
+.mp-grid-combo-now{display:flex;justify-content:space-between;gap:8px;padding:5px 10px;background:linear-gradient(#fff8d6,#fff1b8);border-bottom:1px solid #eedc8f}
+.mp-grid-combo-count{flex:none;color:#8a6d00;font-weight:600}
+.mp-grid-combo ul{padding:4px}
+.mp-grid-combo li{height:22px;padding:0 8px 0 4px;border-radius:5px;gap:2px}
+.mp-grid-combo li:hover{background:#eaf2fd}
+.mp-grid-combo li.mp-grid-combo-current{background:#fff8dc}
+.mp-grid-combo li.mp-grid-combo-active{background:linear-gradient(#2f7ad6,#1f64b8);color:#fff}
+.mp-grid-combo-text{overflow:hidden;text-overflow:ellipsis}
+.mp-grid-combo mark,.search-combo-list mark{padding:0;border-radius:2px;background:#ffe27a;color:inherit;font-weight:700}
+.mp-grid-combo li.mp-grid-combo-active mark,.search-combo-list li.search-combo-active mark{background:#ffffff40;color:#fff}
+.mp-grid-combo-tick{width:18px;display:grid;place-items:center}
+.mp-grid-combo-keys{display:flex;align-items:center;gap:3px;padding:4px 10px}
+.mp-grid-combo-keys kbd{padding:0 4px;border:1px solid #c8d4e5;border-bottom-width:2px;border-radius:3px;background:#fff;font:inherit;font-size:9px;color:#33475f}
+.mp-grid-combo ul,.search-combo-list{scrollbar-width:thin;scrollbar-color:#b9cbe4 transparent}
+
+/* The top combo (group) in the same style. */
+.search-combo input{border-radius:4px;padding-right:26px}
+.search-combo input:focus{outline:none;border-color:#1f64b8;box-shadow:0 0 0 2px #1f64b833}
+.search-combo-arrow{right:2px!important;top:2px!important;bottom:2px!important;width:20px!important;display:grid;place-items:center;border-radius:3px;background:transparent!important;color:#1f64b8!important}
+.search-combo-arrow:hover:not(:disabled){background:#e3edfa!important}
+.search-combo-arrow .ui-chevron{transition:transform .15s}
+.search-combo-arrow-open .ui-chevron{transform:rotate(180deg)}
+.search-combo-list{margin-top:3px;padding:4px;border:1px solid #b9cbe4;border-radius:8px;box-shadow:0 12px 32px #0b1a2e40,0 2px 6px #0b1a2e26;animation:ui-drop .12s ease-out}
+.search-combo-list li{display:flex;align-items:center;gap:2px;height:22px;padding:0 8px 0 2px;border-radius:5px}
+.search-combo-tick{width:18px;flex:none;display:grid;place-items:center;color:#1f8b40}
+.search-combo-list li.search-combo-active .search-combo-tick{color:#fff}
+.search-combo-list li.search-combo-active{background:linear-gradient(#2f7ad6,#1f64b8)}
+@media (prefers-reduced-motion:reduce){.mp-grid-combo,.search-combo-list{animation:none}}

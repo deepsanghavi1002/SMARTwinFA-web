@@ -87,3 +87,10 @@ test("money read back from PostgreSQL keeps its sign wherever the minus sits", a
   assert.equal(parseMoney("? 1,250.00"), 1250);
   assert.equal(parseMoney("? 0.00"), 0);
 });
+
+test("a list column's choice names are not held to the number rules of its id", () => {
+  const schedule = setup({ field_type: "I", force_inputtype: "", number_positiveonly: true, combo_value: "Q" });
+  assert.equal(check(schedule, "E - DIRECT EXPENSES").ok, true);
+  assert.equal(check(schedule, "E -- FACTORY OVERHEADS").ok, true);
+  assert.equal(check(setup({ number_positiveonly: true }), "-5").ok, false, "a plain number column still refuses it");
+});

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Matched } from "./Matched";
 
 /**
  * A combo box you can type into to search, for any screen.
@@ -122,13 +123,13 @@ export function SearchCombo<T extends ComboItem>({
           }
         }}
       />
-      <button type="button" className="search-combo-arrow" tabIndex={-1} disabled={disabled} aria-label={`Show ${ariaLabel} list`}
+      <button type="button" className={`search-combo-arrow ${open ? "search-combo-arrow-open" : ""}`} tabIndex={-1} disabled={disabled} aria-label={`Show ${ariaLabel} list`}
         onMouseDown={(event) => {
           event.preventDefault();
           const input = event.currentTarget.previousElementSibling as HTMLInputElement | null;
           input?.focus();
           if (open) setOpen(false); else openAt(matches);
-        }}>▾</button>
+        }}><svg className="ui-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg></button>
       {open && (
         <ul ref={list} id={`${id}-list`} className="search-combo-list" role="listbox" aria-label={ariaLabel}>
           {matches.map((option, index) => (
@@ -142,7 +143,8 @@ export function SearchCombo<T extends ComboItem>({
               onMouseDown={(event) => { event.preventDefault(); choose(option); }}
               onMouseEnter={() => setActive(index)}
             >
-              {option.text || " "}
+              <span className="search-combo-tick">{value && option.value === value.value && option.text === value.text ? <svg className="ui-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg> : null}</span>
+              <Matched text={option.text} query={query ?? ""} />
             </li>
           ))}
           {matches.length === 0 && <li className="search-combo-none" role="presentation">Nothing matches “{query}”</li>}
