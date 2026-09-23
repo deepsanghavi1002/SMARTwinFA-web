@@ -23,6 +23,8 @@ export type KeyContext = Readonly<{
   editorText: string;
   /** tarikh1 as dd/MMM/yyyy. */
   yearStart: string;
+  /** The editor text that stays once this key replaces the selected part (defaults to editorText). */
+  remainingText?: string;
 }>;
 
 export type KeyOutcome = Readonly<{
@@ -70,6 +72,10 @@ export function keyPress(context: KeyContext, key: string): KeyOutcome {
     refused = true;
   }
 
+  // A number takes one decimal point only ("123.12.14" cannot be typed).
+  if (key === "." && isNumberField(setup) && (context.remainingText ?? context.editorText).includes(".")) refused = true;
+  if (key === "-" && setup.number_positiveonly) refused = true;
+
   const numericRefusal = () => {
     if (setup.force_inputtype !== "N") return false;
     const allowMinus = !setup.number_positiveonly && key === "-";
@@ -92,6 +98,32 @@ export function keyPress(context: KeyContext, key: string): KeyOutcome {
     if (numericRefusal()) refused = true;
   }
   return { refused, message, replaceWith, restore };
+}
+
+/** A field that holds a number: type N or C, or forced to numeric input. */
+export function isNumberField(setup: Pick<Setup, "field_type" | "force_inputtype">): boolean {
+  return setup.field_type === "N" || setup.field_type === "C" || setup.force_inputtype === "N";
+}
+
+/** The typing rules a whole editor text must keep; each entry is broken when true. */
+function brokenRules(setup: Setup, text: string) {
+  return [
+    isNumberField(setup) && (text.match(/\./g)?.length ?? 0) > 1,
+    Boolean(setup.number_positiveonly) && text.includes("-"),
+    setup.force_inputtype === "N" && /[^0-9.,-]/.test(text),
+    setup.force_inputtype === "N" && setup.decimal_points <= 0 && text.includes("."),
+  ];
+}
+
+/**
+ * Whether an editor may change from `before` to `after`. The key checks above see ordinary
+ * typing, but text can also arrive without a key the page sees: Alt+45 on the number pad, a
+ * paste, a drop, an input method. Any change that breaks a rule the text kept until now is
+ * refused, so a value that was already stored that way can still be corrected.
+ */
+export function typingAllowed(setup: Setup, before: string, after: string): boolean {
+  const was = brokenRules(setup, before);
+  return brokenRules(setup, after).every((broken, index) => !broken || was[index]);
 }
 
 /** SetupEditor and AfterEdit's style_case, which the web applies as the value is committed. */
@@ -146,8 +178,11 @@ export function validate(context: ValidateContext, typed: string): ValidateOutco
 
   // The desktop checks these only as keys are typed; a value that arrives whole (the
   // calculator, a paste) is checked here too, so it cannot slip past them.
-  if (setup.number_positiveonly && text.trim() !== "" && isNumeric(text.replace(/,/g, "").trim(), true) && toDecimal(text.replace(/,/g, "")) < 0) {
+  if (setup.number_positiveonly && (text.includes("-") || (text.trim() !== "" && isNumeric(text.replace(/,/g, "").trim(), true) && toDecimal(text.replace(/,/g, "")) < 0))) {
     return fail("Only positive value allowed in this column", "Positive Value Only");
+  }
+  if (isNumberField(setup) && (text.match(/\./g)?.length ?? 0) > 1) {
+    return fail("Only one decimal point is allowed in a number", "Invalid Number");
   }
   for (const character of text) {
     const notAllowed = toText(setup.value_notallowed) !== "" && keyRefused(setup.value_notallowed, character, false, context.programId);
@@ -308,3 +343,65 @@ export function dateOutsideYear(value: string, yearStart: string, yearEnd: strin
 }
 
 export { getPermission };
+
+const MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/**
+ * Short ways to type a date. "2309", "23/9", "23-9" and "23sep" are 23 September in the
+ * accounting year (tarikh1..tarikh2: a month before the year's start month falls in its
+ * second calendar year). "230926" and "23092026" give the year too. A trailing +n or -n
+ * adds or takes days ("0109+5" is 6 September), and a bare "+5" / "-5" counts from `base`
+ * (the date already in the field, else today). Returns null when the text is not a date.
+ */
+export function shorthandDate(typed: string, yearStart: Date | null, base: Date | null): Date | null {
+  /** A day and month (0-based) in the accounting year unless a year is given; null if no such day. */
+  const build = (day: number, month: number, year?: number): Date | null => {
+    if (year !== undefined && year < 100) year += 2000;
+    if (year === undefined) {
+      year = yearStart ? yearStart.getFullYear() : new Date().getFullYear();
+      if (yearStart && month < yearStart.getMonth()) year += 1;
+    }
+    const date = new Date(year, month, day);
+    return month >= 0 && month < 12 && date.getMonth() === month && date.getDate() === day ? date : null;
+  };
+  const whole = (text: string): Date | null => {
+    const t = text.trim().toLowerCase();
+    let day: number, month: number, year: number | undefined;
+    let m = /^(\d{1,2})[\s./-]?([a-z]{3})[a-z]*(?:[\s./-]?(\d{2}|\d{4}))?$/.exec(t);
+    if (m && MONTH_NAMES.includes(m[2])) { day = +m[1]; month = MONTH_NAMES.indexOf(m[2]); year = m[3] ? +m[3] : undefined; }
+    else if (/^\d{2,8}$/.test(t)) return digitsDate(t);
+    else if ((m = /^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2}|\d{4}))?$/.exec(t))) { day = +m[1]; month = +m[2] - 1; year = m[3] ? +m[3] : undefined; }
+    // Only the stored full forms (ISO, or dd/MMM/yyyy with a time) go to the general reader.
+    else return /^(\d{4}-\d{2}-\d{2}|\d{1,2}[/-][a-z]{3}[/-]\d{4}\s)/.test(t) ? parseDesktopDate(text) : null;
+    return build(day, month, year);
+  };
+  /**
+   * Digits only, read the first way that makes a real date: "15" 1 May, "154" 15 Apr,
+   * "2309" 23 Sep, "1426" (not a day-month) 1 Apr 2026, "230926" and "23092026" with the year.
+   */
+  const digitsDate = (t: string): Date | null => {
+    // [day, month, year, near]: a "near" reading is a guess, taken only when its year is within
+    // a year of the accounting year ("3109" is not 3 Oct 2009).
+    const readings: [number, number, number?, boolean?][] = [];
+    const n = (from: number, to?: number) => Number(t.slice(from, to));
+    if (t.length === 2) readings.push([n(0, 1), n(1)]);
+    if (t.length === 3) readings.push([n(0, 2), n(2)], [n(0, 1), n(1)]);
+    if (t.length === 4) readings.push([n(0, 2), n(2)], [n(0, 1), n(1, 2), n(2), true]);
+    if (t.length === 5) readings.push([n(0, 2), n(2, 3), n(3), true], [n(0, 1), n(1, 3), n(3), true]);
+    if (t.length === 6) readings.push([n(0, 2), n(2, 4), n(4)]);
+    if (t.length === 8) readings.push([n(0, 2), n(2, 4), n(4)]);
+    const around = (yearStart ?? new Date()).getFullYear();
+    for (const [day, month, year, near] of readings) {
+      const date = build(day, month - 1, year);
+      if (date && (!near || Math.abs(date.getFullYear() - around) <= 1)) return date;
+    }
+    return null;
+  };
+  const exact = whole(typed);
+  if (exact) return exact;
+  const shift = /^(.*?)\s*([+-])\s*(\d{1,4})\s*$/.exec(typed);
+  if (!shift) return null;
+  const from = shift[1].trim() === "" ? base ?? new Date(new Date().toDateString()) : whole(shift[1]);
+  if (!from) return null;
+  return new Date(from.getFullYear(), from.getMonth(), from.getDate() + (shift[2] === "+" ? 1 : -1) * Number(shift[3]));
+}

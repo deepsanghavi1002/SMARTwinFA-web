@@ -18,7 +18,12 @@ import type { PdfOptions } from "../../lib/export/pdf";
 import { download, safeFileName } from "../../lib/export/table";
 import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
-import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, keyPress, styleCase, validate } from "./rules";
+import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, isNumberField as isNumberSetup, keyPress, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
+import { HelpList } from "./HelpList";
+import { isMessageBoxOpen, messageBox } from "../ui/MessageBox";
+import type { MessageButton } from "../ui/MessageBox";
+import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
+import { SearchCombo } from "../ui/SearchCombo";
 
 /**
  * Master_ProgramGrid, the one screen every MASTER menu opens.
@@ -35,8 +40,7 @@ type Meta = { yearStart: string; yearEnd: string; coStateName: string; coGstReq:
 type LogTable = { columns: string[]; rows: string[][]; message: string };
 type AddState = AddRow & { recFound: boolean; compulsory: boolean };
 type Cell = { row: number; key: string };
-type DialogButton = "OK" | "Yes" | "No" | "Cancel";
-type Dialog = { title: string; message: string; buttons: DialogButton[]; input?: boolean; resolve: (answer: DialogButton, text?: string) => void };
+type DialogButton = MessageButton;
 type HelpState = Awaited<ReturnType<typeof fetchHelp>>;
 
 const ROW_HEIGHT = 21;
@@ -310,7 +314,6 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [meta, setMeta] = useState<Meta | null>(null);
   const [fatal, setFatal] = useState("");
   const [first, setFirst] = useState<ComboOption | null>(null);
-  const [firstTyped, setFirstTyped] = useState("");
   const [secondOptions, setSecondOptions] = useState<readonly ComboOption[] | null>(null);
   const [second, setSecond] = useState<ComboOption | null>(null);
   const [grids, setGrids] = useState<Grids | null>(null);
@@ -320,7 +323,6 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [message, setMessage] = useState("");
   const [hotKeys, setHotKeys] = useState("");
   const [warnings, setWarnings] = useState<readonly string[]>([]);
-  const [dialog, setDialog] = useState<Dialog | null>(null);
 
   // Add grid (c1dg_MasterGrid)
   const [addRows, setAddRows] = useState<AddState[]>([]);
@@ -332,6 +334,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   // Update grid (c1dg_UpdateGrid + c1_Update_Backup)
   const [records, setRecords] = useState<UpdateRecord[]>([]);
   const [backup, setBackup] = useState<UpdateRecord[]>([]);
+  /** Both grids exactly as loaded, so a row changed and changed back is no longer marked edited. */
+  const [original, setOriginal] = useState<{ records: readonly UpdateRecord[]; backup: readonly UpdateRecord[] }>({ records: [], backup: [] });
   const [edited, setEdited] = useState<Set<number>>(new Set());
   const [deleted, setDeleted] = useState<Set<number>>(new Set());
   const [cellEditable, setCellEditable] = useState<Record<string, boolean>>({});
@@ -351,6 +355,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [columnChooser, setColumnChooser] = useState(false);
   /** A row reached by clicking or arrowing (not by finishing an edit): typing there searches first. */
   const findMode = useRef(true);
+  /** The left button went down on a cell and is still held: moving over other rows selects them. */
+  const dragSelect = useRef(false);
+  useEffect(() => {
+    const release = () => { dragSelect.current = false; };
+    document.addEventListener("mouseup", release);
+    return () => document.removeEventListener("mouseup", release);
+  }, []);
   const helpDrag = useDraggable();
   const calcDrag = useDraggable();
   const calendarDrag = useDraggable();
@@ -370,6 +381,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [typed, setTyped] = useState("");
   const [help, setHelp] = useState<HelpState>(null);
   const [helpRow, setHelpRow] = useState<number | null>(null);
+  /** An entry picked in the New Add grid's help list with the keys or mouse, over the one found from the typing. */
+  const [addHelpPick, setAddHelpPick] = useState<{ row: number; key: string } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(400);
   const [passwords, setPasswords] = useState<Record<string, string>>({});
@@ -382,6 +395,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const scroller = useRef<HTMLDivElement>(null);
   const gridFocus = useRef<HTMLDivElement>(null);
   const addFocus = useRef<HTMLDivElement>(null);
+  const screenRef = useRef<HTMLDivElement>(null);
+  useAltHotkeys(screenRef);
 
   const group: GroupState | null = useMemo(() => (first ? { firstCombo: first, secondCombo: second } : null), [first, second]);
   /** Focuses an editor when it mounts, which is what C1FlexGrid does when editing starts. */
@@ -391,13 +406,9 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     return masterCall<T>(selection, programName, action, { menuShortName, ...payload }, group ?? undefined);
   }, [selection, programName, menuShortName, group]);
 
-  /** CustomMessageBoxForm, as a promise. */
-  const ask = useCallback((text: string, heading: string, buttons: DialogButton[] = ["OK"]) => new Promise<DialogButton>((resolve) => {
-    setDialog({ title: heading, message: text, buttons, resolve: (answer) => { setDialog(null); resolve(answer); } });
-  }), []);
-  const askPassword = useCallback((heading: string) => new Promise<string | null>((resolve) => {
-    setDialog({ title: heading, message: "Enter Password", buttons: ["OK", "Cancel"], input: true, resolve: (answer, text) => { setDialog(null); resolve(answer === "OK" ? text ?? "" : null); } });
-  }), []);
+  /** CustomMessageBoxForm: the program's shared message box (features/ui/MessageBox). */
+  const ask = useCallback((text: string, heading: string, buttons: DialogButton[] = ["OK"], defaultButton?: DialogButton) => messageBox.ask(text, heading, buttons, { defaultButton }).then((answer) => { keepGridFocus(); return answer; }), []);
+  const askPassword = useCallback((heading: string) => messageBox.prompt("Enter Password", heading, { password: true }), []);
 
   // ---- Master_ProgramGrid_Load
   useEffect(() => {
@@ -452,6 +463,13 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       setAddRows(load.addRows.map((row) => ({ ...row, recFound: false, compulsory: row.setup.value_compulsory })));
       setRecords(load.records.map((record) => ({ ...record })));
       setBackup(load.backup.map((record) => ({ ...record })));
+      setOriginal({ records: load.records, backup: load.backup });
+      // The grid draws only the rows near its scroll position; a position left over from an
+      // earlier group (the grid was cancelled, or a group with no records showed the Add grid)
+      // would draw rows far below the top of the fresh grid and leave it looking empty.
+      setScrollTop(0);
+      if (scroller.current) scroller.current.scrollTop = 0;
+      setHelpRow(null);
       setEdited(new Set());
       setDeleted(new Set());
       setCellEditable({});
@@ -510,12 +528,27 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     if (first) await loadGroup(first, second);
   };
 
+  // ---- Refresh: reload the group from the database, after asking, so a stray key cannot drop edits
+  const refreshUpdate = async () => {
+    if (!first) return;
+    const pending = edited.size + deleted.size;
+    const text = pending > 0
+      ? `Refresh will reload the records and drop ${pending} unsaved change${pending === 1 ? "" : "s"}.
+Refresh anyway?`
+      : "Reload the records from the database?";
+    if ((await ask(text, "Refresh", ["Yes", "No"], "No")) !== "Yes") return;
+    await loadGroup(first, second);
+  };
+
   // ---- BtnCancelAddUpdate_Click
   const cancelAll = async () => {
     if ((await ask("Are You Sure Want To Cancel ? ", "Master Cancel", ["Yes", "No"])) !== "Yes") return;
     setGrids(null);
     setRecords([]);
     setBackup([]);
+    setOriginal({ records: [], backup: [] });
+    setScrollTop(0);
+    setHelpRow(null);
     setAddRows([]);
     setRestore(null);
     setSecond(null);
@@ -649,6 +682,26 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const exact = found >= 0 && cellOf(help.rows[found], f1).trim().toUpperCase() === typedText && !(restore && restore.row === found);
     return { row: found, exact, typed: typedText };
   }, [tab, help, addRows, addCursor, addEditing, addText, first, restore]);
+  /** A pick in the New Add help list holds only while the row and the typing stay as they were. */
+  const addHelpKey = `${addCursor}|${addEditing ? 1 : 0}|${addText}`;
+
+  /** The help field a column searches: DUPLICHK_FLDNAME1, else the help list's first column. */
+  const helpSearchKey = (setup: UpdateColumn["setup"]) => toText(setup.duplichk_fldname1).toLowerCase() || (help?.columns[0]?.key ?? "");
+
+  /**
+   * Update grid: as a field with a help list is typed, the list follows to the first entry
+   * that starts with the text so far (the top of the list while it is blank).
+   */
+  const followHelp = (key: string, text: string) => {
+    if (!help || help.columns.length === 0) return;
+    const column = columnByKey.get(key);
+    if (!column || toText(column.setup.help_query) === "") return;
+    const typedText = text.trim().toUpperCase();
+    const field = helpSearchKey(column.setup);
+    const found = typedText === "" ? -1 : help.rows.findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase().startsWith(typedText));
+    setHelpRow((current) => (found >= 0 || typedText === "" ? found : current ?? -1));
+  };
+
   const imageTab = Boolean(def?.imageReq) && (programId === 8 || programId === 14);
 
   // ---- C1dg_UpdateGrid_BeforeRowColChange, image part: product_image for the product row
@@ -667,6 +720,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     if (!element) return;
     const observe = new ResizeObserver(() => setViewport(element.clientHeight));
     observe.observe(element);
+    // A grid that has just appeared starts from its own scroll position, not a remembered one.
+    setScrollTop(element.scrollTop);
     return () => observe.disconnect();
   }, [grids, tab]);
 
@@ -682,6 +737,47 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   });
 
   const markEdited = (row: number) => setEdited((current) => (current.has(row) ? current : new Set(current).add(row)));
+  /** One value against the loaded one: numbers by amount (blank is 0, 1200 is 1200.00), dates by day. */
+  const sameValue = (key: string, a: string | undefined, b: string | undefined) => {
+    const left = (a ?? "").trim();
+    const right = (b ?? "").trim();
+    if (left === right) return true;
+    const column = columnByKey.get(key);
+    if (!column) return false;
+    if (isNumberSetup(column.setup)) return toDecimal(left.replace(/,/g, "") || "0") === toDecimal(right.replace(/,/g, "") || "0");
+    if (column.setup.field_type === "D") return parseDesktopDate(left)?.getTime() === parseDesktopDate(right)?.getTime();
+    return false;
+  };
+  const sameRecord = (a: UpdateRecord | undefined, b: UpdateRecord | undefined) => {
+    if (!a || !b) return false;
+    // record_exist is the grid's own note, filled in when editing starts; it is not data.
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)].filter((key) => key.toLowerCase() !== "record_exist"));
+    return [...keys].every((key) => sameValue(key, a[key], b[key]));
+  };
+  /**
+   * The c1_Update_Backup check: after an edit, a row whose every value (and every hidden id
+   * or password kept aside) is back to what was loaded is no longer marked edited, so Save
+   * does not rewrite it, log it or push it to the cloud. Only that one row is compared.
+   */
+  const settleEdited = (row: number, nextRecord: UpdateRecord, nextBackup: UpdateRecord | undefined) => {
+    const unchanged = !deleted.has(row) && sameRecord(nextRecord, original.records[row]) && sameRecord(nextBackup, original.backup[row]);
+    setEdited((current) => {
+      if (unchanged !== current.has(row)) return current;
+      const copy = new Set(current);
+      if (unchanged) copy.delete(row); else copy.add(row);
+      return copy;
+    });
+  };
+  /** Ctrl+Z / Restore Cell Value: the cell (and any id kept aside for it) as it was loaded. */
+  const restoreCell = (row: number, key: string) => {
+    const loaded = original.records[row];
+    if (!loaded || !records[row]) return;
+    const nextRecord = { ...records[row], [key]: cellOf(loaded, key) };
+    const nextBackup = backup[row] && original.backup[row] ? { ...backup[row], [key]: cellOf(original.backup[row], key) } : backup[row];
+    setRecords((current) => current.map((record, index) => (index === row ? nextRecord : record)));
+    if (nextBackup) setBackup((current) => current.map((record, index) => (index === row ? nextBackup : record)));
+    settleEdited(row, nextRecord, nextBackup);
+  };
   const setCell = (row: number, key: string, value: string) => setRecords((current) => current.map((record, index) => (index === row ? { ...record, [key]: value } : record)));
   const setBackupCell = (row: number, key: string, value: string) => setBackup((current) => current.map((record, index) => (index === row ? { ...record, [key]: value } : record)));
 
@@ -725,8 +821,21 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     if (!(await beforeEdit(at.row, column))) return;
     const value = cellOf(records[at.row], column.key);
     setEditText(initial !== undefined ? initial : value);
+    if (initial !== undefined) followHelp(column.key, initial);
     setEditing(true);
   };
+
+  /**
+   * A date as typed in a date field: short forms (2309, 23sep, 0109+5, +5) take their year
+   * from the accounting year; +n / -n alone count from the date the field already had.
+   */
+  const typedDate = (text: string, before: string) => {
+    const start = meta ? parseDesktopDate(meta.yearStart) ?? new Date(meta.yearStart) : null;
+    return shorthandDate(text, start && !Number.isNaN(start.getTime()) ? start : null, parseDesktopDate(before));
+  };
+
+  /** A value typed with a time (program 52's date and time) stays as typed; any other date is written dd/MMM/yyyy. */
+  const dateText = (text: string, date: Date) => (/\d{1,2}:\d{2}/.test(text) ? text : formatDesktopDate(date));
 
   /** C1dg_UpdateGrid_ValidateEdit then AfterEdit. Returns false when the edit is refused. */
   const commitEdit = async (): Promise<boolean> => {
@@ -737,6 +846,11 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
     if (editText === cellOf(record, column.key)) { setEditing(false); return true; }
     let text = editText;
+    if (column.setup.field_type === "D" && text.trim() !== "") {
+      const date = typedDate(text, dataAtBegin);
+      if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
+      text = dateText(text, date);
+    }
     const outcome = validate({
       setup: column.setup, masterGrid: false, programId, licence, coGstReq: meta.coGstReq, label: column.caption,
       fieldValue: (name) => cellOf(record, name),
@@ -766,15 +880,17 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     }
 
     // ---- C1dg_UpdateGrid_AfterEdit
-    let changed = text !== dataAtBegin;
+    let nextBackup = backup[row];
     if (column.options && (column.comboKind === "Q" || column.comboKind === "X")) {
       const option = column.options.find((candidate) => candidate.text === text);
-      if (option && option.value !== "" && text.toLowerCase() !== "(blank)" && toInt(option.value) > 0) setBackupCell(row, column.key, option.value);
-      else if (text === "(blank)") setBackupCell(row, column.key, "");
+      const id = option && option.value !== "" && text.toLowerCase() !== "(blank)" && toInt(option.value) > 0 ? option.value : text === "(blank)" ? "" : undefined;
+      if (id !== undefined) {
+        setBackupCell(row, column.key, id);
+        if (nextBackup) nextBackup = { ...nextBackup, [column.key]: id };
+      }
     }
     text = roundToPlaces(styleCase(column.setup, text, licence), column.setup);
     let next: UpdateRecord = { ...record, [column.key]: text };
-    if (changed) markEdited(row);
     setEditing(false);
 
     if (column.setup.serverQueries.includes("onchange_repl_value_query") && text !== dataAtBegin) {
@@ -795,11 +911,23 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       if (keyOf(next, "pr_netrate")) next = { ...next, [keyOf(next, "pr_netrate")!]: String(disRate - toDecimal(cellOf(next, "pr_slabperc"))) };
     }
     if (programId === 36 && keyOf(next, "pr_netrate")) next = { ...next, [keyOf(next, "pr_netrate")!]: String(toDecimal(cellOf(next, "pr_prate")) - toDecimal(cellOf(next, "pr_slabperc"))) };
-    changed = changed || JSON.stringify(next) !== JSON.stringify(record);
     setRecords((current) => current.map((candidate, index) => (index === row ? next : candidate)));
-    if (changed) markEdited(row);
+    settleEdited(row, next, nextBackup);
     return true;
   };
+
+  /**
+   * The keyboard must never end up on the page itself (Space would scroll the whole screen and
+   * the arrows would scroll without moving the cursor). If nothing holds it once a move or an
+   * edit has settled, the grid takes it back.
+   */
+  function keepGridFocus() {
+    setTimeout(() => {
+      const holder = document.activeElement;
+      if (isMessageBoxOpen() || (holder && holder !== document.body && holder.isConnected)) return;
+      (gridFocus.current ?? addFocus.current)?.focus({ preventScroll: true });
+    }, 0);
+  }
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
   const moveTo = async (row: number, key: string): Promise<boolean> => {
@@ -887,6 +1015,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         setHelpRow(found >= 0 ? found : null);
       }
     }
+    keepGridFocus();
     // keep the cursor in view
     const element = scroller.current;
     if (element) {
@@ -926,6 +1055,17 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     return next ?? row;
   };
 
+  /**
+   * The rows of the selection (cursor row to selectionEnd) in the order the grid shows them,
+   * so a sorted or filtered grid never pastes into or deletes a row hidden between the two.
+   */
+  const selectedRows = () => {
+    const a = shownRows.indexOf(cursor.row);
+    const b = selectionEnd === null ? a : shownRows.indexOf(selectionEnd);
+    if (a < 0) return records[cursor.row] ? [cursor.row] : [];
+    return shownRows.slice(Math.min(a, b < 0 ? a : b), Math.max(a, b < 0 ? a : b) + 1);
+  };
+
   // ---- Selected_RowDelete / MnuDeleteRow_Click / MnuDeleteSelection_Click / Delete key
   const deleteSelected = async (fromMenu: "row" | "selection" | "key") => {
     if (!grids) return;
@@ -933,10 +1073,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     if ((await ask("Are you sure to delete?", "Confirmation", ["Yes", "No"])) !== "Yes") return;
     if (def && !def.rights.delete) { await ask("Master Delete Rights Not Available For User", "Rights Validation"); return; }
     if ((await ask("Are you Confirm to delete record??", "Confirmation", ["Yes", "No"])) !== "Yes") return;
-    const from = Math.min(cursor.row, selectionEnd ?? cursor.row);
-    const to = Math.max(cursor.row, selectionEnd ?? cursor.row);
     const marked = new Set(deleted);
-    for (let row = from; row <= to; row += 1) {
+    for (const row of selectedRows()) {
       if (marked.has(row)) continue;
       const record = records[row];
       if (toInt(Object.values(record)[1]) <= 27 && (programId === 14 || programId === 20)) {
@@ -971,6 +1109,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   // ---- Btn_Master_EditSave_Click
   const saveUpdate = async () => {
     if (!grids || !def || !group) return;
+    // A cell still open is committed first; the save then runs again once the grid holds it.
+    if (editing) { if (await commitEdit()) setSaveAfterCommit(true); return; }
     const answer = await ask("Do you want to save the changes ? ", "Master Update Save", ["Yes", "No", "Cancel"]);
     if (answer === "Cancel") return;
     if (answer === "No") { await loadGroup(group.firstCombo, group.secondCombo); return; }
@@ -1011,6 +1151,15 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     }
   };
 
+  const [saveAfterCommit, setSaveAfterCommit] = useState(false);
+  const saveUpdateRef = useRef(saveUpdate);
+  useEffect(() => { saveUpdateRef.current = saveUpdate; });
+  useEffect(() => {
+    if (!saveAfterCommit || editing) return;
+    setSaveAfterCommit(false);
+    void saveUpdateRef.current();
+  }, [saveAfterCommit, editing]);
+
   // ---- MnuCopy_Click / MnuPaste_Click
   const copyCell = async () => {
     const column = columnByKey.get(cursor.key);
@@ -1026,22 +1175,32 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   };
   const pasteCell = async () => {
     if (!copied || !grids) return;
-    const from = Math.min(cursor.row, selectionEnd ?? cursor.row);
-    const to = Math.max(cursor.row, selectionEnd ?? cursor.row);
+    const rows = selectedRows();
+    const from = rows[0] ?? cursor.row;
     const column = columnByKey.get(cursor.key);
     if (!column) return;
     let problem = "";
     if (!isEditable(from, column)) problem = `Column. : ${column.caption} is readonly`;
     else if (toText(column.setup.status_against_fld) !== "" && toText(column.setup.enable_for) !== "" && getPermission(permissionSource(records[from]), "E", column.setup.status_against_fld.trim(), column.setup.enable_for.trim(), false, false).toUpperCase().includes("D")) problem = `Column. : ${column.caption} is disabled`;
     else if (["L", "Q"].includes(column.setup.combo_value.toUpperCase())) problem = `Column ${column.caption} isn't allow for Paste, as it is drop down column`;
-    else if (column.setup.field_type === "D") problem = `Value = ${copied.value} isn't valid date for Column ${column.caption}`;
+    // A date pastes when the copied value reads as one; it goes in written as the grid writes dates.
+    let value = copied.value;
+    if (column.setup.field_type === "D" && value.trim() !== "") {
+      const date = typedDate(value, "");
+      if (date) value = dateText(value, date);
+      else problem = `Value = ${copied.value} isn't valid date for Column ${column.caption}`;
+    }
     if (problem !== "") { await ask(problem, "Invalid Paste Selection"); return; }
-    for (let row = from; row <= to; row += 1) {
-      if (deleted.has(row)) continue;
-      setCell(row, column.key, copied.value);
+    // Every selected row takes the value, except one marked for deletion or locked for this column.
+    let pasted = 0;
+    for (const row of rows) {
+      if (deleted.has(row) || !isEditable(row, column)) continue;
+      setCell(row, column.key, value);
       if (column.setup.combo_value.toUpperCase() === "X") setBackupCell(row, column.key, copied.addonId);
       markEdited(row);
+      pasted += 1;
     }
+    setMessage(`Pasted "${value}" into ${pasted} row${pasted === 1 ? "" : "s"} of ${column.caption}`);
   };
 
   // ---- Restore_Master (F4)
@@ -1236,7 +1395,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
 
   /** C1dg_UpdateGrid_KeyUp + KeyPress + KeyPressEdit, for the grid when no editor is open. */
   const gridKeys = async (event: ReactKeyboardEvent) => {
-    if (!grids || editing || dialog) return;
+    if (!grids || editing || isMessageBoxOpen()) return;
     const column = columnByKey.get(cursor.key);
     const ctrl = event.ctrlKey || event.metaKey;
     switch (event.key) {
@@ -1270,6 +1429,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     }
     if (ctrl && event.key.toLowerCase() === "c") { event.preventDefault(); await navigator.clipboard?.writeText(cellOf(records[cursor.row], cursor.key)).catch(() => undefined); await copyCell(); return; }
     if (ctrl && event.key.toLowerCase() === "v") { event.preventDefault(); await pasteCell(); return; }
+    if (ctrl && event.key.toLowerCase() === "z") { event.preventDefault(); if (column && isEditable(cursor.row, column)) restoreCell(cursor.row, column.key); return; }
     if (findMode.current && typed !== "" && (event.key === "Backspace" || event.key === "Escape")) {
       event.preventDefault();
       const search = event.key === "Escape" ? "" : typed.slice(0, -1);
@@ -1316,11 +1476,19 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     }
   };
 
+  /** The editor's text once a typed key replaces whatever is selected in it. */
+  const remainingAfterKey = (input: HTMLInputElement) => {
+    const from = input.selectionStart ?? input.value.length;
+    const to = input.selectionEnd ?? from;
+    return input.value.slice(0, from) + input.value.slice(to);
+  };
+
   /** The open editor's own keys (KeyPressEdit). */
   const editorKeys = async (event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
     const column = columnByKey.get(cursor.key);
     if (!column) return;
-    if (event.key === "Escape") { event.preventDefault(); setEditing(false); gridFocus.current?.focus(); return; }
+    // Esc undoes what was typed: the cell keeps the value it had before editing began.
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
     if (toolKeys(event, column.setup, editText, setEditText, "update")) return;
     if (event.key === "Enter" || event.key === "Tab") {
       event.preventDefault();
@@ -1333,14 +1501,15 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      // Ctrl+Z: the value as it was loaded (the grid's text, not an id kept aside for a combo).
       event.preventDefault();
-      const original = cellOf(backup[cursor.row], column.key);
-      const date = column.setup.field_type === "D" ? parseDesktopDate(original) : null;
-      setEditText(date ? formatDesktopDate(date) : original);
+      const loaded = cellOf(original.records[cursor.row], column.key);
+      const date = column.setup.field_type === "D" ? parseDesktopDate(loaded) : null;
+      setEditText(date ? formatDesktopDate(date) : loaded);
       return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && event.currentTarget instanceof HTMLInputElement) {
-      const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: editText, yearStart: yearStartText }, event.key);
+      const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: editText, remainingText: remainingAfterKey(event.currentTarget), yearStart: yearStartText }, event.key);
       if (outcome.refused) event.preventDefault();
       if (outcome.message) await ask(outcome.message, "Typed Character not allowed");
       if (outcome.replaceWith !== undefined) setEditText(outcome.replaceWith);
@@ -1443,6 +1612,11 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     const row = addRows[index];
     if (!row || !grids || !meta) { setAddEditing(false); return true; }
     let text = addText;
+    if (row.setup.field_type === "D" && text.trim() !== "") {
+      const date = typedDate(text, row.fieldInput);
+      if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
+      text = dateText(text, date);
+    }
     if (row.comboKind === "L" && row.setup.value_compulsory && text.trim() === "" && row.options?.length) text = row.options[0].text;
     const outcome = validate({
       setup: { ...row.setup, value_compulsory: row.compulsory }, masterGrid: true, programId, licence, coGstReq: meta.coGstReq, label: row.headLabel,
@@ -1566,14 +1740,15 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   };
 
   const addKeys = async (event: ReactKeyboardEvent) => {
-    if (dialog || !grids) return;
+    if (isMessageBoxOpen() || !grids) return;
     const row = addRows[addCursor];
     const nextVisible = (from: number, step: number) => {
       for (let at = from + step; at >= 0 && at < addRows.length; at += step) if (addRows[at].visible) return at;
       return from;
     };
     if (addEditing) {
-      if (event.key === "Escape") { event.preventDefault(); setAddEditing(false); addFocus.current?.focus(); return; }
+      // Esc undoes what was typed: the row keeps the value it had before editing began.
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setAddEditing(false); addFocus.current?.focus({ preventScroll: true }); return; }
       if (row && toolKeys(event, row.setup, addText, setAddText, "add")) return;
       if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (event.target instanceof HTMLSelectElement && (event.key === "ArrowDown" || event.key === "ArrowUp")) return;
@@ -1582,7 +1757,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         return;
       }
       if (event.key.length === 1 && !event.ctrlKey && row && event.target instanceof HTMLInputElement) {
-        const outcome = keyPress({ setup: row.setup, masterGrid: true, programId, licence, cellValue: row.fieldInput, editorText: addText, yearStart: yearStartText }, event.key);
+        const outcome = keyPress({ setup: row.setup, masterGrid: true, programId, licence, cellValue: row.fieldInput, editorText: addText, remainingText: remainingAfterKey(event.target), yearStart: yearStartText }, event.key);
         if (outcome.refused) event.preventDefault();
         if (outcome.message) await ask(outcome.message, "Character Not Allowed");
         if (outcome.replaceWith !== undefined) setAddText(outcome.replaceWith);
@@ -1609,12 +1784,14 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   };
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
-  const escapeState = useRef({ editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: false });
-  useEffect(() => { escapeState.current = { editing, addEditing, dialog: dialog !== null, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null || calendar !== null || preview !== null || pdfChoice !== null }; });
+  const escapeState = useRef({ editing, addEditing, leave, licence, close: onClose, busyElsewhere: false });
+  useEffect(() => { escapeState.current = { editing, addEditing, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null || calendar !== null || preview !== null || pdfChoice !== null || logTable !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const state = escapeState.current;
-      if (event.key === "Escape" && !state.editing && !state.addEditing && !state.dialog && !state.busyElsewhere) void state.leave();
+      // An Esc something else already used (closing an editor, a list, a message) is not a request to leave:
+      // by the time it gets here that editor has closed, so its state alone cannot tell.
+      if (event.key === "Escape" && !event.defaultPrevented && !state.editing && !state.addEditing && !isMessageBoxOpen() && !state.busyElsewhere) void state.leave();
       if (event.key === "Pause" && PAUSE_EXIT_LICENCES.includes(state.licence)) state.close();
     };
     window.addEventListener("keydown", onKey);
@@ -1634,28 +1811,28 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const frozenLeft: number[] = [];
   columns.reduce((left, column, index) => { frozenLeft[index] = left; return left + widthOf(column); }, INDICATOR_WIDTH);
   const cursorColumn = columnByKey.get(cursor.key);
+  const pickedRows = new Set(selectionEnd === null ? [] : selectedRows());
   /** The help list window: centred on one entry, with a note under the title for the New Add grid. */
-  const helpWindow = (focusRow: number, note: { text: string; warn: boolean } | null) => {
+  const helpWindow = (focusRow: number, onFocusRow: (row: number) => void, searchKey: string, note: { text: string; warn: boolean } | null) => {
     if (!help || help.columns.length === 0) return null;
-    const from = focusRow >= 0 ? Math.max(0, focusRow - 3) : 0;
+    const backToGrid = () => {
+      const editor = document.querySelector<HTMLElement>(".mp-editor");
+      (editor ?? (tab === "add" ? addFocus.current : gridFocus.current))?.focus({ preventScroll: true });
+    };
     return (
-      <div className="mp-help" style={helpDrag.style}>
-        <div className="mp-help-title mp-drag-handle" {...helpDrag.handle} onDoubleClick={helpDrag.reset} title="Drag to move · double-click to put back">
-          <span><Icon name="move" />{help.total}</span>
-          {tab === "update" && <button type="button" onClick={() => setHelpRow(null)} aria-label="Close help">×</button>}
-        </div>
-        {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
-        <table>
-          <thead><tr>{help.columns.map((column) => <th key={column.key} style={{ width: column.width || 90 }}>{column.caption}</th>)}</tr></thead>
-          <tbody>
-            {help.rows.slice(from, from + 15).map((helpRecord, index) => (
-              <tr key={from + index} className={from + index === focusRow ? "mp-current-row" : ""}>
-                {help.columns.map((column) => <td key={column.key} style={{ textAlign: column.align === "R" ? "right" : "left" }}>{formatCell(helpRecord[column.key] ?? "", column.format)}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <HelpList
+        help={help}
+        focusRow={focusRow}
+        onFocusRow={onFocusRow}
+        searchKey={searchKey}
+        note={note}
+        onClose={tab === "update" ? () => { setHelpRow(null); backToGrid(); } : undefined}
+        onEscape={backToGrid}
+        style={helpDrag.style}
+        dragHandle={helpDrag.handle}
+        onResetPosition={helpDrag.reset}
+        formatCell={formatCell}
+      />
     );
   };
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
@@ -1724,69 +1901,43 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     </>
   );
   return (
-    <div className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.heading || title}>
+    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.heading || title}>
       <div className="mp-combos">
         {firstCombo && (
-          <label className="mp-combo">
+          <div className="mp-combo">
             <span>{firstCombo.label}</span>
-            {firstCombo.editable ? (
-              <>
-                <input
-                  list="mp-first-options"
-                  // The chosen group shows as the placeholder so the list is not filtered down to it.
-                  value={firstTyped}
-                  placeholder={first?.text ?? "Type or pick…"}
-                  disabled={Boolean(grids) || Boolean(busy)}
-                  onChange={(event) => {
-                    const text = event.target.value;
-                    setFirstTyped(text);
-                    // Picking from the list (not typing) chooses the group at once, as Leave would.
-                    const picked = !(event.nativeEvent instanceof InputEvent) || event.nativeEvent.inputType === "insertReplacementText";
-                    const option = picked ? firstCombo.options.find((candidate) => candidate.text === text) : undefined;
-                    if (option) { setFirstTyped(""); chooseFirst(option); }
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    if (firstTyped.trim() === "" && first) { chooseFirst(first); return; }
-                    const option = firstCombo.options.find((candidate) => candidate.text.toUpperCase() === firstTyped.trim().toUpperCase());
-                    if (option) { setFirstTyped(""); chooseFirst(option); }
-                  }}
-                  onBlur={() => {
-                    const option = firstCombo.options.find((candidate) => candidate.text.toUpperCase() === firstTyped.trim().toUpperCase());
-                    if (option && option.value !== first?.value) { setFirstTyped(""); chooseFirst(option); }
-                  }}
-                />
-                <datalist id="mp-first-options">{firstCombo.options.map((option, index) => <option key={`${option.value}-${index}`} value={option.text} />)}</datalist>
-              </>
-            ) : (
-              <select
-                value={first ? String(firstCombo.options.indexOf(firstCombo.options.find((option) => option.value === first.value && option.text === first.text) ?? firstCombo.options[0])) : ""}
-                disabled={Boolean(grids) || Boolean(busy)}
-                onChange={(event) => { const option = firstCombo.options[Number(event.target.value)]; if (option) chooseFirst(option); }}
-              >
-                {!first && <option value="">Select…</option>}
-                {firstCombo.options.map((option, index) => <option key={`${option.value}-${index}`} value={index}>{option.text}</option>)}
-              </select>
-            )}
-          </label>
+            {/* Type to search; Enter or a click chooses, Enter on an unchanged box loads it again. */}
+            <SearchCombo
+              ariaLabel={firstCombo.label}
+              options={firstCombo.options}
+              value={first}
+              reselect
+              disabled={Boolean(grids) || Boolean(busy)}
+              onChoose={chooseFirst}
+            />
+          </div>
         )}
         {secondOptions && (
-          <label className="mp-combo">
+          <div className="mp-combo">
             <span>Select</span>
-            <select value={second ? String(secondOptions.indexOf(second)) : ""} disabled={Boolean(grids) || Boolean(busy)} onChange={(event) => { const option = secondOptions[Number(event.target.value)]; setSecond(option ?? null); if (option && first) void loadGroup(first, option); }}>
-              <option value="">Select…</option>
-              {secondOptions.map((option, index) => <option key={`${option.value}-${index}`} value={index}>{option.text}</option>)}
-            </select>
-          </label>
+            <SearchCombo
+              ariaLabel="Select"
+              options={secondOptions}
+              value={second}
+              placeholder="Select…"
+              disabled={Boolean(grids) || Boolean(busy)}
+              onChoose={(option) => { setSecond(option); if (first) void loadGroup(first, option); }}
+            />
+          </div>
         )}
-        {first && !grids && !secondOptions && <button type="button" className="mp-btn mp-btn-blue" onClick={() => void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="list" />Show</button>}
+        {first && !grids && !secondOptions && <button type="button" data-hotkey="h" aria-keyshortcuts="Alt+H" className="mp-btn mp-btn-blue" onClick={() => void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="list" /><HotkeyLabel text="Show" hotkey="h" /></button>}
         {grids && (
           <div className="mp-views" role="tablist" aria-label="Master view">
-            {grids.addTabVisible && tab !== "add" && <button type="button" role="tab" aria-selected={false} className="mp-btn mp-btn-green mp-btn-big" onClick={() => setTab("add")}><Icon name="plus" />New Add</button>}
+            {grids.addTabVisible && tab !== "add" && <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" role="tab" aria-selected={false} className="mp-btn mp-btn-green mp-btn-big" onClick={() => setTab("add")}><Icon name="plus" /><HotkeyLabel text="New Add" hotkey="n" /></button>}
             {grids.addTabVisible && tab === "add" && <span className="mp-view-now">{restore ? "View (Restore)" : "New Add"}</span>}
-            {grids.updateTabVisible && tab !== "update" && <button type="button" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}><Icon name="list" />Update / Delete</button>}
-            {imageTab && tab !== "image" && <button type="button" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => setTab("image")}><Icon name="image" />Image</button>}
-            <button type="button" className="mp-btn mp-btn-red mp-btn-big" onClick={() => void cancelAll()}><Icon name="cancel" />Cancel Both (Add And Update)</button>
+            {grids.updateTabVisible && tab !== "update" && <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}><Icon name="list" /><HotkeyLabel text="Update / Delete" hotkey="u" /></button>}
+            {imageTab && tab !== "image" && <button type="button" data-hotkey="i" aria-keyshortcuts="Alt+I" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => setTab("image")}><Icon name="image" /><HotkeyLabel text="Image" hotkey="i" /></button>}
+            <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-red mp-btn-big" onClick={() => void cancelAll()}><Icon name="cancel" /><HotkeyLabel text="Cancel Both (Add And Update)" hotkey="b" /></button>
           </div>
         )}
         {busy && <span className="mp-busy">{busy}…</span>}
@@ -1814,7 +1965,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                         </select>
                       ) : (
                         <span className="mp-editor-wrap" role="presentation" onClick={(event) => event.stopPropagation()}>
-                          <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)} />
+                          <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(row.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(row.setup) ? "c" : undefined} value={addText} onChange={(event) => { if (typingAllowed(row.setup, addText, event.target.value)) setAddText(event.target.value); }} onKeyDown={(event) => void addKeys(event)} />
                           {editorTools(row.setup, addText, setAddText, "add")}
                         </span>
                       )
@@ -1824,7 +1975,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               ))}
             </tbody>
           </table>
-          {addHelp && helpWindow(addHelp.row, addHelp.typed === ""
+          {addHelp && helpWindow(addHelpPick?.key === addHelpKey ? addHelpPick.row : addHelp.row, (row) => setAddHelpPick({ row, key: addHelpKey }), toText(addRows[addCursor]?.setup.duplichk_fldname1).toLowerCase(), addHelp.typed === ""
             ? { text: "Existing entries (type to search)", warn: false }
             : addHelp.exact
               ? { text: `"${addHelp.typed}" already exists`, warn: true }
@@ -1888,7 +2039,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                       <button type="button" className="mp-filter-button" aria-label={`Filter ${column.caption}`} onClick={() => openFilterFor(column)}>▾</button>
                       {draft && (
                         <div className="mp-filter" role="dialog" aria-label={`Filter ${column.caption}`}>
-                          <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); if (event.key === "Escape") setOpenFilter(null); }} />
+                          <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
                           <label className="mp-filter-all">
                             <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => setDraft({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
                             <b>{needle ? "(Select all found)" : "(Select All)"}</b>
@@ -1947,7 +2098,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               {visibleRows.slice(startIndex, endIndex).map((row, offset) => {
                 const record = records[row];
                 const position = startIndex + offset;
-                const inSelection = selectionEnd !== null && row >= Math.min(cursor.row, selectionEnd) && row <= Math.max(cursor.row, selectionEnd);
+                const inSelection = pickedRows.has(row);
                 return (
                   <div key={row} className={`mp-row ${position % 2 ? "mp-alt" : ""} ${row === cursor.row ? "mp-current-row" : ""} ${edited.has(row) ? "mp-edited" : ""} ${inSelection ? "mp-selected" : ""}`} style={{ top: (position + 1) * ROW_HEIGHT }}>
                     <div className="mp-cell mp-rownum" aria-hidden="true">{row === cursor.row ? "▶" : edited.has(row) ? "✎" : ""}</div>
@@ -1963,18 +2114,34 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
                           aria-readonly={!editable}
                           className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : "mp-readonly"}`}
                           style={{ width: widthOf(column), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
-                          onMouseDown={(event) => { if (event.shiftKey) { setSelectionEnd(row); return; } if (row !== cursor.row) { findMode.current = true; setTyped(""); } void moveTo(row, column.key); }}
+                          onMouseDown={(event) => {
+                            // While a cell is open the keyboard stays in its editor, so a refused
+                            // value's message hands it straight back there; otherwise the grid has it.
+                            if (editing && current) return; // a click inside the open editor just places the caret
+                            // The cell itself never takes the keyboard: once it scrolled out of view it would
+                            // vanish and take the keyboard with it.
+                            event.preventDefault();
+                            if (!editing) gridFocus.current?.focus({ preventScroll: true });
+                            if (event.shiftKey) { setSelectionEnd(row); return; }
+                            // A right-click inside the selection keeps it, for Copy / Paste / Delete on the menu.
+                            if (event.button !== 0 && pickedRows.has(row)) return;
+                            if (event.button === 0) dragSelect.current = true;
+                            if (row !== cursor.row) { findMode.current = true; setTyped(""); }
+                            void moveTo(row, column.key);
+                          }}
                           onDoubleClick={() => void startEdit()}
+                          // Dragging down (or up) with the left button held selects those rows.
+                          onMouseEnter={(event) => { if (dragSelect.current && event.buttons === 1 && !editing && row !== (selectionEnd ?? cursor.row)) setSelectionEnd(row === cursor.row ? null : row); }}
                         >
                           {current && editing ? (
                             column.options ? (
-                              <select ref={focusOnMount} className="mp-editor" value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => void editorKeys(event)} onBlur={() => void commitEdit()}>
+                              <select ref={focusOnMount} className="mp-editor" value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => void editorKeys(event)} onBlur={() => { if (!isMessageBoxOpen()) void commitEdit(); }}>
                                 {!column.options.some((option) => option.text === editText) && <option value={editText}>{editText}</option>}
                                 {column.options.map((option, at) => <option key={`${option.value}-${at}`} value={option.text}>{option.text}</option>)}
                               </select>
                             ) : (
                               <span className="mp-editor-wrap">
-                                <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => void editorKeys(event)} />
+                                <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(column.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(column.setup) ? "c" : undefined} value={editText} onChange={(event) => { if (!typingAllowed(column.setup, editText, event.target.value)) return; setEditText(event.target.value); followHelp(column.key, event.target.value); }} onKeyDown={(event) => void editorKeys(event)} />
                                 {editorTools(column.setup, editText, setEditText, "update")}
                               </span>
                             )
@@ -1987,7 +2154,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               })}
             </div>
           </div>
-          {help && helpRow !== null && cursorColumn && toText(cursorColumn.setup.help_query) !== "" && helpWindow(helpRow, null)}
+          {help && helpRow !== null && cursorColumn && toText(cursorColumn.setup.help_query) !== "" && helpWindow(helpRow, setHelpRow, helpSearchKey(cursorColumn.setup), null)}
           {menu && (
             <div className="mp-menu" style={{ left: menu.x, top: menu.y }} onMouseLeave={() => setMenu(null)}>
               <button type="button" onClick={() => { setMenu(null); void copyCell(); }}>Copy</button>
@@ -1996,7 +2163,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns((current) => current.slice(0, -1)); }}>Visible Column</button>
               <button type="button" onClick={() => { setMenu(null); setColumnChooser(true); }}>Hide / Show Columns…</button>
               <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns([]); }}>Show All Columns</button>
-              <button type="button" onClick={() => { setMenu(null); setCell(cursor.row, cursor.key, cellOf(backup[cursor.row], cursor.key)); }}>Restore Cell Value</button>
+              <button type="button" onClick={() => { setMenu(null); restoreCell(cursor.row, cursor.key); }}>Restore Cell Value (Ctrl+Z)</button>
               <button type="button" onClick={() => { setMenu(null); void deleteSelected("row"); }}>Delete Row</button>
               <button type="button" onClick={() => { setMenu(null); void deleteSelected("selection"); }}>Delete Selection</button>
             </div>
@@ -2036,17 +2203,17 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       {grids && (
         <div className="mp-buttons">
           {tab === "update" && <>
-            <button type="button" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}><Icon name="save" />Save</button>
-            <button type="button" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()}><Icon name="print" />Print</button>
-            <button type="button" className="mp-btn mp-btn-blue" onClick={() => void openPreview()} title="See the pages before printing"><Icon name="preview" />Preview</button>
-            <button type="button" className="mp-btn mp-btn-excel" onClick={() => void exportExcel()} title="Save the grid as an Excel workbook (.xlsx)"><Icon name="excel" />Excel</button>
-            <button type="button" className="mp-btn mp-btn-pdf" onClick={() => void exportPdf()} title="Save the grid as a PDF report"><Icon name="pdf" />PDF</button>
-            <button type="button" className="mp-btn mp-btn-teal" onClick={exportCsv} title="Save the grid as a CSV text file"><Icon name="export" />CSV</button>
-            <button type="button" className="mp-btn mp-btn-blue" onClick={() => first && void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="refresh" />Refresh</button>
-            <button type="button" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" />Cancel</button>
-            <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
-            {meta?.logFileSpecial && <button type="button" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}><Icon name="log" />Log</button>}
-            <button type="button" className="mp-btn mp-btn-plain" onClick={() => setColumnChooser(true)} title="Hide or show several columns"><Icon name="columns" />Columns{hiddenColumns.length ? ` (${hiddenColumns.length} hidden)` : ""}</button>
+            <button type="button" data-hotkey="s" aria-keyshortcuts="Alt+S" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
+            <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
+            <button type="button" data-hotkey="w" aria-keyshortcuts="Alt+W" className="mp-btn mp-btn-blue" onClick={() => void openPreview()} title="See the pages before printing"><Icon name="preview" /><HotkeyLabel text="Preview" hotkey="w" /></button>
+            <button type="button" data-hotkey="x" aria-keyshortcuts="Alt+X" className="mp-btn mp-btn-excel" onClick={() => void exportExcel()} title="Save the grid as an Excel workbook (.xlsx)"><Icon name="excel" /><HotkeyLabel text="Excel" hotkey="x" /></button>
+            <button type="button" data-hotkey="d" aria-keyshortcuts="Alt+D" className="mp-btn mp-btn-pdf" onClick={() => void exportPdf()} title="Save the grid as a PDF report"><Icon name="pdf" /><HotkeyLabel text="PDF" hotkey="d" /></button>
+            <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className="mp-btn mp-btn-teal" onClick={exportCsv} title="Save the grid as a CSV text file"><Icon name="export" /><HotkeyLabel text="CSV" hotkey="v" /></button>
+            <button type="button" data-hotkey="r" aria-keyshortcuts="Alt+R" className="mp-btn mp-btn-blue" onClick={() => void refreshUpdate()} disabled={Boolean(busy)}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
+            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
+            <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
+            {meta?.logFileSpecial && <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>}
+            <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setColumnChooser(true)} title="Hide or show several columns"><Icon name="columns" /><HotkeyLabel text="Columns" hotkey="o" />{hiddenColumns.length ? ` (${hiddenColumns.length} hidden)` : ""}</button>
             <span className="mp-spacer" />
             {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
               <input
@@ -2061,16 +2228,16 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               />
             ))}
             <label className="mp-search"><Icon name="search" /><input id="mp-find" type="search" placeholder="Search all columns (Ctrl+F)" value={find} onChange={(event) => setFind(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F3") { event.preventDefault(); findNext(); } }} /></label>
-            {filtering && <button type="button" className="mp-btn mp-btn-plain" onClick={() => { setFilters({}); setFind(""); setSort(null); }}><Icon name="clear" />Clear filters</button>}
+            {filtering && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" onClick={() => { setFilters({}); setFind(""); setSort(null); }}><Icon name="clear" /><HotkeyLabel text="Clear filters" hotkey="a" /></button>}
             <span className="mp-count">{shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length}`}{edited.size ? ` · ${edited.size} changed` : ""}{deleted.size ? ` · ${deleted.size} to delete` : ""}</span>
           </>}
           {tab === "add" && <>
-            <button type="button" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveAdd()} disabled={Boolean(busy) || (def ? !def.rights.add : true)}><Icon name="save" />Save</button>
-            {printsMasterSheet && <button type="button" className="mp-btn mp-btn-blue" onClick={printMasterSheet}><Icon name="print" />Print</button>}
-            <button type="button" className="mp-btn mp-btn-red" onClick={() => void cancelAdd()}><Icon name="cancel" />Cancel</button>
-            <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>
+            <button type="button" data-hotkey="s" aria-keyshortcuts="Alt+S" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveAdd()} disabled={Boolean(busy) || (def ? !def.rights.add : true)}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
+            {printsMasterSheet && <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-blue" onClick={printMasterSheet}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>}
+            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={() => void cancelAdd()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
+            <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
           </>}
-          {tab === "image" && <button type="button" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" />Quit</button>}
+          {tab === "image" && <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>}
         </div>
       )}
 
@@ -2122,8 +2289,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
               })}
             </ul>
             <div className="mp-dialog-buttons">
-              <button type="button" onClick={() => setHiddenColumns([])}>Show all</button>
-              <button type="button" ref={focusOnMount} onClick={() => setColumnChooser(false)}>Close</button>
+              <button type="button" className="mp-columns-show" data-hotkey="m" aria-keyshortcuts="Alt+M" onClick={() => setHiddenColumns([])}><HotkeyLabel text="Show All Columns" hotkey="m" /></button>
+              <button type="button" className="mp-columns-close" data-hotkey="e" aria-keyshortcuts="Alt+E" ref={focusOnMount} onClick={() => setColumnChooser(false)}><HotkeyLabel text="Close" hotkey="e" /></button>
             </div>
           </div>
         </div>
@@ -2175,21 +2342,6 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
         })()}</span>
         {warnings.length > 0 && <span className="mp-warn" title={warnings.join("\n")}>{warnings.length} setup query warning{warnings.length === 1 ? "" : "s"}</span>}
       </div>
-
-      {dialog && (
-        <div className="mp-dialog-backdrop" role="presentation">
-          <div className="mp-dialog" role="dialog" aria-modal="true" aria-label={dialog.title}>
-            <strong>{dialog.title}</strong>
-            <pre>{dialog.message}</pre>
-            {dialog.input && <input id="mp-dialog-input" type="password" ref={focusOnMount} onKeyDown={(event) => { if (event.key === "Enter") dialog.resolve("OK", event.currentTarget.value); }} />}
-            <div className="mp-dialog-buttons">
-              {dialog.buttons.map((button, index) => (
-                <button key={button} type="button" ref={!dialog.input && index === 0 ? focusOnMount : undefined} onClick={() => dialog.resolve(button, (document.getElementById("mp-dialog-input") as HTMLInputElement | null)?.value)}>{button}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

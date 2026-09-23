@@ -531,3 +531,83 @@
 .mp-add .mp-help{top:8px;right:12px;bottom:auto;max-height:calc(100% - 16px)}
 .mp-help-note{padding:3px 8px;border-bottom:1px solid #c7d7ea;background:#eef4fb;color:#0d3a73;font-weight:600;white-space:nowrap}
 .mp-help-note.mp-help-warn{background:#fde2e4;color:#a8202e}
+
+/* ── Shared message box (features/ui/MessageBox) ──────────────────────────────
+   Coloured title bar, an icon by kind, Yes/OK green like Save, No red like Cancel. */
+.msgbox-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:16px;background:#0b1a2e66;animation:msgbox-fade .12s ease-out}
+.msgbox{width:min(460px,100%);display:flex;flex-direction:column;overflow:hidden;border:1px solid #1b58a3;border-radius:6px;background:#fff;color:#10233d;box-shadow:0 10px 32px #0b1a2e66;font-size:13px;animation:msgbox-pop .14s ease-out}
+.msgbox-title{padding:8px 14px;background:linear-gradient(#3d8fe0,#1f64b8);color:#fff;font-weight:700;font-size:13px;text-shadow:0 1px 0 #0003;overflow-wrap:anywhere}
+.msgbox-warning .msgbox-title{background:linear-gradient(#f0a13a,#d97a0b);border-color:#b86408}
+.msgbox-error .msgbox-title{background:linear-gradient(#e8495a,#c42636)}
+.msgbox-body{display:flex;gap:14px;align-items:flex-start;padding:16px 16px 10px}
+.msgbox-icon{width:34px;height:34px;flex:none;fill:none;stroke:#1f64b8;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.msgbox-question .msgbox-icon{stroke:#1f8b40}
+.msgbox-warning .msgbox-icon{stroke:#d97a0b}
+.msgbox-error .msgbox-icon{stroke:#c42636}
+.msgbox-text{flex:1;min-width:0;display:grid;gap:10px}
+.msgbox-text p{margin:0;max-height:50vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.45}
+.msgbox-text input{height:28px;padding:0 8px;border:1px solid #6d93c4;border-radius:3px;font:inherit}
+.msgbox-text input:focus{outline:2px solid #3d8fe0;outline-offset:0}
+.msgbox-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:10px 16px 14px;border-top:1px solid #e3ebf5;background:#f5f8fc}
+.msgbox-buttons button{min-width:84px;height:30px;padding:0 14px;border:1px solid transparent;border-radius:4px;color:#fff;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 1px 2px #0003;text-shadow:0 1px 0 #0003}
+.msgbox-buttons button:hover{filter:brightness(1.08)}
+.msgbox-buttons button:active{transform:translateY(1px);box-shadow:none}
+.msgbox-buttons button:focus-visible{outline:3px solid #ffb400;outline-offset:2px}
+.msgbox-yes{background:linear-gradient(#34b45a,#1f8b40);border-color:#1b7a38}
+.msgbox-no{background:linear-gradient(#e8495a,#c42636);border-color:#ad1f2e}
+.msgbox-cancel{background:linear-gradient(#8d9aab,#65738a);border-color:#56637a}
+@keyframes msgbox-fade{from{opacity:0}}
+@keyframes msgbox-pop{from{opacity:0;transform:scale(.96)}}
+@media (prefers-reduced-motion:reduce){.msgbox-backdrop,.msgbox{animation:none}}
+
+/* ── Type-to-search combo (features/ui/SearchCombo) ── */
+.search-combo{position:relative;display:inline-flex;align-items:stretch}
+.search-combo input{min-width:260px;height:24px;padding:0 24px 0 6px;border:1px solid #6d93c4;background:#fff;font-size:11px}
+.search-combo input:disabled{background:#eef2f7;color:#10233d}
+.search-combo-arrow{position:absolute;right:1px;top:1px;bottom:1px;width:20px;border:0!important;background:#e3ecf7!important;color:#1f64b8;font-size:11px;cursor:pointer;padding:0!important;height:auto!important}
+.search-combo-arrow:disabled{opacity:.4;cursor:default}
+.search-combo-list{position:absolute;left:0;top:100%;z-index:30;min-width:100%;max-height:min(340px,60vh);margin:1px 0 0;padding:2px 0;overflow:auto;list-style:none;border:1px solid #1b58a3;background:#fff;box-shadow:0 6px 16px #0b1a2e40;font-size:11px}
+.search-combo-list li{padding:3px 8px;white-space:nowrap;cursor:pointer}
+.search-combo-list li.search-combo-active{background:#1f64b8;color:#fff}
+.search-combo-none{color:#6b7c93;cursor:default!important}
+@media(max-width:780px){.search-combo,.search-combo input{width:100%;min-width:0}}
+
+/* ── Help list: the heading row keeps its colour and stays at the top while the list scrolls ── */
+.mp-help{display:flex;flex-direction:column;overflow:hidden;outline:none}
+.mp-help:focus-visible{box-shadow:0 0 0 2px #ffb400,2px 3px 8px #1c292944}
+.mp-help-title{flex:none;gap:8px}
+.mp-help-tip{font-weight:400;font-size:10px;opacity:.85;margin-left:auto}
+.mp-help-scroll{flex:1;min-height:0;overflow:auto}
+.mp-help table{table-layout:fixed;border-collapse:separate;border-spacing:0}
+.mp-help th,.mp-help td{height:20px;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box}
+.mp-help thead th{position:sticky;top:0;z-index:2;background:#ffe9a8;color:#5a3d00;font-weight:700;border-bottom:2px solid #d9a520;text-align:left}
+.mp-help thead th .mp-resize{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize}
+.mp-help thead th .mp-resize:hover{background:#d9a52066}
+.mp-help tbody tr{cursor:default}
+
+/* The group label's white text stays on the label, not on the combo and its list. */
+.mp-combo .search-combo{color:#10233d;font-weight:400;text-shadow:none}
+.search-combo-list li{color:#10233d;background:#fff}
+.search-combo-list li:hover{background:#dbe9fb}
+.search-combo-list li.search-combo-active{color:#fff;background:#1f64b8}
+.hotkey-label u{text-decoration-thickness:2px;text-underline-offset:2px}
+
+/* Message box: a button lights up under the mouse, and the one Enter presses is marked. */
+.msgbox-buttons button{position:relative;transition:transform .08s,box-shadow .08s,filter .08s}
+.msgbox-buttons button:hover{filter:brightness(1.15);box-shadow:0 0 0 2px #fff,0 0 0 4px #ffb400,0 2px 6px #0004;transform:translateY(-1px)}
+.msgbox-buttons button:focus{outline:none;box-shadow:0 0 0 2px #fff,0 0 0 4px #1f64b8,0 2px 6px #0004}
+.msgbox-buttons button:focus::after{content:"↵ Enter";position:absolute;left:50%;top:100%;margin-top:5px;transform:translateX(-50%);padding:0 5px;border-radius:3px;background:#1f64b8;color:#fff;font-size:9px;font-weight:700;line-height:14px;white-space:nowrap;text-shadow:none;pointer-events:none}
+.msgbox-buttons{padding-bottom:22px}
+/* Prompt with a text box: Enter answers the first button, so it carries the mark. */
+.msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after{content:"↵ Enter";position:absolute;left:50%;top:100%;margin-top:5px;transform:translateX(-50%);padding:0 5px;border-radius:3px;background:#1f64b8;color:#fff;font-size:9px;font-weight:700;line-height:14px;white-space:nowrap;text-shadow:none;pointer-events:none}
+
+/* Hide / Show Columns: a light tooltip-coloured window, Show All green, Close red. */
+.mp-dialog.mp-columns{background:#fffbe0;border:1px solid #c9b458;border-radius:4px;box-shadow:0 6px 20px #0b1a2e55}
+.mp-columns ul{background:#fffef4;border:1px solid #e6d98f}
+.mp-dialog-buttons .mp-columns-show,.mp-dialog-buttons .mp-columns-close{height:26px;padding:0 14px;border-radius:3px;color:#fff;font-weight:700;text-shadow:0 1px 0 #0003;box-shadow:0 1px 2px #0003}
+.mp-dialog-buttons .mp-columns-show{background:linear-gradient(#34b45a,#1f8b40);border-color:#1b7a38}
+.mp-dialog-buttons .mp-columns-close{background:linear-gradient(#e8495a,#c42636);border-color:#ad1f2e}
+.mp-dialog-buttons .mp-columns-show:hover,.mp-dialog-buttons .mp-columns-close:hover{filter:brightness(1.12);box-shadow:0 0 0 2px #fff,0 0 0 4px #ffb400}
+.mp-dialog-buttons .mp-columns-show:hover{background:linear-gradient(#34b45a,#1f8b40)}
+.mp-dialog-buttons .mp-columns-close:hover{background:linear-gradient(#e8495a,#c42636)}
+.mp-columns li label:hover{background:#fff1b0}

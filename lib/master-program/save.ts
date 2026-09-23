@@ -2,7 +2,7 @@ import type { Client } from "pg";
 import { requiredEditRights } from "./access";
 import type { SysValueContext } from "../sys-values";
 import { isNumeric, parseDesktopDate, removeTableAlias, runFormula, securityRead, securityWrite, toDecimal, toInt, toText, writePw, formatDesktopDate, formatDesktopTime } from "./legacy";
-import { displayValue, Loader, loadContext, prepareProgram, replaceControlValues } from "./load";
+import { displayValue, Loader, loadContext, prepareProgram, replaceControlValues, updateColumnShown } from "./load";
 import type { BodyRow, PreparedProgram } from "./load";
 import { columnName, replaceSessionValues } from "./sql";
 import { readRights, SETUP_SCHEMA, SYSTEM_SCHEMA } from "./session";
@@ -721,15 +721,25 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
     if (rights) return rights;
   }
 
-  // Func_BlankFieldValidation(c1dg_UpdateGrid, ..., true, "c") over edited rows
+  // Func_BlankFieldValidation(c1dg_UpdateGrid, ..., true, "c") over edited rows. Like the desktop,
+  // only a column on screen and open for editing is checked: a column the grid hides for this
+  // group (VISIBLE_AGAINST_FLD, e.g. the address and state of an addon without addresses)
+  // cannot be filled, so it cannot be demanded.
+  const shownSource = {
+    firstCombo: { text: request.group.firstCombo.text, value: request.group.firstCombo.value, bound: true },
+    fieldValue: (name: string) => request.firstRecord[lower(name)],
+  };
   let blankMessage = "Fill The Following Fields And Try Again\n\n";
   let blank = false;
   request.records.forEach((record) => {
     if (record.deleted) return;
     for (const row of prepared.updateBody) {
-      if (!row.value_compulsory || !row.update_grid_visible || row.enable_for.trim() !== "" || row.disable_for.trim() !== "") continue;
+      if (!row.value_compulsory || row.enable_for.trim() !== "" || row.disable_for.trim() !== "") continue;
       if (toText(row.hide_by_firstcmbval) !== "" && row.hide_by_firstcmbval.includes(`${request.group.firstCombo.value},`)) continue;
-      if (!row.update_grid_editable) continue;
+      if (!updateColumnShown(row, shownSource, session.businessNature)) continue;
+      // Cols[..].AllowEditing: the column as the screen had it open on this row.
+      const editableHere = record.editableColumns ? record.editableColumns.includes(lower(row.field_name)) : row.update_grid_editable;
+      if (!editableHere) continue;
       const value = record.values[lower(row.field_name)];
       if (value !== undefined && value.trim() === "") {
         blank = true;

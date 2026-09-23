@@ -332,6 +332,34 @@ async function hideList(loader: Loader, programName: string, programId: number, 
   return { list, levelNumber };
 }
 
+/**
+ * Whether an Update grid column is shown: update_grid_visible, then VISIBLE_AGAINST_FLD /
+ * HIDE_FOR_VALUE (read from the grid's first record, or the business nature), then
+ * HIDE_BY_FIRSTCMBVAL. The grid builds its columns with it and the save's compulsory check
+ * skips a column it hides, as the desktop's check skips a column that is not on screen.
+ */
+export function updateColumnShown(row: BodyRow, source: Parameters<typeof getPermission>[0], businessNature: string): boolean {
+  let visible = row.update_grid_visible;
+  if (row.visible_against_fld.trim() !== "") {
+    if (row.visible_against_fld.includes("|sys.Business_Nature|")) {
+      const hideFor = toText(row.hide_for_value);
+      if (hideFor.startsWith("!")) {
+        if (businessNature.toLowerCase() !== hideFor.toLowerCase().slice(1)) visible = false;
+      } else if (businessNature.toLowerCase() === hideFor.toLowerCase()) {
+        visible = false;
+      }
+    } else if (row.hide_for_value !== "") {
+      const effect = applyPermission(getPermission(source, "V", row.visible_against_fld, row.hide_for_value.trim(), false, false));
+      if (effect.visible !== undefined) visible = effect.visible;
+    }
+  }
+  if (row.hide_by_firstcmbval !== "" && visible) {
+    const effect = applyPermission(getPermission(source, "V", "first_combo", row.hide_by_firstcmbval.trim(), false, true));
+    if (effect.visible !== undefined) visible = effect.visible;
+  }
+  return visible;
+}
+
 /** Master_ProgramGrid.Hide_ProductLevel. Like the C#, the first row of the table is never looked at. */
 export function hideProductLevel(rows: BodyRow[], levelNumber: number, list: string, levelMaster: Row | null, licence: number, productCode: boolean): void {
   const heading = (level: number) => toText(field(levelMaster ?? undefined, `level${level}_hd`));
@@ -726,7 +754,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       if (position > resultKeys.length) continue;
       const name = (row.field_name !== "" ? row.field_name.trim() : row.field_restore.trim()).split(".").pop()!.toLowerCase();
       const key = resultKeys.find((candidate) => candidate.toLowerCase() === name) ?? name;
-      let visible = row.update_grid_visible;
+      const visible = updateColumnShown(row, permissionSource, session.businessNature);
       let editableColumn = row.update_grid_editable;
       const caption = row.value_compulsory ? `* ${row.head_grid.trim()}` : row.head_grid.trim();
 
@@ -754,20 +782,6 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         if (result.disable) editableColumn = false;
       }
 
-      if (row.visible_against_fld.trim() !== "") {
-        if (row.visible_against_fld.includes("|sys.Business_Nature|")) {
-          const hideFor = toText(row.hide_for_value);
-          if (hideFor.startsWith("!")) {
-            if (session.businessNature.toLowerCase() !== hideFor.toLowerCase().slice(1)) visible = false;
-          } else if (session.businessNature.toLowerCase() === hideFor.toLowerCase()) {
-            visible = false;
-          }
-        } else if (row.hide_for_value !== "") {
-          const effect = applyPermission(getPermission(permissionSource, "V", row.visible_against_fld, row.hide_for_value.trim(), false, false));
-          if (effect.visible !== undefined) visible = effect.visible;
-        }
-      }
-
       if (row.defa_against_field !== "" && row.defa_against_for !== "") {
         const against = row.defa_against_field.toLowerCase() === "first_combo" ? "first_combo" : row.defa_against_field;
         const answer = getPermission(permissionSource, "E", against, row.defa_against_for.trim(), true, false);
@@ -776,11 +790,6 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
           const rows = await loader.readTable(sql);
           if (rows && row.combo_value.toUpperCase() !== "N") options = optionsFrom(rows);
         }
-      }
-
-      if (row.hide_by_firstcmbval !== "" && visible) {
-        const effect = applyPermission(getPermission(permissionSource, "V", "first_combo", row.hide_by_firstcmbval.trim(), false, true));
-        if (effect.visible !== undefined) visible = effect.visible;
       }
 
       if (programId === 34) editableColumn = true;

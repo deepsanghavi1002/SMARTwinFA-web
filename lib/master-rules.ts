@@ -213,7 +213,10 @@ export function parseMoney(value: unknown): number {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return value;
   const raw = String(value).trim();
-  const negative = raw.startsWith("-") || /^\(.*\)$/.test(raw);
+  // The sign can follow the currency symbol: PostgreSQL under English_India prints -100 as
+  // "₹- 100.00" (the symbol arriving as "?"). Money text holds no other "-", so any minus,
+  // or brackets round the amount, makes it negative.
+  const negative = raw.includes("-") || /\(.*\)/.test(raw);
   const digits = raw.replace(/[^0-9.]/g, "");
   const parsed = Number(digits);
   if (digits === "" || !Number.isFinite(parsed)) return 0;
