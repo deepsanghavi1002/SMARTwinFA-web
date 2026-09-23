@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { pdf } from "../../lib/export/pdf";
+import { download, safeFileName } from "../../lib/export/table";
+import { xlsx } from "../../lib/export/xlsx";
+import { buildReportTable, reportSummary } from "../../lib/reporting/report-table";
 
 export type ReportKind = "daybook" | "ledger" | "outstanding" | "trial-balance" | "closing-stock" | "top-sales" | "cash-bank-voucher" | "journal-voucher" | "discount-voucher" | "lock-status" | "stock-movement" | "partywise-stock" | "daily-transaction" | "target-register" | "book-series" | "opening-balance" | "tax-setup" | "document-register" | "e-invoice-register" | "e-way-bill-register" | "configuration" | "sales-distribution";
 export type ReportRow = Record<string, string | number | null>;
@@ -117,6 +121,16 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
   useEffect(() => { setSelection(visualOptions[kind]?.choices[0] ?? "All"); setMeasure(visualOptions[kind]?.measures[0] ?? "Detailed"); setSelectedKey(""); setZoom(false); }, [kind]);
 
   const rows = useMemo(() => presentRows(kind, payload?.rows ?? [], selection, measure), [kind, payload?.rows, selection, measure]);
+  const reportTable = useMemo(() => payload ? buildReportTable({
+    title: payload.report.title,
+    subtitle: [
+      `${selection} · ${measure}`,
+      applied.from || applied.upto ? `Period: ${applied.from || "Beginning"} to ${applied.upto || "Today"}` : "All available dates",
+    ],
+    columns: payload.columns,
+    rows,
+  }) : null, [payload, rows, selection, measure, applied.from, applied.upto]);
+  const summary = useMemo(() => reportTable ? reportSummary(reportTable) : [], [reportTable]);
   const selected = rows.find((row, index) => rowKey(row, index) === selectedKey) ?? null;
   const distribution = useMemo(() => rows.slice(0, 6).map((row) => ({ label: String(row.Party ?? row.Account ?? row.Product ?? "—"), value: Number(row["Invoice Amount"] ?? row.Amount ?? row.Quantity ?? row.Value ?? 0) })).filter((item) => item.value > 0), [rows]);
   const distributionTotal = distribution.reduce((total, item) => total + item.value, 0);
@@ -138,11 +152,15 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
     {!loading && payload && <div className={`legacy-master-grid-wrap ${zoom ? "with-report-zoom" : ""}`}>
       <div className="legacy-grid-tools"><strong>{payload.report.title}</strong><input aria-label={`${payload.report.title} search`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter loaded real rows"/><button type="button" disabled={!selected || !definition?.zoom} onClick={() => setZoom(true)}>F4 Zoom</button><span className="legacy-scroll-hint">↔ Scroll sideways using the bar below</span></div>
       <p className="legacy-report-note">{payload.report.note} <b>View:</b> {selection} · {measure}</p>
+      <section className="modern-report-summary" aria-label="Report summary">
+        <div><span>Displayed rows</span><strong>{rows.length.toLocaleString("en-IN")}</strong></div>
+        {summary.map((item) => <div key={item.label}><span>Total {item.label}</span><strong>{item.value.toLocaleString("en-IN", { minimumFractionDigits: item.decimals, maximumFractionDigits: item.decimals })}</strong></div>)}
+      </section>
       {kind === "sales-distribution" && <section className="legacy-pie-panel" aria-label="Sales distribution pie chart"><div className="legacy-pie" style={{ background: pie }} /><div>{distribution.map((item, index) => <span key={`${item.label}-${index}`}><i style={{ background: pieColors[index % pieColors.length] }} />{item.label} · {item.value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>)}</div></section>}
-      <div className="legacy-excel-grid legacy-real-data-grid"><table style={{ minWidth: Math.max(1060, payload.columns.length * 150) }}><thead><tr>{payload.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr className={rowKey(row, index) === selectedKey ? "selected" : ""} key={rowKey(row, index)} onClick={() => setSelectedKey(rowKey(row, index))} onDoubleClick={() => definition?.zoom && setZoom(true)}>{payload.columns.map((column) => <td key={column}>{format(column, row[column])}</td>)}</tr>)}</tbody></table></div>
+      <div className="legacy-excel-grid legacy-real-data-grid"><table style={{ minWidth: Math.max(1060, payload.columns.length * 150) }}><thead><tr>{payload.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr className={rowKey(row, index) === selectedKey ? "selected" : ""} key={rowKey(row, index)} onClick={() => setSelectedKey(rowKey(row, index))} onDoubleClick={() => definition?.zoom && setZoom(true)}>{payload.columns.map((column) => <td key={column}>{format(column, row[column])}</td>)}</tr>)}</tbody>{reportTable?.totals && <tfoot><tr>{payload.columns.map((column, index) => <td key={column}>{index === 0 ? "TOTAL" : reportTable.totals?.[index] === null ? "" : format(column, reportTable.totals?.[index] ?? null)}</td>)}</tr></tfoot>}</table></div>
       {zoom && selected && <aside className="legacy-report-zoom" aria-label="Selected report detail"><header><strong>Zoom · selected real row</strong><button type="button" onClick={() => setZoom(false)}>×</button></header>{detailEntries(selected).map(([key, value]) => <label key={key}><span>{key}</span><b>{format(key, value)}</b></label>)}<footer><button type="button" onClick={() => window.print()}>Print selected</button><button type="button" onClick={() => setZoom(false)}>Close</button></footer></aside>}
     </div>}
-    <footer className="legacy-master-actions"><button type="button" disabled={!selected || !definition?.zoom} onClick={() => setZoom(true)}>🔎 Zoom selected</button><button type="button" onClick={() => window.print()}>🖨 Print</button><button type="button" disabled={!payload} onClick={() => payload && downloadCsv(payload.report.title, payload.columns, rows)}>⇩ Export CSV</button><button type="button" onClick={refresh}>🔄 Refresh real data</button><button type="button" onClick={clear}>Reset filters</button></footer>
+    <footer className="legacy-master-actions"><button type="button" disabled={!selected || !definition?.zoom} onClick={() => setZoom(true)}>🔎 Zoom selected</button><button type="button" onClick={() => window.print()}>🖨 Print</button><button type="button" disabled={!reportTable} onClick={() => reportTable && download(pdf(reportTable, { orientation: "landscape", fontSize: 8, totals: true, footer: `Generated ${new Date().toLocaleString("en-IN")}` }), `${safeFileName(reportTable.title)}.pdf`, "application/pdf")}>⇩ PDF</button><button type="button" disabled={!reportTable} onClick={() => reportTable && download(xlsx(reportTable, reportTable.title), `${safeFileName(reportTable.title)}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}>⇩ Excel</button><button type="button" disabled={!payload} onClick={() => payload && downloadCsv(payload.report.title, payload.columns, rows)}>⇩ CSV</button><button type="button" onClick={refresh}>🔄 Refresh real data</button><button type="button" onClick={clear}>Reset filters</button></footer>
     <div className="legacy-master-status"><span>{payload ? `${rows.length.toLocaleString("en-IN")} of ${payload.total.toLocaleString("en-IN")} loaded real source rows` : ""}</span><span>Source: PostgreSQL / restored legacy tables</span></div>
   </section>;
 }

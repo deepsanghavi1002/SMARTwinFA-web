@@ -684,3 +684,13 @@
 .search-combo-list li.search-combo-active .search-combo-tick{color:#fff}
 .search-combo-list li.search-combo-active{background:linear-gradient(#2f7ad6,#1f64b8)}
 @media (prefers-reduced-motion:reduce){.mp-grid-combo,.search-combo-list{animation:none}}
+
+/* Modern report workspace: keeps the dense legacy grid while making totals and exports explicit. */
+.modern-report-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding:8px 10px;background:#eef5fb;border-top:1px solid #c4d7e8;border-bottom:1px solid #c4d7e8}
+.modern-report-summary div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;background:#fff;border:1px solid #d4e0eb;border-radius:6px;box-shadow:0 1px 2px #17324d12}
+.modern-report-summary span{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#60758a}
+.modern-report-summary strong{font-size:16px;color:#173f67;font-variant-numeric:tabular-nums}
+.legacy-real-data-grid tfoot{position:sticky;bottom:0;background:#e5eef8;color:#173f67;font-weight:700;box-shadow:0 -1px 0 #9fb8d0}
+.legacy-real-data-grid tfoot td{text-align:right;font-variant-numeric:tabular-nums}
+.legacy-real-data-grid tfoot td:first-child{text-align:left}
+@media print{.legacy-report-command,.legacy-grid-tools input,.legacy-master-actions,.legacy-master-status,.legacy-report-zoom{display:none!important}.legacy-master-grid-wrap{display:block!important}.legacy-excel-grid{overflow:visible!important}.legacy-excel-grid table{width:100%;min-width:0!important;font-size:8pt}.modern-report-summary{break-inside:avoid}}
