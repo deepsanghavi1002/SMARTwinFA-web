@@ -1,9 +1,14 @@
 const kinds = new Set(["daybook", "ledger", "outstanding", "trial-balance", "closing-stock", "top-sales", "cash-bank-voucher", "journal-voucher", "discount-voucher", "lock-status", "stock-movement", "partywise-stock", "daily-transaction", "target-register", "book-series", "opening-balance", "tax-setup", "document-register", "e-invoice-register", "e-way-bill-register", "configuration", "sales-distribution"]);
 
+import { readScopedLedgerReport } from "@/lib/reporting/ledger-report";
+
 export async function GET(request: Request, context: { params: Promise<{ kind: string }> }) {
   const { kind } = await context.params;
   if (!kinds.has(kind)) return Response.json({ error: "Unknown legacy report" }, { status: 404 });
   try {
+    if (["daybook", "ledger", "journal-voucher"].includes(kind)) {
+      return Response.json(await readScopedLedgerReport(kind, new URL(request.url).searchParams), { headers: { "cache-control": "no-store" } });
+    }
     const serviceUrl = process.env.LEGACY_API_URL?.trim();
     if (!serviceUrl) throw new Error("Legacy data service is not configured");
     const target = new URL(`/report/${kind}`, serviceUrl);

@@ -15,6 +15,7 @@ function numberValue(value: string | number | null): number | null {
 }
 
 function isNumericColumn(name: string, rows: readonly ReportDataRow[]): boolean {
+  if (/(?:key|code|year|document no|invoice no)/i.test(name)) return false;
   if (moneyNames.test(name) || countNames.test(name)) return true;
   const values = rows.map((row) => row[name]).filter((value) => value !== null && value !== "");
   return values.length > 0 && values.every((value) => numberValue(value) !== null);
@@ -27,7 +28,7 @@ export function reportColumns(names: readonly string[], rows: readonly ReportDat
     return {
       caption,
       kind: date ? "date" : numeric ? "number" : "text",
-      decimals: numeric && moneyNames.test(caption) ? 2 : 0,
+      decimals: numeric ? (/quantity|qty|pieces|packs|weight/i.test(caption) ? 3 : moneyNames.test(caption) ? 2 : 0) : 0,
       align: numeric ? "right" : date ? "center" : "left",
       width: Math.min(260, Math.max(numeric ? 105 : 130, caption.length * 9 + 28)),
     };

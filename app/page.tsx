@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MasterProgram } from "../features/master-program/MasterProgram";
+import { LegacyReportWorkflow } from "../features/demo-workflows/LegacyReportWorkflow";
 import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
 /**
@@ -94,8 +95,12 @@ function MainMenu() {
    * Master_ProgramGrid; other rows are answered honestly rather than dropped, so a menu
    * that does nothing can be told apart from one that is broken.
    */
+  const reportKind = running?.actionCode?.toUpperCase() === "REPORT"
+    ? ({ REPORT_DAYBOOK: "daybook", REPORT_LEDGER: "ledger", REPORT_JOURNAL: "journal-voucher" } as const)[running.actionMenu as "REPORT_DAYBOOK" | "REPORT_LEDGER" | "REPORT_JOURNAL"]
+    : undefined;
   const screen = running === null ? "home"
     : running.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master"
+    : reportKind ? "report"
     : "pending";
 
   /** One dropdown row: a leaf runs, a branch opens its submenu beside it. */
@@ -155,6 +160,7 @@ function MainMenu() {
             the Pranav Computers credit, so it is drawn as one background
             rather than reassembled from separate elements. */}
         {screen === "master" ? <MasterProgram key={running!.id} programName={running!.actionMenu!} menuShortName={running!.menuShortName ?? ""} title={running!.label} onClose={goHome} />
+          : screen === "report" && reportKind ? <LegacyReportWorkflow key={`${running!.id}-${selection?.companyId}-${selection?.yearId}`} kind={reportKind} />
           : screen === "pending" ? <NotBuiltYet node={running!} />
           : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
       </section>

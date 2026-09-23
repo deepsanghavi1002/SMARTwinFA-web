@@ -5,6 +5,7 @@ import { pdf } from "../../lib/export/pdf";
 import { download, safeFileName } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
 import { buildReportTable, reportSummary } from "../../lib/reporting/report-table";
+import { useStartupSelection } from "../startup/StartupGate";
 
 export type ReportKind = "daybook" | "ledger" | "outstanding" | "trial-balance" | "closing-stock" | "top-sales" | "cash-bank-voucher" | "journal-voucher" | "discount-voucher" | "lock-status" | "stock-movement" | "partywise-stock" | "daily-transaction" | "target-register" | "book-series" | "opening-balance" | "tax-setup" | "document-register" | "e-invoice-register" | "e-way-bill-register" | "configuration" | "sales-distribution";
 export type ReportRow = Record<string, string | number | null>;
@@ -13,14 +14,14 @@ export type ReportFilter = { from?: string; upto?: string; query?: string; varia
 
 const numeric = new Set(["Debit", "Credit", "Entry Amount", "Setoff", "Prior Setoff", "Pending", "Opening", "Closing", "Reporting Rate", "Closing Value", "Invoice Amount", "Quantity", "Rate", "Value", "Target Quantity", "Target Value", "Target %", "Share %", "Amount"]);
 const visualOptions: Partial<Record<ReportKind, { selection: string; choices: string[]; measure: string; measures: string[]; zoom?: boolean }>> = {
-  ledger: { selection: "Account", choices: ["All accounts", "Account-wise", "Book-wise"], measure: "View", measures: ["Ledger", "Narration", "Document"], zoom: true },
+  ledger: { selection: "Order", choices: ["Account-wise", "Book-wise"], measure: "View", measures: ["Transactions"] },
   outstanding: { selection: "Outstanding", choices: ["All", "Sale", "Purchase", "Expense"], measure: "Ageing", measures: ["All days", "30 days", "60 days", "90 days"], zoom: true },
   "trial-balance": { selection: "Group", choices: ["Account", "Schedule", "Area"], measure: "Format", measures: ["Summary", "Detailed", "With opening"], zoom: true },
   "top-sales": { selection: "Select", choices: ["Customer", "Supplier", "Item"], measure: "Order", measures: ["Value", "Quantity", "Invoices"], zoom: true },
   "partywise-stock": { selection: "Analysis", choices: ["Party", "Item", "Quantity", "Invoice count"], measure: "View", measures: ["Value", "Quantity", "Details"], zoom: true },
   "closing-stock": { selection: "Stock", choices: ["Closing stock", "Pieces", "Packs", "Value"], measure: "Period", measures: ["Current", "Month-end", "Financial year"], zoom: true },
   "sales-distribution": { selection: "Select", choices: ["Sale amount", "Sale quantity", "Purchase amount", "Purchase quantity", "Expense", "Receipt", "Payment"], measure: "Chart", measures: ["Pie", "Legend", "Table"], zoom: true },
-  daybook: { selection: "Book", choices: ["Bank", "Cash", "Discount", "All books"], measure: "Format", measures: ["Detailed", "Summary"], zoom: true },
+  daybook: { selection: "Book", choices: ["All books", "Bank", "Cash", "Discount"], measure: "Format", measures: ["Detailed"] },
 };
 const pieColors = ["#20acc3", "#f08855", "#f1cc4f", "#7b71c5", "#77b871", "#d36589"];
 
@@ -78,6 +79,7 @@ function downloadCsv(title: string, columns: string[], rows: ReportRow[]) {
 }
 
 export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
+  const context = useStartupSelection();
   const [payload, setPayload] = useState<ReportPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -85,8 +87,13 @@ export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
   useEffect(() => {
     const controller = new AbortController();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Retained prototype resets request status when its query changes.
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setPayload(null);
     const params = new URLSearchParams();
+    if (context) {
+      params.set("companyId", context.companyId);
+      params.set("yearKey", String(context.yearKey));
+      params.set("loginName", context.loginName);
+    }
     if (filter.from) params.set("from", filter.from);
     if (filter.upto) params.set("upto", filter.upto);
     if (filter.query) params.set("q", filter.query);
@@ -97,15 +104,16 @@ export function useLegacyReport(kind: ReportKind, filter: ReportFilter = {}) {
         if (!response.ok || !("rows" in body)) throw new Error("error" in body && body.error ? body.error : "Report could not be loaded");
         return body;
       })
-      .then(setPayload)
+      .then((body) => { if (!controller.signal.aborted) setPayload(body); })
       .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Report could not be loaded"); })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, reload, filter.from, filter.upto, filter.query, filter.variant]);
+  }, [kind, reload, filter.from, filter.upto, filter.query, filter.variant, context]);
   return { payload, loading, error, refresh: () => setReload((value) => value + 1) };
 }
 
 export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
+  const context = useStartupSelection();
   const definition = visualOptions[kind];
   const [query, setQuery] = useState("");
   const [fromDate, setFromDate] = useState("");
@@ -123,13 +131,15 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
   const rows = useMemo(() => presentRows(kind, payload?.rows ?? [], selection, measure), [kind, payload?.rows, selection, measure]);
   const reportTable = useMemo(() => payload ? buildReportTable({
     title: payload.report.title,
+    company: context?.companyName,
     subtitle: [
       `${selection} · ${measure}`,
+      `Year: ${context?.yearLabel ?? "Not selected"}; Search: ${applied.query || "All"}`,
       applied.from || applied.upto ? `Period: ${applied.from || "Beginning"} to ${applied.upto || "Today"}` : "All available dates",
     ],
     columns: payload.columns,
     rows,
-  }) : null, [payload, rows, selection, measure, applied.from, applied.upto]);
+  }) : null, [payload, rows, selection, measure, applied.from, applied.upto, applied.query, context]);
   const summary = useMemo(() => reportTable ? reportSummary(reportTable) : [], [reportTable]);
   const selected = rows.find((row, index) => rowKey(row, index) === selectedKey) ?? null;
   const distribution = useMemo(() => rows.slice(0, 6).map((row) => ({ label: String(row.Party ?? row.Account ?? row.Product ?? "—"), value: Number(row["Invoice Amount"] ?? row.Amount ?? row.Quantity ?? row.Value ?? 0) })).filter((item) => item.value > 0), [rows]);
@@ -149,7 +159,7 @@ export function LegacyReportWorkflow({ kind }: { kind: ReportKind }) {
     </header>
     {loading && <div className="legacy-empty-state">Loading report rows from the restored database…</div>}
     {error && <div className="legacy-empty-state" role="alert"><strong>Database connection failed</strong><span>{error}</span></div>}
-    {!loading && payload && <div className={`legacy-master-grid-wrap ${zoom ? "with-report-zoom" : ""}`}>
+    {!loading && !error && payload && <div className={`legacy-master-grid-wrap ${zoom ? "with-report-zoom" : ""}`}>
       <div className="legacy-grid-tools"><strong>{payload.report.title}</strong><input aria-label={`${payload.report.title} search`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter loaded real rows"/><button type="button" disabled={!selected || !definition?.zoom} onClick={() => setZoom(true)}>F4 Zoom</button><span className="legacy-scroll-hint">↔ Scroll sideways using the bar below</span></div>
       <p className="legacy-report-note">{payload.report.note} <b>View:</b> {selection} · {measure}</p>
       <section className="modern-report-summary" aria-label="Report summary">

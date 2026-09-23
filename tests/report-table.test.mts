@@ -19,6 +19,13 @@ test("report table preserves typed numbers and computes additive totals", () => 
   ]);
 });
 
+test("numeric-only identifiers retain leading zeroes and never enter totals", () => {
+  const table = buildReportTable({ title: "Ledger", columns: ["Key", "Code", "Year", "Quantity", "Debit"], rows: [{ Key: "123", Code: "0012", Year: "2026", Quantity: "1.125", Debit: "100.50" }] });
+  assert.deepEqual(table.rows[0], ["123", "0012", "2026", 1.125, 100.5]);
+  assert.deepEqual(table.totals, [null, null, null, 1.125, 100.5]);
+  assert.equal(table.columns[3].decimals, 3);
+});
+
 test("identifier-like numeric strings stay text when the column is mixed", () => {
   const table = buildReportTable({ title: "Register", columns: ["Document No"], rows: [{ "Document No": "0012" }, { "Document No": "A13" }] });
   assert.equal(table.columns[0].kind, "text");
