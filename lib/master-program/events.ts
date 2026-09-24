@@ -3,9 +3,10 @@ import type { SysValueContext } from "../sys-values";
 import { sysValueLookups } from "../sys-values-db";
 import { isNumeric, runFormula, toDecimal, toInt, toText, formatDesktopDate } from "./legacy";
 import { displayValue, Loader, loadContext, prepareProgram } from "./load";
-import { replaceSessionValues } from "./sql";
+import { replaceSessionValues, blankCoalesceAsText } from "./sql";
 import { SETUP_SCHEMA } from "./session";
 import type { GroupState } from "./types";
+import { isMainField } from "./main-field";
 
 /**
  * The parts of the grid events that need the database: what C1dg_UpdateGrid_BeforeEdit,
@@ -306,6 +307,7 @@ export async function helpGrid(loader: Loader, request: Omit<EventRequest, "row"
   const { session } = loader;
   let list = "";
   for (const row of prepared.updateBody) {
+    if (!isMainField(row)) continue;
     const help = toText(row.help_query);
     if (help !== "" && !list.includes(help)) list += `${help},`;
   }
@@ -322,7 +324,7 @@ export async function helpGrid(loader: Loader, request: Omit<EventRequest, "row"
   sql = replaceSessionValues(sql, session);
   if (list.toUpperCase() === "HELP_ADDONSUB") sql = sql.toUpperCase().replace("ORDER BY", "and addon.fiel_key=|sys.firstcombovalue| ORDER BY");
   sql = await replaceSysValues(sql, loadContext(session, prepared.programId, request.group), sysValueLookups(loader.client, session.companySchema));
-  sql = sql.split("|sys.help_stock_3|,").join("");
+  sql = blankCoalesceAsText(sql.split("|sys.help_stock_3|,").join(""));
   if (prepared.programId === 8 && [9, 89].includes(session.licence) && request.group.firstCombo.value === "81") sql = sql.toUpperCase().replace("ORDER BY PRODUCT.PROD_SHORT", "order by RIGHT(repeat(' ',10)||product.level_1,10),product.prod_short");
   if (prepared.programId === 8 && session.licence === 45) sql = sql.toUpperCase().replace("ORDER BY PRODUCT.PROD_SHORT", "order by product.prod_desc");
   const rows = await loader.readTable(sql);

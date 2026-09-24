@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import type { StartupSelection } from "../startup/StartupGate";
@@ -18,9 +18,11 @@ import type { PdfOptions } from "../../lib/export/pdf";
 import { download, safeFileName } from "../../lib/export/table";
 import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
-import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, gstStateMismatch, isNumberField as isNumberSetup, keyPress, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
+import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, fitCase, gstStateMismatch, isNumberField as isNumberSetup, keyPress, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
 import { HelpList } from "./HelpList";
+import { cleanMainValue, isMainField } from "../../lib/master-program/main-field";
 import { GridCombo } from "./GridCombo";
+import { ArrangeColumns } from "./ArrangeColumns";
 import { isMessageBoxOpen, messageBox } from "../ui/MessageBox";
 import type { MessageButton } from "../ui/MessageBox";
 import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
@@ -45,6 +47,8 @@ type DialogButton = MessageButton;
 type HelpState = Awaited<ReturnType<typeof fetchHelp>>;
 
 const ROW_HEIGHT = 21;
+/** Entries a help list shows at once, at the bottom of the grid, so it covers about half the screen. */
+const HELP_ROWS = 9;
 /** The row indicator column (C1FlexGrid's fixed column): a marker, not a second row number. */
 const INDICATOR_WIDTH = 16;
 const MIN_COLUMN_WIDTH = 30;
@@ -97,6 +101,12 @@ const cellOf = (record: UpdateRecord | undefined, name: string) => {
   const key = keyOf(record, name);
   return key ? record[key] : "";
 };
+
+/** A number field (not a list) opens its editor blank rather than showing a zero: 0, 0.00, 0.000 ... */
+function zeroAsBlank(setup: Parameters<typeof isNumberSetup>[0], hasList: boolean, value: string): string {
+  const text = value.trim();
+  return isNumberSetup(setup) && !hasList && /[0-9]/.test(text) && /^-?[0-9,]*\.?[0-9]*$/.test(text) && Number(text.replace(/,/g, "")) === 0 ? "" : value;
+}
 
 async function fetchHelp(selection: StartupSelection, programName: string, group: GroupState) {
   const body = await masterCall<{ help: { columns: { key: string; caption: string; width: number; align: string; format: string }[]; rows: Record<string, string>[]; frozen: number; total: string } | null }>(selection, programName, "help", {}, group);
@@ -330,6 +340,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [addCursor, setAddCursor] = useState(0);
   const [addEditing, setAddEditing] = useState(false);
   const [addText, setAddText] = useState("");
+  /** Something was typed into the New (Add) grid since it was last blanked. */
+  const [addChanged, setAddChanged] = useState(false);
   const [restore, setRestore] = useState<{ row: number } | null>(null);
 
   // Update grid (c1dg_UpdateGrid + c1_Update_Backup)
@@ -341,6 +353,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [deleted, setDeleted] = useState<Set<number>>(new Set());
   const [cellEditable, setCellEditable] = useState<Record<string, boolean>>({});
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+  /** The operator's own column order (keys), kept while the master is open; empty is the setup's order. */
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [dropMark, setDropMark] = useState<{ key: string; after: boolean } | null>(null);
+  const dragColumn = useRef<string | null>(null);
   const [cursor, setCursor] = useState<Cell>({ row: 0, key: "" });
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
@@ -349,6 +365,31 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [comboAt, setComboAt] = useState<{ left: number; top: number; width: number; rows: number } | null>(null);
   /** A letter typed on a combo cell: its list opens searching for it. */
   const [comboStart, setComboStart] = useState("");
+  /** The New (Add) grid's combo list: where it opens, and the letter that opened it. */
+  const [addComboAt, setAddComboAt] = useState<{ left: number; top: number; width: number; rows: number } | null>(null);
+  const [addComboStart, setAddComboStart] = useState("");
+  /**
+   * A move asked for right after a commit. It is worked out in the next render, from values that
+   * already hold what was just committed: worked out at once, a field that the new value opens
+   * (INTREST % after INTREST REQUIRED = Yes) still looked closed and was jumped over.
+   */
+  const addPendingMove = useRef<{ from: number; step: 1 | -1; skipClosed: boolean; edit: boolean } | null>(null);
+  /** The New (Add) grid row whose editor opens as soon as the cursor has arrived there. */
+  const addEditOnArrive = useRef<number | null>(null);
+  /** The Update grid's "go on to the next editable field" after a commit, worked out the same way. */
+  const updatePendingMove = useRef<{ row: number; key: string; step: 1 | -1 } | null>(null);
+  /**
+   * A move to a cell or row asked for while a field is being edited (a mouse click on another
+   * field, for one). The field being edited is checked first; when it is refused its message shows
+   * and the cursor stays. When it passes, the move waits for the next render, so the new field's
+   * defaults and rules read the value just committed.
+   */
+  const updateGo = useRef<{ row: number; key: string; edit: boolean } | null>(null);
+  const addGo = useRef<number | null>(null);
+  /** A render to run the pending moves in, for when nothing else changes. */
+  const [, nudgeRender] = useReducer((count: number) => count + 1, 0);
+  const setAddPendingMove = (move: NonNullable<typeof addPendingMove.current>) => { addPendingMove.current = move; nudgeRender(); };
+  const setUpdatePendingMove = (move: NonNullable<typeof updatePendingMove.current>) => { updatePendingMove.current = move; nudgeRender(); };
   const [dataAtBegin, setDataAtBegin] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState<{ value: string; addonId: string } | null>(null);
@@ -466,6 +507,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       const load = body.load;
       setGrids(load);
       setAddRows(load.addRows.map((row) => ({ ...row, recFound: false, compulsory: row.setup.value_compulsory })));
+      setAddChanged(false);
       setRecords(load.records.map((record) => ({ ...record })));
       setBackup(load.backup.map((record) => ({ ...record })));
       setOriginal({ records: load.records, backup: load.backup });
@@ -547,7 +589,17 @@ Refresh anyway?`
 
   // ---- BtnCancelAddUpdate_Click
   const cancelAll = async () => {
-    if ((await ask("Are You Sure Want To Cancel ? ", "Master Cancel", ["Yes", "No"])) !== "Yes") return;
+    // Asked only when something would be lost, and "No" is the default, so Enter keeps the work.
+    const addPending = addChanged || restore !== null || (addEditing && addText !== (addRows[addCursor]?.fieldInput ?? ""));
+    const updatePending = edited.size + deleted.size > 0 || (editing && editText !== cellOf(records[cursor.row], cursor.key));
+    if (addPending || updatePending) {
+      const where = [addPending ? "New (Add)" : "", updatePending ? "Update" : ""].filter(Boolean).join(" and ");
+      if ((await ask(`There are unsaved changes in the ${where} grid.
+Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") return;
+    }
+    setEditing(false);
+    setAddEditing(false);
+    setAddChanged(false);
     setGrids(null);
     setRecords([]);
     setBackup([]);
@@ -569,7 +621,41 @@ Refresh anyway?`
   // ======================================================================================
   // Update grid
 
-  const columns = useMemo(() => (grids?.columns ?? []).filter((column) => column.visible && !hiddenColumns.includes(column.key)), [grids, hiddenColumns]);
+  /** The frozen columns (NO_OF_COL_FROZEN, from the left of the setup's order): always first, never moved or hidden. */
+  const fixedKeys = useMemo(() => (grids?.columns ?? []).filter((column) => column.visible).slice(0, grids?.frozen ?? 0).map((column) => column.key), [grids]);
+  /** Every column the setup shows: the frozen ones, then the rest in the operator's order (a column the order does not name keeps its place after it). */
+  const orderedColumns = useMemo(() => {
+    const shown = (grids?.columns ?? []).filter((column) => column.visible);
+    const fixed = shown.filter((column) => fixedKeys.includes(column.key));
+    const rest = shown.filter((column) => !fixedKeys.includes(column.key));
+    if (columnOrder.length === 0) return [...fixed, ...rest];
+    const rank = (key: string) => { const at = columnOrder.indexOf(key); return at < 0 ? Number.MAX_SAFE_INTEGER : at; };
+    return [...fixed, ...rest.sort((a, b) => rank(a.key) - rank(b.key))];
+  }, [grids, columnOrder, fixedKeys]);
+  const columns = useMemo(() => orderedColumns.filter((column) => fixedKeys.includes(column.key) || !hiddenColumns.includes(column.key)), [orderedColumns, hiddenColumns, fixedKeys]);
+  /** Hides a column, unless it is frozen. */
+  const hideColumn = (key: string) => { if (key && !fixedKeys.includes(key)) setHiddenColumns((current) => (current.includes(key) ? current : [...current, key])); };
+  /** Puts a column at a position in the whole list (0-based), never among the frozen ones. */
+  const placeColumn = (key: string, position: number) => {
+    if (fixedKeys.includes(key)) return;
+    const order = orderedColumns.map((column) => column.key).filter((candidate) => candidate !== key);
+    order.splice(Math.min(order.length, Math.max(fixedKeys.length, position)), 0, key);
+    setColumnOrder(order);
+  };
+  /** Moves a column next to another one: before it, or after it. */
+  const moveColumn = (key: string, target: string, after: boolean) => {
+    if (key === target || fixedKeys.includes(key) || fixedKeys.includes(target)) return;
+    const order = orderedColumns.map((column) => column.key).filter((candidate) => candidate !== key);
+    const at = order.indexOf(target);
+    if (at < 0) return;
+    placeColumn(key, after ? at + 1 : at);
+  };
+  /** Moves a column one place left or right among the columns on screen. */
+  const shiftColumn = (key: string, step: -1 | 1) => {
+    const index = columns.findIndex((column) => column.key === key);
+    const target = columns[index + step];
+    if (index >= 0 && target) moveColumn(key, target.key, step === 1);
+  };
   const columnByKey = useMemo(() => new Map((grids?.columns ?? []).map((column) => [column.key, column])), [grids]);
   const columnByField = useCallback((name: string) => (grids?.columns ?? []).find((column) => column.key.toLowerCase() === lower(name)), [grids]);
   const liveRows = useMemo(() => records.map((_, index) => index).filter((index) => !deleted.has(index)), [records, deleted]);
@@ -657,6 +743,21 @@ Refresh anyway?`
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
   };
+  /**
+   * A column's filter list opens under its heading from the heading's left edge; where the
+   * grid has no room for it on the right (the last columns), it moves left until it shows whole.
+   */
+  const placeFilter = (element: HTMLDivElement | null) => {
+    if (!element) return;
+    element.style.left = "0px";
+    const box = element.getBoundingClientRect();
+    const area = scroller.current;
+    const areaBox = area?.getBoundingClientRect();
+    const right = Math.min(window.innerWidth, areaBox && area ? areaBox.left + area.clientWidth : window.innerWidth) - 4;
+    const left = Math.max(0, areaBox?.left ?? 0) + 4;
+    const shift = Math.min(Math.max(0, box.right - right), Math.max(0, box.left - left));
+    element.style.left = `${-shift}px`;
+  };
   // An open filter list closes when the click lands anywhere else.
   useEffect(() => {
     if (openFilter === null) return;
@@ -677,7 +778,7 @@ Refresh anyway?`
   const addHelp = useMemo(() => {
     if (tab !== "add" || !help || help.columns.length === 0) return null;
     const row = addRows[addCursor];
-    if (!row || toText(row.setup.help_query) === "") return null;
+    if (!row || !isMainField(row.setup)) return null;
     const f1 = toText(row.setup.duplichk_fldname1).toLowerCase();
     const f2 = toText(row.setup.duplichk_fldname2).toLowerCase();
     const typedText = (addEditing ? addText : row.fieldInput).trim().toUpperCase();
@@ -700,7 +801,7 @@ Refresh anyway?`
   const followHelp = (key: string, text: string) => {
     if (!help || help.columns.length === 0) return;
     const column = columnByKey.get(key);
-    if (!column || toText(column.setup.help_query) === "") return;
+    if (!column || !isMainField(column.setup)) return;
     const typedText = text.trim().toUpperCase();
     const field = helpSearchKey(column.setup);
     const found = typedText === "" ? -1 : help.rows.findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase().startsWith(typedText));
@@ -730,10 +831,33 @@ Refresh anyway?`
     return () => observe.disconnect();
   }, [grids, tab]);
 
+  /**
+   * A column open for editing that its row rules close on this row: STATUS_AGAINST_FLD with
+   * ENABLE_FOR / DISABLE_FOR, read from the record the way BeforeRowColChange reads it, so the
+   * cell can be shown closed before the cursor reaches it. A record_exist rule is known only
+   * once the record has been checked.
+   */
+  const closedByRow = (row: number, column: UpdateColumn): boolean => {
+    const status = toText(column.setup.status_against_fld);
+    if (!column.editable || status === "" || toText(first?.value) === "") return false;
+    const record = records[row];
+    if (!record) return false;
+    if (status.toLowerCase() === "record_exist") {
+      const exists = cellOf(record, "record_exist");
+      if (exists === "") return false;
+      if (column.setup.enable_for === "Y") return exists !== "Y";
+      if (column.setup.disable_for === "Y") return exists === "Y";
+      return false;
+    }
+    const setting = toText(column.setup.enable_for) !== "" ? column.setup.enable_for.trim() : toText(column.setup.disable_for) !== "" ? column.setup.disable_for.trim() : "";
+    return setting !== "" && applyPermission(getPermission(permissionSource(record), "E", status, setting, false, false)).editable === false;
+  };
+  /** A column whose cells open or close row by row (see closedByRow). */
+  const rowRuled = (column: UpdateColumn) => column.editable && toText(column.setup.status_against_fld) !== "" && (toText(column.setup.enable_for) !== "" || toText(column.setup.disable_for) !== "");
   const isEditable = (row: number, column: UpdateColumn | undefined) => {
     if (!column) return false;
     const override = cellEditable[`${row}:${column.key}`];
-    return override ?? column.editable;
+    return override ?? (column.editable && !closedByRow(row, column));
   };
 
   const permissionSource = (record: UpdateRecord) => ({
@@ -829,7 +953,7 @@ Refresh anyway?`
     if (!column || !records[at.row] || !isEditable(at.row, column)) return;
     if (!(await beforeEdit(at.row, column))) return;
     const value = cellOf(records[at.row], column.key);
-    setEditText(initial !== undefined ? initial : value);
+    setEditText(initial !== undefined ? initial : zeroAsBlank(column.setup, Boolean(column.options?.length), value));
     if (initial !== undefined) followHelp(column.key, initial);
     if (column.options) {
       const box = document.querySelector(`.mp-grid [data-cell="${at.row}:${CSS.escape(at.key)}"]`)?.getBoundingClientRect();
@@ -866,7 +990,7 @@ Refresh anyway?`
   const openCombo = async (row: number, key: string) => {
     if (editing && cursor.row === row && cursor.key === key) return;
     setComboStart("");
-    if (await moveTo(row, key)) await startEdit(undefined, { row, key });
+    if (await moveTo(row, key, true)) await startEdit(undefined, { row, key });
   };
 
   /**
@@ -890,8 +1014,9 @@ Refresh anyway?`
     if (!column || !grids || !meta) { setEditing(false); return true; }
     const record = records[row];
     // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
-    if (entered === cellOf(record, column.key)) { setEditing(false); return true; }
-    let text = entered;
+    if (entered === cellOf(record, column.key) || (entered === "" && zeroAsBlank(column.setup, Boolean(column.options?.length), cellOf(record, column.key)) === "")) { setEditing(false); return true; }
+    // The main field keeps no trailing blanks or unseen characters, so a duplicate cannot hide behind them.
+    let text = fitCase(column.setup, isMainField(column.setup) ? cleanMainValue(entered) : entered, programId);
     if (column.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, dataAtBegin);
       if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
@@ -938,16 +1063,19 @@ Refresh anyway?`
     text = roundToPlaces(styleCase(column.setup, text, licence), column.setup);
     let next: UpdateRecord = { ...record, [column.key]: text };
     setEditing(false);
+    // The server queries read |sys.thiscombolistid| from the backup: it must hold the id just picked,
+    // not the one the state still has (blank on a first pick, so the query found nothing).
+    const freshBackup = Object.fromEntries(Object.entries(nextBackup ?? {}).map(([key, value]) => [key.toLowerCase(), value]));
 
     if (column.setup.serverQueries.includes("onchange_repl_value_query") && text !== dataAtBegin) {
-      const values = await call<{ values: Record<string, string> }>("onchange", { masterGrid: false, row: { ...eventRow(row, column.setup.field_name, text), values: Object.fromEntries(Object.entries(next).map(([key, value]) => [key.toLowerCase(), value])) } });
+      const values = await call<{ values: Record<string, string> }>("onchange", { masterGrid: false, row: { ...eventRow(row, column.setup.field_name, text), backup: freshBackup, values: Object.fromEntries(Object.entries(next).map(([key, value]) => [key.toLowerCase(), value])) } });
       for (const [name, value] of Object.entries(values.values)) {
         const key = keyOf(next, name);
         if (key) next = { ...next, [key]: value };
       }
     }
     if (toText(column.setup.formula_for_table) === "uom_formula") {
-      const result = await call<{ value: string | null }>("uom-formula", { masterGrid: false, coreEntry: grids.coreEntry, row: { ...eventRow(row, column.setup.field_name, text), values: Object.fromEntries(Object.entries(next).map(([key, value]) => [key.toLowerCase(), value])) } });
+      const result = await call<{ value: string | null }>("uom-formula", { masterGrid: false, coreEntry: grids.coreEntry, row: { ...eventRow(row, column.setup.field_name, text), backup: freshBackup, values: Object.fromEntries(Object.entries(next).map(([key, value]) => [key.toLowerCase(), value])) } });
       const index = grids.columns.indexOf(column);
       if (result.value !== null && grids.columns[index + 1]) next = { ...next, [grids.columns[index + 1].key]: result.value };
     }
@@ -996,9 +1124,14 @@ Refresh anyway?`
   };
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
-  const moveTo = async (row: number, key: string): Promise<boolean> => {
+  /** `editAfter`: open the editor once the cursor gets there (used when a commit makes the move wait). */
+  const moveTo = async (row: number, key: string, editAfter = false): Promise<boolean> => {
     if (!grids || !meta || busy) return false;
-    if (editing && !(await commitEdit())) return false;
+    if (editing) {
+      if (!(await commitEdit())) return false;
+      if (row !== cursor.row || key !== cursor.key) { updateGo.current = { row, key, edit: editAfter }; nudgeRender(); }
+      return false;
+    }
     const oldRow = cursor.row;
     const oldColumn = columnByKey.get(cursor.key);
     const newColumn = columnByKey.get(key);
@@ -1074,11 +1207,12 @@ Refresh anyway?`
       }
       if (programId === 34) setCellEditable((current) => ({ ...current, [permissionKey]: true }));
       setMessage([tooltipText(column.setup.field_tooltips), column.statusDisplay].filter(Boolean).join("   ·   "));
-      // NewRowColDisplay: position the help grid on this value.
-      if (help && toText(column.setup.duplichk_fldname1) !== "" && cellOf(record, column.key) !== "") {
-        const f1 = column.setup.duplichk_fldname1.toLowerCase();
-        const found = help.rows.findIndex((helpRecord) => (cellOf(helpRecord, f1) ?? "").toUpperCase() === cellOf(record, column.key).toUpperCase());
-        setHelpRow(found >= 0 ? found : null);
+      // NewRowColDisplay: the main field (DISPLAY_HELP with a HELP_QUERY) always shows its help
+      // list, on the entry holding this value, else from the top.
+      if (help && isMainField(column.setup)) {
+        const field = helpSearchKey(column.setup);
+        const value = cellOf(record, column.key).trim().toUpperCase();
+        setHelpRow(value === "" ? -1 : help.rows.findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase() === value));
       }
     }
     keepGridFocus();
@@ -1233,8 +1367,8 @@ Refresh anyway?`
     if (!(await commitEdit(text))) return;
     gridFocus.current?.focus({ preventScroll: true });
     if (step === 0) return;
-    const next = nextEditable(cursor.row, cursor.key, step);
-    if (next && (await moveTo(next.row, next.key))) { setComboStart(""); await startEdit(undefined, next); }
+    setComboStart("");
+    setUpdatePendingMove({ row: cursor.row, key: cursor.key, step });
   };
 
   // ---- MnuCopy_Click / MnuPaste_Click
@@ -1475,10 +1609,24 @@ Refresh anyway?`
     if (!grids || editing || isMessageBoxOpen()) return;
     const column = columnByKey.get(cursor.key);
     const ctrl = event.ctrlKey || event.metaKey;
+    // Ctrl+Shift+Left / Right: the current column moves one place; the cursor goes with it.
+    if (ctrl && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      shiftColumn(cursor.key, event.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
     switch (event.key) {
       case "ArrowDown": event.preventDefault(); findMode.current = true; setTyped(""); if (event.shiftKey) setSelectionEnd(neighbourRow(selectionEnd ?? cursor.row, 1)); else await moveTo(neighbourRow(cursor.row, 1), cursor.key); return;
       case "ArrowUp": event.preventDefault(); findMode.current = true; setTyped(""); if (event.shiftKey) setSelectionEnd(neighbourRow(selectionEnd ?? cursor.row, -1)); else await moveTo(neighbourRow(cursor.row, -1), cursor.key); return;
-      case "ArrowRight": case "Tab": event.preventDefault(); setTyped(""); await moveTo(cursor.row, neighbourColumn(cursor.key, event.shiftKey ? -1 : 1)); return;
+      case "ArrowRight": event.preventDefault(); setTyped(""); await moveTo(cursor.row, neighbourColumn(cursor.key, 1)); return;
+      case "Tab": {
+        // Tab, like Enter, passes over read-only columns; the arrow keys still stop on them to read.
+        event.preventDefault();
+        setTyped("");
+        const next = nextEditable(cursor.row, cursor.key, event.shiftKey ? -1 : 1);
+        await moveTo(next?.row ?? cursor.row, next?.key ?? neighbourColumn(cursor.key, event.shiftKey ? -1 : 1));
+        return;
+      }
       case "ArrowLeft": event.preventDefault(); setTyped(""); await moveTo(cursor.row, neighbourColumn(cursor.key, -1)); return;
       case "PageDown": event.preventDefault(); findMode.current = true; setTyped(""); await moveTo(neighbourRow(cursor.row, Math.floor(viewport / ROW_HEIGHT)), cursor.key); return;
       case "PageUp": event.preventDefault(); findMode.current = true; setTyped(""); await moveTo(neighbourRow(cursor.row, -Math.floor(viewport / ROW_HEIGHT)), cursor.key); return;
@@ -1534,10 +1682,11 @@ Refresh anyway?`
         return;
       }
       if (column && isEditable(cursor.row, column)) {
-        const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: "", yearStart: yearStartText }, event.key);
+        const key = fitCase(column.setup, event.key, programId);
+        const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: "", yearStart: yearStartText }, key);
         if (outcome.message) { await ask(outcome.message, "Typed Character not allowed"); return; }
         if (outcome.replaceWith !== undefined) { setCell(cursor.row, column.key, outcome.replaceWith); markEdited(cursor.row); return; }
-        if (!outcome.refused) await startEdit(event.key);
+        if (!outcome.refused) await startEdit(key);
         return;
       }
       // C1dg_UpdateGrid_KeyPress: type to find in the current column.
@@ -1566,6 +1715,13 @@ Refresh anyway?`
     const to = input.selectionEnd ?? from;
     return input.value.slice(0, from) + input.value.slice(to);
   };
+  /** Types `text` where the caret is, for a key taken in another case than the one pressed. */
+  const typeAtCaret = (input: HTMLInputElement, text: string, apply: (value: string) => void) => {
+    const from = input.selectionStart ?? input.value.length;
+    const to = input.selectionEnd ?? from;
+    apply(input.value.slice(0, from) + text + input.value.slice(to));
+    requestAnimationFrame(() => input.setSelectionRange(from + text.length, from + text.length));
+  };
 
   /** The open editor's own keys (KeyPressEdit). */
   const editorKeys = async (event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -1579,8 +1735,7 @@ Refresh anyway?`
       if (await commitEdit()) {
         gridFocus.current?.focus();
         // Editing carries on: the next editable field opens by itself, wrapping to the next row.
-        const next = nextEditable(cursor.row, cursor.key, event.shiftKey ? -1 : 1);
-        if (next && (await moveTo(next.row, next.key))) await startEdit(undefined, next);
+        setUpdatePendingMove({ row: cursor.row, key: cursor.key, step: event.shiftKey ? -1 : 1 });
       }
       return;
     }
@@ -1593,8 +1748,13 @@ Refresh anyway?`
       return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && event.currentTarget instanceof HTMLInputElement) {
-      const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: editText, remainingText: remainingAfterKey(event.currentTarget), yearStart: yearStartText }, event.key);
+      const key = fitCase(column.setup, event.key, programId);
+      const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: editText, remainingText: remainingAfterKey(event.currentTarget), yearStart: yearStartText }, key);
       if (outcome.refused) event.preventDefault();
+      else if (key !== event.key) {
+        event.preventDefault();
+        typeAtCaret(event.currentTarget, key, (after) => { if (!typingAllowed(column.setup, editText, after)) return; setEditText(after); followHelp(column.key, after); });
+      }
       if (outcome.message) await ask(outcome.message, "Typed Character not allowed");
       if (outcome.replaceWith !== undefined) setEditText(outcome.replaceWith);
     }
@@ -1604,6 +1764,24 @@ Refresh anyway?`
   // Add grid
 
   const addValue = (name: string) => addRows.find((row) => row.fieldName.toLowerCase() === lower(name))?.fieldInput;
+  /**
+   * An Add-grid field its row rule closes: STATUS_AGAINST_FLD with ENABLE_FOR, else DISABLE_FOR,
+   * read from the values entered so far exactly as the Update grid reads its record (closedByRow).
+   * It is worked out afresh each time, so it follows the field it depends on; it used to be set
+   * once when the cursor arrived, from values that did not yet hold the last choice, and it stuck.
+   */
+  const addClosedByRule = (row: AddState): boolean => {
+    const status = toText(row.setup.status_against_fld);
+    if (status === "") return false;
+    const enable = toText(row.setup.enable_for);
+    const setting = enable !== "" ? enable : toText(row.setup.disable_for);
+    if (setting === "") return false;
+    if (enable !== "" && row.recFound) return true;
+    const source = { firstCombo: { text: first?.text ?? "", value: first?.value ?? "", bound: def?.firstCombo?.bound ?? true }, fieldValue: (name: string) => addValue(name) };
+    return applyPermission(getPermission(source, "E", status, setting, false, false)).editable === false;
+  };
+  /** An Add-grid field that can be typed in now: open in the setup and not closed by its row rule. */
+  const addOpen = (row: AddState | undefined): boolean => Boolean(row && row.editable && !addClosedByRule(row));
   const addEventRow = (index: number, text: string) => ({
     values: Object.fromEntries(addRows.map((row, at) => [row.fieldName.toLowerCase(), at === index ? text : row.fieldInput])),
     backup: Object.fromEntries(addRows.map((row) => [row.fieldName.toLowerCase(), row.fieldComboValue])),
@@ -1613,9 +1791,15 @@ Refresh anyway?`
   const setAdd = (index: number, patch: Partial<AddState>) => setAddRows((current) => current.map((row, at) => (at === index ? { ...row, ...patch } : row)));
 
   /** C1dg_MasterGrid_BeforeRowColChange for a move to row `index`. */
-  const addMoveTo = async (index: number) => {
+  /** `committed`: the caller has just committed the open edit, so it is not committed again from the text this render holds. */
+  const addMoveTo = async (index: number, committed = false) => {
     if (!grids || !meta || index < 0 || index >= addRows.length) return;
-    if (addEditing && !(await addCommit())) return;
+    if (addEditing && !committed) {
+      if (!(await addCommit())) return;
+      if (index !== addCursor) { addGo.current = index; nudgeRender(); }
+      return;
+    }
+    setAddComboStart("");
     const old = addRows[addCursor];
     const row = addRows[index];
     setRowStatus(`${index + 1}/${addRows.length}`);
@@ -1665,37 +1849,53 @@ Refresh anyway?`
       const label = row.headLabel.replace(/^\* /, "");
       setAdd(index, { compulsory, headLabel: compulsory ? `* ${label}` : label });
     }
-    if (toText(row.setup.status_against_fld) !== "") {
-      const source = { firstCombo: { text: first?.text ?? "", value: first?.value ?? "", bound: def?.firstCombo?.bound ?? true }, fieldValue: (name: string) => addValue(name) };
-      if (toText(row.setup.enable_for) !== "") {
-        const effect = applyPermission(getPermission(source, "E", row.setup.status_against_fld, row.setup.enable_for.trim(), true, false));
-        if (effect.editable !== undefined) setAdd(index, { editable: row.recFound ? false : effect.editable });
-      } else if (toText(row.setup.disable_for) !== "") {
-        const effect = applyPermission(getPermission(source, "E", row.setup.status_against_fld, row.setup.disable_for.trim(), true, true));
-        if (effect.editable !== undefined) setAdd(index, { editable: effect.editable });
-      }
-    }
+    // STATUS_AGAINST_FLD is no longer set here: addOpen works it out from the current values.
     setAddCursor(index);
+    return index;
   };
 
   const addStartEdit = async (initial?: string) => {
     const row = addRows[addCursor];
-    if (!row || !row.editable || !row.visible || !grids) return;
+    if (!addOpen(row) || !row.visible || !grids) return;
     if (row.setup.force_inputtype === "P") setAdd(addCursor, { fieldInput: row.fieldComboValue });
     if (toText(row.setup.formula_for_table) === "uom_entry" || toText(row.setup.defa_formula) !== "") {
       const value = (await call<{ value: string | null }>("add-before-edit", { masterGrid: true, coreEntry: grids.coreEntry, row: addEventRow(addCursor, row.fieldInput) })).value;
-      if (value !== null) { setAdd(addCursor, { fieldInput: value }); setAddText(initial ?? value); setAddEditing(true); return; }
+      if (value !== null) { setAdd(addCursor, { fieldInput: value }); setAddText(initial ?? zeroAsBlank(row.setup, Boolean(row.options?.length), value)); setAddEditing(true); return; }
     }
-    setAddText(initial !== undefined ? initial : row.fieldInput);
+    setAddText(initial !== undefined ? initial : zeroAsBlank(row.setup, Boolean(row.options?.length), row.fieldInput));
+    if (row.options) {
+      // The same list as the Update grid's combo: under the cell (above it when there is no room below).
+      const box = document.querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.getBoundingClientRect();
+      const rows = Math.min(10, Math.max(2, row.options.length));
+      const height = rows * 22 + 62;
+      if (box) {
+        const below = box.bottom + height < window.innerHeight - 4;
+        const width = Math.min(window.innerWidth - 8, Math.max(box.width, 200, longestText(row.options.map((option) => option.text)) + 64));
+        const left = Math.max(4, Math.min(box.left, window.innerWidth - width - 4));
+        setAddComboAt({ left, top: below ? box.bottom + 2 : Math.max(4, box.top - height - 2), width, rows });
+      } else setAddComboAt(null);
+    }
     setAddEditing(true);
+  };
+  /** A choice taken from the New (Add) grid's combo list; step 1 / -1 goes on to the next / previous open field. */
+  const finishAddCombo = async (text: string, step: 0 | 1 | -1) => {
+    setAddComboStart("");
+    setAddText(text);
+    if (!(await addCommit(text))) return;
+    addFocus.current?.focus({ preventScroll: true });
+    if (step !== 0) setAddPendingMove({ from: addCursor, step, skipClosed: true, edit: true });
   };
 
   /** C1dg_MasterGrid_ValidateEdit + AfterEdit. */
-  const addCommit = async (): Promise<boolean> => {
+  const addCommit = async (typedText?: string): Promise<boolean> => {
     const index = addCursor;
     const row = addRows[index];
     if (!row || !grids || !meta) { setAddEditing(false); return true; }
-    let text = addText;
+    /** The text to commit: a combo's choice arrives directly, before the render that would hold it. */
+    const entered = typedText ?? addText;
+    // The main field keeps no trailing blanks or unseen characters, so a duplicate cannot hide behind them.
+    let text = fitCase(row.setup, isMainField(row.setup) ? cleanMainValue(entered) : entered, programId);
+    if (text === "" && zeroAsBlank(row.setup, Boolean(row.options?.length), row.fieldInput) === "") text = row.fieldInput;
     if (row.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, row.fieldInput);
       if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
@@ -1754,28 +1954,32 @@ Refresh anyway?`
     }
     let nextRows = addRows.map((candidate, at) => (at === index ? { ...candidate, fieldInput: text, fieldComboValue } : candidate));
     setAddEditing(false);
+    // The server queries read |sys.thiscombolistid| from the combo ids: they must include the id just
+    // picked, which the state does not hold yet (so a first pick found nothing, and ENT_FRAME stayed blank).
+    const freshBackup = Object.fromEntries(nextRows.map((candidate) => [candidate.fieldName.toLowerCase(), candidate.fieldComboValue]));
     if (row.setup.serverQueries.includes("onchange_repl_value_query")) {
-      const values = await call<{ values: Record<string, string> }>("onchange", { masterGrid: true, row: { ...addEventRow(index, text), values: Object.fromEntries(nextRows.map((candidate) => [candidate.fieldName.toLowerCase(), candidate.fieldInput])) } });
+      const values = await call<{ values: Record<string, string> }>("onchange", { masterGrid: true, row: { ...addEventRow(index, text), backup: freshBackup, values: Object.fromEntries(nextRows.map((candidate) => [candidate.fieldName.toLowerCase(), candidate.fieldInput])) } });
       nextRows = nextRows.map((candidate) => (candidate.fieldName.toLowerCase() in values.values ? { ...candidate, fieldInput: values.values[candidate.fieldName.toLowerCase()] } : candidate));
     }
     if (toText(row.setup.formula_for_table) === "uom_formula" && nextRows[index + 1]) {
-      const value = (await call<{ value: string | null }>("uom-formula", { masterGrid: true, coreEntry: grids.coreEntry, row: { ...addEventRow(index, text), values: Object.fromEntries(nextRows.map((candidate) => [candidate.fieldName.toLowerCase(), candidate.fieldInput])) } })).value;
+      const value = (await call<{ value: string | null }>("uom-formula", { masterGrid: true, coreEntry: grids.coreEntry, row: { ...addEventRow(index, text), backup: freshBackup, values: Object.fromEntries(nextRows.map((candidate) => [candidate.fieldName.toLowerCase(), candidate.fieldInput])) } })).value;
       if (value !== null) nextRows = nextRows.map((candidate, at) => (at === index + 1 ? { ...candidate, fieldInput: value } : candidate));
     }
+    if (text !== row.fieldInput) setAddChanged(true);
     setAddRows(nextRows);
     if (row.setup.field_add_order === grids.lastAddRow) document.getElementById("mp-save")?.focus();
     return true;
   };
 
   // ---- BlankOutGrid("IF") / Btn_Master_AddCancel_Click
-  const blankAdd = () => setAddRows((current) => current.map((row) => {
+  const blankAdd = () => { setAddChanged(false); setAddRows((current) => current.map((row) => {
     if (!row.setup.add_grid_visible) return row;
     let next = { ...row };
     if (!["Q", "X", "L"].includes(row.comboKind)) next.fieldInput = "";
     if ((row.comboKind === "Q" || row.comboKind === "X") && row.defaultText !== "" && (next.fieldInput === "" || next.fieldComboValue === "")) next = { ...next, fieldInput: row.defaultText, fieldComboValue: row.defaultValue };
     if (row.comboKind === "L" && next.fieldInput === "") next.fieldInput = row.setup.combo_list.slice(0, Math.max(0, row.setup.combo_list.indexOf("|")));
     return next;
-  }));
+  })); };
   const cancelAdd = async (silent = false) => {
     if (!silent && !restore && (await ask("Are You Sure Want To Cancel ? ", "Master Add Cancel", ["Yes", "No"])) !== "Yes") return;
     setRestore(null);
@@ -1798,7 +2002,7 @@ Refresh anyway?`
       setBusy("Saving");
       const result = await call<{ ok: boolean; message: string; needs?: string; warnings: string[]; cloud?: CloudPush }>("add-save", {
         restoreMode: restore !== null,
-        rows: addRows.map((row) => ({ fieldName: row.fieldName, fieldInput: row.fieldInput, fieldComboValue: row.fieldComboValue, visible: row.visible, editable: row.editable })),
+        rows: addRows.map((row) => ({ fieldName: row.fieldName, fieldInput: row.fieldInput, fieldComboValue: row.fieldComboValue, visible: row.visible, editable: addOpen(row) })),
         passwords: currentPasswords,
       }).catch((error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error), needs: undefined, warnings: [], cloud: undefined }));
       setBusy("");
@@ -1823,6 +2027,48 @@ Refresh anyway?`
     }
   };
 
+  // The pending moves above, run once the committed value is in the state they read.
+  useEffect(() => {
+    if (!addPendingMove.current || addEditing) return;
+    const { from, step, skipClosed, edit } = addPendingMove.current;
+    addPendingMove.current = null;
+    let target = from;
+    for (let at = from + step; at >= 0 && at < addRows.length; at += step) {
+      if (addRows[at].visible && (!skipClosed || addOpen(addRows[at]))) { target = at; break; }
+    }
+    // Past the last open field, the Save button is next.
+    if (target === from) { if (skipClosed && step === 1) document.getElementById("mp-save")?.focus(); return; }
+    void addMoveTo(target).then((landed) => { if (edit && landed !== undefined) { addEditOnArrive.current = landed; nudgeRender(); } });
+  });
+  useEffect(() => {
+    if (addEditOnArrive.current === null || addEditing || addCursor !== addEditOnArrive.current) return;
+    addEditOnArrive.current = null;
+    void Promise.resolve().then(() => addStartEdit());
+  });
+  useEffect(() => {
+    if (!updatePendingMove.current || editing) return;
+    const { row, key, step } = updatePendingMove.current;
+    updatePendingMove.current = null;
+    const next = nextEditable(row, key, step);
+    if (next) void moveTo(next.row, next.key).then((moved) => { if (moved) void startEdit(undefined, next); });
+  });
+  useEffect(() => {
+    if (updateGo.current === null || editing) return;
+    const { row, key, edit } = updateGo.current;
+    updateGo.current = null;
+    void moveTo(row, key).then((moved) => { if (moved && edit) void startEdit(undefined, { row, key }); });
+  });
+  useEffect(() => {
+    if (addGo.current === null || addEditing) return;
+    const to = addGo.current;
+    addGo.current = null;
+    void addMoveTo(to);
+  });
+  // The New (Add) grid's current row is always shown whole: scrolled into view as the cursor reaches it.
+  useEffect(() => {
+    document.querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.closest("tr")?.scrollIntoView({ block: "nearest" });
+  }, [addCursor]);
+
   const addKeys = async (event: ReactKeyboardEvent) => {
     if (isMessageBoxOpen() || !grids) return;
     const row = addRows[addCursor];
@@ -1830,6 +2076,8 @@ Refresh anyway?`
       for (let at = from + step; at >= 0 && at < addRows.length; at += step) if (addRows[at].visible) return at;
       return from;
     };
+    // The combo list's search box handles its own keys (typing, arrows, Enter, Tab, Esc).
+    if (addEditing && (event.target as Element).closest(".mp-grid-combo-field")) return;
     if (addEditing) {
       // Esc undoes what was typed: the row keeps the value it had before editing began.
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setAddEditing(false); addFocus.current?.focus({ preventScroll: true }); return; }
@@ -1837,28 +2085,44 @@ Refresh anyway?`
       if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (event.target instanceof HTMLSelectElement && (event.key === "ArrowDown" || event.key === "ArrowUp")) return;
         event.preventDefault();
-        if (await addCommit()) { addFocus.current?.focus(); await addMoveTo(nextVisible(addCursor, event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey) ? -1 : 1)); }
+        const step = event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey) ? -1 : 1;
+        // Enter and Tab go on to the next open field and start editing it; the arrow keys only move.
+        const onward = event.key === "Enter" || event.key === "Tab";
+        if (await addCommit()) { addFocus.current?.focus(); setAddPendingMove({ from: addCursor, step, skipClosed: onward, edit: onward }); }
         return;
       }
       if (event.key.length === 1 && !event.ctrlKey && row && event.target instanceof HTMLInputElement) {
-        const outcome = keyPress({ setup: row.setup, masterGrid: true, programId, licence, cellValue: row.fieldInput, editorText: addText, remainingText: remainingAfterKey(event.target), yearStart: yearStartText }, event.key);
+        const key = fitCase(row.setup, event.key, programId);
+        const outcome = keyPress({ setup: row.setup, masterGrid: true, programId, licence, cellValue: row.fieldInput, editorText: addText, remainingText: remainingAfterKey(event.target), yearStart: yearStartText }, key);
         if (outcome.refused) event.preventDefault();
+        else if (key !== event.key) {
+          event.preventDefault();
+          typeAtCaret(event.target, key, (after) => { if (typingAllowed(row.setup, addText, after)) setAddText(after); });
+        }
         if (outcome.message) await ask(outcome.message, "Character Not Allowed");
         if (outcome.replaceWith !== undefined) setAddText(outcome.replaceWith);
       }
       return;
     }
     switch (event.key) {
-      case "ArrowDown": case "Enter": event.preventDefault(); if (event.key === "Enter" && row?.editable) await addStartEdit(); else await addMoveTo(nextVisible(addCursor, 1)); return;
+      case "ArrowDown": event.preventDefault(); await addMoveTo(nextVisible(addCursor, 1)); return;
+      case "Enter": event.preventDefault(); if (addOpen(row)) await addStartEdit(); else setAddPendingMove({ from: addCursor, step: 1, skipClosed: true, edit: true }); return;
       case "ArrowUp": event.preventDefault(); await addMoveTo(nextVisible(addCursor, -1)); return;
       case "F2": event.preventDefault(); await addStartEdit(); return;
     }
-    if (event.key.length === 1 && !event.ctrlKey && row?.editable) {
+    if (event.key.length === 1 && !event.ctrlKey && addOpen(row) && row?.options) {
       event.preventDefault();
-      const outcome = keyPress({ setup: row.setup, masterGrid: true, programId, licence, cellValue: row.fieldInput, editorText: "", yearStart: yearStartText }, event.key);
+      setAddComboStart(event.key);
+      await addStartEdit();
+      return;
+    }
+    if (event.key.length === 1 && !event.ctrlKey && addOpen(row)) {
+      event.preventDefault();
+      const key = fitCase(row.setup, event.key, programId);
+      const outcome = keyPress({ setup: row.setup, masterGrid: true, programId, licence, cellValue: row.fieldInput, editorText: "", yearStart: yearStartText }, key);
       if (outcome.message) { await ask(outcome.message, "Character Not Allowed"); return; }
-      if (outcome.replaceWith !== undefined) { setAdd(addCursor, { fieldInput: outcome.replaceWith }); return; }
-      if (!outcome.refused) await addStartEdit(event.key);
+      if (outcome.replaceWith !== undefined) { setAdd(addCursor, { fieldInput: outcome.replaceWith }); setAddChanged(true); return; }
+      if (!outcome.refused) await addStartEdit(key);
     }
   };
 
@@ -1916,6 +2180,7 @@ Refresh anyway?`
         dragHandle={helpDrag.handle}
         onResetPosition={helpDrag.reset}
         formatCell={formatCell}
+        shown={HELP_ROWS}
       />
     );
   };
@@ -2039,14 +2304,18 @@ Refresh anyway?`
             <tbody>
               {addRows.map((row, index) => row.visible && (
                 <tr key={`${row.fieldName}-${index}`} className={index === addCursor ? "mp-current" : ""}>
-                  <td role="gridcell" onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`mp-add-head ${row.setup.program_top_id === 48 || row.setup.program_top_id === 49 ? "mp-yellow" : ""}`}>{row.headLabel}</td>
-                  <td role="gridcell" aria-readonly={!row.editable} title={tooltipText(row.setup.field_tooltips) || undefined} style={{ textAlign: alignOf(row.setup.add_grid_align) }} onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`${row.editable ? "" : "mp-readonly"} ${row.styleName}`}>
+                  <td role="gridcell" onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} title={row.editable ? undefined : "Read-only"} className={`mp-add-head ${row.editable ? "" : "mp-head-readonly"} ${row.setup.program_top_id === 48 || row.setup.program_top_id === 49 ? "mp-yellow" : ""}`}>{row.headLabel}</td>
+                  <td role="gridcell" data-add-cell={index} aria-readonly={!addOpen(row)} title={tooltipText(row.setup.field_tooltips) || undefined} style={{ textAlign: alignOf(row.setup.add_grid_align) }} onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`${addOpen(row) ? "" : row.editable ? "mp-readonly mp-row-closed" : "mp-readonly"} ${row.styleName}`}>
                     {addEditing && index === addCursor ? (
                       row.options ? (
-                        <select ref={focusOnMount} className="mp-editor" value={addText} onChange={(event) => setAddText(event.target.value)} onKeyDown={(event) => void addKeys(event)}>
-                          {!row.options.some((option) => option.text === addText) && <option value={addText}>{addText}</option>}
-                          {row.options.map((option, at) => <option key={`${option.value}-${at}`} value={option.text}>{option.text}</option>)}
-                        </select>
+                        <GridCombo
+                          options={row.options}
+                          current={addText}
+                          startWith={addComboStart}
+                          place={addComboAt}
+                          onPick={(text, step) => void finishAddCombo(text, step)}
+                          onCancel={() => { setAddComboStart(""); setAddEditing(false); addFocus.current?.focus({ preventScroll: true }); }}
+                        />
                       ) : (
                         <span className="mp-editor-wrap" role="presentation" onClick={(event) => event.stopPropagation()}>
                           <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(row.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(row.setup) ? "c" : undefined} value={addText} onChange={(event) => { if (typingAllowed(row.setup, addText, event.target.value)) setAddText(event.target.value); }} onKeyDown={(event) => void addKeys(event)} />
@@ -2085,7 +2354,18 @@ Refresh anyway?`
               className="mp-grid"
               style={{ height: (visibleRows.length + 1) * ROW_HEIGHT }}
               onKeyDown={(event) => void gridKeys(event)}
-              onContextMenu={(event) => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }); }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                // The menu acts on the cell clicked: the cursor goes there first.
+                const cell = (event.target as Element).closest("[data-cell]")?.getAttribute("data-cell");
+                if (cell) {
+                  const split = cell.indexOf(":");
+                  const row = Number(cell.slice(0, split));
+                  const key = cell.slice(split + 1);
+                  if (row !== cursor.row || key !== cursor.key) void moveTo(row, key);
+                }
+                setMenu({ x: event.clientX, y: event.clientY });
+              }}
             >
               <div className="mp-row mp-head" style={{ top: 0 }}>
                 <div className="mp-cell mp-rownum" aria-hidden="true" />
@@ -2116,13 +2396,27 @@ Refresh anyway?`
                     );
                   };
                   return (
-                    <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""}`} style={{ width: widthOf(column), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={`${column.caption} · click to sort · ▾ to filter · drag the edge to resize`}>
+                    <div
+                      key={column.key}
+                      draggable={openFilter === null && !fixedKeys.includes(column.key)}
+                      onDragStart={(event) => { dragColumn.current = column.key; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.caption); }}
+                      onDragOver={(event) => {
+                        if (dragColumn.current === null || dragColumn.current === column.key || fixedKeys.includes(column.key)) return;
+                        event.preventDefault();
+                        const box = event.currentTarget.getBoundingClientRect();
+                        const after = event.clientX > box.left + box.width / 2;
+                        if (dropMark?.key !== column.key || dropMark.after !== after) setDropMark({ key: column.key, after });
+                      }}
+                      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropMark((current) => (current?.key === column.key ? null : current)); }}
+                      onDrop={(event) => { event.preventDefault(); if (dragColumn.current && dropMark) moveColumn(dragColumn.current, column.key, dropMark.after); dragColumn.current = null; setDropMark(null); }}
+                      onDragEnd={() => { dragColumn.current = null; setDropMark(null); }}
+                      className={`mp-cell ${dropMark?.key === column.key ? (dropMark.after ? "mp-drop-after" : "mp-drop-before") : ""} ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${column.editable ? "" : "mp-head-readonly"} ${rowRuled(column) ? "mp-head-rowruled" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""}`} style={{ width: widthOf(column), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={`${column.caption}${column.editable ? (rowRuled(column) ? " (editable on some rows only; grey cells are closed)" : "") : " (read-only)"} · click to sort · ▾ to filter · drag to move · drag the edge to resize`}>
                       <button type="button" className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                         {column.caption}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                       </button>
                       <button type="button" className="mp-filter-button" aria-label={`Filter ${column.caption}`} onClick={() => openFilterFor(column)}>▾</button>
                       {draft && (
-                        <div className="mp-filter" role="dialog" aria-label={`Filter ${column.caption}`}>
+                        <div ref={placeFilter} className="mp-filter" role="dialog" aria-label={`Filter ${column.caption}`}>
                           <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
                           <label className="mp-filter-all">
                             <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => setDraft({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
@@ -2197,7 +2491,7 @@ Refresh anyway?`
                           tabIndex={-1}
                           aria-selected={current}
                           aria-readonly={!editable}
-                          className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : "mp-readonly"} ${editable && column.options?.length ? "mp-combo-cell" : ""}`}
+                          className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : column.editable ? "mp-readonly mp-row-closed" : "mp-readonly"} ${editable && column.options?.length ? "mp-combo-cell" : ""}`}
                           style={{ width: widthOf(column), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
                           onMouseDown={(event) => {
                             // While a cell is open the keyboard stays in its editor, so a refused
@@ -2253,14 +2547,17 @@ Refresh anyway?`
               })}
             </div>
           </div>
-          {help && helpRow !== null && cursorColumn && toText(cursorColumn.setup.help_query) !== "" && helpWindow(helpRow, setHelpRow, helpSearchKey(cursorColumn.setup), null)}
+          {help && helpRow !== null && cursorColumn && isMainField(cursorColumn.setup) && helpWindow(helpRow, setHelpRow, helpSearchKey(cursorColumn.setup), null)}
           {menu && (
             <div className="mp-menu" style={{ left: menu.x, top: menu.y }} onMouseLeave={() => setMenu(null)}>
               <button type="button" onClick={() => { setMenu(null); void copyCell(); }}>Copy</button>
               <button type="button" disabled={!copied} onClick={() => { setMenu(null); void pasteCell(); }}>Paste</button>
-              <button type="button" onClick={() => { setMenu(null); if (cursor.key) setHiddenColumns((current) => [...current, cursor.key]); }}>Hide Column</button>
+              <button type="button" disabled={fixedKeys.includes(cursor.key)} title={fixedKeys.includes(cursor.key) ? "A frozen column cannot be hidden" : undefined} onClick={() => { setMenu(null); hideColumn(cursor.key); }}>Hide Column</button>
               <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns((current) => current.slice(0, -1)); }}>Visible Column</button>
-              <button type="button" onClick={() => { setMenu(null); setColumnChooser(true); }}>Hide / Show Columns…</button>
+              <button type="button" disabled={fixedKeys.includes(cursor.key) || columns[fixedKeys.length]?.key === cursor.key} onClick={() => { setMenu(null); shiftColumn(cursor.key, -1); }}>Move Column Left (Ctrl+Shift+←)</button>
+              <button type="button" disabled={fixedKeys.includes(cursor.key) || columns[columns.length - 1]?.key === cursor.key} onClick={() => { setMenu(null); shiftColumn(cursor.key, 1); }}>Move Column Right (Ctrl+Shift+→)</button>
+              <button type="button" disabled={columnOrder.length === 0} onClick={() => { setMenu(null); setColumnOrder([]); }}>Reset Column Order</button>
+              <button type="button" onClick={() => { setMenu(null); setColumnChooser(true); }}>Arrange Columns (Show / Hide / Move)…</button>
               <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns([]); }}>Show All Columns</button>
               <button type="button" onClick={() => { setMenu(null); restoreCell(cursor.row, cursor.key); }}>Restore Cell Value (Ctrl+Z)</button>
               <button type="button" onClick={() => { setMenu(null); void deleteSelected("row"); }}>Delete Row</button>
@@ -2312,7 +2609,7 @@ Refresh anyway?`
             <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
             <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
             {meta?.logFileSpecial && <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>}
-            <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setColumnChooser(true)} title="Hide or show several columns"><Icon name="columns" /><HotkeyLabel text="Columns" hotkey="o" />{hiddenColumns.length ? ` (${hiddenColumns.length} hidden)` : ""}</button>
+            <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setColumnChooser(true)} title="Arrange columns: change their order, show or hide them"><Icon name="columns" /><HotkeyLabel text="Arrange Columns" hotkey="o" />{hiddenColumns.length ? ` (${hiddenColumns.length} hidden)` : ""}</button>
             <span className="mp-spacer" />
             {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
               <input
@@ -2370,29 +2667,15 @@ Refresh anyway?`
       )}
 
       {columnChooser && grids && (
-        <div className="mp-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setColumnChooser(false); }}>
-          <div className="mp-dialog mp-columns" role="dialog" aria-modal="true" aria-label="Hide or show columns">
-            <strong>Hide / Show Columns</strong>
-            <ul>
-              {grids.columns.filter((column) => column.visible).map((column) => {
-                const shown = !hiddenColumns.includes(column.key);
-                const last = shown && columns.length === 1;
-                return (
-                  <li key={column.key}>
-                    <label>
-                      <input type="checkbox" checked={shown} disabled={last} onChange={() => setHiddenColumns((current) => (shown ? [...current, column.key] : current.filter((key) => key !== column.key)))} />
-                      {column.caption || column.key}
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="mp-dialog-buttons">
-              <button type="button" className="mp-columns-show" data-hotkey="m" aria-keyshortcuts="Alt+M" onClick={() => setHiddenColumns([])}><HotkeyLabel text="Show All Columns" hotkey="m" /></button>
-              <button type="button" className="mp-columns-close" data-hotkey="e" aria-keyshortcuts="Alt+E" ref={focusOnMount} onClick={() => setColumnChooser(false)}><HotkeyLabel text="Close" hotkey="e" /></button>
-            </div>
-          </div>
-        </div>
+        <ArrangeColumns
+          items={orderedColumns.map((column) => ({ key: column.key, caption: column.caption || column.key, fixed: fixedKeys.includes(column.key), shown: fixedKeys.includes(column.key) || !hiddenColumns.includes(column.key) }))}
+          changed={columnOrder.length > 0}
+          onMove={placeColumn}
+          onToggle={(key) => { if (hiddenColumns.includes(key)) setHiddenColumns((current) => current.filter((candidate) => candidate !== key)); else hideColumn(key); }}
+          onShowAll={() => setHiddenColumns([])}
+          onResetOrder={() => setColumnOrder([])}
+          onClose={() => { setColumnChooser(false); keepGridFocus(); }}
+        />
       )}
 
       {calendar && (

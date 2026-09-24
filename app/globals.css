@@ -684,3 +684,61 @@
 .search-combo-list li.search-combo-active .search-combo-tick{color:#fff}
 .search-combo-list li.search-combo-active{background:linear-gradient(#2f7ad6,#1f64b8)}
 @media (prefers-reduced-motion:reduce){.mp-grid-combo,.search-combo-list{animation:none}}
+
+/* read-only columns: a grey, striped heading tells the operator the column cannot be typed in */
+.mp-head .mp-cell.mp-head-readonly:not(.mp-filtered){background:repeating-linear-gradient(135deg,#dfe4ea 0 6px,#d2d8df 6px 12px);color:#56616d}
+.mp-head .mp-cell.mp-head-readonly .mp-head-label{font-style:italic;font-weight:600}
+.mp-add-grid td.mp-add-head.mp-head-readonly{background:repeating-linear-gradient(135deg,#eef1f4 0 6px,#e4e8ec 6px 12px);color:#56616d;font-style:italic;font-weight:500}
+.mp-add-grid tr.mp-current td.mp-add-head.mp-head-readonly{background:#cfd8e2}
+
+/* Update grid help list: from the top of the grid (under the headings), so its ten entries show whole */
+.mp-update .mp-help{top:24px;bottom:auto;max-height:calc(100% - 30px)}
+
+/* cells a row rule closes (STATUS_AGAINST_FLD): grey, so a column open on other rows reads as closed here */
+.mp-row:not(.mp-current-row) .mp-cell.mp-row-closed{background:repeating-linear-gradient(135deg,#e7eaee 0 5px,#dde1e6 5px 10px)!important;color:#7a8591}
+.mp-head .mp-cell.mp-head-rowruled:not(.mp-filtered){box-shadow:inset 0 -3px 0 #9aa5b1}
+.mp-head .mp-cell.mp-head-rowruled .mp-head-label::after{content:" \25D0";font-weight:400;opacity:.7}
+
+/* moving columns: drag a heading; the orange bar shows where it will land */
+.mp-head .mp-cell[draggable="true"]{cursor:grab}
+.mp-head .mp-cell.mp-drop-before{box-shadow:inset 3px 0 0 #ff8c00}
+.mp-head .mp-cell.mp-drop-after{box-shadow:inset -3px 0 0 #ff8c00}
+.mp-columns-item{display:flex;align-items:center;gap:4px}
+.mp-columns-item label{flex:1;min-width:0}
+.mp-columns-move{width:22px;height:20px;padding:0;border:1px solid #9bb4d4;background:linear-gradient(#fff,#e3edf9);font-size:9px;cursor:pointer}
+.mp-columns-move:disabled{opacity:.35;cursor:default}
+
+/* Arrange Columns: numbered list on the left, move tools for the picked column on the right */
+.mp-dialog.mp-arrange{width:min(560px,94vw)}
+.mp-arrange-tip{margin:0 0 6px;color:#5a4d12;font-size:11px}
+.mp-arrange-body{display:flex;gap:10px;align-items:flex-start}
+.mp-arrange ul{flex:1;min-width:0;max-height:60vh;margin:0;padding:2px;overflow:auto;list-style:none;outline:none}
+.mp-arrange ul:focus-visible{box-shadow:0 0 0 2px #ffb400}
+.mp-arrange li{display:flex;align-items:center;gap:6px;height:24px;padding:0 6px;border-bottom:1px solid #f0e6b8;cursor:pointer;user-select:none}
+.mp-arrange li:hover{background:#fff1b0}
+.mp-arrange li.mp-arrange-picked{background:#1f64c8;color:#fff}
+.mp-arrange li.mp-arrange-fixed{color:#7a7050;background:#f4efd8;cursor:default}
+.mp-arrange li.mp-arrange-drop{box-shadow:inset 0 3px 0 #ff8c00}
+.mp-arrange-no{width:24px;text-align:right;color:inherit;opacity:.7;font-variant-numeric:tabular-nums}
+.mp-arrange-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-arrange-lock{font-size:11px}
+.mp-arrange-tools{display:grid;gap:5px;width:150px;flex:none}
+.mp-arrange-tools button{height:26px;border:1px solid #8aa8cf;border-radius:3px;background:linear-gradient(#fff,#dbe7f5);font:inherit;font-weight:600;cursor:pointer;text-align:left;padding:0 10px}
+.mp-arrange-tools button:disabled{opacity:.4;cursor:default}
+.mp-arrange-picked-name{padding:4px 6px;border:1px solid #e6d98f;background:#fffef4;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-arrange-to{display:grid;gap:2px;font-size:11px}
+.mp-arrange-to input{height:24px;padding:0 6px;border:1px solid #9bb4d4;font:inherit}
+@media(max-width:560px){.mp-arrange-body{flex-direction:column}.mp-arrange-tools{width:100%}}
+
+/* help lists sit at the bottom of the grid (nine entries), leaving the rows above in view */
+.mp-update .mp-help{top:auto;bottom:12px;max-height:calc(100% - 30px)}
+.mp-add .mp-help{top:auto;bottom:8px;max-height:calc(100% - 16px)}
+
+/* a menu item that does not apply here is greyed out */
+.mp-menu button:disabled,.mp-menu button:disabled:hover{background:transparent;color:#a3acb6;cursor:default}
+
+/* New (Add) grid: a field its row rule closes (STATUS_AGAINST_FLD) is grey-striped, as in the Update grid */
+.mp-add-grid td.mp-row-closed{background:repeating-linear-gradient(135deg,#e7eaee 0 5px,#dde1e6 5px 10px)!important;color:#7a8591}
+
+/* New (Add) grid: a row scrolled into view clears the sticky heading row above and the edge below */
+.mp-add-grid tbody tr{scroll-margin-top:28px;scroll-margin-bottom:6px}

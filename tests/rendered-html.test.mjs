@@ -77,7 +77,7 @@ test("keeps the latest migrated application surface wired into the root route", 
     assert.match(master, new RegExp(action));
   }
   // Print, image tab, edit log, module password, program 39/50 boxes, zoom and the Ezeone push.
-  for (const action of ["Print", "Image", "Log", "module-password", "product-image", "master-log", "zoom-book", "cloud-push", "SCH_SALEHO", "PL_SRATE", "Numeric Filter", "Text Filter", "Date Filter", "Hide / Show Columns", "Clear the ", "\"figure\"", "useDraggable", "↓ Calendar", "Del Clear", "toolKeys", "CalendarPopup"]) {
+  for (const action of ["Print", "Image", "Log", "module-password", "product-image", "master-log", "zoom-book", "cloud-push", "SCH_SALEHO", "PL_SRATE", "Numeric Filter", "Text Filter", "Date Filter", "Arrange Columns", "Clear the ", "\"figure\"", "useDraggable", "↓ Calendar", "Del Clear", "toolKeys", "CalendarPopup"]) {
     assert.match(master, new RegExp(action));
   }
   assert.match(layout, /title:\s*"SMARTwinFA Web"/);

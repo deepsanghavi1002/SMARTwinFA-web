@@ -9,6 +9,7 @@ import { readRights, SETUP_SCHEMA, SYSTEM_SCHEMA } from "./session";
 import type { GroupState } from "./types";
 import { cloudPushFor, replicateAdd, replicateEdit } from "./replicate";
 import type { CloudPush } from "./replicate";
+import { cleanMainValue, isMainField } from "./main-field";
 
 /**
  * Btn_Master_AddSave_Click, Btn_Master_EditSave_Click and Selected_RowDelete.
@@ -243,6 +244,10 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
   const prepared = await prepareProgram(loader, request.programName, request.group);
   const { programId } = prepared;
   const top = prepared.top;
+
+  // The main field is stored without trailing blanks or characters nobody can see (Alt+255 and the like).
+  const mainFields = new Set(prepared.addBody.filter(isMainField).map((row) => row.field_name.trim().toUpperCase()));
+  request = { ...request, rows: request.rows.map((row) => (mainFields.has(row.fieldName.trim().toUpperCase()) ? { ...row, fieldInput: cleanMainValue(row.fieldInput) } : row)) };
 
   const rights = await checkRights(loader, programId, request.menuShortName, request.group, "add", request.passwords ?? {});
   if (rights) return rights;
@@ -715,6 +720,10 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
   const dryRun = request.dryRun === true;
   const prepared = await prepareProgram(loader, request.programName, request.group);
   const { programId, top } = prepared;
+
+  // The main field is stored without trailing blanks or characters nobody can see (Alt+255 and the like).
+  const mainColumns = new Set(prepared.updateBody.filter(isMainField).map((row) => lower(row.field_name)));
+  request = { ...request, records: request.records.map((record) => ({ ...record, values: Object.fromEntries(Object.entries(record.values).map(([key, value]) => [key, mainColumns.has(key) ? cleanMainValue(value) : value])) })) };
 
   for (const kind of requiredEditRights(request.records)) {
     const rights = await checkRights(loader, programId, request.menuShortName, request.group, kind, request.passwords ?? {});

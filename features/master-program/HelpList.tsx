@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 /**
@@ -13,6 +13,7 @@ export type HelpColumn = { key: string; caption: string; width: number; align: s
 export type HelpData = { columns: HelpColumn[]; rows: Record<string, string>[]; total: string };
 
 const ROW = 20;
+/** Entries the list shows at once unless the screen asks for another number. */
 const SHOWN = 15;
 const OVERSCAN = 10;
 const MIN_WIDTH = 30;
@@ -20,7 +21,7 @@ const MIN_WIDTH = 30;
 const TYPE_PAUSE_MS = 1200;
 
 export function HelpList({
-  help, focusRow, onFocusRow, searchKey, note, onClose, onEscape, style, dragHandle, onResetPosition, formatCell,
+  help, focusRow, onFocusRow, searchKey, note, onClose, onEscape, style, dragHandle, onResetPosition, formatCell, shown = SHOWN,
 }: {
   help: HelpData;
   /** The entry to highlight and bring into view; -1 for none. */
@@ -36,11 +37,26 @@ export function HelpList({
   dragHandle: Record<string, unknown>;
   onResetPosition: () => void;
   formatCell: (value: string, format: string) => string;
+  /** How many entries the list shows at once. */
+  shown?: number;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const typed = useRef({ text: "", at: 0 });
+  /** The horizontal scroll bar's height, so it does not hide the last entry. */
+  const [bar, setBar] = useState(0);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const measure = () => setBar(element.offsetHeight - element.clientHeight);
+    measure();
+    const observe = new ResizeObserver(measure);
+    observe.observe(element);
+    const table = element.querySelector("table");
+    if (table) observe.observe(table);
+    return () => observe.disconnect();
+  }, []);
 
   const widthOf = (column: HelpColumn) => widths[column.key] ?? Math.max(MIN_WIDTH, column.width || 90);
   const tableWidth = help.columns.reduce((sum, column) => sum + widthOf(column), 0);
@@ -65,8 +81,8 @@ export function HelpList({
     switch (event.key) {
       case "ArrowDown": event.preventDefault(); move(focusRow < 0 ? 0 : from + 1); return;
       case "ArrowUp": event.preventDefault(); move(from - 1); return;
-      case "PageDown": event.preventDefault(); move(from + SHOWN); return;
-      case "PageUp": event.preventDefault(); move(from - SHOWN); return;
+      case "PageDown": event.preventDefault(); move(from + shown); return;
+      case "PageUp": event.preventDefault(); move(from - shown); return;
       case "Home": event.preventDefault(); move(0); return;
       case "End": event.preventDefault(); move(help.rows.length - 1); return;
       case "Escape": event.preventDefault(); event.stopPropagation(); typed.current.text = ""; onEscape?.(); return;
@@ -94,7 +110,7 @@ export function HelpList({
   };
 
   const first = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
-  const last = Math.min(help.rows.length, first + SHOWN + OVERSCAN * 2);
+  const last = Math.min(help.rows.length, first + shown + OVERSCAN * 2);
   const colSpan = help.columns.length;
 
   return (
@@ -105,7 +121,7 @@ export function HelpList({
         {onClose && <button type="button" onClick={onClose} aria-label="Close help">×</button>}
       </div>
       {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
-      <div className="mp-help-scroll" ref={scroller} style={{ maxHeight: ROW * (SHOWN + 1) + 2 }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", height: ROW * (Math.min(shown, Math.max(1, help.rows.length)) + 1) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table style={{ width: tableWidth }}>
           <colgroup>{help.columns.map((column) => <col key={column.key} style={{ width: widthOf(column) }} />)}</colgroup>
           <thead>

@@ -1,5 +1,6 @@
 import { applyStyleCase, getPermission, isNumeric, keyRefused, parseDesktopDate, toDecimal, toText, validateContactNumber } from "../../lib/master-program/legacy";
 import type { PublicProgramBodySetup } from "../../lib/master-rules";
+import { hasInvisible } from "../../lib/master-program/main-field";
 
 /**
  * The grid events of Master_ProgramGrid that need no database, for both grids.
@@ -100,14 +101,44 @@ export function keyPress(context: KeyContext, key: string): KeyOutcome {
   return { refused, message, replaceWith, restore };
 }
 
+/**
+ * A letter typed in the case value_allowed does not list, when the other case is allowed
+ * (MOBILE NO. allows A-Z only): the letter is taken in the allowed case instead of refused.
+ */
+export function fitCase(setup: Pick<Setup, "value_allowed" | "value_notallowed">, text: string, programId: number): string {
+  const allowed = toText(setup.value_allowed);
+  if (allowed === "") return text;
+  const refused = (character: string) => keyRefused(allowed, character, true, programId)
+    || (toText(setup.value_notallowed) !== "" && keyRefused(setup.value_notallowed, character, false, programId));
+  return [...text].map((character) => {
+    const other = character === character.toUpperCase() ? character.toLowerCase() : character.toUpperCase();
+    return other !== character && refused(character) && !refused(other) ? other : character;
+  }).join("");
+}
+
 /** A field that holds a number: type N or C, or forced to numeric input. */
 export function isNumberField(setup: Pick<Setup, "field_type" | "force_inputtype">): boolean {
   return setup.field_type === "N" || setup.field_type === "C" || setup.force_inputtype === "N";
 }
 
+/**
+ * An e-mail or web-site field: value_allowed lets "@" in, or the field is named for mail or
+ * a web site (not the mail password, SMTP server or "mail required" flag).
+ */
+export function isAddressField(setup: Pick<Setup, "field_name" | "value_allowed">): boolean {
+  const name = toText(setup.field_name).toUpperCase();
+  if (/PASS|SMTP|_REQ/.test(name)) return false;
+  return toText(setup.value_allowed).split("|").includes("@") || /MAIL|WEB/.test(name);
+}
+
+/** More than one "@" in one address; several addresses are split by ";", "," or a space. */
+const doubleAt = (text: string) => text.split(/[;,\s]+/).some((address) => (address.match(/@/g)?.length ?? 0) > 1);
+
 /** The typing rules a whole editor text must keep; each entry is broken when true. */
 function brokenRules(setup: Setup, text: string) {
   return [
+    hasInvisible(text),
+    isAddressField(setup) && doubleAt(text),
     isNumberField(setup) && (text.match(/\./g)?.length ?? 0) > 1,
     Boolean(setup.number_positiveonly) && text.includes("-"),
     setup.force_inputtype === "N" && /[^0-9.,-]/.test(text),
@@ -196,8 +227,9 @@ export function validate(context: ValidateContext, typed: string): ValidateOutco
   }
 
   if (setup.field_validation.toLowerCase() === "sys.validcontactnumber" && text.length > 0) {
-    // The Update grid separates a name with ';', the Add grid with ':'.
-    const result = validateContactNumber(text, setup.field_length_min, context.masterGrid ? ":" : ";", ",", setup.head_label);
+    // The desktop splits a name off with ':' on the Add grid and ';' on the Update grid, while
+    // value_allowed lets only one of them be typed; either one is read as the separator here.
+    const result = validateContactNumber(text.replace(/:/g, ";"), setup.field_length_min, ";", ",", setup.head_label);
     if (!result.ok) return fail(result.message, "Invalid Contact Info");
   }
 

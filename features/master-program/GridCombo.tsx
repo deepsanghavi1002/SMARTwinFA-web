@@ -44,6 +44,13 @@ export function GridCombo({ options, current, startWith = "", place, onPick, onC
   }, [options, query]);
   const [active, setActive] = useState(() => (startWith ? 0 : Math.max(0, options.findIndex((option) => option.text === current))));
   const list = useRef<HTMLUListElement>(null);
+  /**
+   * Where the mouse was last seen over the list. The highlight follows the mouse only once it
+   * really moves: when the list opens (or scrolls) under a pointer that is standing still, the
+   * browser still reports it entering the entry below it, which used to move the highlight off
+   * the current value onto whatever happened to be there.
+   */
+  const pointer = useRef<{ x: number; y: number } | null>(null);
   const listId = useId();
   /** The search box takes the keyboard as soon as the list opens. */
   const focusOnMount = useCallback((element: HTMLInputElement | null) => { element?.focus(); }, []);
@@ -101,7 +108,11 @@ export function GridCombo({ options, current, startWith = "", place, onPick, onC
                   role="option"
                   aria-selected={index === active}
                   className={`${index === active ? "mp-grid-combo-active" : ""} ${isCurrent ? "mp-grid-combo-current" : ""}`}
-                  onMouseEnter={() => setActive(index)}
+                  onMouseMove={(event) => {
+                    const last = pointer.current;
+                    pointer.current = { x: event.screenX, y: event.screenY };
+                    if (last && (last.x !== event.screenX || last.y !== event.screenY)) setActive(index);
+                  }}
                   onMouseUp={() => onPick(option.text, 0)}
                 >
                   <span className="mp-grid-combo-tick">{isCurrent ? <Check /> : null}</span>

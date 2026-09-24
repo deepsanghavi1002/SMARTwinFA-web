@@ -65,3 +65,13 @@ export function columnName(name: string): string {
   const bare = dot >= 0 ? trimmed.slice(dot + 1) : trimmed;
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(bare) && PG_RESERVED.has(bare.toLowerCase()) ? `${prefix}"${bare}"` : trimmed;
 }
+
+/**
+ * SQL Server reads `coalesce(AC.Code,'')` on a number column as `coalesce(AC.Code,0)`;
+ * PostgreSQL refuses it ("invalid input syntax for type integer"). The help queries use the
+ * idiom for columns of every type, so the column is read as text first, which leaves a text
+ * column unchanged and shows a number as its digits (the help list shows text either way).
+ */
+export function blankCoalesceAsText(sql: string): string {
+  return sql.replace(/coalesce\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*,\s*''\s*\)/gi, "coalesce(CAST($1 AS text),'')");
+}
