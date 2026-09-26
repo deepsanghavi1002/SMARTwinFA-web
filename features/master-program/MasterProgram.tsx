@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import type { StartupSelection } from "../startup/StartupGate";
@@ -386,12 +386,21 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
    */
   const updateGo = useRef<{ row: number; key: string; edit: boolean } | null>(null);
   const addGo = useRef<number | null>(null);
+  /** The grid last given its starting cursor; cleared by a fresh load so the grid starts again. */
+  const arrivedTab = useRef<string | null>(null);
+  /** A load for a newly chosen group: the Update grid starts at the top rather than on the last row. */
+  const freshLoad = useRef(false);
+  /** The Update grid row to come back to after a save reloads the group. */
+  const keepRow = useRef<number | null>(null);
   /** A render to run the pending moves in, for when nothing else changes. */
   const [, nudgeRender] = useReducer((count: number) => count + 1, 0);
   const setAddPendingMove = (move: NonNullable<typeof addPendingMove.current>) => { addPendingMove.current = move; nudgeRender(); };
   const setUpdatePendingMove = (move: NonNullable<typeof updatePendingMove.current>) => { updatePendingMove.current = move; nudgeRender(); };
   const [dataAtBegin, setDataAtBegin] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  /** New grid: each field's value before its first change in this entry, for Ctrl+Z (Restore Old Value). */
+  const addOld = useRef(new Map<number, { fieldInput: string; fieldComboValue: string }>());
   const [copied, setCopied] = useState<{ value: string; addonId: string } | null>(null);
   const [find, setFind] = useState("");
   // Sorting, per-column filters and column widths the operator sets on the Update grid
@@ -441,6 +450,20 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const scroller = useRef<HTMLDivElement>(null);
   const gridFocus = useRef<HTMLDivElement>(null);
   const addFocus = useRef<HTMLDivElement>(null);
+  const addTable = useRef<HTMLTableElement>(null);
+  /** New grid: rows from the top down to the main field (e.g. Account's name) stay in view while the rest scroll. */
+  const addFrozenUpTo = addRows.findIndex((row) => row.visible && isMainField(row.setup));
+  // Each frozen row sticks just below the ones above it; row heights are measured, not assumed.
+  useLayoutEffect(() => {
+    const table = addTable.current;
+    if (!table) return;
+    let top = table.tHead?.offsetHeight ?? 0;
+    for (const tr of table.querySelectorAll<HTMLTableRowElement>("tbody tr.mp-add-frozen")) {
+      for (const td of tr.cells) td.style.top = `${top}px`;
+      top += tr.offsetHeight;
+    }
+    table.style.setProperty("--mp-add-frozen-h", `${top}px`);
+  });
   const screenRef = useRef<HTMLDivElement>(null);
   useAltHotkeys(screenRef);
 
@@ -506,6 +529,9 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       }
       const load = body.load;
       setGrids(load);
+      addOld.current.clear();
+      arrivedTab.current = null;
+      freshLoad.current = true;
       setAddRows(load.addRows.map((row) => ({ ...row, recFound: false, compulsory: row.setup.value_compulsory })));
       setAddChanged(false);
       setRecords(load.records.map((record) => ({ ...record })));
@@ -1511,8 +1537,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   };
   const printUpdate = async () => {
     if (liveRows.length === 0) { await ask("Can't open print priview as update grid is blank", "Print failed!!"); return; }
-    if (printsMasterSheet) { printMasterSheet(); return; }
-    // The same pages as Print Preview, in the page setup last chosen.
+    // The same pages as Print Preview and the PDF, in the page setup last chosen, for every master.
+    // (The desktop printed one account's master sheet here; that stays on the New grid's Print.)
     const options = pdfOptions();
     printHtmlDocument(printDocument(exportName(), previewPages(buildExportTable(), options), options.orientation));
   };
@@ -1966,13 +1992,17 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (value !== null) nextRows = nextRows.map((candidate, at) => (at === index + 1 ? { ...candidate, fieldInput: value } : candidate));
     }
     if (text !== row.fieldInput) setAddChanged(true);
+    for (const [at, candidate] of addRows.entries()) {
+      const next = nextRows[at];
+      if (!addOld.current.has(at) && (next.fieldInput !== candidate.fieldInput || next.fieldComboValue !== candidate.fieldComboValue)) addOld.current.set(at, { fieldInput: candidate.fieldInput, fieldComboValue: candidate.fieldComboValue });
+    }
     setAddRows(nextRows);
     if (row.setup.field_add_order === grids.lastAddRow) document.getElementById("mp-save")?.focus();
     return true;
   };
 
   // ---- BlankOutGrid("IF") / Btn_Master_AddCancel_Click
-  const blankAdd = () => { setAddChanged(false); setAddRows((current) => current.map((row) => {
+  const blankAdd = () => { setAddChanged(false); addOld.current.clear(); setAddRows((current) => current.map((row) => {
     if (!row.setup.add_grid_visible) return row;
     let next = { ...row };
     if (!["Q", "X", "L"].includes(row.comboKind)) next.fieldInput = "";
@@ -2021,6 +2051,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       setWarnings(result.warnings);
       if (result.cloud && (await ask("Save Master To Cloud?", "Save Cloud Message", ["Yes", "No"])) === "Yes") await sendToCloud(result.cloud);
       blankAdd();
+      if (restore) keepRow.current = restore.row;
       await loadGroup(group.firstCombo, group.secondCombo);
       setTab(grids.updateTabVisible ? "update" : "add");
       return;
@@ -2064,10 +2095,60 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     addGo.current = null;
     void addMoveTo(to);
   });
+  // A grid coming into view starts on its first open field: the Update grid on the first row's first
+  // editable column, the New grid on its first editable field with the editor already open.
+  useEffect(() => {
+    if (busy || !grids || arrivedTab.current === tab) return;
+    arrivedTab.current = tab;
+    if (tab === "update") {
+      // Back from the New grid (Cancel, or Save of an edited row): stay on the row last worked on.
+      const back = keepRow.current ?? (freshLoad.current ? null : cursor.row);
+      const fresh = back === null;
+      keepRow.current = null;
+      freshLoad.current = false;
+      const row = zoomAccode > 0 ? cursor.row : !fresh && shownRows.includes(back) ? back : shownRows[0];
+      if (row === undefined) return;
+      const stay = !fresh && row === cursor.row ? columns.find((candidate) => candidate.key === cursor.key && isEditable(row, candidate)) : undefined;
+      const column = stay ?? columns.find((candidate) => isEditable(row, candidate)) ?? columns[0];
+      if (!column) return;
+      void Promise.resolve().then(() => { setCursor({ row, key: column.key }); gridFocus.current?.focus({ preventScroll: true }); });
+    } else if (tab === "add") {
+      const target = addRows.findIndex((row) => row.visible && addOpen(row));
+      if (target < 0) return;
+      addFocus.current?.focus({ preventScroll: true });
+      void Promise.resolve().then(() => addMoveTo(target)).then((landed) => { if (landed !== undefined) { addEditOnArrive.current = landed; nudgeRender(); } });
+    }
+  });
   // The New (Add) grid's current row is always shown whole: scrolled into view as the cursor reaches it.
   useEffect(() => {
     document.querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.closest("tr")?.scrollIntoView({ block: "nearest" });
   }, [addCursor]);
+
+  // ---- New grid: Copy / Paste / Restore Old Value (the Update grid's menu, for one field at a time)
+  const addCopy = async () => {
+    const row = addRows[addCursor];
+    if (!row) return;
+    await navigator.clipboard?.writeText(row.fieldInput).catch(() => undefined);
+    setCopied({ value: row.fieldInput, addonId: row.comboKind === "X" ? row.fieldComboValue : "0" });
+  };
+  const addPaste = async () => {
+    const row = addRows[addCursor];
+    if (!copied || !row || !grids) return;
+    if (!addOpen(row) || !row.visible) { await ask(`Field : ${row.headLabel.replace(/^\* /, "")} is readonly`, "Invalid Paste Selection"); return; }
+    if (row.options && copied.value !== "" && !row.options.some((option) => option.text === copied.value)) {
+      await ask(`Value = ${copied.value} isn't in the list of ${row.headLabel.replace(/^\* /, "")}`, "Invalid Paste Selection");
+      return;
+    }
+    // The pasted value goes through the same checks as a typed one.
+    setAddText(copied.value);
+    if (await addCommit(copied.value)) addFocus.current?.focus({ preventScroll: true });
+  };
+  const addRestore = () => {
+    const old = addOld.current.get(addCursor);
+    if (!old || !addOpen(addRows[addCursor])) return;
+    addOld.current.delete(addCursor);
+    setAdd(addCursor, old);
+  };
 
   const addKeys = async (event: ReactKeyboardEvent) => {
     if (isMessageBoxOpen() || !grids) return;
@@ -2103,6 +2184,12 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         if (outcome.replaceWith !== undefined) setAddText(outcome.replaceWith);
       }
       return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const letter = event.key.toLowerCase();
+      if (letter === "c") { event.preventDefault(); await addCopy(); return; }
+      if (letter === "v") { event.preventDefault(); await addPaste(); return; }
+      if (letter === "z") { event.preventDefault(); addRestore(); return; }
     }
     switch (event.key) {
       case "ArrowDown": event.preventDefault(); await addMoveTo(nextVisible(addCursor, 1)); return;
@@ -2299,12 +2386,17 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
       {grids && tab === "add" && (
         <div className="mp-add" ref={addFocus} role="grid" aria-label="New (Add)" tabIndex={0} onKeyDown={(event) => void addKeys(event)}>
-          <table className="mp-add-grid">
+          <table className="mp-add-grid" ref={addTable}>
             <thead><tr><th className="mp-add-head">Heading</th><th>Input</th></tr></thead>
             <tbody>
               {addRows.map((row, index) => row.visible && (
-                <tr key={`${row.fieldName}-${index}`} className={index === addCursor ? "mp-current" : ""}>
-                  <td role="gridcell" onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} title={row.editable ? undefined : "Read-only"} className={`mp-add-head ${row.editable ? "" : "mp-head-readonly"} ${row.setup.program_top_id === 48 || row.setup.program_top_id === 49 ? "mp-yellow" : ""}`}>{row.headLabel}</td>
+                <tr key={`${row.fieldName}-${index}`} onContextMenu={(event) => {
+                  if (addEditing) return;
+                  event.preventDefault();
+                  if (index !== addCursor) void addMoveTo(index);
+                  setAddMenu({ x: event.clientX, y: event.clientY });
+                }} className={`${index === addCursor ? "mp-current" : ""} ${index <= addFrozenUpTo ? "mp-add-frozen" : ""} ${index === addFrozenUpTo ? "mp-add-frozen-last" : ""}`}>
+                  <td role="gridcell" onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} title={[row.editable ? "" : "Read-only", row.addon ? "Addon field" : ""].filter(Boolean).join(" · ") || undefined} className={`mp-add-head ${row.editable ? "" : "mp-head-readonly"} ${row.setup.program_top_id === 48 || row.setup.program_top_id === 49 ? "mp-yellow" : ""} ${row.addon ? "mp-head-addon" : ""}`}>{row.headLabel}</td>
                   <td role="gridcell" data-add-cell={index} aria-readonly={!addOpen(row)} title={tooltipText(row.setup.field_tooltips) || undefined} style={{ textAlign: alignOf(row.setup.add_grid_align) }} onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`${addOpen(row) ? "" : row.editable ? "mp-readonly mp-row-closed" : "mp-readonly"} ${row.styleName}`}>
                     {addEditing && index === addCursor ? (
                       row.options ? (
@@ -2328,6 +2420,13 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               ))}
             </tbody>
           </table>
+          {addMenu && (
+            <div className="mp-menu" style={{ left: addMenu.x, top: addMenu.y }} onMouseLeave={() => setAddMenu(null)}>
+              <button type="button" onClick={() => { setAddMenu(null); void addCopy(); }}>Copy (Ctrl+C)</button>
+              <button type="button" disabled={!copied || !addOpen(addRows[addCursor])} onClick={() => { setAddMenu(null); void addPaste(); }}>Paste (Ctrl+V)</button>
+              <button type="button" disabled={!addOld.current.has(addCursor) || !addOpen(addRows[addCursor])} onClick={() => { setAddMenu(null); addRestore(); }}>Restore Old Value (Ctrl+Z)</button>
+            </div>
+          )}
           {addHelp && helpWindow(addHelpPick?.key === addHelpKey ? addHelpPick.row : addHelp.row, (row) => setAddHelpPick({ row, key: addHelpKey }), toText(addRows[addCursor]?.setup.duplichk_fldname1).toLowerCase(), addHelp.typed === ""
             ? { text: "Existing entries (type to search)", warn: false }
             : addHelp.exact
@@ -2410,7 +2509,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                       onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropMark((current) => (current?.key === column.key ? null : current)); }}
                       onDrop={(event) => { event.preventDefault(); if (dragColumn.current && dropMark) moveColumn(dragColumn.current, column.key, dropMark.after); dragColumn.current = null; setDropMark(null); }}
                       onDragEnd={() => { dragColumn.current = null; setDropMark(null); }}
-                      className={`mp-cell ${dropMark?.key === column.key ? (dropMark.after ? "mp-drop-after" : "mp-drop-before") : ""} ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${column.editable ? "" : "mp-head-readonly"} ${rowRuled(column) ? "mp-head-rowruled" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""}`} style={{ width: widthOf(column), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={`${column.caption}${column.editable ? (rowRuled(column) ? " (editable on some rows only; grey cells are closed)" : "") : " (read-only)"} · click to sort · ▾ to filter · drag to move · drag the edge to resize`}>
+                      className={`mp-cell ${dropMark?.key === column.key ? (dropMark.after ? "mp-drop-after" : "mp-drop-before") : ""} ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${column.editable ? "" : "mp-head-readonly"} ${rowRuled(column) ? "mp-head-rowruled" : ""} ${column.setup.program_top_id === 48 || column.setup.program_top_id === 49 ? "mp-yellow" : ""} ${column.addon ? "mp-head-addon" : ""}`} style={{ width: widthOf(column), textAlign: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }} title={`${column.caption}${column.editable ? (rowRuled(column) ? " (editable on some rows only; grey cells are closed)" : "") : " (read-only)"}${column.addon ? " · addon field" : ""} · click to sort · ▾ to filter · drag the edge to resize`}>
                       <button type="button" className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                         {column.caption}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                       </button>

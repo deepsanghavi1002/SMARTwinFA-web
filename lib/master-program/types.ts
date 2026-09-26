@@ -58,6 +58,8 @@ export type UpdateColumn = Readonly<{
   position: number;
   /** STATUS_DISPLAY: the typing rules summarised for the status bar. */
   statusDisplay: string;
+  /** Added from addon_fld (Addon_RecordAdd_in_Grid), not the master's own table. */
+  addon?: boolean;
   setup: PublicProgramBodySetup;
 }>;
 
@@ -79,6 +81,8 @@ export type AddRow = Readonly<{
   carryName: string;
   /** STATUS_DISPLAY: the typing rules summarised for the status bar. */
   statusDisplay: string;
+  /** Added from addon_fld (Addon_RecordAdd_in_Grid), not the master's own table. */
+  addon?: boolean;
   setup: PublicProgramBodySetup;
 }>;
 

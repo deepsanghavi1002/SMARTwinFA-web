@@ -46,10 +46,12 @@ export function HelpList({
   const typed = useRef({ text: "", at: 0 });
   /** The horizontal scroll bar's height, so it does not hide the last entry. */
   const [bar, setBar] = useState(0);
+  /** The vertical scroll bar's width, added so the columns fit without a sideways scroll. */
+  const [sideBar, setSideBar] = useState(0);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    const measure = () => setBar(element.offsetHeight - element.clientHeight);
+    const measure = () => { setBar(element.offsetHeight - element.clientHeight); setSideBar(element.offsetWidth - element.clientWidth); };
     measure();
     const observe = new ResizeObserver(measure);
     observe.observe(element);
@@ -121,7 +123,7 @@ export function HelpList({
         {onClose && <button type="button" onClick={onClose} aria-label="Close help">×</button>}
       </div>
       {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
-      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", height: ROW * (Math.min(shown, Math.max(1, help.rows.length)) + 1) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", width: tableWidth + sideBar + 2, maxWidth: "100%", height: ROW * (Math.min(shown, Math.max(1, help.rows.length)) + 1) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table style={{ width: tableWidth }}>
           <colgroup>{help.columns.map((column) => <col key={column.key} style={{ width: widthOf(column) }} />)}</colgroup>
           <thead>

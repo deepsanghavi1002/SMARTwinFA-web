@@ -125,3 +125,30 @@ test("the print preview pages match the PDF's pages, and printing sends every pa
   assert.equal(printed.match(/height:838pt/g)?.length, pages.pageCount);
   assert.doesNotMatch(printed, /height:842pt/);
 });
+
+test("too many columns for one sheet: all records with the first columns, then all again with the next", async () => {
+  const { pageLayout } = await import("../lib/export/pdf.ts");
+  const { previewPages } = await import("../lib/export/pages.ts");
+  const columns = Array.from({ length: 40 }, (_, index) => ({ caption: index === 0 ? "NAME" : `FIELD ${index}`, kind: "text" as const, decimals: 0, align: "left" as const, width: 120 }));
+  const rows = Array.from({ length: 100 }, (_, row) => columns.map((_, index) => (index === 0 ? `Party ${row}` : `v${row}-${index}`)));
+  const wide: ExportTable = { ...table, subtitle: [], columns, rows, totals: undefined };
+  const options = { orientation: "landscape", fontSize: 8, totals: false, footer: "" } as const;
+  const layout = pageLayout(wide, options);
+  assert.ok(layout.bands.length > 1 && layout.blockCount > 1, `${layout.bands.length} bands, ${layout.blockCount} pages each`);
+  assert.equal(layout.pageCount, layout.blockCount * layout.bands.length);
+  for (const band of layout.bands) {
+    assert.ok(band.tableWidth <= layout.usable + 0.01, "each band fits the sheet");
+    assert.equal(band.widths[0], 90, "columns keep their screen width");
+  }
+  assert.deepEqual(layout.bands.flatMap((band) => band.columns), columns.map((_, index) => index), "every column once, in order, none repeated");
+  const pages = previewPages(wide, options);
+  const lastOfFirstBand = layout.blockCount - 1;
+  assert.match(pages.page(0), /Party 0/);
+  assert.match(pages.page(lastOfFirstBand), /Party 99/, "the first band runs through every record");
+  assert.match(pages.page(lastOfFirstBand + 1), /v0-/, "then the next band starts again at the first record");
+  assert.doesNotMatch(pages.page(lastOfFirstBand + 1), /Party 0/, "the first column is not repeated");
+  assert.match(pages.page(lastOfFirstBand + 1), /columns 2\//);
+  assert.equal(pages.pageOf(layout.perPage), 1);
+  const text = new TextDecoder("latin1").decode(pdf(wide, options));
+  assert.equal(Number(/\/Count (\d+)/.exec(text)![1]), layout.pageCount);
+});

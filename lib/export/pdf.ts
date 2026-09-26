@@ -69,30 +69,46 @@ function headingLines(text: string, width: number, size: number): string[] {
 const escapePdf = (text: string) => winAnsi(text).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 const num = (value: number) => (Math.round(value * 100) / 100).toString();
 
+/**
+ * One slice of the columns, printed side by side on a page. When the columns do not all fit
+ * across the paper, pages run as Excel prints them ("down, then over"): every record with the
+ * first band of columns, then every record again with the next band, until all are printed.
+ */
+export type PageBand = Readonly<{
+  /** Indexes into table.columns, in print order. */
+  columns: readonly number[];
+  widths: readonly number[];
+  xs: readonly number[];
+  tableWidth: number;
+  heads: readonly (readonly string[])[];
+  /** Where "Total" is printed: the first column of the band that is not summed, or -1. */
+  labelAt: number;
+}>;
+
 /** Where everything goes on the pages, in points: shared by the PDF and the on-screen print preview. */
 export type PageLayout = Readonly<{
   pageWidth: number;
   pageHeight: number;
   margin: number;
   usable: number;
-  widths: readonly number[];
-  xs: readonly number[];
-  tableWidth: number;
-  /** Body font size after fitting the columns to the page. */
+  bands: readonly PageBand[];
   size: number;
   rowHeight: number;
   pad: number;
-  heads: readonly (readonly string[])[];
   headHeight: number;
   topLines: readonly string[];
   topHeight: number;
   bodyTop: number;
   withTotals: boolean;
-  labelColumn: number;
   lineCount: number;
   perPage: number;
+  /** Pages each band of columns takes (all the records once). */
+  blockCount: number;
   pageCount: number;
 }>;
+
+/** A column never prints wider than this, in points (longer text ends in "..."). */
+const MAX_COLUMN = 240;
 
 export function pageLayout(table: ExportTable, options: PdfOptions): PageLayout {
   const landscape = options.orientation === "landscape";
@@ -100,45 +116,87 @@ export function pageLayout(table: ExportTable, options: PdfOptions): PageLayout 
   const pageHeight = landscape ? 595 : 842;
   const margin = 28;
   const usable = pageWidth - margin * 2;
-
-  // Column widths: screen pixels to points, scaled to the page; a crowded table gets a smaller font.
-  const natural = table.columns.map((column) => Math.max(24, column.width * 0.75));
-  const naturalTotal = natural.reduce((sum, width) => sum + width, 0) || 1;
-  const scale = Math.min(1.4, usable / naturalTotal);
-  const widths = natural.map((width) => width * scale);
-  const size = scale < 0.8 ? Math.max(5.5, (options.fontSize * scale) / 0.8) : options.fontSize;
+  const size = options.fontSize;
   const rowHeight = size * 1.55;
   const pad = 2.5;
+  const withTotals = Boolean(options.totals && table.totals && table.rows.length > 0);
 
-  const headSize = size;
-  const heads = table.columns.map((column, index) => headingLines(column.caption, widths[index] - pad * 2, headSize));
-  const headLines = Math.max(1, ...heads.map((lines) => lines.length));
-  const headHeight = headLines * headSize * 1.2 + 5;
+  // Each column as wide as on screen (and at least its heading's longest word), so the text stays
+  // readable: when they do not all fit across, the rest go on further sheets instead of shrinking.
+  const natural = table.columns.map((column) => {
+    const word = Math.max(0, ...column.caption.split(/\s+/).map((part) => textWidth(part, size, true)));
+    return Math.min(MAX_COLUMN, usable, Math.max(24, column.width * 0.75, word + pad * 2));
+  });
+  const naturalTotal = natural.reduce((sum, width) => sum + width, 0) || 1;
+
+  let groups: number[][];
+  let scale = 1;
+  if (naturalTotal <= usable) {
+    // Everything fits across one sheet: spread the columns over the page, as before.
+    groups = [table.columns.map((_, index) => index)];
+    scale = Math.min(1.4, usable / naturalTotal);
+  } else {
+    groups = [];
+    let current: number[] = [];
+    let used = 0;
+    table.columns.forEach((_, index) => {
+      if (current.length > 0 && used + natural[index] > usable) { groups.push(current); current = []; used = 0; }
+      current.push(index);
+      used += natural[index];
+    });
+    if (current.length > 0) groups.push(current);
+  }
+
+  const summed = (index: number) => table.totals?.[index] !== null && table.totals?.[index] !== undefined;
+  const bands: PageBand[] = groups.map((columns) => {
+    const widths = columns.map((index) => natural[index] * scale);
+    const xs: number[] = [];
+    widths.reduce((x, width, at) => { xs[at] = x; return x + width; }, margin);
+    return {
+      columns,
+      widths,
+      xs,
+      tableWidth: widths.reduce((sum, width) => sum + width, 0),
+      heads: columns.map((index, at) => headingLines(table.columns[index].caption, widths[at] - pad * 2, size)),
+      labelAt: columns.findIndex((index) => !summed(index)),
+    };
+  });
+  const headLines = Math.max(1, ...bands.flatMap((band) => band.heads.map((lines) => lines.length)));
+  const headHeight = headLines * size * 1.2 + 5;
 
   const topLines = [table.company, table.title, ...table.subtitle].filter((line) => line.trim() !== "");
   const topHeight = topLines.reduce((sum, _, index) => sum + (index === 0 ? 15 : index === 1 ? 13 : 11), 0) + 6;
   const bodyTop = pageHeight - margin - topHeight - headHeight;
   const bodyBottom = margin + 16;
   const perPage = Math.max(1, Math.floor((bodyTop - bodyBottom) / rowHeight));
-  const withTotals = Boolean(options.totals && table.totals && table.rows.length > 0);
-  /** "Total" goes in the first column that is not itself summed. */
-  const labelColumn = Math.max(0, table.columns.findIndex((_, index) => table.totals?.[index] === null || table.totals?.[index] === undefined));
   const lineCount = table.rows.length + (withTotals ? 1 : 0);
-  const pageCount = Math.max(1, Math.ceil(lineCount / perPage));
+  const blockCount = Math.max(1, Math.ceil(lineCount / perPage));
 
-  const xs: number[] = [];
-  widths.reduce((x, width, index) => { xs[index] = x; return x + width; }, margin);
-  const tableWidth = widths.reduce((sum, width) => sum + width, 0);
+  return { pageWidth, pageHeight, margin, usable, bands, size, rowHeight, pad, headHeight, topLines, topHeight, bodyTop, withTotals, lineCount, perPage, blockCount, pageCount: blockCount * bands.length };
+}
 
-  return { pageWidth, pageHeight, margin, usable, widths, xs, tableWidth, size, rowHeight, pad, heads, headHeight, topLines, topHeight, bodyTop, withTotals, labelColumn, lineCount, perPage, pageCount };
+/** Which rows and which band of columns a page carries: all the records for one band, then the next band. */
+export function pageParts(layout: PageLayout, page: number): { band: PageBand; bandIndex: number; first: number; last: number } {
+  const bandIndex = Math.floor(page / layout.blockCount);
+  const first = (page % layout.blockCount) * layout.perPage;
+  return { band: layout.bands[bandIndex], bandIndex, first, last: Math.min(layout.lineCount, first + layout.perPage) };
+}
+
+/** "Page 3 of 12", with the column part when the columns take more than one sheet across. */
+export function pageLabel(layout: PageLayout, page: number): string {
+  const text = `Page ${page + 1} of ${layout.pageCount}`;
+  return layout.bands.length > 1 ? `${text}  (columns ${Math.floor(page / layout.blockCount) + 1}/${layout.bands.length})` : text;
 }
 
 export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
-  const { pageWidth, pageHeight, margin, usable, widths, xs, tableWidth, size, rowHeight, pad, heads, headHeight, topLines, topHeight, bodyTop, withTotals, labelColumn, lineCount, perPage, pageCount } = pageLayout(table, options);
+  const layout = pageLayout(table, options);
+  const { pageWidth, pageHeight, margin, usable, size, rowHeight, pad, headHeight, topLines, topHeight, bodyTop, withTotals, lineCount, pageCount } = layout;
   const headSize = size;
   const pages: string[] = [];
   for (let page = 0; page < pageCount; page += 1) {
     const ops: string[] = [];
+    const { band, first, last: lastLine } = pageParts(layout, page);
+    const { widths, xs, tableWidth, heads } = band;
     const text = (value: string, x: number, y: number, fontSize: number, bold = false) => {
       ops.push(`BT /${bold ? "F2" : "F1"} ${num(fontSize)} Tf ${num(x)} ${num(y)} Td (${escapePdf(value)}) Tj ET`);
     };
@@ -174,23 +232,22 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
     });
     ops.push("0 g");
 
-    // Rows (and, on the last page, the totals)
-    const first = page * perPage;
-    const lastLine = Math.min(lineCount, first + perPage);
+    // Rows (and, on the last block of rows, the totals)
     let rowY = bodyTop;
     for (let line = first; line < lastLine; line += 1) {
       const isTotal = withTotals && line === table.rows.length;
       if (isTotal) ops.push(`1 0.949 0.8 rg ${num(margin)} ${num(rowY - rowHeight)} ${num(tableWidth)} ${num(rowHeight)} re f 0 g`);
       else if (line % 2 === 1) ops.push(`0.89 0.933 0.984 rg ${num(margin)} ${num(rowY - rowHeight)} ${num(tableWidth)} ${num(rowHeight)} re f 0 g`);
       const baseline = rowY - rowHeight + (rowHeight - size) / 2 + size * 0.22;
-      table.columns.forEach((column, index) => {
+      band.columns.forEach((source, index) => {
+        const column = table.columns[source];
         if (isTotal) {
-          const total = table.totals?.[index];
+          const total = table.totals?.[source];
           if (total !== null && total !== undefined) place(cellText(total, column), { ...column, align: "right" }, index, baseline, true);
-          else if (index === labelColumn) place("Total", { ...column, align: "left" }, index, baseline, true);
+          else if (index === band.labelAt) place("Total", { ...column, align: "left" }, index, baseline, true);
           return;
         }
-        place(cellText(table.rows[line][index] ?? null, column), column, index, baseline, false);
+        place(cellText(table.rows[line][source] ?? null, column), column, index, baseline, false);
       });
       rowY -= rowHeight;
     }
@@ -210,7 +267,7 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
       const middle = fit(winAnsi(table.footerCenter), usable * 0.3, 7, false);
       text(middle, (pageWidth - textWidth(middle, 7, false)) / 2, margin, 7);
     }
-    const pageText = `Page ${page + 1} of ${pageCount}`;
+    const pageText = pageLabel(layout, page);
     text(pageText, pageWidth - margin - textWidth(pageText, 7, false), margin, 7);
     pages.push(ops.join("\n"));
   }

@@ -1,4 +1,4 @@
-import { fit, pageLayout } from "./pdf.ts";
+import { fit, pageLabel, pageLayout, pageParts } from "./pdf.ts";
 import type { PageLayout, PdfOptions } from "./pdf.ts";
 import { cellText } from "./table.ts";
 import type { ExportTable } from "./table.ts";
@@ -40,9 +40,9 @@ function marked(text: string, needle: string): string {
 
 export function previewPages(table: ExportTable, options: PdfOptions): PreviewPages {
   const layout = pageLayout(table, options);
-  const { pageWidth, pageHeight, margin, usable, widths, tableWidth, size, rowHeight, pad, heads, headHeight, topLines, topHeight, withTotals, labelColumn, lineCount, perPage, pageCount } = layout;
-  const colgroup = `<colgroup>${widths.map((width) => `<col style="width:${pt(width)}">`).join("")}</colgroup>`;
-  const head = `<thead><tr style="height:${pt(headHeight)}">${heads.map((lines) => `<th style="font-size:${pt(size)}">${lines.map(escape).join("<br>")}</th>`).join("")}</tr></thead>`;
+  const { pageWidth, pageHeight, margin, usable, size, rowHeight, pad, headHeight, topLines, topHeight, withTotals, perPage, pageCount } = layout;
+  const colgroups = layout.bands.map((band) => `<colgroup>${band.widths.map((width) => `<col style="width:${pt(width)}">`).join("")}</colgroup>`);
+  const headRows = layout.bands.map((band) => `<thead><tr style="height:${pt(headHeight)}">${band.heads.map((lines) => `<th style="font-size:${pt(size)}">${lines.map(escape).join("<br>")}</th>`).join("")}</tr></thead>`);
   const alignClass = (align: string) => (align === "right" ? ' class="pv-r"' : align === "center" ? ' class="pv-c"' : "");
 
   const page = (index: number, search?: PreviewSearch): string => {
@@ -55,27 +55,28 @@ export function previewPages(table: ExportTable, options: PdfOptions): PreviewPa
       if (at === 1 && table.titleRight) lines.push(`<div class="pv-line pv-bold" style="right:${pt(margin)};top:${pt(top)};font-size:${pt(10)};max-width:${pt(usable * 0.36)}">${escape(table.titleRight)}</div>`);
       top += at === 0 ? 15 : at === 1 ? 13 : 11;
     });
-    const first = index * perPage;
-    const last = Math.min(lineCount, first + perPage);
+    const { band, bandIndex, first, last } = pageParts(layout, index);
+    const { widths } = band;
     const rows: string[] = [];
     for (let line = first; line < last; line += 1) {
       const isTotal = withTotals && line === table.rows.length;
-      const cells = table.columns.map((column, at) => {
+      const cells = band.columns.map((source, at) => {
+        const column = table.columns[source];
         const room = widths[at] - pad * 2;
         if (isTotal) {
-          const total = table.totals?.[at];
+          const total = table.totals?.[source];
           if (total !== null && total !== undefined) return `<td class="pv-r">${escape(fit(cellText(total, column), room, size, true))}</td>`;
-          return at === labelColumn ? "<td>Total</td>" : "<td></td>";
+          return at === band.labelAt ? "<td>Total</td>" : "<td></td>";
         }
-        return `<td${alignClass(column.align)}>${marked(fit(cellText(table.rows[line][at] ?? null, column), room, size, false), needle)}</td>`;
+        return `<td${alignClass(column.align)}>${marked(fit(cellText(table.rows[line][source] ?? null, column), room, size, false), needle)}</td>`;
       }).join("");
       const classes = [isTotal ? "pv-total" : line % 2 === 1 ? "pv-alt" : "", search && line === search.currentLine ? "pv-hit-row" : ""].filter(Boolean).join(" ");
       rows.push(`<tr style="height:${pt(rowHeight)}"${classes ? ` class="${classes}"` : ""} data-line="${line}">${cells}</tr>`);
     }
-    const tableHtml = `<table class="pv-table" style="left:${pt(margin)};top:${pt(margin + topHeight)};width:${pt(tableWidth)};font-size:${pt(size)}">${colgroup}${head}<tbody>${rows.join("")}</tbody></table>`;
+    const tableHtml = `<table class="pv-table" style="left:${pt(margin)};top:${pt(margin + topHeight)};width:${pt(band.tableWidth)};font-size:${pt(size)}">${colgroups[bandIndex]}${headRows[bandIndex]}<tbody>${rows.join("")}</tbody></table>`;
     const footerTop = pageHeight - margin - 7;
     const middle = table.footerCenter ? `<div class="pv-foot pv-foot-center" style="top:${pt(footerTop)};width:${pt(usable * 0.3)};left:${pt((pageWidth - usable * 0.3) / 2)}">${escape(table.footerCenter)}</div>` : "";
-    const footer = `<div class="pv-foot" style="left:${pt(margin)};top:${pt(footerTop)};max-width:${pt(usable * 0.38)}">${escape(options.footer)}</div>${middle}<div class="pv-foot" style="right:${pt(margin)};top:${pt(footerTop)}">Page ${index + 1} of ${pageCount}</div>`;
+    const footer = `<div class="pv-foot" style="left:${pt(margin)};top:${pt(footerTop)};max-width:${pt(usable * 0.38)}">${escape(options.footer)}</div>${middle}<div class="pv-foot" style="right:${pt(margin)};top:${pt(footerTop)}">${escape(pageLabel(layout, index))}</div>`;
     return `<section class="pv-page" style="width:${pt(pageWidth)};height:${pt(pageHeight)}">${lines.join("")}${tableHtml}${footer}</section>`;
   };
 
@@ -88,6 +89,7 @@ export function previewPages(table: ExportTable, options: PdfOptions): PreviewPa
     });
     return hits;
   };
+  // A row's page in the first band of columns.
   return { layout, pageCount, page, find, pageOf: (line) => Math.floor(line / perPage) };
 }
 

@@ -138,7 +138,7 @@ export function statusDisplay(s: ProgramBodySetup): string {
 }
 
 /** A setup row the loader may still change, as the desktop changes its DataTable rows. */
-type BodyRow = { -readonly [K in keyof ProgramBodySetup]: ProgramBodySetup[K] } & { program_top_id: number; deleted?: boolean };
+type BodyRow = { -readonly [K in keyof ProgramBodySetup]: ProgramBodySetup[K] } & { program_top_id: number; deleted?: boolean; addon?: boolean };
 
 const editable = (rows: ProgramBodySetup[]): BodyRow[] => rows.map((row) => ({ ...row }));
 
@@ -430,6 +430,7 @@ async function addonRecordAdd(loader: Loader, rows: BodyRow[], addon: AddonState
         row.update_active = true;
         row.head_label = description; row.head_grid = description; row.head_report = description; row.head_short = description;
         row.value_compulsory = compulsory;
+        row.addon = true;
         return row;
       };
       if (type === "I" && template.field_name === "_addon_input") {
@@ -805,6 +806,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         options,
         position,
         statusDisplay: statusDisplay(row),
+        addon: row.addon === true,
         setup: publicSetup(row),
       });
     }
@@ -994,6 +996,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         styleName,
         carryName,
         statusDisplay: statusDisplay(row),
+        addon: row.addon === true,
         setup: publicSetup(row),
       });
     }

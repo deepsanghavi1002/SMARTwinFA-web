@@ -344,7 +344,7 @@
 .mp-scroll{background:#fff}
 .mp-row,.mp-cell{height:21px}
 .mp-cell{padding:2px 5px;border-right:1px solid #c7d7ea;border-bottom:1px solid #c7d7ea}
-.mp-head .mp-cell{position:relative;display:flex;align-items:center;padding:0;background:linear-gradient(#b9d7f7,#8fbdef);color:#0b2c57;border-right:1px solid #6f9bd0;border-bottom:1px solid #6f9bd0;overflow:visible}
+.mp-head .mp-cell{position:relative;display:flex;align-items:center;padding:0;background:linear-gradient(var(--mp-head-top),var(--mp-head-bottom));color:#0b2c57;border-right:1px solid #6f9bd0;border-bottom:1px solid #6f9bd0;overflow:visible}
 .mp-head .mp-cell.mp-frozen,.mp-head .mp-cell.mp-rownum{position:sticky}
 .mp-head .mp-cell.mp-filtered{background:linear-gradient(#ffe9a8,#f5c95b)}
 .mp-head-label{flex:1;min-width:0;height:100%;padding:0 14px 0 5px;border:0;background:transparent;color:inherit;font:inherit;font-weight:700;text-align:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -700,7 +700,6 @@
 .mp-head .mp-cell.mp-head-rowruled .mp-head-label::after{content:" \25D0";font-weight:400;opacity:.7}
 
 /* moving columns: drag a heading; the orange bar shows where it will land */
-.mp-head .mp-cell[draggable="true"]{cursor:grab}
 .mp-head .mp-cell.mp-drop-before{box-shadow:inset 3px 0 0 #ff8c00}
 .mp-head .mp-cell.mp-drop-after{box-shadow:inset -3px 0 0 #ff8c00}
 .mp-columns-item{display:flex;align-items:center;gap:4px}
@@ -742,3 +741,19 @@
 
 /* New (Add) grid: a row scrolled into view clears the sticky heading row above and the edge below */
 .mp-add-grid tbody tr{scroll-margin-top:28px;scroll-margin-bottom:6px}
+
+/* addon fields (from addon_fld): the heading colour a shade darker, so a user-chosen grid colour still tells them apart */
+:root{--mp-head-top:#b9d7f7;--mp-head-bottom:#8fbdef;--mp-add-head:#eaf2fc;--mp-addon-shade:#000;--mp-addon-mix:20%}
+.mp-head .mp-cell.mp-head-addon:not(.mp-filtered):not(.mp-head-readonly){background:linear-gradient(color-mix(in srgb,var(--mp-head-top),var(--mp-addon-shade) var(--mp-addon-mix)),color-mix(in srgb,var(--mp-head-bottom),var(--mp-addon-shade) var(--mp-addon-mix)))}
+.mp-add-grid td.mp-add-head.mp-head-addon:not(.mp-head-readonly){background:color-mix(in srgb,var(--mp-add-head),var(--mp-addon-shade) 12%)}
+.mp-add-grid tr.mp-current td.mp-add-head.mp-head-addon:not(.mp-head-readonly){background:#174f9f}
+
+/* help lists grow to the left to show every column, instead of scrolling sideways */
+.mp-help{max-width:calc(100% - 24px)}
+
+/* New (Add) grid: rows down to the main field are frozen at the top; the rest scroll under them */
+.mp-add-grid thead th{z-index:3}
+.mp-add-grid tr.mp-add-frozen td{position:sticky;z-index:2}
+.mp-add-grid tr.mp-add-frozen:not(.mp-current) td:not(.mp-add-head){background:#fff}
+.mp-add-grid tr.mp-add-frozen-last td{box-shadow:inset 0 -2px 0 #6f9bd0}
+.mp-add-grid tbody tr{scroll-margin-top:calc(var(--mp-add-frozen-h,22px) + 6px)}
