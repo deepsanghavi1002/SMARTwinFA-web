@@ -1,5 +1,6 @@
 import type { Client } from "pg";
 import { parseMoney, PROGRAM_BODY_COLUMNS, publicSetup, toSetup } from "../master-rules";
+import { properHeading } from "./heading";
 import type { ProgramBodySetup } from "../master-rules";
 import { replaceSysValues } from "../sys-values";
 import type { SysValueContext } from "../sys-values";
@@ -757,7 +758,8 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       const key = resultKeys.find((candidate) => candidate.toLowerCase() === name) ?? name;
       const visible = updateColumnShown(row, permissionSource, session.businessNature);
       let editableColumn = row.update_grid_editable;
-      const caption = row.value_compulsory ? `* ${row.head_grid.trim()}` : row.head_grid.trim();
+      // Shown in Proper Case whatever case the setup stores (lib/master-program/heading.ts).
+      const caption = properHeading(row.value_compulsory ? `* ${row.head_grid.trim()}` : row.head_grid.trim());
 
       if (row.enable_by_firstcmbval.trim() !== "") {
         const effect = applyPermission(getPermission(permissionSource, "E", "first_combo", row.enable_by_firstcmbval.trim(), false, false));
@@ -905,7 +907,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         if (firstAddRow === 0) firstAddRow = row.field_add_order;
         lastAddRow = row.field_add_order;
       }
-      const headLabel = row.value_compulsory ? `* ${row.head_label.trim()}` : row.head_label;
+      const headLabel = properHeading(row.value_compulsory ? `* ${row.head_label.trim()}` : row.head_label);
       let styleName: AddRow["styleName"] = "";
       if (row.field_type === "C") styleName = "curr";
       else if (row.field_type === "D") styleName = "date";

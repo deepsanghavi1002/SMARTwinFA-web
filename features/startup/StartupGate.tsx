@@ -88,7 +88,20 @@ export function StartupGate({ children }: { children: ReactNode }) {
         if (!response.ok || !body.operators) throw new Error(body.error || "Operator list could not be loaded");
         return body.operators;
       })
-      .then((rows) => { setOperators(rows); setUsername((current) => current || rows[0]?.loginName || ""); })
+      .then(async (rows) => {
+        setOperators(rows);
+        setUsername((current) => current || rows[0]?.loginName || "");
+        // TEMPORARY, for testing: SMARTWINFA_SKIP_LOGIN in .env.local skips the login form (see app/api/dev-login).
+        const devLogin = await fetch("/api/dev-login", { signal: controller.signal, cache: "no-store" })
+          .then((response) => response.json() as Promise<{ skip?: boolean; login?: string | null }>)
+          .catch(() => ({ skip: false, login: null }));
+        if (!devLogin.skip) return;
+        const wanted = devLogin.login?.toUpperCase();
+        const match = wanted ? rows.find((item) => item.loginName.toUpperCase() === wanted) : rows[0];
+        if (!match) { setError(`Login skip: operator ${devLogin.login ?? ""} not found`); return; }
+        setOperator(match);
+        setStage("company");
+      })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
         setDataError(reason instanceof Error ? reason.message : "Operator list could not be loaded");

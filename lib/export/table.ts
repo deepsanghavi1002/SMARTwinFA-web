@@ -33,6 +33,8 @@ export type ExportTable = Readonly<{
   rows: readonly (readonly ExportCell[])[];
   /** Column totals (null where a column is not summed); omitted when nothing is summed. */
   totals?: readonly (number | null)[];
+  /** The column that names a record on the "one record per page" layout (default: the first). */
+  recordTitleColumn?: number;
 }>;
 
 /** A name that is safe as a downloaded file name on Windows. */

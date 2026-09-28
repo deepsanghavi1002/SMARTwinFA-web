@@ -9,12 +9,12 @@ import type { AddRow, CloudPush, ComboOption, GroupLoad, GroupState, ProgramDefi
 import { masterCall } from "./api";
 import { Calculator } from "./Calculator";
 import { CalendarPopup } from "./CalendarPopup";
-import { PrintPreview } from "./PrintPreview";
+import { FONT_SIZES, PrintPreview } from "./PrintPreview";
 import { printHtmlDocument, readPrintSetup, savePrintSetup } from "./printFrame";
 import type { PrintSetup } from "./printFrame";
 import { previewPages, printDocument } from "../../lib/export/pages";
 import { pdf } from "../../lib/export/pdf";
-import type { PdfOptions } from "../../lib/export/pdf";
+import type { PdfOptions, PrintStyle } from "../../lib/export/pdf";
 import { download, safeFileName } from "../../lib/export/table";
 import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
@@ -429,7 +429,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   /** The page setup last chosen in Preview or for a PDF (this browser only), used by Print and PDF too. */
   const [printSetup, setPrintSetup] = useState<PrintSetup | null>(() => (typeof window === "undefined" ? null : readPrintSetup()));
   const rememberSetup = (setup: PrintSetup) => { setPrintSetup(setup); savePrintSetup(setup); };
-  const [pdfChoice, setPdfChoice] = useState<PrintSetup | null>(null);
+  /** The Print / PDF dialog: page setup and layout, and which of the two it is for. */
+  const [pdfChoice, setPdfChoice] = useState<(PrintSetup & { style: PrintStyle; purpose: "print" | "pdf" }) | null>(null);
   /** Print preview: the grid frozen as it was when opened, and the page setup chosen. */
   const [preview, setPreview] = useState<{ table: ExportTable; options: PdfOptions; name: string } | null>(null);
   const [calendar, setCalendar] = useState<{ grid: "add" | "update"; initial: string; left: number; top: number } | null>(null);
@@ -1536,11 +1537,13 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     printHtml(heading, `<h1>${escapeHtml(meta?.companyName ?? "")}</h1><p>${escapeHtml(heading)} : ${escapeHtml(first?.text ?? "")}</p><table><tbody>${rows.map((row) => `<tr><th>${escapeHtml(row.headLabel)}</th><td>${escapeHtml(row.setup.force_inputtype === "P" ? "" : row.fieldInput)}</td></tr>`).join("")}</tbody></table>`);
   };
   const printUpdate = async () => {
+    if (await unsavedBlocks()) return;
     if (liveRows.length === 0) { await ask("Can't open print priview as update grid is blank", "Print failed!!"); return; }
-    // The same pages as Print Preview and the PDF, in the page setup last chosen, for every master.
+    if (await noRows()) return;
+    // The same pages as Print Preview and the PDF, for every master; the dialog asks the layout first.
     // (The desktop printed one account's master sheet here; that stays on the New grid's Print.)
-    const options = pdfOptions();
-    printHtmlDocument(printDocument(exportName(), previewPages(buildExportTable(), options), options.orientation));
+    const { orientation, fontSize, totals } = pdfOptions();
+    setPdfChoice({ orientation, fontSize, totals, style: "list", purpose: "print" });
   };
 
   // ---- Excel, PDF and print preview of the Update grid, as shown (columns, filters, sort)
@@ -1553,7 +1556,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   };
   const buildExportTable = (): ExportTable => {
     const exportColumns: ExportColumn[] = columns.map((column) => {
-      const kind = filterKind(column);
+      // A list column (combo_value L, Q or X) holds a choice's name, e.g. "L -- CREDITORS FOR EXPENSES".
+      const kind = ["L", "Q", "X"].includes(column.setup.combo_value.trim().toUpperCase()) ? "text" : filterKind(column);
       return {
         caption: column.caption || column.key,
         kind,
@@ -1584,6 +1588,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       columns: exportColumns,
       rows,
       totals,
+      recordTitleColumn: Math.max(0, columns.findIndex((column) => isMainField(column.setup))),
     };
   };
   const exportName = () => {
@@ -1593,11 +1598,19 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const printedLine = () => { const now = new Date(); return `Printed ${formatDesktopDate(now)} ${now.toTimeString().slice(0, 5)} by ${meta?.userName ?? ""}`; };
   const pdfOptions = (): PdfOptions => ({
     orientation: printSetup?.orientation ?? (columns.reduce((sum, column) => sum + widthOf(column), 0) > 700 ? "landscape" : "portrait"),
-    fontSize: printSetup?.fontSize ?? 8,
+    fontSize: printSetup?.fontSize ?? 10,
     totals: printSetup?.totals ?? true,
     footer: printedLine(),
   });
-  const noRows = async () => { if (shownRows.length > 0) return false; await ask("There are no records to export.", "Export"); return true; };
+  /**
+   * Print, Preview, Excel, PDF and CSV give only saved data: from the first change in the Update
+   * grid until it is saved or cancelled they are shut, so no printout can show values that were
+   * never saved.
+   */
+  const unsaved = editing || edited.size > 0 || deleted.size > 0;
+  const unsavedTip = "Save or cancel the changes first: only saved data can be printed or exported";
+  const unsavedBlocks = async () => { if (!unsaved) return false; await ask(unsavedTip, "Print / Export"); return true; };
+  const noRows = async () => { if (await unsavedBlocks()) return true; if (shownRows.length > 0) return false; await ask("There are no records to export.", "Export"); return true; };
   const exportExcel = async () => {
     if (await noRows()) return;
     download(xlsx(buildExportTable(), first?.text || "Master"), `${exportName()}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -1606,19 +1619,22 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const exportPdf = async () => {
     if (await noRows()) return;
     const { orientation, fontSize, totals } = pdfOptions();
-    setPdfChoice({ orientation, fontSize, totals });
+    setPdfChoice({ orientation, fontSize, totals, style: "list", purpose: "pdf" });
   };
-  const savePdf = (setup: PrintSetup) => {
-    rememberSetup(setup);
+  const savePdf = (setup: PrintSetup & { style: PrintStyle; purpose: "print" | "pdf" }) => {
+    rememberSetup({ orientation: setup.orientation, fontSize: setup.fontSize, totals: setup.totals });
     setPdfChoice(null);
-    download(pdf(buildExportTable(), { ...setup, footer: printedLine() }), `${exportName()}.pdf`, "application/pdf");
+    const options: PdfOptions = { orientation: setup.orientation, fontSize: setup.fontSize, totals: setup.totals, style: setup.style, footer: printedLine() };
+    if (setup.purpose === "print") printHtmlDocument(printDocument(exportName(), previewPages(buildExportTable(), options), options.orientation));
+    else download(pdf(buildExportTable(), options), `${exportName()}.pdf`, "application/pdf");
   };
   const openPreview = async () => {
     if (await noRows()) return;
     setPreview({ table: buildExportTable(), options: pdfOptions(), name: exportName() });
   };
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+    if (await unsavedBlocks()) return;
     const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const lines = [columns.map((column) => quote(column.caption)).join(","), ...shownRows.map((row) => columns.map((column) => quote(formatCell(cellOf(records[row], column.key), column.format))).join(","))];
     const blob = new Blob([String.fromCharCode(0xfeff) + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
@@ -2699,11 +2715,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         <div className="mp-buttons">
           {tab === "update" && <>
             <button type="button" data-hotkey="s" aria-keyshortcuts="Alt+S" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
-            <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
-            <button type="button" data-hotkey="w" aria-keyshortcuts="Alt+W" className="mp-btn mp-btn-blue" onClick={() => void openPreview()} title="See the pages before printing"><Icon name="preview" /><HotkeyLabel text="Preview" hotkey="w" /></button>
-            <button type="button" data-hotkey="x" aria-keyshortcuts="Alt+X" className="mp-btn mp-btn-excel" onClick={() => void exportExcel()} title="Save the grid as an Excel workbook (.xlsx)"><Icon name="excel" /><HotkeyLabel text="Excel" hotkey="x" /></button>
-            <button type="button" data-hotkey="d" aria-keyshortcuts="Alt+D" className="mp-btn mp-btn-pdf" onClick={() => void exportPdf()} title="Save the grid as a PDF report"><Icon name="pdf" /><HotkeyLabel text="PDF" hotkey="d" /></button>
-            <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className="mp-btn mp-btn-teal" onClick={exportCsv} title="Save the grid as a CSV text file"><Icon name="export" /><HotkeyLabel text="CSV" hotkey="v" /></button>
+            <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()} disabled={unsaved} title={unsaved ? unsavedTip : "Print the grid"}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
+            <button type="button" data-hotkey="w" aria-keyshortcuts="Alt+W" className="mp-btn mp-btn-blue" onClick={() => void openPreview()} disabled={unsaved} title={unsaved ? unsavedTip : "See the pages before printing"}><Icon name="preview" /><HotkeyLabel text="Preview" hotkey="w" /></button>
+            <button type="button" data-hotkey="x" aria-keyshortcuts="Alt+X" className="mp-btn mp-btn-excel" onClick={() => void exportExcel()} disabled={unsaved} title={unsaved ? unsavedTip : "Save the grid as an Excel workbook (.xlsx)"}><Icon name="excel" /><HotkeyLabel text="Excel" hotkey="x" /></button>
+            <button type="button" data-hotkey="d" aria-keyshortcuts="Alt+D" className="mp-btn mp-btn-pdf" onClick={() => void exportPdf()} disabled={unsaved} title={unsaved ? unsavedTip : "Save the grid as a PDF report"}><Icon name="pdf" /><HotkeyLabel text="PDF" hotkey="d" /></button>
+            <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className="mp-btn mp-btn-teal" onClick={() => void exportCsv()} disabled={unsaved} title={unsaved ? unsavedTip : "Save the grid as a CSV text file"}><Icon name="export" /><HotkeyLabel text="CSV" hotkey="v" /></button>
             <button type="button" data-hotkey="r" aria-keyshortcuts="Alt+R" className="mp-btn mp-btn-blue" onClick={() => void refreshUpdate()} disabled={Boolean(busy)}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
             <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
             <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
@@ -2740,27 +2756,51 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
       {pdfChoice && (
         <div className="mp-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPdfChoice(null); }}>
-          <div className="mp-dialog mp-pdf-choice" role="dialog" aria-modal="true" aria-label="Save as PDF">
-            <strong>Save as PDF</strong>
-            <div className="mp-pdf-orientation" role="radiogroup" aria-label="Page">
-              {(["portrait", "landscape"] as const).map((orientation) => (
-                <label key={orientation} className={pdfChoice.orientation === orientation ? "mp-chosen" : ""}>
-                  <input type="radio" name="pdf-orientation" checked={pdfChoice.orientation === orientation} onChange={() => setPdfChoice({ ...pdfChoice, orientation })} />
-                  <span className={`mp-sheet mp-sheet-${orientation}`} aria-hidden="true" />
-                  {orientation === "portrait" ? "Portrait" : "Landscape"}
-                </label>
-              ))}
+          <div className="mp-print-dialog" role="dialog" aria-modal="true" aria-label={pdfChoice.purpose === "print" ? "Print" : "Save as PDF"}>
+            <header>
+              <Icon name={pdfChoice.purpose === "print" ? "print" : "pdf"} />
+              <strong>{pdfChoice.purpose === "print" ? "Print" : "Save as PDF"}</strong>
+              <span>{shownRows.length} record{shownRows.length === 1 ? "" : "s"}</span>
+            </header>
+            <div className="mp-print-body">
+              <div className="mp-print-section">Layout</div>
+              <div className="mp-print-cards" role="radiogroup" aria-label="Layout">
+                {([["list", "List print", "All records in a table"], ["record", "Vertical print", "Each record from a new page"]] as const).map(([style, name, hint]) => (
+                  <label key={style} className={pdfChoice.style === style ? "mp-chosen" : ""}>
+                    <input type="radio" name="print-style" checked={pdfChoice.style === style} onChange={() => setPdfChoice({ ...pdfChoice, style, orientation: style === "record" ? "portrait" : pdfChoice.orientation })} />
+                    <span className={`mp-print-icon mp-print-icon-${style}`} aria-hidden="true" />
+                    <b>{name}</b>
+                    <small>{hint}</small>
+                  </label>
+                ))}
+              </div>
+              <div className="mp-print-section">Page</div>
+              <div className="mp-print-cards" role="radiogroup" aria-label="Page">
+                {(["portrait", "landscape"] as const).map((orientation) => (
+                  <label key={orientation} className={pdfChoice.orientation === orientation ? "mp-chosen" : ""}>
+                    <input type="radio" name="pdf-orientation" checked={pdfChoice.orientation === orientation} onChange={() => setPdfChoice({ ...pdfChoice, orientation })} />
+                    <span className={`mp-sheet mp-sheet-${orientation}`} aria-hidden="true" />
+                    <b>{orientation === "portrait" ? "Portrait" : "Landscape"}</b>
+                  </label>
+                ))}
+              </div>
+              <div className="mp-print-section">Font size</div>
+              <div className="mp-print-sizes" role="radiogroup" aria-label="Font size">
+                {FONT_SIZES.map((size) => (
+                  <button key={size} type="button" role="radio" aria-checked={pdfChoice.fontSize === size} className={pdfChoice.fontSize === size ? "mp-chosen" : ""} onClick={() => setPdfChoice({ ...pdfChoice, fontSize: size })}>{size}</button>
+                ))}
+                <span>pt</span>
+              </div>
+              {pdfChoice.style === "list" && (
+                <label className="mp-print-check"><input type="checkbox" checked={pdfChoice.totals} onChange={(event) => setPdfChoice({ ...pdfChoice, totals: event.target.checked })} />Print the totals row</label>
+              )}
             </div>
-            <label className="mp-pdf-row">Font
-              <select value={pdfChoice.fontSize} onChange={(event) => setPdfChoice({ ...pdfChoice, fontSize: Number(event.target.value) })}>
-                {[6, 7, 8, 9, 10, 11].map((size) => <option key={size} value={size}>{size} pt</option>)}
-              </select>
-            </label>
-            <label className="mp-pdf-row"><input type="checkbox" checked={pdfChoice.totals} onChange={(event) => setPdfChoice({ ...pdfChoice, totals: event.target.checked })} />Totals row</label>
-            <div className="mp-dialog-buttons">
-              <button type="button" ref={focusOnMount} onClick={() => savePdf(pdfChoice)}>Save PDF</button>
-              <button type="button" onClick={() => setPdfChoice(null)}>Cancel</button>
-            </div>
+            <footer>
+              <button type="button" data-hotkey={pdfChoice.purpose === "print" ? "p" : "s"} aria-keyshortcuts={pdfChoice.purpose === "print" ? "Alt+P" : "Alt+S"} className="mp-print-go" ref={focusOnMount} onClick={() => savePdf(pdfChoice)}>
+                {pdfChoice.purpose === "print" ? <HotkeyLabel text="Print" hotkey="p" /> : <HotkeyLabel text="Save PDF" hotkey="s" />}
+              </button>
+              <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-print-cancel" onClick={() => setPdfChoice(null)}><HotkeyLabel text="Cancel" hotkey="c" /></button>
+            </footer>
           </div>
         </div>
       )}

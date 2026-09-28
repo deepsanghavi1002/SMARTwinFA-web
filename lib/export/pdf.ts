@@ -17,7 +17,11 @@ export type PdfOptions = Readonly<{
   totals: boolean;
   /** The footer's left text, e.g. "Printed 21/09/2026 10:15 by ADMIN". */
   footer: string;
+  /** "list" (the default): all records as a table. "record": each record on its own page(s), every field's heading beside its value. */
+  style?: PrintStyle;
 }>;
+
+export type PrintStyle = "list" | "record";
 
 // Character widths (per 1000 units of font size) for ASCII 32..126, from the Helvetica AFM files.
 const HELVETICA = "278 278 355 556 556 889 667 191 333 333 389 584 278 333 278 278 556 556 556 556 556 556 556 556 556 556 278 278 584 584 584 556 1015 667 667 722 722 667 611 778 722 278 500 667 556 833 722 778 667 778 722 667 611 722 667 944 667 667 611 278 278 278 469 556 333 556 556 500 556 556 278 556 556 222 222 500 222 833 556 556 556 556 333 500 278 556 500 722 500 500 500 334 260 334 584".split(" ").map(Number);
@@ -64,6 +68,29 @@ function headingLines(text: string, width: number, size: number): string[] {
   while (index < words.length && textWidth(`${first} ${words[index]}`.trim(), size, true) <= width) { first = `${first} ${words[index]}`.trim(); index += 1; }
   if (first === "") return [fit(text, width, size, true)];
   return [first, fit(words.slice(index).join(" "), width, size, true)].filter((line) => line !== "");
+}
+
+/** Text broken into lines that fit a width, at spaces where it can and inside a word when a word is too long. */
+export function wrap(text: string, width: number, size: number, bold: boolean): string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split(/\r?\n/)) {
+    let line = "";
+    for (const word of paragraph.split(/ +/)) {
+      let rest = word;
+      while (rest !== "" && textWidth(rest, size, bold) > width) {
+        if (line !== "") { out.push(line); line = ""; }
+        let cut = rest.length - 1;
+        while (cut > 1 && textWidth(rest.slice(0, cut), size, bold) > width) cut -= 1;
+        out.push(rest.slice(0, cut));
+        rest = rest.slice(cut);
+      }
+      const joined = line === "" ? rest : `${line} ${rest}`;
+      if (line === "" || textWidth(joined, size, bold) <= width) line = joined;
+      else { out.push(line); line = rest; }
+    }
+    out.push(line);
+  }
+  return out;
 }
 
 const escapePdf = (text: string) => winAnsi(text).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -188,7 +215,148 @@ export function pageLabel(layout: PageLayout, page: number): string {
   return layout.bands.length > 1 ? `${text}  (columns ${Math.floor(page / layout.blockCount) + 1}/${layout.bands.length})` : text;
 }
 
+/** One field of a record sheet: its heading and value as printed lines, and where the row sits (points from the page top). */
+export type RecordEntry = Readonly<{ column: number; label: readonly string[]; value: readonly string[]; top: number; height: number }>;
+/** A page of a record sheet: which record, which part of it (0 unless the record runs over several pages) and its fields. */
+export type RecordPage = Readonly<{ record: number; part: number; entries: readonly RecordEntry[] }>;
+
+/** The "one record per page" layout: each record starts a new page, a field per row, heading on the left and value on the right. */
+export type RecordLayout = Readonly<{
+  pageWidth: number;
+  pageHeight: number;
+  margin: number;
+  usable: number;
+  size: number;
+  lineHeight: number;
+  pad: number;
+  labelWidth: number;
+  topLines: readonly string[];
+  topHeight: number;
+  /** The "Record n of N" bar under the heading. */
+  barTop: number;
+  barHeight: number;
+  pages: readonly RecordPage[];
+  pageCount: number;
+  /** Each record's first page. */
+  firstPage: readonly number[];
+}>;
+
+export function recordLayout(table: ExportTable, options: PdfOptions): RecordLayout {
+  const landscape = options.orientation === "landscape";
+  const pageWidth = landscape ? 842 : 595;
+  const pageHeight = landscape ? 595 : 842;
+  const margin = 28;
+  const usable = pageWidth - margin * 2;
+  const size = options.fontSize;
+  const lineHeight = size * 1.3;
+  const pad = 3;
+  const topLines = [table.company, table.title, ...table.subtitle].filter((line) => line.trim() !== "");
+  const topHeight = topLines.reduce((sum, _, index) => sum + (index === 0 ? 15 : index === 1 ? 13 : 11), 0) + 6;
+  const barTop = margin + topHeight;
+  const barHeight = size * 1.3 + 6;
+  const bodyTop = barTop + barHeight + 4;
+  const bodyBottom = pageHeight - margin - 16;
+  const widest = Math.max(0, ...table.columns.map((column) => textWidth(column.caption, size, true)));
+  const labelWidth = Math.min(usable * 0.4, Math.max(70, widest + pad * 2));
+  const valueRoom = usable - labelWidth - pad * 2;
+  const maxLines = Math.max(1, Math.floor((bodyBottom - bodyTop - pad * 2) / lineHeight));
+
+  const pages: RecordPage[] = [];
+  const firstPage: number[] = [];
+  table.rows.forEach((row, record) => {
+    firstPage.push(pages.length);
+    let part = 0;
+    let entries: RecordEntry[] = [];
+    let top = bodyTop;
+    table.columns.forEach((column, index) => {
+      const label = wrap(column.caption, labelWidth - pad * 2, size, true).slice(0, maxLines);
+      let value = wrap(cellText(row[index] ?? null, column), valueRoom, size, false);
+      // A value longer than a whole page is cut, ending in "...".
+      if (value.length > maxLines) value = [...value.slice(0, maxLines - 1), fit(`${value[maxLines - 1]}...`, valueRoom, size, false)];
+      const height = Math.max(label.length, value.length) * lineHeight + pad * 2;
+      if (top + height > bodyBottom && entries.length > 0) {
+        pages.push({ record, part, entries });
+        part += 1;
+        entries = [];
+        top = bodyTop;
+      }
+      entries.push({ column: index, label, value, top, height });
+      top += height;
+    });
+    pages.push({ record, part, entries });
+  });
+  if (pages.length === 0) pages.push({ record: -1, part: 0, entries: [] });
+  return { pageWidth, pageHeight, margin, usable, size, lineHeight, pad, labelWidth, topLines, topHeight, barTop, barHeight, pages, pageCount: pages.length, firstPage };
+}
+
+/** The bar over a record's fields: "Record 3 of 120 : <its name>", and "(continued)" on its later pages. */
+export function recordTitle(table: ExportTable, page: RecordPage): string {
+  if (page.record < 0) return "No records";
+  const at = table.recordTitleColumn ?? 0;
+  const first = table.columns[at] ? cellText(table.rows[page.record][at] ?? null, table.columns[at]).trim() : "";
+  return `Record ${page.record + 1} of ${table.rows.length}${first ? ` : ${first}` : ""}${page.part > 0 ? " (continued)" : ""}`;
+}
+
+/** The record sheet's pages as PDF drawing operators. */
+function recordPdfPages(table: ExportTable, options: PdfOptions, layout: RecordLayout): string[] {
+  const { pageWidth, pageHeight, margin, usable, size, lineHeight, pad, labelWidth, topLines, barTop, barHeight } = layout;
+  return layout.pages.map((page, pageIndex) => {
+    const ops: string[] = [];
+    const text: TextOp = (value, x, y, fontSize, bold = false) => {
+      ops.push(`BT /${bold ? "F2" : "F1"} ${num(fontSize)} Tf ${num(x)} ${num(y)} Td (${escapePdf(value)}) Tj ET`);
+    };
+    headingOps(table, topLines, text, pageWidth, pageHeight, margin, usable);
+    // The record bar
+    ops.push(`0.725 0.843 0.969 rg ${num(margin)} ${num(pageHeight - barTop - barHeight)} ${num(usable)} ${num(barHeight)} re f`);
+    ops.push("0.043 0.173 0.341 rg");
+    text(fit(winAnsi(recordTitle(table, page)), usable - pad * 2, size, true), margin + pad, pageHeight - barTop - barHeight + (barHeight - size) / 2 + size * 0.22, size, true);
+    ops.push("0 g");
+    // The fields: heading shaded on the left, value on the right
+    for (const entry of page.entries) {
+      const y = pageHeight - entry.top - entry.height;
+      ops.push(`0.89 0.933 0.984 rg ${num(margin)} ${num(y)} ${num(labelWidth)} ${num(entry.height)} re f 0 g`);
+      const firstBaseline = pageHeight - entry.top - pad - size * 0.95;
+      entry.label.forEach((line, at) => text(line, margin + pad, firstBaseline - at * lineHeight, size, true));
+      entry.value.forEach((line, at) => text(line, margin + labelWidth + pad, firstBaseline - at * lineHeight, size, false));
+      ops.push(`0.62 0.71 0.83 RG 0.4 w ${num(margin)} ${num(y)} ${num(usable)} ${num(entry.height)} re S ${num(margin + labelWidth)} ${num(y)} m ${num(margin + labelWidth)} ${num(y + entry.height)} l S`);
+    }
+    ops.push("0.3 g");
+    footerOps(table, options, text, pageWidth, margin, usable, `Page ${pageIndex + 1} of ${layout.pageCount}`);
+    return ops.join("\n");
+  });
+}
+
+type TextOp = (value: string, x: number, y: number, fontSize: number, bold?: boolean) => void;
+
+/** The heading block: company; then the title with the group at the right end of the same line. */
+function headingOps(table: ExportTable, topLines: readonly string[], text: TextOp, pageWidth: number, pageHeight: number, margin: number, usable: number) {
+  let y = pageHeight - margin - 11;
+  const right = winAnsi(table.titleRight ?? "");
+  const rightWidth = right ? textWidth(right, 10, true) : 0;
+  topLines.forEach((line, index) => {
+    const fontSize = index === 0 ? 12 : index === 1 ? 10 : 8;
+    const room = index === 1 && right ? usable - rightWidth - 12 : usable;
+    text(fit(winAnsi(line), room, fontSize, index < 2), margin, y, fontSize, index < 2);
+    if (index === 1 && right) text(right, pageWidth - margin - rightWidth, y, 10, true);
+    y -= index === 0 ? 15 : index === 1 ? 13 : 11;
+  });
+}
+
+/** The footer: print date and user on the left, the record count in the middle, the page on the right. */
+function footerOps(table: ExportTable, options: PdfOptions, text: TextOp, pageWidth: number, margin: number, usable: number, pageText: string) {
+  text(fit(winAnsi(options.footer), usable * 0.38, 7, false), margin, margin, 7);
+  if (table.footerCenter) {
+    const middle = fit(winAnsi(table.footerCenter), usable * 0.3, 7, false);
+    text(middle, (pageWidth - textWidth(middle, 7, false)) / 2, margin, 7);
+  }
+  text(pageText, pageWidth - margin - textWidth(pageText, 7, false), margin, 7);
+}
+
 export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
+  if (options.style === "record") {
+    const layout = recordLayout(table, options);
+    return assemble(table, recordPdfPages(table, options, layout), layout.pageWidth, layout.pageHeight);
+  }
   const layout = pageLayout(table, options);
   const { pageWidth, pageHeight, margin, usable, size, rowHeight, pad, headHeight, topLines, topHeight, bodyTop, withTotals, lineCount, pageCount } = layout;
   const headSize = size;
@@ -197,7 +365,7 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
     const ops: string[] = [];
     const { band, first, last: lastLine } = pageParts(layout, page);
     const { widths, xs, tableWidth, heads } = band;
-    const text = (value: string, x: number, y: number, fontSize: number, bold = false) => {
+    const text: TextOp = (value, x, y, fontSize, bold = false) => {
       ops.push(`BT /${bold ? "F2" : "F1"} ${num(fontSize)} Tf ${num(x)} ${num(y)} Td (${escapePdf(value)}) Tj ET`);
     };
     const place = (value: string, column: ExportColumn, index: number, y: number, bold: boolean) => {
@@ -207,17 +375,7 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
       text(shown, x, y, size, bold);
     };
 
-    // Heading block: company; then the title with the group at the right end of the same line
-    let y = pageHeight - margin - 11;
-    const right = winAnsi(table.titleRight ?? "");
-    const rightWidth = right ? textWidth(right, 10, true) : 0;
-    topLines.forEach((line, index) => {
-      const fontSize = index === 0 ? 12 : index === 1 ? 10 : 8;
-      const room = index === 1 && right ? usable - rightWidth - 12 : usable;
-      text(fit(winAnsi(line), room, fontSize, index < 2), margin, y, fontSize, index < 2);
-      if (index === 1 && right) text(right, pageWidth - margin - rightWidth, y, 10, true);
-      y -= index === 0 ? 15 : index === 1 ? 13 : 11;
-    });
+    headingOps(table, topLines, text, pageWidth, pageHeight, margin, usable);
 
     // Column headings
     const headTop = pageHeight - margin - topHeight;
@@ -262,16 +420,14 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
 
     // Footer
     ops.push("0.3 g");
-    text(fit(winAnsi(options.footer), usable * 0.38, 7, false), margin, margin, 7);
-    if (table.footerCenter) {
-      const middle = fit(winAnsi(table.footerCenter), usable * 0.3, 7, false);
-      text(middle, (pageWidth - textWidth(middle, 7, false)) / 2, margin, 7);
-    }
-    const pageText = pageLabel(layout, page);
-    text(pageText, pageWidth - margin - textWidth(pageText, 7, false), margin, 7);
+    footerOps(table, options, text, pageWidth, margin, usable, pageLabel(layout, page));
     pages.push(ops.join("\n"));
   }
+  return assemble(table, pages, pageWidth, pageHeight);
+}
 
+/** The PDF file around the pages' drawing operators. */
+function assemble(table: ExportTable, pages: readonly string[], pageWidth: number, pageHeight: number): Uint8Array {
   // Assemble: catalog, page tree, two fonts, then a page and its content per page, and the info.
   const objects: string[] = [];
   const pageIds = pages.map((_, index) => 5 + index * 2);

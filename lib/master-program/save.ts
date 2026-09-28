@@ -448,7 +448,7 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
 
     // Log store
     if (session.flags.logFileSpecial) {
-      statements.push(...await specialLog(loader, programId, request, prepared, pkTable[0] ?? 0, "A"));
+      statements.push(...await specialLog(loader, programId, request, prepared, pkTable[0] ?? 0, { kind: "add", tableName: grid.addTables[0] ?? "", rows: request.rows }));
     } else if (addLogSave && log.fields !== "") {
       statements.push(await masterLog(loader, programId, "A", log, pkTable[0] ?? 0));
     }
@@ -580,8 +580,31 @@ function splitValues(values: string): string[] {
   return out;
 }
 
-/** logfile = 'S': the JSON log in <company>_BIGLOG.LOG_ALLMASTER, when that database exists. */
-async function specialLog(loader: Loader, programId: number, request: { group: GroupState }, prepared: PreparedProgram, pk: number, mode: "A" | "E" | "D", record?: Readonly<Record<string, string>>): Promise<string[]> {
+/** What one logfile = 'S' record describes: the saved master record and where its values come from. */
+type SpecialLogSource =
+  | Readonly<{ kind: "add"; tableName: string; rows: readonly AddFieldInput[] }>
+  | Readonly<{ kind: "update"; tableName: string; deleted: boolean; values: Readonly<Record<string, string>>; shown: Parameters<typeof updateColumnShown>[1] }>;
+
+/** DateTime.Now.ToString("hh:mm:ss tt"): the time saved in LMASTER_SAVETIME. */
+function logSaveTime(date: Date): string {
+  const hours = date.getHours() % 12 === 0 ? 12 : date.getHours() % 12;
+  return `${String(hours).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")} ${date.getHours() < 12 ? "AM" : "PM"}`;
+}
+
+/**
+ * logfile = 'S' (company setup): Btn_Master_AddSave_Click / Btn_Master_EditSave_Click's
+ * "Special Log Store" into <company>_BIGLOG.LOG_ALLMASTER, a row per saved record.
+ *
+ * LMASTER_TOP holds the group: [{"!*<first combo label>": text, "Selection": second combo text,
+ * "user", "savedate", "savetime", "machine_name"}]. LMASTER_NEW_GRID holds the record:
+ * [{"!*<first save table>": key, "Row": "  New" | "Update" | "Delete", " <heading>": value, ...}]
+ * with every visible field under its heading as the grid shows it ("* " before a compulsory
+ * one; SR_NO left out of the Update grid), a zero number as blank. LOG_SHORT picks the
+ * name/short/head/opening columns. An Update-grid save is logged 'A' when the master has no New
+ * grid and nothing was logged for the record yet, so its first log is always an Add.
+ * The desktop writes the JSON by hand; here it is JSON.stringify, so quotes in a value stay valid.
+ */
+async function specialLog(loader: Loader, programId: number, request: { group: GroupState }, prepared: PreparedProgram, code: number, source: SpecialLogSource): Promise<string[]> {
   const { session, client } = loader;
   const schema = `${session.companySchema}_biglog`;
   const exists = await loader.readTable("SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'log_allmaster'", [schema]);
@@ -590,20 +613,47 @@ async function specialLog(loader: Loader, programId: number, request: { group: G
     return [];
   }
   const now = new Date();
-  const top = [{ [`!*${prepared.firstComboRow?.head_label ?? ""}`]: request.group.firstCombo.text, user: session.loginName, savedate: formatDesktopDate(now), savetime: formatDesktopTime(now), machine_name: "WEB" }];
-  const grid: Record<string, string> = { [`!*${prepared.updateBody[0]?.database_name ?? ""}`]: String(pk), Row: mode === "A" ? "  New" : mode === "D" ? "Delete" : "Update" };
-  let name = ""; let short = ""; let head = ""; let opening = "0";
-  for (const row of mode === "A" ? prepared.addBody : prepared.updateBody) {
-    const value = record?.[row.field_name.split(".").pop()!.toLowerCase()] ?? "";
-    if ((mode === "A" ? row.add_grid_visible : row.update_grid_visible) && row.head_label !== "") grid[` ${row.head_label}`] = row.field_type === "N" && toDecimal(value) === 0 ? "" : value;
-    switch (row.log_short.toLowerCase().trim()) {
+  const top: Record<string, string> = { [`!*${prepared.firstComboRow?.head_label ?? ""}`]: request.group.firstCombo.text };
+  if (request.group.secondCombo) top.Selection = request.group.secondCombo.text;
+  Object.assign(top, { user: session.loginName, savedate: formatDesktopDate(now), savetime: formatDesktopTime(now), machine_name: "WEB" });
+
+  const grid: Record<string, string> = { [`!*${source.tableName}`]: String(code), Row: source.kind === "add" ? "  New" : source.deleted ? "Delete" : "Update" };
+  let name = ""; let short = ""; let head = ""; let opening = "";
+  const shortValue = (logShort: string, value: string) => {
+    switch (logShort.toLowerCase().trim()) {
       case "short": short = value.slice(0, 29); break;
       case "name": name = value.slice(0, 79); break;
       case "head": head = value.slice(0, 39); break;
       case "open": opening = String(toDecimal(value)); break;
     }
+  };
+  const shown = (row: BodyRow, value: string) => (row.field_type === "N" && toDecimal(value) === 0 ? "" : value);
+
+  if (source.kind === "add") {
+    const inputs = new Map(source.rows.map((input) => [input.fieldName.toUpperCase(), input]));
+    for (const row of prepared.addBody) {
+      const input = inputs.get(row.field_name.toUpperCase());
+      if (!input?.visible) continue;
+      const label = row.head_label.trim();
+      if (label !== "") grid[` ${row.value_compulsory ? `* ${label}` : label}`] = shown(row, input.fieldInput);
+      shortValue(row.log_short, input.fieldInput);
+    }
+  } else {
+    for (const row of prepared.updateBody) {
+      const value = source.values[lower(row.field_name)] ?? "";
+      const caption = row.head_grid.trim();
+      if (updateColumnShown(row, source.shown, session.businessNature) && caption.toUpperCase() !== "SR_NO") grid[` ${row.value_compulsory ? `* ${caption}` : caption}`] = shown(row, value);
+      shortValue(row.log_short, value);
+    }
   }
-  const sql = `INSERT INTO ${schema}.log_allmaster (lmaster_id,lmaster_top,lmaster_new_grid,lmaster_user,lmaster_firstname,lmaster_firstvalue,lmaster_savedate,lmaster_savetime,lmaster_machine_name,lmaster_mode,lmaster_code,lmaster_name,lmaster_short,lmaster_head,lmaster_opening) VALUES (${programId},${quote(JSON.stringify(top))},${quote(JSON.stringify([grid]))},${session.userNo},${quote(request.group.firstCombo.text)},${toInt(request.group.firstCombo.value)},${quote(formatDesktopDate(now))},${quote(formatDesktopTime(now))},'WEB','${mode}',${pk},${quote(name)},${quote(short)},${quote(head)},${opening})`;
+
+  let mode: "A" | "E" | "D" = source.kind === "add" ? "A" : source.deleted ? "D" : "E";
+  if (mode === "E" && field(prepared.top, "add_screen_hidden") === true) {
+    const logged = await loader.readTable(`SELECT 1 FROM ${schema}.log_allmaster WHERE lmaster_id = $1 AND lmaster_code = $2 LIMIT 1`, [programId, code]);
+    if (!logged) mode = "A";
+  }
+
+  const sql = `INSERT INTO ${schema}.log_allmaster (lmaster_id,lmaster_top,lmaster_new_grid,lmaster_user,lmaster_firstname,lmaster_firstvalue,lmaster_savedate,lmaster_savetime,lmaster_machine_name,lmaster_mode,lmaster_code,lmaster_name,lmaster_short,lmaster_head,lmaster_opening) VALUES (${programId},${quote(JSON.stringify([top]))},${quote(JSON.stringify([grid]))},${session.userNo},${quote(request.group.firstCombo.text)},${toInt(request.group.firstCombo.value)},${quote(formatDesktopDate(now))},${quote(logSaveTime(now))},'WEB','${mode}',${code},${quote(name)},${quote(short)},${quote(head)},${toDecimal(opening)})`;
   await client.query(sql);
   return [sql];
 }
@@ -1071,7 +1121,7 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
         statements.push(sql);
         await client.query(sql);
       }
-      if (session.flags.logFileSpecial) statements.push(...await specialLog(loader, programId, request, prepared, pkTable[0] ?? 0, record.deleted ? "D" : "E", record.values));
+      if (session.flags.logFileSpecial) statements.push(...await specialLog(loader, programId, request, prepared, pkTable[0] ?? 0, { kind: "update", tableName: grid.updateTables[0] ?? "", deleted: record.deleted, values: record.values, shown: shownSource }));
       if (!boolRunDelete) {
         const copy = { programId, group: request.group, partyName, productName };
         statements.push(...await replicateEdit(loader, copy));

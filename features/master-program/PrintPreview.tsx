@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PAGE_CSS, previewPages, printDocument } from "../../lib/export/pages";
-import type { PdfOptions } from "../../lib/export/pdf";
+import type { PdfOptions, PrintStyle } from "../../lib/export/pdf";
 import type { ExportTable } from "../../lib/export/table";
+import { HotkeyLabel } from "../ui/hotkeys";
 import { printHtmlDocument } from "./printFrame";
 
 /**
@@ -15,6 +16,8 @@ import { printHtmlDocument } from "./printFrame";
 const PX_PER_PT = 96 / 72;
 const GAP = 16; // px between pages
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+/** Font sizes offered for printing; 10 pt is the default. */
+export const FONT_SIZES = [7, 8, 9, 10, 11, 12];
 
 export function PrintPreview({ table, initialOptions, title, onClose, onOptionsChange }: { table: ExportTable; initialOptions: PdfOptions; title: string; onClose: () => void; onOptionsChange?: (options: PdfOptions) => void }) {
   const [options, setOptionsState] = useState(initialOptions);
@@ -60,7 +63,7 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
     setHit(wrapped);
     const target = pages.pageOf(hits[wrapped]);
     if (scroller.current) {
-      const withinPage = ((hits[wrapped] % pages.layout.perPage) * pages.layout.rowHeight + pages.layout.margin + pages.layout.topHeight + pages.layout.headHeight) * PX_PER_PT * scale;
+      const withinPage = pages.offsetOf(hits[wrapped]) * PX_PER_PT * scale;
       scroller.current.scrollTop = Math.max(0, target * step + withinPage - scroller.current.clientHeight / 2);
     }
     setCurrent(target);
@@ -102,6 +105,12 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
         <style>{PAGE_CSS}</style>
         <div className="mp-preview-bar">
           <strong>Print Preview</strong>
+          <label title="List print: all records as a table. Vertical print: each record from a new page, every field's heading beside its value">Layout
+            <select value={options.style ?? "list"} onChange={(event) => { const style = event.target.value as PrintStyle; setOptions({ ...options, style, orientation: style === "record" ? "portrait" : options.orientation }); goTo(0); }}>
+              <option value="list">List print</option>
+              <option value="record">Vertical print</option>
+            </select>
+          </label>
           <label>Page
             <select value={options.orientation} onChange={(event) => { setOptions({ ...options, orientation: event.target.value as PdfOptions["orientation"] }); goTo(0); }}>
               <option value="landscape">Landscape</option>
@@ -110,10 +119,10 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
           </label>
           <label>Font
             <select value={options.fontSize} onChange={(event) => { setOptions({ ...options, fontSize: Number(event.target.value) }); goTo(0); }}>
-              {[6, 7, 8, 9, 10, 11].map((size) => <option key={size} value={size}>{size} pt</option>)}
+              {FONT_SIZES.map((size) => <option key={size} value={size}>{size} pt</option>)}
             </select>
           </label>
-          {table.totals && <label><input type="checkbox" checked={options.totals} onChange={(event) => setOptions({ ...options, totals: event.target.checked })} />Totals</label>}
+          {table.totals && options.style !== "record" && <label><input type="checkbox" checked={options.totals} onChange={(event) => setOptions({ ...options, totals: event.target.checked })} />Totals</label>}
           <label>Zoom
             <select value={zoom === "fit" ? "fit" : String(zoom)} onChange={(event) => setZoom(event.target.value === "fit" ? "fit" : Number(event.target.value))}>
               <option value="fit">Page width</option>
@@ -132,7 +141,7 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
             <input
               id="pv-search"
               type="search"
-              placeholder="Search in preview (Ctrl+F)"
+              placeholder="Search (Ctrl+F)"
               aria-label="Search in preview"
               value={search}
               onChange={(event) => { setSearch(event.target.value); setHit(0); }}
@@ -142,8 +151,8 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
             <button type="button" onClick={() => showHit(hit - 1)} disabled={!hits.length} title="Previous match (Shift+F3)">▲</button>
             <button type="button" onClick={() => showHit(hit + 1)} disabled={!hits.length} title="Next match (F3 or Enter)">▼</button>
           </span>
-          <button type="button" className="mp-btn mp-btn-green" onClick={print} title="Print these pages (Ctrl+P)">🖨 Print</button>
-          <button type="button" className="mp-btn mp-btn-red" onClick={onClose} title="Close (Esc)">✖ Close</button>
+          <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-green" onClick={print} title="Print these pages (Alt+P or Ctrl+P)">🖨 <HotkeyLabel text="Print" hotkey="p" /></button>
+          <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={onClose} title="Close (Alt+C or Esc)">✖ <HotkeyLabel text="Close" hotkey="c" /></button>
         </div>
         <div
           ref={scroller}

@@ -55,7 +55,9 @@ type LogRecord = { lmaster_mode: string; lmaster_top: string; lmaster_new_grid: 
  * LMASTER_NEW_GRID. Each record's JSON is an array of objects; a property whose name starts
  * with "!" names the position the following properties belong to, and in an Edit record a
  * "!*" property starts the next edit column. The first record (the Add) fills Add_Value,
- * each edit its own Edit_Value_n. Nothing is shown unless the master's Add was logged.
+ * each edit its own Edit_Value_n. The desktop shows nothing unless the master's Add was logged;
+ * here a record saved before logging began still shows its edits (no Add_Value column).
+ * Edits run in save order (the desktop sorted by mode only), and a Delete counts as an edit.
  */
 export async function readMasterLog(loader: Loader, programId: number, firstComboText: string, code: number): Promise<MasterLogTable> {
   const { session } = loader;
@@ -69,15 +71,16 @@ export async function readMasterLog(loader: Loader, programId: number, firstComb
   const counts = await loader.readTable(`SELECT COUNT(*) FILTER (WHERE lmaster_mode = 'A') AS added, COUNT(*) AS total FROM ${schema}.log_allmaster WHERE lmaster_id = $1 AND lmaster_code = $2`, [programId, code]);
   const added = toInt(field(counts?.[0], "added"));
   const total = toInt(field(counts?.[0], "total"));
-  if (added === 0) return empty("No log was saved when this master was added");
+  if (total === 0) return empty("No log has been saved for this record yet");
+  const hasAdd = added > 0;
 
   const records = (await loader.readTable(
     `SELECT lmaster_mode, lmaster_top::text AS lmaster_top, lmaster_new_grid::text AS lmaster_new_grid FROM ${schema}.log_allmaster
-      WHERE lmaster_firstname = $1 AND lmaster_id = $2 AND lmaster_code = $3 ORDER BY lmaster_mode`,
+      WHERE lmaster_firstname = $1 AND lmaster_id = $2 AND lmaster_code = $3 ORDER BY lmaster_mode <> 'A', lmaster_key`,
     [firstComboText, programId, code],
   )) as LogRecord[] | null;
 
-  const columns = ["FieldName", "Add_Value", ...Array.from({ length: Math.max(0, total - 1) }, (_, index) => `Edit_Value_${index + 1}`)];
+  const columns = ["FieldName", ...(hasAdd ? ["Add_Value"] : []), ...Array.from({ length: Math.max(0, total - added) }, (_, index) => `Edit_Value_${index + 1}`)];
   const table = new Map<string, string[]>();
   const parse = (text: string): Record<string, unknown>[] => {
     try {
@@ -97,7 +100,8 @@ export async function readMasterLog(loader: Loader, programId: number, firstComb
       for (const item of parse(toText(record[column]))) {
         for (const [name, raw] of Object.entries(item)) {
           const value = raw === null || raw === undefined ? "" : String(raw);
-          if (name.startsWith("!*") && mode === "E") editCount += 1;
+          const edit = mode === "E" || mode === "D";
+          if (name.startsWith("!*") && edit) editCount += 1;
           if (name.startsWith("!")) { position = value; continue; }
           const sort = `${prefix}${position}${name}`;
           if (mode === "A") {
@@ -105,7 +109,7 @@ export async function readMasterLog(loader: Loader, programId: number, firstComb
             row[0] = name;
             row[1] = value;
             table.set(sort, row);
-          } else if (mode === "E") {
+          } else if (edit) {
             const at = columns.indexOf(`Edit_Value_${editCount}`);
             let row = table.get(sort);
             if (!row) { row = Array<string>(columns.length).fill(""); row[0] = name; table.set(sort, row); }

@@ -22,14 +22,15 @@ export function printHtmlDocument(html: string) {
 }
 
 /** The page setup a user last chose (orientation, font, totals), kept in this browser only. */
-const SETUP_KEY = "smartwinfa.printSetup";
+// v2: the default font became 10 pt, so a setup saved with the old 8 pt default is not reused.
+const SETUP_KEY = "smartwinfa.printSetup.v2";
 export type PrintSetup = { orientation: "portrait" | "landscape"; fontSize: number; totals: boolean };
 
 export function readPrintSetup(): PrintSetup | null {
   try {
     const value = JSON.parse(localStorage.getItem(SETUP_KEY) ?? "null") as Partial<PrintSetup> | null;
     if (!value || (value.orientation !== "portrait" && value.orientation !== "landscape")) return null;
-    return { orientation: value.orientation, fontSize: Number(value.fontSize) || 8, totals: value.totals !== false };
+    return { orientation: value.orientation, fontSize: Number(value.fontSize) || 10, totals: value.totals !== false };
   } catch {
     return null;
   }

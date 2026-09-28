@@ -1,5 +1,5 @@
-import { fit, pageLabel, pageLayout, pageParts } from "./pdf.ts";
-import type { PageLayout, PdfOptions } from "./pdf.ts";
+import { fit, pageLabel, pageLayout, pageParts, recordLayout, recordTitle } from "./pdf.ts";
+import type { PdfOptions } from "./pdf.ts";
 import { cellText } from "./table.ts";
 import type { ExportTable } from "./table.ts";
 
@@ -16,13 +16,15 @@ const pt = (value: number) => `${Math.round(value * 100) / 100}pt`;
 export type PreviewSearch = Readonly<{ needle: string; currentLine: number }>;
 
 export type PreviewPages = Readonly<{
-  layout: PageLayout;
+  layout: Readonly<{ pageWidth: number; pageHeight: number }>;
   pageCount: number;
   page: (index: number, search?: PreviewSearch) => string;
   /** Rows (line numbers) whose shown text contains the needle, in page order. */
   find: (needle: string) => number[];
   /** The page a row falls on. */
   pageOf: (line: number) => number;
+  /** How far down its page a row is printed, in points. */
+  offsetOf: (line: number) => number;
 }>;
 
 /** Escaped text with every occurrence of the needle wrapped in <mark>. */
@@ -38,7 +40,56 @@ function marked(text: string, needle: string): string {
   return out + escape(text.slice(at));
 }
 
+/** Rows (line numbers) whose shown text contains the needle. */
+function findRows(table: ExportTable, raw: string): number[] {
+  const needle = raw.trim().toLowerCase();
+  if (!needle) return [];
+  const hits: number[] = [];
+  table.rows.forEach((row, line) => {
+    if (table.columns.some((column, at) => cellText(row[at] ?? null, column).toLowerCase().includes(needle))) hits.push(line);
+  });
+  return hits;
+}
+
+/** The heading lines at the top of every page: company, then the title with the group at its right. */
+function headingHtml(table: ExportTable, topLines: readonly string[], margin: number, usable: number): string {
+  const lines: string[] = [];
+  let top = margin;
+  topLines.forEach((line, at) => {
+    const fontSize = at === 0 ? 12 : at === 1 ? 10 : 8;
+    lines.push(`<div class="pv-line${at < 2 ? " pv-bold" : ""}" style="left:${pt(margin)};top:${pt(top)};font-size:${pt(fontSize)};max-width:${pt(at === 1 && table.titleRight ? usable * 0.62 : usable)}">${escape(line)}</div>`);
+    if (at === 1 && table.titleRight) lines.push(`<div class="pv-line pv-bold" style="right:${pt(margin)};top:${pt(top)};font-size:${pt(10)};max-width:${pt(usable * 0.36)}">${escape(table.titleRight)}</div>`);
+    top += at === 0 ? 15 : at === 1 ? 13 : 11;
+  });
+  return lines.join("");
+}
+
+/** The footer: print date and user on the left, the record count in the middle, the page on the right. */
+function footerHtml(table: ExportTable, options: PdfOptions, pageWidth: number, pageHeight: number, margin: number, usable: number, pageText: string): string {
+  const footerTop = pageHeight - margin - 7;
+  const middle = table.footerCenter ? `<div class="pv-foot pv-foot-center" style="top:${pt(footerTop)};width:${pt(usable * 0.3)};left:${pt((pageWidth - usable * 0.3) / 2)}">${escape(table.footerCenter)}</div>` : "";
+  return `<div class="pv-foot" style="left:${pt(margin)};top:${pt(footerTop)};max-width:${pt(usable * 0.38)}">${escape(options.footer)}</div>${middle}<div class="pv-foot" style="right:${pt(margin)};top:${pt(footerTop)}">${escape(pageText)}</div>`;
+}
+
+/** "One record per page": each record starts a new page, every field's heading beside its value. */
+function recordPages(table: ExportTable, options: PdfOptions): PreviewPages {
+  const layout = recordLayout(table, options);
+  const { pageWidth, pageHeight, margin, usable, size, lineHeight, pad, labelWidth, topLines, barTop, barHeight } = layout;
+  const page = (index: number, search?: PreviewSearch): string => {
+    const needle = search?.needle.trim().toLowerCase() ?? "";
+    const sheet = layout.pages[index];
+    const bar = `<div class="pv-record-bar" style="left:${pt(margin)};top:${pt(barTop)};width:${pt(usable)};height:${pt(barHeight)};line-height:${pt(barHeight)};font-size:${pt(size)};padding:0 ${pt(pad)}">${escape(recordTitle(table, sheet))}</div>`;
+    const rows = sheet.entries.map((entry) => `<tr style="height:${pt(entry.height)}"><th style="padding:${pt(pad - 0.4)} ${pt(pad)}">${entry.label.map(escape).join("<br>")}</th><td style="padding:${pt(pad - 0.4)} ${pt(pad)}">${entry.value.map((line) => marked(line, needle)).join("<br>")}</td></tr>`).join("");
+    const top = sheet.entries[0]?.top ?? barTop + barHeight;
+    const fields = `<table class="pv-table pv-record" style="left:${pt(margin)};top:${pt(top)};width:${pt(usable)};font-size:${pt(size)};line-height:${pt(lineHeight)}"><colgroup><col style="width:${pt(labelWidth)}"><col></colgroup><tbody>${rows}</tbody></table>`;
+    const footer = footerHtml(table, options, pageWidth, pageHeight, margin, usable, `Page ${index + 1} of ${layout.pageCount}`);
+    return `<section class="pv-page" style="width:${pt(pageWidth)};height:${pt(pageHeight)}">${headingHtml(table, topLines, margin, usable)}${bar}${fields}${footer}</section>`;
+  };
+  return { layout, pageCount: layout.pageCount, page, find: (needle) => findRows(table, needle), pageOf: (line) => layout.firstPage[line] ?? 0, offsetOf: () => barTop };
+}
+
 export function previewPages(table: ExportTable, options: PdfOptions): PreviewPages {
+  if (options.style === "record") return recordPages(table, options);
   const layout = pageLayout(table, options);
   const { pageWidth, pageHeight, margin, usable, size, rowHeight, pad, headHeight, topLines, topHeight, withTotals, perPage, pageCount } = layout;
   const colgroups = layout.bands.map((band) => `<colgroup>${band.widths.map((width) => `<col style="width:${pt(width)}">`).join("")}</colgroup>`);
@@ -47,14 +98,6 @@ export function previewPages(table: ExportTable, options: PdfOptions): PreviewPa
 
   const page = (index: number, search?: PreviewSearch): string => {
     const needle = search?.needle.trim().toLowerCase() ?? "";
-    const lines: string[] = [];
-    let top = margin;
-    topLines.forEach((line, at) => {
-      const fontSize = at === 0 ? 12 : at === 1 ? 10 : 8;
-      lines.push(`<div class="pv-line${at < 2 ? " pv-bold" : ""}" style="left:${pt(margin)};top:${pt(top)};font-size:${pt(fontSize)};max-width:${pt(at === 1 && table.titleRight ? usable * 0.62 : usable)}">${escape(line)}</div>`);
-      if (at === 1 && table.titleRight) lines.push(`<div class="pv-line pv-bold" style="right:${pt(margin)};top:${pt(top)};font-size:${pt(10)};max-width:${pt(usable * 0.36)}">${escape(table.titleRight)}</div>`);
-      top += at === 0 ? 15 : at === 1 ? 13 : 11;
-    });
     const { band, bandIndex, first, last } = pageParts(layout, index);
     const { widths } = band;
     const rows: string[] = [];
@@ -74,23 +117,19 @@ export function previewPages(table: ExportTable, options: PdfOptions): PreviewPa
       rows.push(`<tr style="height:${pt(rowHeight)}"${classes ? ` class="${classes}"` : ""} data-line="${line}">${cells}</tr>`);
     }
     const tableHtml = `<table class="pv-table" style="left:${pt(margin)};top:${pt(margin + topHeight)};width:${pt(band.tableWidth)};font-size:${pt(size)}">${colgroups[bandIndex]}${headRows[bandIndex]}<tbody>${rows.join("")}</tbody></table>`;
-    const footerTop = pageHeight - margin - 7;
-    const middle = table.footerCenter ? `<div class="pv-foot pv-foot-center" style="top:${pt(footerTop)};width:${pt(usable * 0.3)};left:${pt((pageWidth - usable * 0.3) / 2)}">${escape(table.footerCenter)}</div>` : "";
-    const footer = `<div class="pv-foot" style="left:${pt(margin)};top:${pt(footerTop)};max-width:${pt(usable * 0.38)}">${escape(options.footer)}</div>${middle}<div class="pv-foot" style="right:${pt(margin)};top:${pt(footerTop)}">${escape(pageLabel(layout, index))}</div>`;
-    return `<section class="pv-page" style="width:${pt(pageWidth)};height:${pt(pageHeight)}">${lines.join("")}${tableHtml}${footer}</section>`;
+    const footer = footerHtml(table, options, pageWidth, pageHeight, margin, usable, pageLabel(layout, index));
+    return `<section class="pv-page" style="width:${pt(pageWidth)};height:${pt(pageHeight)}">${headingHtml(table, topLines, margin, usable)}${tableHtml}${footer}</section>`;
   };
 
-  const find = (raw: string): number[] => {
-    const needle = raw.trim().toLowerCase();
-    if (!needle) return [];
-    const hits: number[] = [];
-    table.rows.forEach((row, line) => {
-      if (table.columns.some((column, at) => cellText(row[at] ?? null, column).toLowerCase().includes(needle))) hits.push(line);
-    });
-    return hits;
+  // A row's page (and place on it) in the first band of columns.
+  return {
+    layout,
+    pageCount,
+    page,
+    find: (needle) => findRows(table, needle),
+    pageOf: (line) => Math.floor(line / perPage),
+    offsetOf: (line) => (line % perPage) * rowHeight + margin + topHeight + headHeight,
   };
-  // A row's page in the first band of columns.
-  return { layout, pageCount, page, find, pageOf: (line) => Math.floor(line / perPage) };
 }
 
 /** The pages' look; the same rules are used on screen and when printing. */
@@ -110,6 +149,10 @@ export const PAGE_CSS = `
 .pv-foot-center{text-align:center}
 .pv-hit{background:#ffe066;color:#000;padding:0}
 .pv-table tr.pv-hit-row td{background:#ffd76a;outline:0.8pt solid #e0a000}
+.pv-record-bar{position:absolute;box-sizing:border-box;background:#b9d7f7;color:#0b2c57;font-weight:bold;white-space:nowrap;overflow:hidden}
+.pv-table.pv-record th,.pv-table.pv-record td{box-sizing:border-box;border:0.4pt solid #9eb5d4;vertical-align:top;white-space:nowrap;line-height:inherit}
+.pv-table.pv-record th{background:#e3eefb;color:#000;text-align:left}
+.pv-table.pv-record td{background:#fff}
 `;
 
 /** A whole document of every page, for printing: one sheet of paper per page, no margins added. */

@@ -152,3 +152,46 @@ test("too many columns for one sheet: all records with the first columns, then a
   const text = new TextDecoder("latin1").decode(pdf(wide, options));
   assert.equal(Number(/\/Count (\d+)/.exec(text)![1]), layout.pageCount);
 });
+
+test("one record per page: each record starts a new page, every field's heading beside its value", async () => {
+  const { recordLayout } = await import("../lib/export/pdf.ts");
+  const { previewPages, printDocument } = await import("../lib/export/pages.ts");
+  const columns = Array.from({ length: 12 }, (_, index) => ({ caption: index === 0 ? "NAME" : `FIELD ${index}`, kind: "text" as const, decimals: 0, align: "left" as const, width: 120 }));
+  const rows = Array.from({ length: 3 }, (_, row) => columns.map((_, index) => (index === 0 ? `Party <${row}>` : `v${row}-${index}`)));
+  const three: ExportTable = { ...table, subtitle: [], columns, rows, totals: undefined, footerCenter: "3 records" };
+  const options = { orientation: "portrait", fontSize: 8, totals: true, footer: "", style: "record" } as const;
+  const layout = recordLayout(three, options);
+  assert.equal(layout.pageCount, 3, "a page for each record");
+  assert.deepEqual(layout.firstPage, [0, 1, 2]);
+  const pages = previewPages(three, options);
+  assert.equal(pages.pageCount, 3);
+  assert.match(pages.page(1), /Record 2 of 3 : Party &lt;1&gt;/);
+  assert.match(pages.page(1), /<th[^>]*>FIELD 5<\/th><td[^>]*>v1-5<\/td>/, "heading beside its value");
+  assert.doesNotMatch(pages.page(1), /v0-/, "only that record on its page");
+  assert.deepEqual(pages.find("v2-3"), [2]);
+  assert.equal(pages.pageOf(2), 2);
+  assert.equal(printDocument("Records", pages, "portrait").match(/<section class="pv-page"/g)?.length, 3);
+  const text = new TextDecoder("latin1").decode(pdf(three, options));
+  assert.equal(Number(/\/Count (\d+)/.exec(text)![1]), 3, "the PDF has the same pages");
+  assert.match(text, /\(Record 3 of 3 : Party <2>\) Tj/);
+  assert.doesNotMatch(text, /Total/, "no totals row on record sheets");
+
+  // A record with more fields than a page holds runs on, marked "(continued)"; the next record still starts a new page.
+  const many = Array.from({ length: 150 }, (_, index) => ({ ...columns[1], caption: `F${index}` }));
+  const tall: ExportTable = { ...three, columns: many, rows: [many.map((_, index) => `a${index}`), many.map((_, index) => `b${index}`)] };
+  const tallLayout = recordLayout(tall, options);
+  assert.ok(tallLayout.pageCount >= 4, `${tallLayout.pageCount} pages`);
+  assert.equal(tallLayout.pages[tallLayout.firstPage[1]].record, 1);
+  assert.equal(tallLayout.pages[tallLayout.firstPage[1]].part, 0);
+  assert.match(previewPages(tall, options).page(1), /Record 1 of 2 : a0 \(continued\)/);
+  for (const page of tallLayout.pages) for (const entry of page.entries) assert.ok(entry.top + entry.height <= tallLayout.pageHeight - tallLayout.margin - 16 + 0.01, "fields stay above the footer");
+});
+
+test("long values wrap onto more lines instead of being cut", async () => {
+  const { wrap } = await import("../lib/export/pdf.ts");
+  const lines = wrap("12 MAIN ROAD, NEAR THE OLD BUS STAND, INDUSTRIAL ESTATE, AHMEDABAD 380001", 120, 9, false);
+  assert.ok(lines.length > 1);
+  assert.equal(lines.join(" "), "12 MAIN ROAD, NEAR THE OLD BUS STAND, INDUSTRIAL ESTATE, AHMEDABAD 380001");
+  assert.deepEqual(wrap("", 100, 9, false), [""]);
+  assert.ok(wrap("X".repeat(200), 100, 9, false).every((line) => line.length > 0 && line.length < 200), "a word too long for a line is broken");
+});
