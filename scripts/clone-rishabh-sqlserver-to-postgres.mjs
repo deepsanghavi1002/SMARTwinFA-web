@@ -15,13 +15,14 @@
  * database> (default rishabh_plastic27); --server / --port override the INI's ServerName (e.g. a
  * named instance on its own port). Identity columns come across as identity columns (continuing
  * after the highest value copied) and primary keys as primary keys, so the application can keep
- * inserting into the copied tables.
+ * inserting into the copied tables. The indexes of scripts/company-indexes.mjs are added at the end.
  */
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import sql from "mssql";
 import pg from "pg";
+import { applyCompanyIndexes } from "./company-indexes.mjs";
 
 const { Client } = pg;
 
@@ -215,6 +216,9 @@ async function main() {
     }
     const verified = await target.query(`SELECT COUNT(*)::integer AS tables FROM information_schema.tables WHERE table_schema=$1 AND table_type='BASE TABLE'`, [schema]);
     console.log(`Clone complete: ${verified.rows[0].tables} tables, ${copiedRows} rows.`);
+    // The legacy database had primary keys only; the indexes the web screens rely on come next.
+    console.log("Adding company indexes:");
+    await applyCompanyIndexes(target, schema);
   } finally {
     await target.end();
     await source.close();

@@ -27,7 +27,19 @@ export function hasInvisible(text: string): boolean {
   return characterClass(INVISIBLE_RANGES, "").test(text) || characterClass(ODD_SPACE_RANGES, "").test(text);
 }
 
-/** The value a main field is stored with: odd spaces made plain, invisible characters dropped, trailing blanks cut. */
+/**
+ * The value a main field is stored with: odd spaces made plain, invisible characters dropped,
+ * a run of blanks inside made one ("ABC  DISTRIBUTOR" is "ABC DISTRIBUTOR"), leading and
+ * trailing blanks cut.
+ */
 export function cleanMainValue(text: string): string {
-  return text.replace(characterClass(ODD_SPACE_RANGES, "g"), " ").replace(characterClass(INVISIBLE_RANGES, "g"), "").replace(/\s+$/, "");
+  return text.replace(characterClass(ODD_SPACE_RANGES, "g"), " ").replace(characterClass(INVISIBLE_RANGES, "g"), "").replace(/ {2,}/g, " ").trim();
+}
+
+/**
+ * What two values are compared by in a duplicate check: the cleaned value in capitals. Records
+ * saved before the cleaning (with doubled or odd spaces) still match a new entry this way.
+ */
+export function duplicateKey(text: string): string {
+  return cleanMainValue(text).toUpperCase();
 }

@@ -18,10 +18,12 @@ import type { PdfOptions, PrintStyle } from "../../lib/export/pdf";
 import { download, safeFileName } from "../../lib/export/table";
 import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
-import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, fitCase, gstStateMismatch, isNumberField as isNumberSetup, keyPress, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
+import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, fitCase, pairedClosed, pairedMessage, gstStateMismatch, isNumberField as isNumberSetup, keyPress, sameGroup, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
 import { HelpList } from "./HelpList";
-import { cleanMainValue, isMainField } from "../../lib/master-program/main-field";
+import { cleanMainValue, duplicateKey, isMainField } from "../../lib/master-program/main-field";
 import { GridCombo } from "./GridCombo";
+import { GridMultiPick } from "./GridMultiPick";
+import { keyListNames, keyListText, parseKeyList, validKeyList } from "../../lib/master-program/multi-pick";
 import { ArrangeColumns } from "./ArrangeColumns";
 import { isMessageBoxOpen, messageBox } from "../ui/MessageBox";
 import type { MessageButton } from "../ui/MessageBox";
@@ -293,8 +295,12 @@ const alignOf = (align: string | null | undefined): "left" | "right" | "center" 
   return code === "R" ? "right" : code === "C" || code === "M" ? "center" : "left";
 };
 
-/** The value a filter, search or sort reads: the stored one, as the grid shows it. */
-const shownText = (record: UpdateRecord | undefined, column: UpdateColumn) => formatCell(cellOf(record, column.key), column.format).trim();
+/** The value a filter, search or sort reads: the stored one, as the grid shows it (a multi-pick cell's names, not its keys). */
+const shownText = (record: UpdateRecord | undefined, column: UpdateColumn) => cellShown(cellOf(record, column.key), column);
+
+/** How a stored value shows in an Update-grid cell: formatted, or a multi-pick's keys as names. */
+const cellShown = (value: string, column: Pick<UpdateColumn, "comboKind" | "options" | "format">) =>
+  column.comboKind === "M" ? keyListNames(value, column.options) : formatCell(value, column.format).trim();
 
 /** How a stored value shows in a cell, per Setting_GridCol's Format. */
 function formatCell(value: string, format: string): string {
@@ -464,7 +470,38 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       top += tr.offsetHeight;
     }
     table.style.setProperty("--mp-add-frozen-h", `${top}px`);
+    // Rows may have come, gone or changed height: count again (after this render, as the lint rule asks).
+    void Promise.resolve().then(measureAddMore);
   });
+  /**
+   * New grid: how many rows are out of sight above (behind the heading and the frozen rows) and
+   * below, shown as "▲ n rows up" / "▼ n rows down". Counted from the rendered rows' positions on
+   * each scroll; the grid has a few dozen rows, so this costs nothing noticeable.
+   */
+  const [addMore, setAddMore] = useState({ up: 0, down: 0 });
+  const measureAddMore = useCallback(() => {
+    const table = addTable.current;
+    if (!table) return;
+    const box = table.getBoundingClientRect();
+    const stuck = Number.parseFloat(table.style.getPropertyValue("--mp-add-frozen-h")) || (table.tHead?.offsetHeight ?? 0);
+    const bottom = box.top + table.clientHeight;
+    let up = 0;
+    let down = 0;
+    for (const tr of table.querySelectorAll<HTMLTableRowElement>("tbody tr:not(.mp-add-frozen)")) {
+      const row = tr.getBoundingClientRect();
+      if (row.bottom <= box.top + stuck + 1) up += 1;
+      else if (row.top >= bottom - 1) down += 1;
+    }
+    setAddMore((current) => (current.up === up && current.down === down ? current : { up, down }));
+  }, []);
+  useEffect(() => {
+    window.addEventListener("resize", measureAddMore);
+    return () => window.removeEventListener("resize", measureAddMore);
+  }, [measureAddMore]);
+  const scrollAdd = (direction: 1 | -1) => {
+    const table = addTable.current;
+    if (table) table.scrollBy({ top: direction * Math.max(60, table.clientHeight * 0.8), behavior: "smooth" });
+  };
   const screenRef = useRef<HTMLDivElement>(null);
   useAltHotkeys(screenRef);
 
@@ -802,19 +839,46 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
    * before a duplicate is typed. Where DUPLICHK_FLDNAME2 is set the entry must also belong to
    * the group chosen in the first combo.
    */
+  /**
+   * The group a main field's help list and duplicate check keep to (duplichk_fldname2): the value
+   * of that field on the Update grid's current record, or in the New grid's row of that name;
+   * a New grid without such a row keeps to the first combo, as the desktop did. null: no group.
+   */
+  const helpGroup = useMemo((): Readonly<{ field: string; values: readonly string[] }> | null => {
+    const setup = tab === "add" ? addRows[addCursor]?.setup : grids?.columns.find((column) => column.key === cursor.key)?.setup;
+    const field = toText(setup?.duplichk_fldname2);
+    if (!setup || field === "") return null;
+    if (tab !== "add") return { field, values: [cellOf(records[cursor.row], field)] };
+    const row = addRows.find((candidate) => lower(candidate.fieldName) === lower(field));
+    if (row) return { field, values: [row.fieldInput] };
+    return first ? { field, values: [first.value, first.text] } : null;
+  }, [tab, addRows, addCursor, grids, cursor, records, first]);
+  /** An Update-grid column's help entries for a record: those of the record's group (duplichk_fldname2), else all. */
+  const groupHelpRows = (setup: UpdateColumn["setup"], record: UpdateRecord | undefined) => {
+    const field = toText(setup.duplichk_fldname2);
+    const rows = help?.rows ?? [];
+    return field === "" ? rows : rows.filter((helpRecord) => sameGroup(cellOf(helpRecord, field), cellOf(record, field)));
+  };
+  /** The help list as shown: only the current group's entries when the main field has one. */
+  const shownHelp = useMemo(() => {
+    if (!help || !helpGroup) return help;
+    const rows = help.rows.filter((helpRecord) => helpGroup.values.some((value) => sameGroup(cellOf(helpRecord, helpGroup.field), value)));
+    return { ...help, rows, total: `Total Help Record : ${rows.length}` };
+  }, [help, helpGroup]);
+
   const addHelp = useMemo(() => {
-    if (tab !== "add" || !help || help.columns.length === 0) return null;
+    if (tab !== "add" || !shownHelp || shownHelp.columns.length === 0) return null;
     const row = addRows[addCursor];
     if (!row || !isMainField(row.setup)) return null;
     const f1 = toText(row.setup.duplichk_fldname1).toLowerCase();
-    const f2 = toText(row.setup.duplichk_fldname2).toLowerCase();
     const typedText = (addEditing ? addText : row.fieldInput).trim().toUpperCase();
     if (f1 === "" || typedText === "") return { row: -1, exact: false, typed: typedText };
-    const inGroup = (helpRecord: Readonly<Record<string, string>>) => f2 === "" || !first || [first.value, first.text].includes(cellOf(helpRecord, f2));
-    const found = help.rows.findIndex((helpRecord) => inGroup(helpRecord) && (addEditing ? cellOf(helpRecord, f1).toUpperCase().startsWith(typedText) : cellOf(helpRecord, f1).toUpperCase() === typedText));
-    const exact = found >= 0 && cellOf(help.rows[found], f1).trim().toUpperCase() === typedText && !(restore && restore.row === found);
+    const found = shownHelp.rows.findIndex((helpRecord) => (addEditing ? cellOf(helpRecord, f1).toUpperCase().startsWith(typedText) : cellOf(helpRecord, f1).toUpperCase() === typedText));
+    // A restore shows the record being restored; with a group the list is filtered, so compare by value.
+    const restoring = restore !== null && (helpGroup ? duplicateKey(cellOf(records[restore.row], f1)) === typedText : restore.row === found);
+    const exact = found >= 0 && cellOf(shownHelp.rows[found], f1).trim().toUpperCase() === typedText && !restoring;
     return { row: found, exact, typed: typedText };
-  }, [tab, help, addRows, addCursor, addEditing, addText, first, restore]);
+  }, [tab, shownHelp, helpGroup, addRows, addCursor, addEditing, addText, restore, records]);
   /** A pick in the New Add help list holds only while the row and the typing stay as they were. */
   const addHelpKey = `${addCursor}|${addEditing ? 1 : 0}|${addText}`;
 
@@ -831,7 +895,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (!column || !isMainField(column.setup)) return;
     const typedText = text.trim().toUpperCase();
     const field = helpSearchKey(column.setup);
-    const found = typedText === "" ? -1 : help.rows.findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase().startsWith(typedText));
+    const found = typedText === "" ? -1 : groupHelpRows(column.setup, records[cursor.row]).findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase().startsWith(typedText));
     setHelpRow((current) => (found >= 0 || typedText === "" ? found : current ?? -1));
   };
 
@@ -864,7 +928,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
    * cell can be shown closed before the cursor reaches it. A record_exist rule is known only
    * once the record has been checked.
    */
+  /** Paired fields (value_diff_than): closed while the partner holds a value; this wins over any other rule. */
+  const closedByPartner = (row: number, column: UpdateColumn) =>
+    column.editable && pairedClosed(toText(column.setup.value_diff_than), cellOf(records[row], column.key), (name) => cellOf(records[row], name));
   const closedByRow = (row: number, column: UpdateColumn): boolean => {
+    if (closedByPartner(row, column)) return true;
     const status = toText(column.setup.status_against_fld);
     if (!column.editable || status === "" || toText(first?.value) === "") return false;
     const record = records[row];
@@ -880,9 +948,10 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     return setting !== "" && applyPermission(getPermission(permissionSource(record), "E", status, setting, false, false)).editable === false;
   };
   /** A column whose cells open or close row by row (see closedByRow). */
-  const rowRuled = (column: UpdateColumn) => column.editable && toText(column.setup.status_against_fld) !== "" && (toText(column.setup.enable_for) !== "" || toText(column.setup.disable_for) !== "");
+  const rowRuled = (column: UpdateColumn) => column.editable && (toText(column.setup.value_diff_than) !== "" || (toText(column.setup.status_against_fld) !== "" && (toText(column.setup.enable_for) !== "" || toText(column.setup.disable_for) !== "")));
   const isEditable = (row: number, column: UpdateColumn | undefined) => {
     if (!column) return false;
+    if (closedByPartner(row, column)) return false;
     const override = cellEditable[`${row}:${column.key}`];
     return override ?? (column.editable && !closedByRow(row, column));
   };
@@ -991,7 +1060,9 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         // Wide enough for the longest choice (tick, padding and scrollbar included), never
         // narrower than the column; it starts at the column's left edge unless the screen
         // runs out on the right, and then it moves left only as far as it has to.
-        const width = Math.min(window.innerWidth - 8, Math.max(box.width, 200, longestText(column.options.map((option) => option.text)) + 64));
+        // A multi-pick list also has a tick box, the key and Clear / OK, so it needs more room.
+        const multi = column.comboKind === "M";
+        const width = Math.min(window.innerWidth - 8, Math.max(box.width, multi ? 320 : 200, longestText(column.options.map((option) => option.text)) + (multi ? 110 : 64)));
         const left = Math.max(4, Math.min(box.left, window.innerWidth - width - 4));
         setComboAt({ left, top: below ? box.bottom + 2 : Math.max(4, box.top - height - 2), width, rows });
       } else setComboAt(null);
@@ -1043,14 +1114,15 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
     if (entered === cellOf(record, column.key) || (entered === "" && zeroAsBlank(column.setup, Boolean(column.options?.length), cellOf(record, column.key)) === "")) { setEditing(false); return true; }
     // The main field keeps no trailing blanks or unseen characters, so a duplicate cannot hide behind them.
-    let text = fitCase(column.setup, isMainField(column.setup) ? cleanMainValue(entered) : entered, programId);
+    let text = column.comboKind === "M" ? keyListText(parseKeyList(entered)) : fitCase(column.setup, isMainField(column.setup) ? cleanMainValue(entered) : entered, programId);
     if (column.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, dataAtBegin);
       if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
       text = dateText(text, date);
     }
     const outcome = validate({
-      setup: column.setup, masterGrid: false, programId, licence, coGstReq: meta.coGstReq, label: column.caption,
+      // A multi-pick value is a key list (" 1," trims to 2 characters), so no minimum length applies.
+      setup: column.comboKind === "M" ? { ...column.setup, field_length_min: 0 } : column.setup, masterGrid: false, programId, licence, coGstReq: meta.coGstReq, label: column.caption,
       fieldValue: (name) => cellOf(record, name),
       previousInput: (() => { const index = grids.columns.indexOf(column); return index > 0 ? cellOf(record, grids.columns[index - 1].key) : ""; })(),
       captionOf: (name) => columnByField(name)?.caption ?? name,
@@ -1058,6 +1130,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       rowIndex: row + 1,
     }, text);
     if (!outcome.ok) { await ask(outcome.message ?? "", outcome.title ?? "Validation"); return false; }
+    const partner = toText(column.setup.value_diff_than);
+    if (partner !== "" && text.trim() !== "" && cellOf(record, partner).trim() !== "") {
+      await ask(pairedMessage(column.caption, columnByField(partner)?.caption ?? partner), "Only One Allowed");
+      return false;
+    }
 
     if (column.setup.field_validation.toLowerCase() === "sys.checkstateid" && text.length > 0 && programId === 14) {
       const result = await call<{ message: string }>("check-state", { masterGrid: false, row: eventRow(row, column.setup.field_name, text), originalState: cellOf(backup[row], "state_id") });
@@ -1074,7 +1151,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     }
     if (text !== "" && toText(column.setup.duplichk_fldname1) !== "") {
       const withText = records.map((candidate, index) => (index === row ? { ...candidate, [column.key]: text } : candidate));
-      if (duplicateInGrid(withText, help?.rows ?? null, row, text, column.setup)) { await ask("Duplicate Master Found...", "Warning"); return false; }
+      if (duplicateInGrid(withText, row, text, column.setup)) { await ask("Duplicate Master Found...", "Warning"); return false; }
     }
 
     // ---- C1dg_UpdateGrid_AfterEdit
@@ -1166,7 +1243,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const oldRecord = records[oldRow];
 
     if (oldColumn && oldRecord && (oldRow !== row || oldColumn.key !== key)) {
-      if (cellOf(oldRecord, oldColumn.key) !== "" && toText(oldColumn.setup.duplichk_fldname1) !== "" && duplicateInGrid(records, help?.rows ?? null, oldRow, cellOf(oldRecord, oldColumn.key), oldColumn.setup)) {
+      if (cellOf(oldRecord, oldColumn.key) !== "" && toText(oldColumn.setup.duplichk_fldname1) !== "" && duplicateInGrid(records, oldRow, cellOf(oldRecord, oldColumn.key), oldColumn.setup)) {
         await ask("Duplicate Master Found...", "Warning");
         return false;
       }
@@ -1203,7 +1280,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       }
       if (oldColumn.setup.field_validation.toLowerCase() === "sys.compulsionhandle" && cellOf(oldRecord, oldColumn.key) !== "") {
         const target = grids.columns.find((column) => lower(column.setup.run_compulsory_field) === lower(oldColumn.setup.field_name));
-        if (target && target.key !== key) key = target.key;
+        // Only to a field that is open: a quantity of 0 keeps its UOM closed, and the cursor must not stop there.
+        if (target && target.key !== key && isEditable(row, target)) key = target.key;
       }
     }
 
@@ -1239,7 +1317,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (help && isMainField(column.setup)) {
         const field = helpSearchKey(column.setup);
         const value = cellOf(record, column.key).trim().toUpperCase();
-        setHelpRow(value === "" ? -1 : help.rows.findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase() === value));
+        setHelpRow(value === "" ? -1 : groupHelpRows(column.setup, record).findIndex((helpRecord) => cellOf(helpRecord, field).trim().toUpperCase() === value));
       }
     }
     keepGridFocus();
@@ -1423,6 +1501,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     else if (["L", "Q"].includes(column.setup.combo_value.toUpperCase())) problem = `Column ${column.caption} isn't allow for Paste, as it is drop down column`;
     // A date pastes when the copied value reads as one; it goes in written as the grid writes dates.
     let value = copied.value;
+    // A multi-pick column takes only keys its list has, written the stored way.
+    if (column.comboKind === "M") {
+      if (validKeyList(value, column.options ?? [], "")) value = keyListText(parseKeyList(value));
+      else problem = `Value = ${copied.value} isn't a list of ${column.caption} keys`;
+    }
     if (column.setup.field_type === "D" && value.trim() !== "") {
       const date = typedDate(value, "");
       if (date) value = dateText(value, date);
@@ -1571,7 +1654,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (raw === "") return null;
       if (exportColumns[index].kind === "number") { const value = toDecimal(raw.replace(/,/g, "")); return Number.isFinite(value) ? value : raw; }
       if (exportColumns[index].kind === "date") return parseDesktopDate(raw) ?? raw;
-      return formatCell(raw, column.format);
+      return column.comboKind === "M" ? keyListNames(raw, column.options) : formatCell(raw, column.format);
     }));
     // Totals for amounts and quantities (not for serial numbers or codes).
     const summed = columns.map((column) => (column.setup.field_type === "N" || column.setup.field_type === "C")
@@ -1636,7 +1719,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const exportCsv = async () => {
     if (await unsavedBlocks()) return;
     const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const lines = [columns.map((column) => quote(column.caption)).join(","), ...shownRows.map((row) => columns.map((column) => quote(formatCell(cellOf(records[row], column.key), column.format))).join(","))];
+    const lines = [columns.map((column) => quote(column.caption)).join(","), ...shownRows.map((row) => columns.map((column) => quote(column.comboKind === "M" ? shownText(records[row], column) : formatCell(cellOf(records[row], column.key), column.format))).join(","))];
     const blob = new Blob([String.fromCharCode(0xfeff) + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1806,6 +1889,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   // Add grid
 
   const addValue = (name: string) => addRows.find((row) => row.fieldName.toLowerCase() === lower(name))?.fieldInput;
+  /** A New-grid field's duplicate group (duplichk_fldname2): that row's value, else the first combo's text. */
+  const addDuplicateGroup = (setup: AddRow["setup"]) => {
+    const field = toText(setup.duplichk_fldname2);
+    return field === "" ? null : { field, value: addValue(field) ?? first?.text ?? "" };
+  };
   /**
    * An Add-grid field its row rule closes: STATUS_AGAINST_FLD with ENABLE_FOR, else DISABLE_FOR,
    * read from the values entered so far exactly as the Update grid reads its record (closedByRow).
@@ -1813,6 +1901,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
    * once when the cursor arrived, from values that did not yet hold the last choice, and it stuck.
    */
   const addClosedByRule = (row: AddState): boolean => {
+    if (pairedClosed(toText(row.setup.value_diff_than), row.fieldInput, (name) => addValue(name) ?? "")) return true;
     const status = toText(row.setup.status_against_fld);
     if (status === "") return false;
     const enable = toText(row.setup.enable_for);
@@ -1863,11 +1952,13 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (old && index !== addCursor) {
       if (old.setup.field_validation.toLowerCase() === "sys.compulsionhandle") {
         const target = addRows.findIndex((candidate) => lower(candidate.setup.run_compulsory_field) === lower(old.fieldName));
-        if (target > 0 && target !== index) { index = target; }
+        // As the Update grid: only after a value, and only to a field that is open (a blank MIN QTY keeps
+        // MIN UOM closed); jumping onto a closed field left the cursor stuck there.
+        if (target > 0 && target !== index && old.fieldInput.trim() !== "" && addOpen(addRows[target])) { index = target; }
       }
       if (old.setup.duplicate_chk && old.fieldInput !== "" && !old.setup.serverQueries.includes("duplicate_query") && !meta.productCode) {
         const field = toText(old.setup.duplichk_fldname1) || old.fieldName;
-        if (duplicateAgainstUpdate(records, field, old.fieldInput, restore ? restore.row : null)) {
+        if (duplicateAgainstUpdate(records, field, old.fieldInput, restore ? restore.row : null, addDuplicateGroup(old.setup))) {
           await ask("Duplicate value Found...", "Warning");
           if (restore) { setAdd(addCursor, { fieldInput: "" }); await cancelAdd(true); }
           return;
@@ -1912,7 +2003,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       const height = rows * 22 + 62;
       if (box) {
         const below = box.bottom + height < window.innerHeight - 4;
-        const width = Math.min(window.innerWidth - 8, Math.max(box.width, 200, longestText(row.options.map((option) => option.text)) + 64));
+        const multi = row.comboKind === "M";
+        const width = Math.min(window.innerWidth - 8, Math.max(box.width, multi ? 320 : 200, longestText(row.options.map((option) => option.text)) + (multi ? 110 : 64)));
         const left = Math.max(4, Math.min(box.left, window.innerWidth - width - 4));
         setAddComboAt({ left, top: below ? box.bottom + 2 : Math.max(4, box.top - height - 2), width, rows });
       } else setAddComboAt(null);
@@ -1936,7 +2028,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     /** The text to commit: a combo's choice arrives directly, before the render that would hold it. */
     const entered = typedText ?? addText;
     // The main field keeps no trailing blanks or unseen characters, so a duplicate cannot hide behind them.
-    let text = fitCase(row.setup, isMainField(row.setup) ? cleanMainValue(entered) : entered, programId);
+    let text = row.comboKind === "M" ? keyListText(parseKeyList(entered)) : fitCase(row.setup, isMainField(row.setup) ? cleanMainValue(entered) : entered, programId);
     if (text === "" && zeroAsBlank(row.setup, Boolean(row.options?.length), row.fieldInput) === "") text = row.fieldInput;
     if (row.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, row.fieldInput);
@@ -1945,11 +2037,17 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     }
     if (row.comboKind === "L" && row.setup.value_compulsory && text.trim() === "" && row.options?.length) text = row.options[0].text;
     const outcome = validate({
-      setup: { ...row.setup, value_compulsory: row.compulsory }, masterGrid: true, programId, licence, coGstReq: meta.coGstReq, label: row.headLabel,
+      setup: { ...row.setup, value_compulsory: row.compulsory, ...(row.comboKind === "M" ? { field_length_min: 0 } : {}) }, masterGrid: true, programId, licence, coGstReq: meta.coGstReq, label: row.headLabel,
       fieldValue: (name) => addValue(name) ?? "", previousInput: addRows[index - 1]?.fieldInput ?? "",
       captionOf: (name) => columnByField(name)?.caption ?? name, columnValues: (name) => records.map((record) => cellOf(record, name)),
     }, text);
     if (!outcome.ok) { await ask(outcome.message ?? "", outcome.title ?? "Validation"); return false; }
+    const partner = toText(row.setup.value_diff_than);
+    if (partner !== "" && text.trim() !== "" && (addValue(partner) ?? "").trim() !== "") {
+      const partnerRow = addRows.find((candidate) => lower(candidate.fieldName) === lower(partner));
+      await ask(pairedMessage(row.headLabel.replace(/^\* /, ""), partnerRow?.headLabel.replace(/^\* /, "") ?? partner), "Only One Allowed");
+      return false;
+    }
     if (row.setup.field_validation.toLowerCase() === "sys.checkgststateid" && text.length > 0 && programId === 14 && meta.coGstReq) {
       const short = (await call<{ short: string }>("state-short", { stateName: addRows[index - 1]?.fieldInput ?? "" })).short;
       const gst = gstStateMismatch(text, short);
@@ -1959,7 +2057,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (row.setup.serverQueries.includes("duplicate_query")) {
         const result = await call<{ message: string }>("duplicate-query", { masterGrid: true, row: addEventRow(index, text) });
         if (result.message !== "") { await ask(result.message, "Warning"); return false; }
-      } else if (duplicateAgainstUpdate(records, toText(row.setup.duplichk_fldname1) || row.fieldName, text, restore ? restore.row : null)) {
+      } else if (duplicateAgainstUpdate(records, toText(row.setup.duplichk_fldname1) || row.fieldName, text, restore ? restore.row : null, addDuplicateGroup(row.setup))) {
         await ask("Duplicate value Found...", "Warning");
         if (restore) { setAdd(index, { fieldInput: "" }); setAddEditing(false); await cancelAdd(true); }
         return false;
@@ -1968,9 +2066,12 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (text !== "" && toText(row.setup.duplichk_fldname1) !== "" && help && help.rows.length > 0) {
       const f1 = row.setup.duplichk_fldname1.toLowerCase();
       const combo = toText(row.setup.dupliadd_combofld).toLowerCase();
+      const group = addDuplicateGroup(row.setup);
       const hit = help.rows.findIndex((helpRecord, at) => {
-        if (cellOf(helpRecord, f1).toUpperCase() !== text.toUpperCase()) return false;
-        if (restore && restore.row === at) return false;
+        if (duplicateKey(cellOf(helpRecord, f1)) !== duplicateKey(text)) return false;
+        if (group && !sameGroup(cellOf(helpRecord, group.field), group.value)) return false;
+        // The record being restored is not its own duplicate (help rows follow the records only without a group).
+        if (restore && (group ? duplicateKey(cellOf(records[restore.row], f1)) === duplicateKey(text) : restore.row === at)) return false;
         if (combo !== "") return cellOf(helpRecord, combo) === (first?.text ?? "") || cellOf(helpRecord, combo) === (first?.value ?? "");
         return true;
       });
@@ -2151,7 +2252,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const row = addRows[addCursor];
     if (!copied || !row || !grids) return;
     if (!addOpen(row) || !row.visible) { await ask(`Field : ${row.headLabel.replace(/^\* /, "")} is readonly`, "Invalid Paste Selection"); return; }
-    if (row.options && copied.value !== "" && !row.options.some((option) => option.text === copied.value)) {
+    if (row.comboKind === "M" ? !validKeyList(copied.value, row.options ?? [], "") : row.options && copied.value !== "" && !row.options.some((option) => option.text === copied.value)) {
       await ask(`Value = ${copied.value} isn't in the list of ${row.headLabel.replace(/^\* /, "")}`, "Invalid Paste Selection");
       return;
     }
@@ -2263,16 +2364,41 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   columns.reduce((left, column, index) => { frozenLeft[index] = left; return left + widthOf(column); }, INDICATOR_WIDTH);
   const cursorColumn = columnByKey.get(cursor.key);
   const pickedRows = new Set(selectionEnd === null ? [] : selectedRows());
+  /**
+   * Update grid, as Excel's status bar: with two or more rows selected on a number column
+   * (quantity, rate, amount; not a list or key column), the sum, count and average of the
+   * selected cells that hold a value. Gone once the selection is.
+   */
+  const selectionTotals = (() => {
+    if (tab !== "update" || editing || pickedRows.size < 2 || !cursorColumn) return null;
+    const { setup } = cursorColumn;
+    const list = ["L", "Q", "X"].includes(setup.combo_value.trim().toUpperCase()) || cursorColumn.comboKind === "M";
+    if (list || !isNumberSetup(setup)) return null;
+    let sum = 0;
+    let count = 0;
+    for (const row of pickedRows) {
+      const raw = cellOf(records[row], cursorColumn.key).replace(/,/g, "").trim();
+      if (raw === "") continue;
+      const value = toDecimal(raw);
+      if (!Number.isFinite(value)) continue;
+      sum += value;
+      count += 1;
+    }
+    if (count === 0) return null;
+    const places = decimalsOf(cursorColumn);
+    const show = (value: number) => value.toLocaleString("en-IN", { minimumFractionDigits: places, maximumFractionDigits: places });
+    return `Sum: ${show(sum)}   Count: ${count}   Average: ${show(sum / count)}`;
+  })();
   /** The help list window: centred on one entry, with a note under the title for the New Add grid. */
   const helpWindow = (focusRow: number, onFocusRow: (row: number) => void, searchKey: string, note: { text: string; warn: boolean } | null) => {
-    if (!help || help.columns.length === 0) return null;
+    if (!shownHelp || shownHelp.columns.length === 0) return null;
     const backToGrid = () => {
       const editor = document.querySelector<HTMLElement>(".mp-editor");
       (editor ?? (tab === "add" ? addFocus.current : gridFocus.current))?.focus({ preventScroll: true });
     };
     return (
       <HelpList
-        help={help}
+        help={shownHelp}
         focusRow={focusRow}
         onFocusRow={onFocusRow}
         searchKey={searchKey}
@@ -2389,7 +2515,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
             {grids.addTabVisible && tab === "add" && <span className="mp-view-now">{restore ? "View (Restore)" : "New Add"}</span>}
             {grids.updateTabVisible && tab !== "update" && <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}><Icon name="list" /><HotkeyLabel text="Update / Delete" hotkey="u" /></button>}
             {imageTab && tab !== "image" && <button type="button" data-hotkey="i" aria-keyshortcuts="Alt+I" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => setTab("image")}><Icon name="image" /><HotkeyLabel text="Image" hotkey="i" /></button>}
-            <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-red mp-btn-big" onClick={() => void cancelAll()}><Icon name="cancel" /><HotkeyLabel text="Cancel Both (Add And Update)" hotkey="b" /></button>
+            {/* Cancel Both needs both grids: a master with no New grid (add_screen_hidden) or no Update grid (none, or no records) leaves it disabled. */}
+            <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-red mp-btn-big" disabled={!(grids.addTabVisible && grids.updateTabVisible && records.length > 0)} onClick={() => void cancelAll()}><Icon name="cancel" /><HotkeyLabel text="Cancel Both (Add And Update)" hotkey="b" /></button>
           </div>
         )}
         {busy && <span className="mp-busy">{busy}…</span>}
@@ -2402,7 +2529,12 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
       {grids && tab === "add" && (
         <div className="mp-add" ref={addFocus} role="grid" aria-label="New (Add)" tabIndex={0} onKeyDown={(event) => void addKeys(event)}>
-          <table className="mp-add-grid" ref={addTable}>
+          {addMore.up > 0 && (
+            <button type="button" tabIndex={-1} className="mp-add-more mp-add-more-up" title="Scroll up" onMouseDown={(event) => event.preventDefault()} onClick={() => scrollAdd(-1)}>
+              ▲ {addMore.up} {addMore.up === 1 ? "row" : "rows"} up
+            </button>
+          )}
+          <table className="mp-add-grid" ref={addTable} onScroll={measureAddMore}>
             <thead><tr><th className="mp-add-head">Heading</th><th>Input</th></tr></thead>
             <tbody>
               {addRows.map((row, index) => row.visible && (
@@ -2415,7 +2547,16 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                   <td role="gridcell" onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} title={[row.editable ? "" : "Read-only", row.addon ? "Addon field" : ""].filter(Boolean).join(" · ") || undefined} className={`mp-add-head ${row.editable ? "" : "mp-head-readonly"} ${row.setup.program_top_id === 48 || row.setup.program_top_id === 49 ? "mp-yellow" : ""} ${row.addon ? "mp-head-addon" : ""}`}>{row.headLabel}</td>
                   <td role="gridcell" data-add-cell={index} aria-readonly={!addOpen(row)} title={tooltipText(row.setup.field_tooltips) || undefined} style={{ textAlign: alignOf(row.setup.add_grid_align) }} onClick={() => void addMoveTo(index)} onDoubleClick={() => void addStartEdit()} className={`${addOpen(row) ? "" : row.editable ? "mp-readonly mp-row-closed" : "mp-readonly"} ${row.styleName}`}>
                     {addEditing && index === addCursor ? (
-                      row.options ? (
+                      row.comboKind === "M" ? (
+                        <GridMultiPick
+                          options={row.options ?? []}
+                          current={addText}
+                          startWith={addComboStart}
+                          place={addComboAt}
+                          onPick={(keys, step) => void finishAddCombo(keys, step)}
+                          onCancel={() => { setAddComboStart(""); setAddEditing(false); addFocus.current?.focus({ preventScroll: true }); }}
+                        />
+                      ) : row.options ? (
                         <GridCombo
                           options={row.options}
                           current={addText}
@@ -2430,12 +2571,20 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                           {editorTools(row.setup, addText, setAddText, "add")}
                         </span>
                       )
-                    ) : row.setup.force_inputtype === "P" && row.fieldInput !== "" ? "*********" : row.fieldInput}
+                    ) : row.setup.force_inputtype === "P" && row.fieldInput !== "" ? "*********" : row.comboKind === "M" ? keyListNames(row.fieldInput, row.options) : row.fieldInput}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {/* Under the grid, not over it, so the last heading in view is never covered. */}
+          <div className="mp-add-foot">
+            {addMore.down > 0 && (
+              <button type="button" tabIndex={-1} className="mp-add-more mp-add-more-down" title="Scroll down" onMouseDown={(event) => event.preventDefault()} onClick={() => scrollAdd(1)}>
+                ▼ {addMore.down} {addMore.down === 1 ? "row" : "rows"} down
+              </button>
+            )}
+          </div>
           {addMenu && (
             <div className="mp-menu" style={{ left: addMenu.x, top: addMenu.y }} onMouseLeave={() => setAddMenu(null)}>
               <button type="button" onClick={() => { setAddMenu(null); void addCopy(); }}>Copy (Ctrl+C)</button>
@@ -2628,7 +2777,16 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                           onMouseEnter={(event) => { if (dragSelect.current && event.buttons === 1 && !editing && row !== (selectionEnd ?? cursor.row)) setSelectionEnd(row === cursor.row ? null : row); }}
                         >
                           {current && editing ? (
-                            column.options ? (
+                            column.comboKind === "M" ? (
+                              <GridMultiPick
+                                options={column.options ?? []}
+                                current={editText}
+                                startWith={comboStart}
+                                place={comboAt}
+                                onPick={(keys, step) => void finishCombo(keys, step)}
+                                onCancel={() => { setEditing(false); gridFocus.current?.focus({ preventScroll: true }); }}
+                              />
+                            ) : column.options ? (
                               <GridCombo
                                 options={column.options}
                                 current={editText}
@@ -2645,7 +2803,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                             )
                           ) : (
                             <>
-                              {formatCell(cellOf(record, column.key), column.format)}
+                              {column.comboKind === "M" ? shownText(record, column) : formatCell(cellOf(record, column.key), column.format)}
                               {editable && column.options?.length ? (
                                 <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
                                   onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); void openCombo(row, column.key); }}>
@@ -2855,6 +3013,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       <div className="mp-status">
         <span>{rowStatus}</span>
         <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message}</span>
+        {selectionTotals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{selectionTotals}</span>}
         <span>{(() => {
           const setup = editing ? cursorColumn?.setup : addEditing ? addRows[addCursor]?.setup : undefined;
           if (setup?.field_type === "D") return "Alt+↓ Calendar · Ctrl+Del Clear";

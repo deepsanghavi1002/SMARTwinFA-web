@@ -1,6 +1,6 @@
 import { applyStyleCase, getPermission, isNumeric, keyRefused, parseDesktopDate, toDecimal, toText, validateContactNumber } from "../../lib/master-program/legacy";
 import type { PublicProgramBodySetup } from "../../lib/master-rules";
-import { hasInvisible } from "../../lib/master-program/main-field";
+import { duplicateKey, hasInvisible } from "../../lib/master-program/main-field";
 
 /**
  * The grid events of Master_ProgramGrid that need no database, for both grids.
@@ -313,23 +313,30 @@ export function carryString(carryFields: string, separator: string, valueOf: (na
   return carryFields !== "" ? (valueOf(carryFields) ?? "").trim() !== "" ? valueOf(carryFields) ?? "" : "" : "";
 }
 
+/** Two values of a group field (duplichk_fldname2/3) read as the same group: trimmed, any case. */
+export const sameGroup = (a: string, b: string) => a.trim().toUpperCase() === b.trim().toUpperCase();
+
 /**
- * Master_ProgramGrid.Duplicate_checking on the Update grid: another row with the same
- * value in duplichk_fldname1 (and, when set, matching fldname2/3 with a different key).
+ * Master_ProgramGrid.Duplicate_checking on the Update grid: another row with the same value in
+ * duplichk_fldname1 (compared by duplicateKey: any case, spacing ignored). duplichk_fldname2 and
+ * duplichk_fldname3 are group fields: a row counts only when it holds the same value in them as
+ * the current row (Option master: a description may repeat under another option).
+ * duplichk_pkfldname, when set, leaves out the row holding the current row's key.
+ *
+ * The desktop read the group fields off the help grid by row number, which only lined up while
+ * help and grid held the same rows; no setup used them, so they are read off the grid here.
  * Returns true when the desktop says "Duplicate Master Found...".
  */
 export function duplicateInGrid(
   records: readonly Readonly<Record<string, string>>[],
-  help: readonly Readonly<Record<string, string>>[] | null,
   currentIndex: number,
   text: string,
   setup: Setup,
 ): boolean {
-  const search = text.trim();
+  const search = duplicateKey(text);
   if (search === "" || toText(setup.duplichk_fldname1) === "") return false;
   const f1 = setup.duplichk_fldname1.toLowerCase();
-  const f2 = toText(setup.duplichk_fldname2).toLowerCase();
-  const f3 = toText(setup.duplichk_fldname3).toLowerCase();
+  const groups = [toText(setup.duplichk_fldname2), toText(setup.duplichk_fldname3)].map((name) => name.toLowerCase()).filter((name) => name !== "");
   const pk = toText(setup.duplichk_pkfldname).toLowerCase();
   const pick = (row: Readonly<Record<string, string>> | undefined, name: string) => {
     if (!row) return "";
@@ -337,37 +344,49 @@ export function duplicateInGrid(
     return key ? row[key] : "";
   };
   const current = records[currentIndex];
-  // FindRow searches from the row after the current one and wraps round to the start.
-  const order = [...records.keys()].slice(currentIndex + 1).concat([...records.keys()].slice(0, currentIndex + 1));
-  for (const index of order) {
-    if (index === currentIndex) continue;
-    const row = records[index];
-    if (pick(row, f1).trim().toUpperCase() !== search.toUpperCase()) continue;
-    const helpRow = help?.[index];
-    if (f2 !== "") {
-      if (pick(helpRow ?? row, f2) === pick(current, f2)) {
-        if (f3 !== "") {
-          if (pick(helpRow ?? row, f3) === pick(current, f3) && pick(helpRow ?? row, pk) !== pick(current, pk)) return true;
-        } else if (pick(helpRow ?? row, pk) === pick(current, pk)) {
-          return true;
-        }
-      }
-    } else if (search.toUpperCase() === pick(row, f1).toUpperCase()) {
-      return true;
-    }
-  }
-  return false;
+  return records.some((row, index) => {
+    if (index === currentIndex || duplicateKey(pick(row, f1)) !== search) return false;
+    if (!groups.every((name) => sameGroup(pick(row, name), pick(current, name)))) return false;
+    return pk === "" || pick(row, pk) !== pick(current, pk);
+  });
 }
 
-/** Add grid: another Update grid record already holds this value in duplichk_fldname1. */
-export function duplicateAgainstUpdate(records: readonly Readonly<Record<string, string>>[], fieldName: string, text: string, restoreRow: number | null): boolean {
-  const name = fieldName.toLowerCase();
-  const found = records.findIndex((record) => {
-    const key = Object.keys(record).find((candidate) => candidate.toLowerCase() === name);
-    return key ? record[key].trim().toUpperCase() === text.trim().toUpperCase() : false;
+/**
+ * Add grid: another Update grid record already holds this value in duplichk_fldname1. With a
+ * group (duplichk_fldname2), only records of the same group count.
+ */
+export function duplicateAgainstUpdate(
+  records: readonly Readonly<Record<string, string>>[],
+  fieldName: string,
+  text: string,
+  restoreRow: number | null,
+  group: Readonly<{ field: string; value: string }> | null = null,
+): boolean {
+  const pick = (record: Readonly<Record<string, string>>, name: string) => {
+    const key = Object.keys(record).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+    return key === undefined ? undefined : record[key];
+  };
+  const search = duplicateKey(text);
+  return records.some((record, index) => {
+    const value = pick(record, fieldName);
+    if (value === undefined || duplicateKey(value) !== search || index === restoreRow) return false;
+    return group === null || sameGroup(pick(record, group.field) ?? "", group.value);
   });
-  if (found < 0) return false;
-  return restoreRow === null ? true : restoreRow !== found;
+}
+
+/**
+ * Paired fields (value_diff_than names the partner): only one of the two may hold a value, as
+ * Addon Field's "Enable For Book No" / "Disable For Book No". A field is closed while its partner
+ * holds a value and it is itself blank; when both already hold one (older records) both stay
+ * open, so either can be cleared.
+ */
+export function pairedClosed(partner: string, own: string, valueOf: (name: string) => string): boolean {
+  return partner !== "" && own.trim() === "" && valueOf(partner).trim() !== "";
+}
+
+/** The refusal when a value is entered while the partner field still holds one. */
+export function pairedMessage(own: string, partner: string): string {
+  return `Only one of "${own.trim()}" and "${partner.trim()}" may be filled. Clear "${partner.trim()}" first.`;
 }
 
 /** "Date should be allowed only Within Accounting year" (BeforeRowColChange, Update grid, blank group). */

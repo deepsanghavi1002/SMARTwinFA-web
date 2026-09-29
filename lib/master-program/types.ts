@@ -12,8 +12,11 @@ import type { PublicProgramBodySetup } from "../master-rules";
 
 export type ComboOption = Readonly<{ text: string; value: string }>;
 
-/** How a field edits. "1" is the group combo itself; "N" (or blank) is plain input. */
-export type ComboKind = "1" | "C" | "F" | "L" | "N" | "Q" | "S" | "V" | "X" | "";
+/**
+ * How a field edits. "1" is the group combo itself; "N" (or blank) is plain input. "M" is not a
+ * combo_value of the setup: it is a multi-pick field (multiple_chkbox), which holds several keys.
+ */
+export type ComboKind = "1" | "C" | "F" | "L" | "M" | "N" | "Q" | "S" | "V" | "X" | "";
 
 export type SessionKey = Readonly<{ companyId: number; yearKey: number; loginName: string }>;
 

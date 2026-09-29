@@ -234,7 +234,7 @@
 .mp-tabs{display:flex;align-self:stretch;align-items:flex-end;gap:2px;margin-bottom:-5px}
 .mp-tabs button{height:24px;padding:0 14px;border:1px solid #8fa3a2;border-bottom:0;background:#c4cfce;font-size:11px;cursor:pointer}
 .mp-tabs button.active{background:#fff;font-weight:700}
-.mp-add{min-height:0;display:grid;grid-template-rows:minmax(0,1fr);outline:none;overflow:hidden}
+.mp-add{min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;outline:none;overflow:hidden}
 .mp-add-grid{width:100%;max-width:760px;border-collapse:collapse;align-self:start;overflow:auto;display:block;max-height:100%;background:#fff}
 .mp-add-grid th,.mp-add-grid td{height:22px;padding:1px 6px;border:1px solid #c3d0cf;text-align:left;white-space:nowrap}
 .mp-add-grid thead th{position:sticky;top:0;background:#c5d1d0;z-index:1}
@@ -275,6 +275,8 @@
 .mp-menu button:hover{background:#dcebea}
 .mp-status{display:flex;align-items:center;gap:14px;padding:0 8px;border-top:1px solid #8fa3a2;background:#d2dcdc;font-size:10px;overflow:hidden;white-space:nowrap}
 .mp-message{flex:1;overflow:hidden;text-overflow:ellipsis}
+/* Update grid: Sum / Count / Average of the selected rows of a number column (as Excel's status bar). */
+.mp-sel-totals{flex:none;font-weight:700;white-space:pre;font-variant-numeric:tabular-nums}
 .mp-warn{color:#8a4b00;cursor:help}
 .mp-fatal{margin:20px;padding:12px;border:1px solid #b04a4a;background:#fff0f0;color:#7a1f1f}
 .mp-dialog-backdrop{position:fixed;inset:0;z-index:40;display:grid;place-items:center;background:#0f1f2040}
@@ -670,6 +672,18 @@
 .mp-grid-combo-keys{display:flex;align-items:center;gap:3px;padding:4px 10px}
 .mp-grid-combo-keys kbd{padding:0 4px;border:1px solid #c8d4e5;border-bottom-width:2px;border-radius:3px;background:#fff;font:inherit;font-size:9px;color:#33475f}
 .mp-grid-combo ul,.search-combo-list{scrollbar-width:thin;scrollbar-color:#b9cbe4 transparent}
+/* Multi-pick list (multiple_chkbox): a tick box per entry, the key on the right, Clear / OK in the footer. */
+.mp-multi-box{width:20px;flex:none;display:grid;place-items:center}
+.mp-multi-box input{margin:0;width:13px;height:13px;accent-color:#1f64b8;pointer-events:none}
+.mp-grid-combo li .mp-grid-combo-text{flex:1}
+.mp-multi-key{flex:none;margin-left:8px;color:#6b7c93;font-size:10px;font-variant-numeric:tabular-nums}
+.mp-grid-combo li.mp-grid-combo-active .mp-multi-key{color:#dce9fb}
+.mp-multi-keys{justify-content:space-between}
+.mp-multi-keys>span:first-child{display:flex;align-items:center;gap:3px}
+.mp-multi-buttons{display:flex;gap:6px}
+.mp-multi-buttons button{height:20px;padding:0 12px;border:1px solid #b9cbe4;border-radius:4px;background:#fff;color:#10233d;font:inherit;font-size:10px;cursor:pointer}
+.mp-multi-buttons button:last-child{border-color:#1f64b8;background:linear-gradient(#2f7ad6,#1f64b8);color:#fff;font-weight:700}
+.mp-multi-buttons button:disabled{opacity:.5;cursor:default}
 
 /* The top combo (group) in the same style. */
 .search-combo input{border-radius:4px;padding-right:26px}
@@ -757,6 +771,14 @@
 .mp-add-grid tr.mp-add-frozen:not(.mp-current) td:not(.mp-add-head){background:#fff}
 .mp-add-grid tr.mp-add-frozen-last td{box-shadow:inset 0 -2px 0 #6f9bd0}
 .mp-add-grid tbody tr{scroll-margin-top:calc(var(--mp-add-frozen-h,22px) + 6px)}
+/* New grid: "▲ n rows up" at the right of the Heading/Input title row, "▼ n rows down" in a strip under
+   the grid, so neither covers a field; only the help list of a main field may open over the strip.
+   A click scrolls a page. */
+.mp-add-foot{width:min(760px,100%);height:22px;display:flex;align-items:center;justify-content:flex-end;padding-right:22px;box-sizing:border-box}
+.mp-add-more{position:absolute;z-index:5;left:min(760px,100%);transform:translateX(calc(-100% - 22px));height:18px;padding:0 9px;border:1px solid #9db8dd;border-radius:9px;background:#eef5ff;color:#1f4f8f;font:inherit;font-size:10px;font-weight:700;line-height:16px;white-space:nowrap;cursor:pointer;box-shadow:0 1px 3px #0b1a2e26}
+.mp-add-more:hover{background:#dcebff}
+.mp-add-more-up{top:2px}
+.mp-add-more-down{position:static;transform:none}
 
 /* Print / Save as PDF dialog */
 .mp-print-dialog{width:min(430px,94vw);display:grid;border-radius:10px;overflow:hidden;background:#fff;color:#1d2b3a;font-size:13px;box-shadow:0 18px 48px #0b2c5766,0 2px 6px #0003}

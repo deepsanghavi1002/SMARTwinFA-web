@@ -1,6 +1,7 @@
 import type { Client } from "pg";
 import { parseMoney, PROGRAM_BODY_COLUMNS, publicSetup, toSetup } from "../master-rules";
 import { properHeading } from "./heading";
+import { isMultiPick } from "./multi-pick";
 import type { ProgramBodySetup } from "../master-rules";
 import { replaceSysValues } from "../sys-values";
 import type { SysValueContext } from "../sys-values";
@@ -479,6 +480,28 @@ async function addonRecordAdd(loader: Loader, rows: BodyRow[], addon: AddonState
 }
 
 // ---------------------------------------------------------------------------------------
+// Multi-pick fields (multiple_chkbox): the list to tick from and the room the column has
+
+/**
+ * A multi-pick field's list: combo_fixquery's first column is the text, the second the key.
+ * Where the setup sets no maximum length, the column's own length becomes it, so a choice
+ * too long for the column is refused in the grid instead of failing at save.
+ */
+async function multiPick(loader: Loader, row: ProgramBodySetup): Promise<{ options: ComboOption[]; setup: ProgramBodySetup }> {
+  const rows = await loader.readTable(replaceSessionValues(row.combo_fixquery, loader.session).split("|sys.entry_id|").join("0"));
+  let setup = row;
+  if (row.field_length_max <= 0 && row.database_name.trim() !== "") {
+    const size = await loader.readTable(
+      "SELECT character_maximum_length AS size FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3",
+      [loader.session.companySchema, row.database_name.trim().toLowerCase(), row.field_name.trim().toLowerCase()],
+    );
+    const length = toInt(size?.[0]?.size);
+    if (length > 0) setup = { ...row, field_length_max: length };
+  }
+  return { options: optionsFrom(rows), setup };
+}
+
+// ---------------------------------------------------------------------------------------
 // Combo options (Setting_GridCol for the Update grid, Cmb_Master_GroupFld_Leave for Add)
 
 async function comboOptions(loader: Loader, row: ProgramBodySetup, group: GroupState, target: HideTarget): Promise<{ options: ComboOption[] | null; disable: boolean; firstValue: ComboOption | null }> {
@@ -778,8 +801,11 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       }
 
       let options: ComboOption[] | null = null;
-      const kind = row.combo_value.trim();
-      if (kind !== "" && kind !== "N") {
+      let columnSetup = row;
+      const kind = isMultiPick(row) ? "M" : row.combo_value.trim();
+      if (kind === "M") {
+        ({ options, setup: columnSetup } = await multiPick(loader, row));
+      } else if (kind !== "" && kind !== "N") {
         const result = await comboOptions(loader, row, group, "update");
         options = result.options;
         if (result.disable) editableColumn = false;
@@ -809,7 +835,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         position,
         statusDisplay: statusDisplay(row),
         addon: row.addon === true,
-        setup: publicSetup(row),
+        setup: publicSetup(columnSetup),
       });
     }
     // Columns the query returns that no setup row describes (record_exist, Row_Number) stay hidden.
@@ -914,8 +940,11 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       else if (row.field_type === "N") styleName = row.decimal_points > 0 && row.decimal_points <= 4 ? (`Decimal_${row.decimal_points}` as AddRow["styleName"]) : row.decimal_points === 0 ? "Pos_Integer" : "";
 
       let options: ComboOption[] | null = null;
-      const kind = row.combo_value.trim();
-      if (kind === "L" && row.combo_list !== "") {
+      let rowSetup = row;
+      const kind = isMultiPick(row) ? "M" : row.combo_value.trim();
+      if (kind === "M") {
+        ({ options, setup: rowSetup } = await multiPick(loader, row));
+      } else if (kind === "L" && row.combo_list !== "") {
         options = row.combo_list.split("|").map((text) => ({ text, value: text }));
         fieldInput = programId === 31 ? row.combo_list : row.combo_list.slice(0, Math.max(row.combo_list.indexOf("|"), 0));
       } else if (kind === "F" || kind === "X" || kind === "Q" || kind === "C" || kind === "V") {
@@ -999,7 +1028,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         carryName,
         statusDisplay: statusDisplay(row),
         addon: row.addon === true,
-        setup: publicSetup(row),
+        setup: publicSetup(rowSetup),
       });
     }
   }
