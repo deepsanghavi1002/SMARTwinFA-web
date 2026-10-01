@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluate } from "../features/master-program/calculate.ts";
+import { evaluate } from "../features/grid/calculate.ts";
 
 test("the cell calculator works out ordinary arithmetic", () => {
   assert.equal(evaluate("1250*4"), 5000);

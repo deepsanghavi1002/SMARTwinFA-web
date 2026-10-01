@@ -200,6 +200,28 @@ export async function loadProgram(loader: Loader, programName: string, menuShort
   };
 }
 
+/** int_rate_addon2 / int_rate_addon3, as Form Load reads them from addon_fld. */
+export async function rateAddon(loader: Loader, programId: number, which: 2 | 3): Promise<number> {
+  const s = loader.session.companySchema;
+  const first = async (where: string) => toInt(field((await loader.readTable(`SELECT fiel_key FROM ${s}.addon_fld WHERE ${where} ORDER BY fiel_key LIMIT 1`))?.[0], "fiel_key"));
+  const partyRate = "((fiel_err IS NOT NULL AND POSITION('ADDONRate,' IN fiel_err) > 0) OR fiel_partyrate = 'Y')";
+  if (which === 3) return programId === 22 ? first(`${partyRate} AND fiel_relate = 'P' AND fiel_pos = 'A'`) : 0;
+  let value = 0;
+  let found = false;
+  if (programId === 22) { value = await first(`${partyRate} AND fiel_relate = 'A' AND fiel_pos = 'A'`); found = value > 0; }
+  else if ([23, 26, 28, 32].includes(programId) || (programId === 36 && s.toUpperCase().includes("SHAH_TRADING"))) { value = await first(`${partyRate} AND fiel_relate = 'P' AND fiel_pos = 'A'`); found = value > 0; }
+  else if (programId === 29 || programId === 36) { value = await first(`fiel_err IS NOT NULL AND POSITION('PBRFN,' IN fiel_err) > 0 AND fiel_relate = 'P' AND fiel_pos = 'A'`); found = value > 0; }
+  else if (programId === 50) { value = await first(`fiel_partyrate = 'Y' AND fiel_relate = 'P' AND fiel_pos = 'A'`); found = value > 0; }
+  if (!found && programId === 36) value = await first(`fiel_err IS NOT NULL AND POSITION('BRFN,' IN fiel_err) > 0 AND fiel_relate = 'P' AND fiel_pos = 'A'`);
+  return value;
+}
+
+/** The addon fields a rate master's setup names as |sys.rate_addon2| / |sys.rate_addon3|; only the programs that use them read addon_fld. */
+async function rateAddons(loader: Loader, programId: number): Promise<Partial<SysValueContext>> {
+  if (![22, 23, 26, 28, 29, 32, 36, 50].includes(programId)) return {};
+  return { rateAddon2: await rateAddon(loader, programId, 2), rateAddon3: await rateAddon(loader, programId, 3) };
+}
+
 // ---------------------------------------------------------------------------------------
 // Func_ReplaceSysVal_CtrlValue context for loading, where no cell is under the cursor yet.
 
@@ -251,7 +273,7 @@ async function secondComboOptions(loader: Loader, programId: number, group: Grou
   else if (programId === 36) temp1 = temp1.split("and pr_accode=|sys.firstcombovalue| ").join("");
   else if (programId === 26) temp1 = temp1.split("|sys.firstcombovalue|").join(value);
 
-  const context = loadContext(loader.session, programId, group, { masterGrid: true });
+  const context = loadContext(loader.session, programId, group, { masterGrid: true, ...(await rateAddons(loader, programId)) });
   let rows: Row[] | null;
   if (programId === 49) {
     const moulds = await loader.readTable(`SELECT no_of_moulds FROM |sys.db|sop_mould WHERE sop_mould_key = $1`, [toInt(value)]);
@@ -614,7 +636,7 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
     return { kind: "second-combo", label: "Select", options: await secondComboOptions(loader, programId, group) };
   }
 
-  const context = loadContext(session, programId, group);
+  const context = loadContext(session, programId, group, await rateAddons(loader, programId));
   let coreEntry = false;
   let levelMaster: Row | null = null;
   if (programId === 8) {
@@ -717,7 +739,8 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       let sql = ` with CTE_TEMP1 as (${list} ${gridAddonFieldList} ${existCte},0 as Row_Number  ${cte1From} ${where}${cte1Tail}),`;
       sql += ` CTE_TEMP3 AS (${list} ${gridAddonFieldList} ${existCte},0 as Row_Number ${from1}`;
       sql += ` ${where} and SUB_CODE not IN (select SUB_CODE ${cte1From} ${where}${cte1Tail}))`;
-      sql += " select * from CTE_TEMP1 union select * from CTE_TEMP3 order by SUB_NAME";
+      // The setup aliases it asub.SUB_NAME AS "SUB_NAME"; unquoted, PostgreSQL would look for sub_name.
+      sql += ' select * from CTE_TEMP1 union select * from CTE_TEMP3 order by "SUB_NAME"';
       rawRows = await loader.readTable(sql);
     } else {
       let orderBy = q("update_orderby");
@@ -1087,7 +1110,7 @@ export async function prepareProgram(loader: Loader, programName: string, group:
   const top = await programTop(loader, programName);
   const firstComboRow = (await programBody(loader, programName, "first"))[0];
   const programId = firstComboRow ? firstComboRow.program_top_id : toInt(field(top, "program_top_key"));
-  const context = loadContext(session, programId, group);
+  const context = loadContext(session, programId, group, await rateAddons(loader, programId));
   const levelMaster = await levelMasterRow(loader, group);
   const addonProductSkip = session.licence === 30 && programId === 8 && group.firstCombo.text === "AC PRODUCT";
   const addon: AddonState = { body: null, fields: null, comboSerial: 0 };

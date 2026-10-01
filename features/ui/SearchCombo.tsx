@@ -23,6 +23,7 @@ export function SearchCombo<T extends ComboItem>({
   placeholder = "Type to search…",
   ariaLabel,
   reselect,
+  focus,
 }: {
   options: readonly T[];
   value: T | null;
@@ -32,12 +33,19 @@ export function SearchCombo<T extends ComboItem>({
   ariaLabel: string;
   /** Enter on an unchanged box chooses the current entry again (to reload it). */
   reselect?: boolean;
+  /** Take the keyboard whenever this turns true while the box is enabled (a screen's first box). */
+  focus?: boolean;
 }) {
   const [query, setQuery] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const list = useRef<HTMLUListElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const id = useId();
+
+  useEffect(() => {
+    if (focus && !disabled) input.current?.focus();
+  }, [focus, disabled]);
 
   const matches = useMemo(() => {
     const needle = (query ?? "").trim().toUpperCase();
@@ -73,6 +81,7 @@ export function SearchCombo<T extends ComboItem>({
   return (
     <span className="search-combo">
       <input
+        ref={input}
         role="combobox"
         aria-label={ariaLabel}
         aria-expanded={open}
@@ -114,6 +123,8 @@ export function SearchCombo<T extends ComboItem>({
               if (open && matches[active]) { choose(matches[active]); return; }
               if (query !== null && query.trim() !== "") { choose(exact(query)); return; }
               if (reselect && value) choose(value);
+              // Nothing chosen yet: Enter opens the list, so the keyboard alone gets a choice made.
+              else if (!value) openAt(matches);
               return;
             }
             case "Escape":

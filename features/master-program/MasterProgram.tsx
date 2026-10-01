@@ -1,34 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import type { StartupSelection } from "../startup/StartupGate";
 import { applyPermission, formatDesktopDate, getPermission, parseDesktopDate, runFormula, toDecimal, toInt, toText } from "../../lib/master-program/legacy";
 import type { AddRow, CloudPush, ComboOption, GroupLoad, GroupState, ProgramDefinition, UpdateColumn, UpdateRecord } from "../../lib/master-program/types";
 import { masterCall } from "./api";
-import { Calculator } from "./Calculator";
-import { CalendarPopup } from "./CalendarPopup";
-import { FONT_SIZES, PrintPreview } from "./PrintPreview";
-import { printHtmlDocument, readPrintSetup, savePrintSetup } from "./printFrame";
-import type { PrintSetup } from "./printFrame";
-import { previewPages, printDocument } from "../../lib/export/pages";
-import { pdf } from "../../lib/export/pdf";
-import type { PdfOptions, PrintStyle } from "../../lib/export/pdf";
-import { download, safeFileName } from "../../lib/export/table";
 import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
-import { xlsx } from "../../lib/export/xlsx";
-import { carryString, dateOutsideYear, duplicateAgainstUpdate, duplicateInGrid, fitCase, pairedClosed, pairedMessage, gstStateMismatch, isNumberField as isNumberSetup, keyPress, sameGroup, shorthandDate, styleCase, typingAllowed, validate } from "./rules";
+import { carryString, dateOutsideYear, dropPadding, duplicateAgainstUpdate, duplicateInGrid, fitCase, pairedClosed, pairedMessage, gstStateMismatch, isNumberField as isNumberSetup, keyPress, sameGroup, styleCase, typingAllowed, validate } from "./rules";
 import { HelpList } from "./HelpList";
 import { cleanMainValue, duplicateKey, isMainField } from "../../lib/master-program/main-field";
-import { GridCombo } from "./GridCombo";
+import { GridCombo } from "../grid/GridCombo";
 import { GridMultiPick } from "./GridMultiPick";
 import { keyListNames, keyListText, parseKeyList, validKeyList } from "../../lib/master-program/multi-pick";
-import { ArrangeColumns } from "./ArrangeColumns";
+import { ArrangeColumns } from "../grid/ArrangeColumns";
 import { isMessageBoxOpen, messageBox } from "../ui/MessageBox";
 import type { MessageButton } from "../ui/MessageBox";
 import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
 import { SearchCombo } from "../ui/SearchCombo";
+import { Icon } from "../ui/Icon";
+import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
+import { editorKindOf, useEditorTools } from "../grid/EditorTools";
+import { filterHolds, kindOfFieldType } from "../grid/filter";
+import type { ColumnFilter, FilterKind } from "../grid/filter";
+import { selectionTotals as totalsOf } from "../grid/totals";
+import { useDraggable } from "../grid/useDraggable";
+import { useColumnLayout } from "../grid/useColumnLayout";
+import { useGridOutput } from "../grid/useGridOutput";
+import { GridButtons } from "../grid/GridButtons";
+import { refreshQuestion } from "../grid/prompts";
 
 /**
  * Master_ProgramGrid, the one screen every MASTER menu opens.
@@ -53,7 +54,6 @@ const ROW_HEIGHT = 21;
 const HELP_ROWS = 9;
 /** The row indicator column (C1FlexGrid's fixed column): a marker, not a second row number. */
 const INDICATOR_WIDTH = 16;
-const MIN_COLUMN_WIDTH = 30;
 const DELETE_BLOCKED_PROGRAMS = [4, 11, 16, 19, 24, 25, 34, 35, 27, 47];
 const SECOND_RESET_PROGRAMS = [21, 22, 23, 26, 28, 29, 32, 36, 42, 49, 50, 51];
 /** Master_ProgramGrid_KeyUp: the Pause key closes SMARTwinFA for these licences. */
@@ -117,154 +117,17 @@ async function fetchHelp(selection: StartupSelection, programName: string, group
 
 type SortState = { key: string; dir: "asc" | "desc" } | null;
 
-type FilterKind = "text" | "number" | "date";
-type Condition = { op: string; a: string; b: string };
-/** A column's filter: the values left ticked, and up to two conditions joined by And/Or. */
-type ColumnFilter = { values?: string[]; first?: Condition; join?: "and" | "or"; second?: Condition };
-type FilterDraft = { key: string; chosen: string[]; first: Condition; join: "and" | "or"; second: Condition };
-
-const FILTER_OPS: Record<FilterKind, readonly (readonly [string, string])[]> = {
-  text: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["begins", "Begins With"], ["ends", "Ends With"], ["contains", "Contains"], ["notContains", "Does Not Contain"], ["blank", "Is Blank"], ["notBlank", "Is Not Blank"]],
-  number: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["gt", "Greater Than"], ["ge", "Greater Than or Equal To"], ["lt", "Less Than"], ["le", "Less Than or Equal To"], ["between", "Between"], ["blank", "Is Blank or Zero"], ["notBlank", "Is Not Blank or Zero"]],
-  date: [["", "(no condition)"], ["eq", "On"], ["ne", "Not On"], ["lt", "Before"], ["le", "On or Before"], ["gt", "After"], ["ge", "On or After"], ["between", "Between"], ["blank", "Is Blank"], ["notBlank", "Is Not Blank"]],
-};
-const FILTER_TITLE: Record<FilterKind, string> = { text: "Text Filter", number: "Numeric Filter", date: "Date Filter" };
-const NO_VALUE_OPS = ["", "blank", "notBlank"];
-const emptyCondition = (): Condition => ({ op: "", a: "", b: "" });
-
+/** A master column's filter kind: its field type, or a number format (features/grid/filter). */
 function filterKind(column: UpdateColumn): FilterKind {
-  const type = column.setup.field_type;
-  if (type === "D") return "date";
-  if (type === "N" || type === "C" || type === "I" || column.format === "N2" || column.format.startsWith("#")) return "number";
-  return "text";
+  return kindOfFieldType(column.setup.field_type, column.format === "N2" || column.format.startsWith("#"));
 }
 
-/** One condition against a stored cell value; "a" and "b" are what the operator typed (dates as yyyy-mm-dd). */
-function conditionHolds(kind: FilterKind, condition: Condition, raw: string, shown: string): boolean {
-  const { op, a, b } = condition;
-  if (op === "") return true;
-  if (kind === "number") {
-    const value = toDecimal(raw);
-    const x = toDecimal(a);
-    const y = toDecimal(b);
-    switch (op) {
-      case "eq": return value === x;
-      case "ne": return value !== x;
-      case "gt": return value > x;
-      case "ge": return value >= x;
-      case "lt": return value < x;
-      case "le": return value <= x;
-      case "between": return value >= Math.min(x, y) && value <= Math.max(x, y);
-      case "blank": return raw.trim() === "" || value === 0;
-      case "notBlank": return raw.trim() !== "" && value !== 0;
-      default: return true;
-    }
-  }
-  if (kind === "date") {
-    const date = parseDesktopDate(raw);
-    const day = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
-    if (op === "blank") return day === "";
-    if (op === "notBlank") return day !== "";
-    if (day === "" || a === "") return false;
-    switch (op) {
-      case "eq": return day === a;
-      case "ne": return day !== a;
-      case "gt": return day > a;
-      case "ge": return day >= a;
-      case "lt": return day < a;
-      case "le": return day <= a;
-      case "between": return b !== "" && day >= (a < b ? a : b) && day <= (a < b ? b : a);
-      default: return true;
-    }
-  }
-  const text = shown.toLowerCase();
-  const needle = a.trim().toLowerCase();
-  switch (op) {
-    case "eq": return text === needle;
-    case "ne": return text !== needle;
-    case "begins": return text.startsWith(needle);
-    case "ends": return text.endsWith(needle);
-    case "contains": return text.includes(needle);
-    case "notContains": return !text.includes(needle);
-    case "blank": return text === "";
-    case "notBlank": return text !== "";
-    default: return true;
-  }
+/** Whether a record passes a column's filter: the stored value for numbers and dates, the shown text otherwise. */
+function columnFilterHolds(column: UpdateColumn, filter: ColumnFilter, record: UpdateRecord | undefined): boolean {
+  return filterHolds(filterKind(column), filter, cellOf(record, column.key), shownText(record, column));
 }
 
-function filterHolds(column: UpdateColumn, filter: ColumnFilter, record: UpdateRecord | undefined): boolean {
-  const shown = shownText(record, column);
-  if (filter.values && !filter.values.includes(shown)) return false;
-  if (!filter.first || filter.first.op === "") return true;
-  const kind = filterKind(column);
-  const raw = cellOf(record, column.key);
-  const first = conditionHolds(kind, filter.first, raw, shown);
-  if (!filter.second || filter.second.op === "") return first;
-  const second = conditionHolds(kind, filter.second, raw, shown);
-  return filter.join === "or" ? first || second : first && second;
-}
 
-/**
- * Lets a small window be dragged by its title bar, so the data behind it can be seen.
- * Returns the position to apply (null until it is first moved) and the title's handler.
- */
-function useDraggable() {
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const start = (event: ReactMouseEvent<HTMLElement>) => {
-    if ((event.target as Element).closest("button, input, select")) return;
-    const box = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-    const offsetX = event.clientX - box.left;
-    const offsetY = event.clientY - box.top;
-    event.preventDefault();
-    const move = (moveEvent: MouseEvent) => setPosition({
-      x: Math.min(Math.max(0, moveEvent.clientX - offsetX), window.innerWidth - 60),
-      y: Math.min(Math.max(0, moveEvent.clientY - offsetY), window.innerHeight - 30),
-    });
-    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
-  };
-  /** The keyboard way to move it: arrow keys shift the window 20px. */
-  const nudge = (event: ReactKeyboardEvent<HTMLElement>) => {
-    const step = ({ ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] } as Record<string, [number, number]>)[event.key];
-    if (!step) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const box = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-    setPosition((current) => {
-      const from = current ?? { x: box.left, y: box.top };
-      return { x: Math.min(Math.max(0, from.x + step[0]), window.innerWidth - 60), y: Math.min(Math.max(0, from.y + step[1]), window.innerHeight - 30) };
-    });
-  };
-  const style = position ? { position: "fixed" as const, left: position.x, top: position.y, right: "auto", bottom: "auto", transform: "none" } : undefined;
-  /** Spread on the title bar: drag it, or focus it and use the arrow keys. */
-  const handle = { role: "button" as const, tabIndex: 0, "aria-label": "Move this window: drag, or use the arrow keys", onMouseDown: start, onKeyDown: nudge };
-  return { style, start, handle, reset: () => setPosition(null) };
-}
-
-/** Small line icons for the button bars. */
-const ICONS: Record<string, string> = {
-  save: "M4 3h11l4 4v14H4zM8 3v5h7V3M7 21v-7h10v7",
-  print: "M7 8V3h10v5M5 17H3v-8h18v8h-2M7 14h10v7H7z",
-  export: "M4 4h10l5 5v11H4zM14 4v5h5M8 13l3 3 4-5",
-  refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
-  cancel: "M6 6l12 12M18 6L6 18",
-  quit: "M10 4H4v16h6M15 8l4 4-4 4M19 12H9",
-  log: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5",
-  plus: "M12 5v14M5 12h14",
-  list: "M4 6h16M4 12h16M4 18h16",
-  image: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01",
-  search: "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM16 16l4 4",
-  clear: "M4 5h16l-6 7v6l-4 2v-8z",
-  columns: "M4 4h16v16H4zM9.5 4v16M14.5 4v16",
-  preview: "M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
-  excel: "M4 3h11l5 5v13H4zM8 11l4 6M12 11l-4 6M14 3v5h6",
-  pdf: "M4 3h11l5 5v13H4zM14 3v5h6M8 13h1.5a1.5 1.5 0 0 1 0 3H8v-3zM8 16v2",
-  move: "M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3",
-};
-function Icon({ name }: { name: string }) {
-  return <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[name]} /></svg>;
-}
 
 
 /**
@@ -358,9 +221,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [edited, setEdited] = useState<Set<number>>(new Set());
   const [deleted, setDeleted] = useState<Set<number>>(new Set());
   const [cellEditable, setCellEditable] = useState<Record<string, boolean>>({});
-  const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
-  /** The operator's own column order (keys), kept while the master is open; empty is the setup's order. */
-  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  /** The Update grid's columns as the operator lays them out: order, hidden ones, widths (features/grid/useColumnLayout). */
+  const setupColumns = useMemo(() => (grids?.columns ?? []).filter((column) => column.visible), [grids]);
+  const layout = useColumnLayout(setupColumns, grids?.frozen ?? 0);
+  const { fixedKeys, columns, hiddenColumns, setHiddenColumns, columnOrder, setColumnOrder, hideColumn, placeColumn, moveColumn, shiftColumn, widthOf } = layout;
   const [dropMark, setDropMark] = useState<{ key: string; after: boolean } | null>(null);
   const dragColumn = useRef<string | null>(null);
   const [cursor, setCursor] = useState<Cell>({ row: 0, key: "" });
@@ -411,8 +275,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [find, setFind] = useState("");
   // Sorting, per-column filters and column widths the operator sets on the Update grid
   const [sort, setSort] = useState<SortState>(null);
-  const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
-  const [filterDraft, setFilterDraft] = useState<FilterDraft | null>(null);
+  const columnFilters = useColumnFilters();
+  const { filters, setFilters, openFilter, setOpenFilter } = columnFilters;
   const [columnChooser, setColumnChooser] = useState(false);
   /** A row reached by clicking or arrowing (not by finishing an edit): typing there searches first. */
   const findMode = useRef(true);
@@ -424,22 +288,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     return () => document.removeEventListener("mouseup", release);
   }, []);
   const helpDrag = useDraggable();
-  const calcDrag = useDraggable();
-  const calendarDrag = useDraggable();
-  const [openFilter, setOpenFilter] = useState<string | null>(null);
-  const [filterSearch, setFilterSearch] = useState("");
-  /** The value last clicked in the open filter list, where a Shift+click range starts. */
-  const filterAnchor = useRef<string | null>(null);
-  const [widths, setWidths] = useState<Record<string, number>>({});
-  const [calc, setCalc] = useState<{ grid: "add" | "update"; initial: string; decimals: number; caretAtEnd?: boolean } | null>(null);
-  /** The page setup last chosen in Preview or for a PDF (this browser only), used by Print and PDF too. */
-  const [printSetup, setPrintSetup] = useState<PrintSetup | null>(() => (typeof window === "undefined" ? null : readPrintSetup()));
-  const rememberSetup = (setup: PrintSetup) => { setPrintSetup(setup); savePrintSetup(setup); };
-  /** The Print / PDF dialog: page setup and layout, and which of the two it is for. */
-  const [pdfChoice, setPdfChoice] = useState<(PrintSetup & { style: PrintStyle; purpose: "print" | "pdf" }) | null>(null);
-  /** Print preview: the grid frozen as it was when opened, and the page setup chosen. */
-  const [preview, setPreview] = useState<{ table: ExportTable; options: PdfOptions; name: string } | null>(null);
-  const [calendar, setCalendar] = useState<{ grid: "add" | "update"; initial: string; left: number; top: number } | null>(null);
+  /** The date and number editors' calendar, calculator and short date typing (features/grid). */
+  const tools = useEditorTools(meta ? parseDesktopDate(meta.yearStart) ?? new Date(meta.yearStart) : null);
   const [typed, setTyped] = useState("");
   const [help, setHelp] = useState<HelpState>(null);
   const [helpRow, setHelpRow] = useState<number | null>(null);
@@ -607,7 +457,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
     } finally {
       setBusy("");
     }
-  }, [selection, def, programName, menuShortName, ask, zoomAccode]);
+  }, [selection, def, programName, menuShortName, ask, zoomAccode, setFilters, setOpenFilter, setHiddenColumns]);
 
   const chooseFirst = (option: ComboOption) => {
     setFirst(option);
@@ -642,12 +492,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   // ---- Refresh: reload the group from the database, after asking, so a stray key cannot drop edits
   const refreshUpdate = async () => {
     if (!first) return;
-    const pending = edited.size + deleted.size;
-    const text = pending > 0
-      ? `Refresh will reload the records and drop ${pending} unsaved change${pending === 1 ? "" : "s"}.
-Refresh anyway?`
-      : "Reload the records from the database?";
-    if ((await ask(text, "Refresh", ["Yes", "No"], "No")) !== "Yes") return;
+    if ((await ask(refreshQuestion(edited.size + deleted.size), "Refresh", ["Yes", "No"], "No")) !== "Yes") return;
     await loadGroup(first, second);
   };
 
@@ -685,41 +530,6 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   // ======================================================================================
   // Update grid
 
-  /** The frozen columns (NO_OF_COL_FROZEN, from the left of the setup's order): always first, never moved or hidden. */
-  const fixedKeys = useMemo(() => (grids?.columns ?? []).filter((column) => column.visible).slice(0, grids?.frozen ?? 0).map((column) => column.key), [grids]);
-  /** Every column the setup shows: the frozen ones, then the rest in the operator's order (a column the order does not name keeps its place after it). */
-  const orderedColumns = useMemo(() => {
-    const shown = (grids?.columns ?? []).filter((column) => column.visible);
-    const fixed = shown.filter((column) => fixedKeys.includes(column.key));
-    const rest = shown.filter((column) => !fixedKeys.includes(column.key));
-    if (columnOrder.length === 0) return [...fixed, ...rest];
-    const rank = (key: string) => { const at = columnOrder.indexOf(key); return at < 0 ? Number.MAX_SAFE_INTEGER : at; };
-    return [...fixed, ...rest.sort((a, b) => rank(a.key) - rank(b.key))];
-  }, [grids, columnOrder, fixedKeys]);
-  const columns = useMemo(() => orderedColumns.filter((column) => fixedKeys.includes(column.key) || !hiddenColumns.includes(column.key)), [orderedColumns, hiddenColumns, fixedKeys]);
-  /** Hides a column, unless it is frozen. */
-  const hideColumn = (key: string) => { if (key && !fixedKeys.includes(key)) setHiddenColumns((current) => (current.includes(key) ? current : [...current, key])); };
-  /** Puts a column at a position in the whole list (0-based), never among the frozen ones. */
-  const placeColumn = (key: string, position: number) => {
-    if (fixedKeys.includes(key)) return;
-    const order = orderedColumns.map((column) => column.key).filter((candidate) => candidate !== key);
-    order.splice(Math.min(order.length, Math.max(fixedKeys.length, position)), 0, key);
-    setColumnOrder(order);
-  };
-  /** Moves a column next to another one: before it, or after it. */
-  const moveColumn = (key: string, target: string, after: boolean) => {
-    if (key === target || fixedKeys.includes(key) || fixedKeys.includes(target)) return;
-    const order = orderedColumns.map((column) => column.key).filter((candidate) => candidate !== key);
-    const at = order.indexOf(target);
-    if (at < 0) return;
-    placeColumn(key, after ? at + 1 : at);
-  };
-  /** Moves a column one place left or right among the columns on screen. */
-  const shiftColumn = (key: string, step: -1 | 1) => {
-    const index = columns.findIndex((column) => column.key === key);
-    const target = columns[index + step];
-    if (index >= 0 && target) moveColumn(key, target.key, step === 1);
-  };
   const columnByKey = useMemo(() => new Map((grids?.columns ?? []).map((column) => [column.key, column])), [grids]);
   const columnByField = useCallback((name: string) => (grids?.columns ?? []).find((column) => column.key.toLowerCase() === lower(name)), [grids]);
   const liveRows = useMemo(() => records.map((_, index) => index).filter((index) => !deleted.has(index)), [records, deleted]);
@@ -733,7 +543,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     let rows = liveRows.filter((row) => {
       for (const [key, filter] of Object.entries(filters)) {
         const column = columnByKey.get(key);
-        if (column && !filterHolds(column, filter, stored(row))) return false;
+        if (column && !columnFilterHolds(column, filter, stored(row))) return false;
       }
       return needle === "" || columns.some((column) => shownText(stored(row), column).toLowerCase().includes(needle));
     });
@@ -751,7 +561,6 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     }
     return rows;
   }, [liveRows, records, backup, filters, find, sort, columns, columnByKey]);
-  const widthOf = (column: UpdateColumn) => widths[column.key] ?? Math.max(40, column.width || 90);
 
   /** Distinct stored values of a column, for its filter list. */
   const valuesOf = (column: UpdateColumn) => {
@@ -760,75 +569,14 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const others = Object.entries(filters).filter(([key]) => key !== column.key);
     for (const row of liveRows) {
       const stored = backup[row] ?? records[row];
-      const kept = others.every(([key, filter]) => { const other = columnByKey.get(key); return !other || filterHolds(other, filter, stored); });
+      const kept = others.every(([key, filter]) => { const other = columnByKey.get(key); return !other || columnFilterHolds(other, filter, stored); });
       if (!kept || (needle !== "" && !columns.some((shown) => shownText(stored, shown).toLowerCase().includes(needle)))) continue;
       seen.add(shownText(stored, column));
     }
     return [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   };
-  /** Opens a column's filter list with its current settings as an editable draft. */
-  const openFilterFor = (column: UpdateColumn) => {
-    if (openFilter === column.key) { setOpenFilter(null); return; }
-    filterAnchor.current = null;
-    const current = filters[column.key];
-    setFilterSearch("");
-    setFilterDraft({ key: column.key, chosen: current?.values ?? valuesOf(column), first: current?.first ?? emptyCondition(), join: current?.join ?? "and", second: current?.second ?? emptyCondition() });
-    setOpenFilter(column.key);
-  };
-  /** Apply: the draft becomes the column's filter; nothing ticked-out and no condition means no filter. */
-  const applyFilter = (column: UpdateColumn) => {
-    if (!filterDraft) return;
-    const all = valuesOf(column);
-    const usable = (condition: Condition) => condition.op !== "" && (NO_VALUE_OPS.includes(condition.op) || (condition.a.trim() !== "" && (condition.op !== "between" || condition.b.trim() !== "")));
-    const next: ColumnFilter = {};
-    if (filterDraft.chosen.length !== all.length) next.values = filterDraft.chosen;
-    if (usable(filterDraft.first)) {
-      next.first = filterDraft.first;
-      if (usable(filterDraft.second)) { next.join = filterDraft.join; next.second = filterDraft.second; }
-    }
-    setFilters((current) => {
-      const copy = { ...current };
-      if (next.values || next.first) copy[column.key] = next; else delete copy[column.key];
-      return copy;
-    });
-    setOpenFilter(null);
-  };
-  const clearFilter = (column: UpdateColumn) => {
-    setFilters((current) => { const copy = { ...current }; delete copy[column.key]; return copy; });
-    setOpenFilter(null);
-  };
-  const startResize = (column: UpdateColumn, event: ReactMouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const startX = event.clientX;
-    const startWidth = widthOf(column);
-    const move = (moveEvent: MouseEvent) => setWidths((current) => ({ ...current, [column.key]: Math.max(MIN_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX) }));
-    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
-  };
-  /**
-   * A column's filter list opens under its heading from the heading's left edge; where the
-   * grid has no room for it on the right (the last columns), it moves left until it shows whole.
-   */
-  const placeFilter = (element: HTMLDivElement | null) => {
-    if (!element) return;
-    element.style.left = "0px";
-    const box = element.getBoundingClientRect();
-    const area = scroller.current;
-    const areaBox = area?.getBoundingClientRect();
-    const right = Math.min(window.innerWidth, areaBox && area ? areaBox.left + area.clientWidth : window.innerWidth) - 4;
-    const left = Math.max(0, areaBox?.left ?? 0) + 4;
-    const shift = Math.min(Math.max(0, box.right - right), Math.max(0, box.left - left));
-    element.style.left = `${-shift}px`;
-  };
-  // An open filter list closes when the click lands anywhere else.
-  useEffect(() => {
-    if (openFilter === null) return;
-    const close = (event: MouseEvent) => { if (!(event.target as Element).closest(".mp-filter, .mp-filter-button")) setOpenFilter(null); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [openFilter]);
+  /** Opens a column's filter list (features/grid/ColumnFilter) with its distinct values. */
+  const openFilterFor = (column: UpdateColumn) => columnFilters.open(column.key, valuesOf(column));
   const programId = def?.programId ?? 0;
   const licence = def?.licence ?? 0;
 
@@ -1095,10 +843,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
    * A date as typed in a date field: short forms (2309, 23sep, 0109+5, +5) take their year
    * from the accounting year; +n / -n alone count from the date the field already had.
    */
-  const typedDate = (text: string, before: string) => {
-    const start = meta ? parseDesktopDate(meta.yearStart) ?? new Date(meta.yearStart) : null;
-    return shorthandDate(text, start && !Number.isNaN(start.getTime()) ? start : null, parseDesktopDate(before));
-  };
+  const typedDate = tools.typedDate;
 
   /** A value typed with a time (program 52's date and time) stays as typed; any other date is written dd/MMM/yyyy. */
   const dateText = (text: string, date: Date) => (/\d{1,2}:\d{2}/.test(text) ? text : formatDesktopDate(date));
@@ -1114,7 +859,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
     if (entered === cellOf(record, column.key) || (entered === "" && zeroAsBlank(column.setup, Boolean(column.options?.length), cellOf(record, column.key)) === "")) { setEditing(false); return true; }
     // The main field keeps no trailing blanks or unseen characters, so a duplicate cannot hide behind them.
-    let text = column.comboKind === "M" ? keyListText(parseKeyList(entered)) : fitCase(column.setup, isMainField(column.setup) ? cleanMainValue(entered) : entered, programId);
+    let text = column.comboKind === "M" ? keyListText(parseKeyList(entered)) : fitCase(column.setup, isMainField(column.setup) ? cleanMainValue(entered) : dropPadding(column.setup, entered), programId);
     if (column.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, dataAtBegin);
       if (!date) { await ask(`"${text}" is not a date. Type it as 2309, 23sep, 23/09/2026, or 0109+5 for five days on.`, "Invalid Date"); return false; }
@@ -1619,15 +1364,6 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const heading = programId === 48 ? "Product Master" : programId === 49 ? "Product Child Master" : "Account Master";
     printHtml(heading, `<h1>${escapeHtml(meta?.companyName ?? "")}</h1><p>${escapeHtml(heading)} : ${escapeHtml(first?.text ?? "")}</p><table><tbody>${rows.map((row) => `<tr><th>${escapeHtml(row.headLabel)}</th><td>${escapeHtml(row.setup.force_inputtype === "P" ? "" : row.fieldInput)}</td></tr>`).join("")}</tbody></table>`);
   };
-  const printUpdate = async () => {
-    if (await unsavedBlocks()) return;
-    if (liveRows.length === 0) { await ask("Can't open print priview as update grid is blank", "Print failed!!"); return; }
-    if (await noRows()) return;
-    // The same pages as Print Preview and the PDF, for every master; the dialog asks the layout first.
-    // (The desktop printed one account's master sheet here; that stays on the New grid's Print.)
-    const { orientation, fontSize, totals } = pdfOptions();
-    setPdfChoice({ orientation, fontSize, totals, style: "list", purpose: "print" });
-  };
 
   // ---- Excel, PDF and print preview of the Update grid, as shown (columns, filters, sort)
   const decimalsOf = (column: UpdateColumn): number => {
@@ -1674,60 +1410,21 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       recordTitleColumn: Math.max(0, columns.findIndex((column) => isMainField(column.setup))),
     };
   };
-  const exportName = () => {
-    const now = new Date();
-    return safeFileName(`${def?.heading || title} - ${first?.text ?? ""} - ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
-  };
-  const printedLine = () => { const now = new Date(); return `Printed ${formatDesktopDate(now)} ${now.toTimeString().slice(0, 5)} by ${meta?.userName ?? ""}`; };
-  const pdfOptions = (): PdfOptions => ({
-    orientation: printSetup?.orientation ?? (columns.reduce((sum, column) => sum + widthOf(column), 0) > 700 ? "landscape" : "portrait"),
-    fontSize: printSetup?.fontSize ?? 10,
-    totals: printSetup?.totals ?? true,
-    footer: printedLine(),
-  });
-  /**
-   * Print, Preview, Excel, PDF and CSV give only saved data: from the first change in the Update
-   * grid until it is saved or cancelled they are shut, so no printout can show values that were
-   * never saved.
-   */
+  /** Print, Preview, Excel, PDF and CSV of the Update grid as shown (features/grid/useGridOutput). */
   const unsaved = editing || edited.size > 0 || deleted.size > 0;
-  const unsavedTip = "Save or cancel the changes first: only saved data can be printed or exported";
-  const unsavedBlocks = async () => { if (!unsaved) return false; await ask(unsavedTip, "Print / Export"); return true; };
-  const noRows = async () => { if (await unsavedBlocks()) return true; if (shownRows.length > 0) return false; await ask("There are no records to export.", "Export"); return true; };
-  const exportExcel = async () => {
-    if (await noRows()) return;
-    download(xlsx(buildExportTable(), first?.text || "Master"), `${exportName()}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  };
-  /** PDF asks for the page setup first, offering the one last used (in Preview or here). */
-  const exportPdf = async () => {
-    if (await noRows()) return;
-    const { orientation, fontSize, totals } = pdfOptions();
-    setPdfChoice({ orientation, fontSize, totals, style: "list", purpose: "pdf" });
-  };
-  const savePdf = (setup: PrintSetup & { style: PrintStyle; purpose: "print" | "pdf" }) => {
-    rememberSetup({ orientation: setup.orientation, fontSize: setup.fontSize, totals: setup.totals });
-    setPdfChoice(null);
-    const options: PdfOptions = { orientation: setup.orientation, fontSize: setup.fontSize, totals: setup.totals, style: setup.style, footer: printedLine() };
-    if (setup.purpose === "print") printHtmlDocument(printDocument(exportName(), previewPages(buildExportTable(), options), options.orientation));
-    else download(pdf(buildExportTable(), options), `${exportName()}.pdf`, "application/pdf");
-  };
-  const openPreview = async () => {
-    if (await noRows()) return;
-    setPreview({ table: buildExportTable(), options: pdfOptions(), name: exportName() });
-  };
-
-  const exportCsv = async () => {
-    if (await unsavedBlocks()) return;
-    const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const lines = [columns.map((column) => quote(column.caption)).join(","), ...shownRows.map((row) => columns.map((column) => quote(column.comboKind === "M" ? shownText(records[row], column) : formatCell(cellOf(records[row], column.key), column.format))).join(","))];
-    const blob = new Blob([String.fromCharCode(0xfeff) + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${programName}-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
+  const output = useGridOutput({
+    table: buildExportTable,
+    name: `${def?.heading || title} - ${first?.text ?? ""}`,
+    sheet: first?.text || "Master",
+    csv: () => [columns.map((column) => column.caption), ...shownRows.map((row) => columns.map((column) => (column.comboKind === "M" ? shownText(records[row], column) : formatCell(cellOf(records[row], column.key), column.format))))],
+    shownRows: shownRows.length,
+    totalRows: liveRows.length,
+    unsaved,
+    userName: meta?.userName ?? "",
+    width: columns.reduce((sum, column) => sum + widthOf(column), 0),
+    ask,
+    onPreviewClose: () => gridFocus.current?.focus(),
+  });
 
   /** C1dg_UpdateGrid_KeyUp + KeyPress + KeyPressEdit, for the grid when no editor is open. */
   const gridKeys = async (event: ReactKeyboardEvent) => {
@@ -1854,7 +1551,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (!column) return;
     // Esc undoes what was typed: the cell keeps the value it had before editing began.
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
-    if (toolKeys(event, column.setup, editText, setEditText, "update")) return;
+    if (tools.keys(event, editorKindOf(column.setup.field_type), editText, setEditText, column.setup.decimal_points)) return;
     if (event.key === "Enter" || event.key === "Tab") {
       event.preventDefault();
       if (await commitEdit()) {
@@ -2028,7 +1725,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     /** The text to commit: a combo's choice arrives directly, before the render that would hold it. */
     const entered = typedText ?? addText;
     // The main field keeps no trailing blanks or unseen characters, so a duplicate cannot hide behind them.
-    let text = row.comboKind === "M" ? keyListText(parseKeyList(entered)) : fitCase(row.setup, isMainField(row.setup) ? cleanMainValue(entered) : entered, programId);
+    let text = row.comboKind === "M" ? keyListText(parseKeyList(entered)) : fitCase(row.setup, isMainField(row.setup) ? cleanMainValue(entered) : dropPadding(row.setup, entered), programId);
     if (text === "" && zeroAsBlank(row.setup, Boolean(row.options?.length), row.fieldInput) === "") text = row.fieldInput;
     if (row.setup.field_type === "D" && text.trim() !== "") {
       const date = typedDate(text, row.fieldInput);
@@ -2279,7 +1976,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (addEditing) {
       // Esc undoes what was typed: the row keeps the value it had before editing began.
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setAddEditing(false); addFocus.current?.focus({ preventScroll: true }); return; }
-      if (row && toolKeys(event, row.setup, addText, setAddText, "add")) return;
+      if (row && tools.keys(event, editorKindOf(row.setup.field_type), addText, setAddText, row.setup.decimal_points)) return;
       if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (event.target instanceof HTMLSelectElement && (event.key === "ArrowDown" || event.key === "ArrowUp")) return;
         event.preventDefault();
@@ -2337,7 +2034,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
   const escapeState = useRef({ editing, addEditing, leave, licence, close: onClose, busyElsewhere: false });
-  useEffect(() => { escapeState.current = { editing, addEditing, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || calc !== null || calendar !== null || preview !== null || pdfChoice !== null || logTable !== null }; });
+  useEffect(() => { escapeState.current = { editing, addEditing, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || tools.open || output.open || logTable !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const state = escapeState.current;
@@ -2374,20 +2071,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const { setup } = cursorColumn;
     const list = ["L", "Q", "X"].includes(setup.combo_value.trim().toUpperCase()) || cursorColumn.comboKind === "M";
     if (list || !isNumberSetup(setup)) return null;
-    let sum = 0;
-    let count = 0;
-    for (const row of pickedRows) {
-      const raw = cellOf(records[row], cursorColumn.key).replace(/,/g, "").trim();
-      if (raw === "") continue;
-      const value = toDecimal(raw);
-      if (!Number.isFinite(value)) continue;
-      sum += value;
-      count += 1;
-    }
-    if (count === 0) return null;
-    const places = decimalsOf(cursorColumn);
-    const show = (value: number) => value.toLocaleString("en-IN", { minimumFractionDigits: places, maximumFractionDigits: places });
-    return `Sum: ${show(sum)}   Count: ${count}   Average: ${show(sum / count)}`;
+    return totalsOf([...pickedRows].map((row) => cellOf(records[row], cursorColumn.key)), decimalsOf(cursorColumn));
   })();
   /** The help list window: centred on one entry, with a note under the title for the New Add grid. */
   const helpWindow = (focusRow: number, onFocusRow: (row: number) => void, searchKey: string, note: { text: string; warn: boolean } | null) => {
@@ -2414,70 +2098,6 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     );
   };
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
-  /** The editor's helpers: a calendar for dates, a calculator for amounts and quantities. */
-  /** Opens the calendar just under the open editor (above it when there is no room below). */
-  const openCalendar = (grid: "add" | "update", value: string) => {
-    const box = document.querySelector(".mp-editor")?.getBoundingClientRect();
-    const width = 236;
-    const height = 290;
-    const left = box ? Math.min(Math.max(4, box.left), window.innerWidth - width - 4) : (window.innerWidth - width) / 2;
-    const top = box ? (box.bottom + height + 4 < window.innerHeight ? box.bottom + 2 : Math.max(4, box.top - height - 2)) : (window.innerHeight - height) / 2;
-    calendarDrag.reset();
-    setCalendar({ grid, initial: value, left, top });
-  };
-  const refocusEditor = () => {
-    const focus = () => document.querySelector<HTMLInputElement>(".mp-editor")?.focus();
-    focus();
-    setTimeout(focus, 0);
-  };
-
-  /**
-   * The editor's tools from the keyboard: Alt+Down opens the calendar on a date, Alt+C the
-   * calculator on an amount (as does typing + * / =), and Ctrl+Delete empties the field.
-   */
-  const toolKeys = (event: ReactKeyboardEvent, setup: UpdateColumn["setup"], value: string, setValue: (text: string) => void, grid: "add" | "update"): boolean => {
-    const isDate = setup.field_type === "D";
-    const isNumber = setup.field_type === "N" || setup.field_type === "C";
-    if (event.ctrlKey && event.key === "Delete") { event.preventDefault(); setValue(""); return true; }
-    if (isDate && event.altKey && event.key === "ArrowDown") { event.preventDefault(); openCalendar(grid, value); return true; }
-    if (isNumber && event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); setCalc({ grid, initial: value, decimals: setup.decimal_points }); return true; }
-    if (isNumber && !event.ctrlKey && !event.altKey && !event.metaKey && ["+", "*", "/", "="].includes(event.key)) {
-      event.preventDefault();
-      setCalc({ grid, initial: event.key === "=" ? value : `${value}${event.key}`, decimals: setup.decimal_points, caretAtEnd: event.key !== "=" });
-      return true;
-    }
-    return false;
-  };
-
-  const clearButton = (onPick: (text: string) => void, what: string) => (
-    <button
-      type="button"
-      className="mp-mini mp-mini-clear"
-      tabIndex={-1}
-      title={`Clear the ${what} (Ctrl+Delete)`}
-      aria-label={`Clear the ${what}`}
-      onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-      onClick={(event) => { event.stopPropagation(); onPick(""); event.currentTarget.closest(".mp-editor-wrap")?.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
-    >
-      <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-    </button>
-  );
-  const editorTools = (setup: UpdateColumn["setup"], value: string, onPick: (text: string) => void, grid: "add" | "update") => (
-    <>
-      {setup.field_type === "D" && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); openCalendar(grid, value); }}>
-          <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v5M16 3v5" /></svg>
-        </button>
-      )}
-      {setup.field_type === "D" && clearButton(onPick, "date")}
-      {(setup.field_type === "N" || setup.field_type === "C") && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); setCalc({ grid, initial: value, decimals: setup.decimal_points }); }}>
-          <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
-        </button>
-      )}
-      {(setup.field_type === "N" || setup.field_type === "C") && clearButton(onPick, "figure")}
-    </>
-  );
   return (
     <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.heading || title}>
       <div className="mp-combos">
@@ -2491,6 +2111,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               value={first}
               reselect
               disabled={Boolean(grids) || Boolean(busy)}
+              focus={!locked && !grids && !secondOptions}
               onChoose={chooseFirst}
             />
           </div>
@@ -2504,19 +2125,22 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               value={second}
               placeholder="Select…"
               disabled={Boolean(grids) || Boolean(busy)}
+              focus={!locked && !grids}
               onChoose={(option) => { setSecond(option); if (first) void loadGroup(first, option); }}
             />
           </div>
         )}
         {first && !grids && !secondOptions && <button type="button" data-hotkey="h" aria-keyshortcuts="Alt+H" className="mp-btn mp-btn-blue" onClick={() => void loadGroup(first, second)} disabled={Boolean(busy)}><Icon name="list" /><HotkeyLabel text="Show" hotkey="h" /></button>}
+        {/* Before a group is shown the button bar is not there yet, so this is the way out of a master opened by mistake. */}
+        {!grids && <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>}
         {grids && (
           <div className="mp-views" role="tablist" aria-label="Master view">
             {grids.addTabVisible && tab !== "add" && <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" role="tab" aria-selected={false} className="mp-btn mp-btn-green mp-btn-big" onClick={() => setTab("add")}><Icon name="plus" /><HotkeyLabel text="New Add" hotkey="n" /></button>}
             {grids.addTabVisible && tab === "add" && <span className="mp-view-now">{restore ? "View (Restore)" : "New Add"}</span>}
             {grids.updateTabVisible && tab !== "update" && <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}><Icon name="list" /><HotkeyLabel text="Update / Delete" hotkey="u" /></button>}
             {imageTab && tab !== "image" && <button type="button" data-hotkey="i" aria-keyshortcuts="Alt+I" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => setTab("image")}><Icon name="image" /><HotkeyLabel text="Image" hotkey="i" /></button>}
-            {/* Cancel Both needs both grids: a master with no New grid (add_screen_hidden) or no Update grid (none, or no records) leaves it disabled. */}
-            <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-red mp-btn-big" disabled={!(grids.addTabVisible && grids.updateTabVisible && records.length > 0)} onClick={() => void cancelAll()}><Icon name="cancel" /><HotkeyLabel text="Cancel Both (Add And Update)" hotkey="b" /></button>
+            {/* With both grids it cancels both. With one (no New grid: add_screen_hidden, as Invoice Slab; or no Update grid: none, or no records) it stays open as the way back to the first combo. */}
+            <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-red mp-btn-big" title="Alt+B" onClick={() => void cancelAll()}><Icon name="cancel" /><HotkeyLabel text={grids.addTabVisible && grids.updateTabVisible && records.length > 0 ? "Cancel Both (Add And Update)" : "Cancel & Change Group"} hotkey="b" /></button>
           </div>
         )}
         {busy && <span className="mp-busy">{busy}…</span>}
@@ -2568,7 +2192,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                       ) : (
                         <span className="mp-editor-wrap" role="presentation" onClick={(event) => event.stopPropagation()}>
                           <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(row.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(row.setup) ? "c" : undefined} value={addText} onChange={(event) => { if (typingAllowed(row.setup, addText, event.target.value)) setAddText(event.target.value); }} onKeyDown={(event) => void addKeys(event)} />
-                          {editorTools(row.setup, addText, setAddText, "add")}
+                          {tools.buttons(editorKindOf(row.setup.field_type), addText, setAddText, row.setup.decimal_points)}
                         </span>
                       )
                     ) : row.setup.force_inputtype === "P" && row.fieldInput !== "" ? "*********" : row.comboKind === "M" ? keyListNames(row.fieldInput, row.options) : row.fieldInput}
@@ -2577,14 +2201,6 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               ))}
             </tbody>
           </table>
-          {/* Under the grid, not over it, so the last heading in view is never covered. */}
-          <div className="mp-add-foot">
-            {addMore.down > 0 && (
-              <button type="button" tabIndex={-1} className="mp-add-more mp-add-more-down" title="Scroll down" onMouseDown={(event) => event.preventDefault()} onClick={() => scrollAdd(1)}>
-                ▼ {addMore.down} {addMore.down === 1 ? "row" : "rows"} down
-              </button>
-            )}
-          </div>
           {addMenu && (
             <div className="mp-menu" style={{ left: addMenu.x, top: addMenu.y }} onMouseLeave={() => setAddMenu(null)}>
               <button type="button" onClick={() => { setAddMenu(null); void addCopy(); }}>Copy (Ctrl+C)</button>
@@ -2634,31 +2250,6 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               <div className="mp-row mp-head" style={{ top: 0 }}>
                 <div className="mp-cell mp-rownum" aria-hidden="true" />
                 {columns.map((column, index) => {
-                  const draft = openFilter === column.key && filterDraft?.key === column.key ? filterDraft : null;
-                  const values = draft ? valuesOf(column) : [];
-                  const needle = filterSearch.trim().toLowerCase();
-                  const label = (value: string) => (value === "" ? "(blank)" : value);
-                  const listed = needle ? values.filter((value) => label(value).toLowerCase().includes(needle)) : values;
-                  const kind = filterKind(column);
-                  const setDraft = (change: Partial<FilterDraft>) => setFilterDraft((current) => (current ? { ...current, ...change } : current));
-                  const conditionRow = (which: "first" | "second") => {
-                    const condition = draft![which];
-                    const set = (change: Partial<Condition>) => setDraft({ [which]: { ...condition, ...change } });
-                    const inputType = kind === "date" ? "date" : "text";
-                    return (
-                      <div className="mp-filter-condition">
-                        <select aria-label={`${FILTER_TITLE[kind]} ${which === "first" ? "condition" : "second condition"}`} value={condition.op} onChange={(event) => set({ op: event.target.value })}>
-                          {FILTER_OPS[kind].map(([op, text]) => <option key={op} value={op}>{text}</option>)}
-                        </select>
-                        {!NO_VALUE_OPS.includes(condition.op) && (
-                          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="Value" placeholder="Value" value={condition.a} onChange={(event) => set({ a: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); }} />
-                        )}
-                        {condition.op === "between" && (
-                          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="And value" placeholder="and" value={condition.b} onChange={(event) => set({ b: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); }} />
-                        )}
-                      </div>
-                    );
-                  };
                   return (
                     <div
                       key={column.key}
@@ -2678,61 +2269,9 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                       <button type="button" className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                         {column.caption}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                       </button>
-                      <button type="button" className="mp-filter-button" aria-label={`Filter ${column.caption}`} onClick={() => openFilterFor(column)}>▾</button>
-                      {draft && (
-                        <div ref={placeFilter} className="mp-filter" role="dialog" aria-label={`Filter ${column.caption}`}>
-                          <input type="search" placeholder="Search values…" aria-label={`Search ${column.caption} values`} value={filterSearch} ref={focusOnMount} onChange={(event) => setFilterSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") applyFilter(column); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
-                          <label className="mp-filter-all">
-                            <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => setDraft({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
-                            <b>{needle ? "(Select all found)" : "(Select All)"}</b>
-                            <span className="mp-filter-tip">Shift+click: range</span>
-                            <span className="mp-filter-count">{listed.filter((value) => draft.chosen.includes(value)).length}/{listed.length}</span>
-                          </label>
-                          <ul>
-                            {listed.map((value) => (
-                              <li key={value || "(blank)"}>
-                                <button
-                                  type="button"
-                                  role="checkbox"
-                                  aria-checked={draft.chosen.includes(value)}
-                                  className="mp-filter-value"
-                                  onClick={(event) => {
-                                    const tick = !draft.chosen.includes(value);
-                                    const from = filterAnchor.current === null ? -1 : listed.indexOf(filterAnchor.current);
-                                    const to = listed.indexOf(value);
-                                    // Shift+click: everything from the last clicked value to this one takes this one's new state.
-                                    const range = event.shiftKey && from >= 0 ? listed.slice(Math.min(from, to), Math.max(from, to) + 1) : [value];
-                                    setDraft({ chosen: tick ? [...new Set([...draft.chosen, ...range])] : draft.chosen.filter((item) => !range.includes(item)) });
-                                    filterAnchor.current = value;
-                                  }}
-                                >
-                                  <span className="mp-filter-box" aria-hidden="true">{draft.chosen.includes(value) ? "✓" : ""}</span>{value === "" ? <em>(blank)</em> : value}
-                                </button>
-                              </li>
-                            ))}
-                            {listed.length === 0 && <li className="mp-filter-none">No value matches.</li>}
-                          </ul>
-                          <div className="mp-filter-conditions">
-                            <b className="mp-filter-kind">{kind === "number" ? "Σ " : kind === "date" ? "📅 " : "T "}{FILTER_TITLE[kind]}</b>
-                            {conditionRow("first")}
-                            {draft.first.op !== "" && (
-                              <>
-                                <div className="mp-filter-join" role="radiogroup" aria-label="Join the two conditions">
-                                  <label><input type="radio" checked={draft.join === "and"} onChange={() => setDraft({ join: "and" })} />And</label>
-                                  <label><input type="radio" checked={draft.join === "or"} onChange={() => setDraft({ join: "or" })} />Or</label>
-                                </div>
-                                {conditionRow("second")}
-                              </>
-                            )}
-                          </div>
-                          <div className="mp-filter-actions">
-                            <button type="button" className="mp-filter-apply" onClick={() => applyFilter(column)}>✔ Apply</button>
-                            <button type="button" onClick={() => clearFilter(column)}>✖ Clear</button>
-                            <button type="button" onClick={() => setOpenFilter(null)}>Cancel</button>
-                          </div>
-                        </div>
-                      )}
-                      <span className="mp-resize" role="presentation" onMouseDown={(event) => startResize(column, event)} onDoubleClick={() => setWidths((current) => { const copy = { ...current }; delete copy[column.key]; return copy; })} />
+                      <FilterButton caption={column.caption} onOpen={() => openFilterFor(column)} />
+                      <FilterPopup state={columnFilters} columnKey={column.key} caption={column.caption} kind={filterKind(column)} values={openFilter === column.key ? valuesOf(column) : []} area={scroller} />
+                      {layout.resizeHandle(column)}
                     </div>
                   );
                 })}
@@ -2798,7 +2337,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                             ) : (
                               <span className="mp-editor-wrap">
                                 <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(column.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(column.setup) ? "c" : undefined} value={editText} onChange={(event) => { if (!typingAllowed(column.setup, editText, event.target.value)) return; setEditText(event.target.value); followHelp(column.key, event.target.value); }} onKeyDown={(event) => void editorKeys(event)} />
-                                {editorTools(column.setup, editText, setEditText, "update")}
+                                {tools.buttons(editorKindOf(column.setup.field_type), editText, setEditText, column.setup.decimal_points)}
                               </span>
                             )
                           ) : (
@@ -2870,145 +2409,71 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       )}
 
       {grids && (
-        <div className="mp-buttons">
-          {tab === "update" && <>
-            <button type="button" data-hotkey="s" aria-keyshortcuts="Alt+S" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveUpdate()} disabled={Boolean(busy) || edited.size === 0}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
-            <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-blue" onClick={() => void printUpdate()} disabled={unsaved} title={unsaved ? unsavedTip : "Print the grid"}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
-            <button type="button" data-hotkey="w" aria-keyshortcuts="Alt+W" className="mp-btn mp-btn-blue" onClick={() => void openPreview()} disabled={unsaved} title={unsaved ? unsavedTip : "See the pages before printing"}><Icon name="preview" /><HotkeyLabel text="Preview" hotkey="w" /></button>
-            <button type="button" data-hotkey="x" aria-keyshortcuts="Alt+X" className="mp-btn mp-btn-excel" onClick={() => void exportExcel()} disabled={unsaved} title={unsaved ? unsavedTip : "Save the grid as an Excel workbook (.xlsx)"}><Icon name="excel" /><HotkeyLabel text="Excel" hotkey="x" /></button>
-            <button type="button" data-hotkey="d" aria-keyshortcuts="Alt+D" className="mp-btn mp-btn-pdf" onClick={() => void exportPdf()} disabled={unsaved} title={unsaved ? unsavedTip : "Save the grid as a PDF report"}><Icon name="pdf" /><HotkeyLabel text="PDF" hotkey="d" /></button>
-            <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className="mp-btn mp-btn-teal" onClick={() => void exportCsv()} disabled={unsaved} title={unsaved ? unsavedTip : "Save the grid as a CSV text file"}><Icon name="export" /><HotkeyLabel text="CSV" hotkey="v" /></button>
-            <button type="button" data-hotkey="r" aria-keyshortcuts="Alt+R" className="mp-btn mp-btn-blue" onClick={() => void refreshUpdate()} disabled={Boolean(busy)}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
-            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={() => void cancelUpdate()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
-            <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
-            {meta?.logFileSpecial && <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={Boolean(busy) || !grids.pkvKey}><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>}
-            <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setColumnChooser(true)} title="Arrange columns: change their order, show or hide them"><Icon name="columns" /><HotkeyLabel text="Arrange Columns" hotkey="o" />{hiddenColumns.length ? ` (${hiddenColumns.length} hidden)` : ""}</button>
-            <span className="mp-spacer" />
-            {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
-              <input
-                key={box.name}
-                className="mp-scheme-box"
-                aria-label={programId === 50 ? "Change rate: +, -, *, / or % then a figure" : box.label}
-                placeholder={programId === 50 ? "Rate +-*/%" : box.label}
-                value={schemeBoxes[box.name] ?? ""}
-                onChange={(event) => setSchemeBoxes((current) => ({ ...current, [box.name]: event.target.value }))}
-                onBlur={(event) => applySchemeBox(box.name, event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-              />
-            ))}
-            <label className="mp-search"><Icon name="search" /><input id="mp-find" type="search" placeholder="Search all columns (Ctrl+F)" value={find} onChange={(event) => setFind(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F3") { event.preventDefault(); findNext(); } }} /></label>
-            {filtering && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" onClick={() => { setFilters({}); setFind(""); setSort(null); }}><Icon name="clear" /><HotkeyLabel text="Clear filters" hotkey="a" /></button>}
-            <span className="mp-count">{shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length}`}{edited.size ? ` · ${edited.size} changed` : ""}{deleted.size ? ` · ${deleted.size} to delete` : ""}</span>
-          </>}
-          {tab === "add" && <>
-            <button type="button" data-hotkey="s" aria-keyshortcuts="Alt+S" className="mp-btn mp-btn-green" id="mp-save" onClick={() => void saveAdd()} disabled={Boolean(busy) || (def ? !def.rights.add : true)}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
-            {printsMasterSheet && <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-blue" onClick={printMasterSheet}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>}
-            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={() => void cancelAdd()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
-            <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
-          </>}
-          {tab === "image" && <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>}
-        </div>
-      )}
-
-      {preview && <PrintPreview table={preview.table} initialOptions={preview.options} title={preview.name} onOptionsChange={({ orientation, fontSize, totals }) => rememberSetup({ orientation, fontSize, totals })} onClose={() => { setPreview(null); gridFocus.current?.focus(); }} />}
-
-      {pdfChoice && (
-        <div className="mp-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPdfChoice(null); }}>
-          <div className="mp-print-dialog" role="dialog" aria-modal="true" aria-label={pdfChoice.purpose === "print" ? "Print" : "Save as PDF"}>
-            <header>
-              <Icon name={pdfChoice.purpose === "print" ? "print" : "pdf"} />
-              <strong>{pdfChoice.purpose === "print" ? "Print" : "Save as PDF"}</strong>
-              <span>{shownRows.length} record{shownRows.length === 1 ? "" : "s"}</span>
-            </header>
-            <div className="mp-print-body">
-              <div className="mp-print-section">Layout</div>
-              <div className="mp-print-cards" role="radiogroup" aria-label="Layout">
-                {([["list", "List print", "All records in a table"], ["record", "Vertical print", "Each record from a new page"]] as const).map(([style, name, hint]) => (
-                  <label key={style} className={pdfChoice.style === style ? "mp-chosen" : ""}>
-                    <input type="radio" name="print-style" checked={pdfChoice.style === style} onChange={() => setPdfChoice({ ...pdfChoice, style, orientation: style === "record" ? "portrait" : pdfChoice.orientation })} />
-                    <span className={`mp-print-icon mp-print-icon-${style}`} aria-hidden="true" />
-                    <b>{name}</b>
-                    <small>{hint}</small>
-                  </label>
-                ))}
-              </div>
-              <div className="mp-print-section">Page</div>
-              <div className="mp-print-cards" role="radiogroup" aria-label="Page">
-                {(["portrait", "landscape"] as const).map((orientation) => (
-                  <label key={orientation} className={pdfChoice.orientation === orientation ? "mp-chosen" : ""}>
-                    <input type="radio" name="pdf-orientation" checked={pdfChoice.orientation === orientation} onChange={() => setPdfChoice({ ...pdfChoice, orientation })} />
-                    <span className={`mp-sheet mp-sheet-${orientation}`} aria-hidden="true" />
-                    <b>{orientation === "portrait" ? "Portrait" : "Landscape"}</b>
-                  </label>
-                ))}
-              </div>
-              <div className="mp-print-section">Font size</div>
-              <div className="mp-print-sizes" role="radiogroup" aria-label="Font size">
-                {FONT_SIZES.map((size) => (
-                  <button key={size} type="button" role="radio" aria-checked={pdfChoice.fontSize === size} className={pdfChoice.fontSize === size ? "mp-chosen" : ""} onClick={() => setPdfChoice({ ...pdfChoice, fontSize: size })}>{size}</button>
-                ))}
-                <span>pt</span>
-              </div>
-              {pdfChoice.style === "list" && (
-                <label className="mp-print-check"><input type="checkbox" checked={pdfChoice.totals} onChange={(event) => setPdfChoice({ ...pdfChoice, totals: event.target.checked })} />Print the totals row</label>
+        tab === "update" ? (
+          <GridButtons
+            source="master"
+            busy={Boolean(busy)}
+            save={{ onClick: () => void saveUpdate(), disabled: edited.size === 0 }}
+            output={output}
+            refresh={{ onClick: () => void refreshUpdate() }}
+            cancel={{ onClick: () => void cancelUpdate() }}
+            quit={{ onClick: () => void leave() }}
+            log={meta?.logFileSpecial ? { onClick: () => void showLog(), disabled: !grids.pkvKey } : undefined}
+            arrange={{ onClick: () => setColumnChooser(true), hidden: hiddenColumns.length }}
+            extra={<>
+              {(programId === 39 || programId === 50) && SCHEME_BOXES.filter((box) => programId === 39 || box.name === "temproute").map((box) => (
+                <input
+                  key={box.name}
+                  className="mp-scheme-box"
+                  aria-label={programId === 50 ? "Change rate: +, -, *, / or % then a figure" : box.label}
+                  placeholder={programId === 50 ? "Rate +-*/%" : box.label}
+                  value={schemeBoxes[box.name] ?? ""}
+                  onChange={(event) => setSchemeBoxes((current) => ({ ...current, [box.name]: event.target.value }))}
+                  onBlur={(event) => applySchemeBox(box.name, event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+                />
+              ))}
+            </>}
+            search={{ id: "mp-find", value: find, onChange: setFind, onEnter: findNext }}
+            clearFilters={filtering ? () => { setFilters({}); setFind(""); setSort(null); } : null}
+            count={`${shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length}`}${edited.size ? ` · ${edited.size} changed` : ""}${deleted.size ? ` · ${deleted.size} to delete` : ""}`}
+          />
+        ) : tab === "add" ? (
+          <GridButtons
+            source="master"
+            busy={Boolean(busy)}
+            save={{ onClick: () => void saveAdd(), disabled: def ? !def.rights.add : true }}
+            print={printsMasterSheet ? { onClick: printMasterSheet } : undefined}
+            cancel={{ onClick: () => void cancelAdd() }}
+            quit={{ onClick: () => void leave() }}
+          >
+            {/* In the button bar under the grid's right edge, not in a strip of its own, so the grid has room for one more row. */}
+              {addMore.down > 0 && (
+                <button type="button" tabIndex={-1} className="mp-add-more mp-add-more-down" title="Scroll down" onMouseDown={(event) => event.preventDefault()} onClick={() => scrollAdd(1)}>
+                  ▼ {addMore.down} {addMore.down === 1 ? "row" : "rows"} down
+                </button>
               )}
-            </div>
-            <footer>
-              <button type="button" data-hotkey={pdfChoice.purpose === "print" ? "p" : "s"} aria-keyshortcuts={pdfChoice.purpose === "print" ? "Alt+P" : "Alt+S"} className="mp-print-go" ref={focusOnMount} onClick={() => savePdf(pdfChoice)}>
-                {pdfChoice.purpose === "print" ? <HotkeyLabel text="Print" hotkey="p" /> : <HotkeyLabel text="Save PDF" hotkey="s" />}
-              </button>
-              <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-print-cancel" onClick={() => setPdfChoice(null)}><HotkeyLabel text="Cancel" hotkey="c" /></button>
-            </footer>
-          </div>
-        </div>
+          </GridButtons>
+        ) : (
+          <GridButtons source="master" quit={{ onClick: () => void leave() }} />
+        )
       )}
+
+      {output.dialogs}
 
       {columnChooser && grids && (
         <ArrangeColumns
-          items={orderedColumns.map((column) => ({ key: column.key, caption: column.caption || column.key, fixed: fixedKeys.includes(column.key), shown: fixedKeys.includes(column.key) || !hiddenColumns.includes(column.key) }))}
+          items={layout.arrangeItems((column) => column.caption)}
           changed={columnOrder.length > 0}
           onMove={placeColumn}
-          onToggle={(key) => { if (hiddenColumns.includes(key)) setHiddenColumns((current) => current.filter((candidate) => candidate !== key)); else hideColumn(key); }}
+          onToggle={layout.toggleColumn}
           onShowAll={() => setHiddenColumns([])}
           onResetOrder={() => setColumnOrder([])}
           onClose={() => { setColumnChooser(false); keepGridFocus(); }}
         />
       )}
 
-      {calendar && (
-        <div className="mp-calc-backdrop mp-cal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setCalendar(null); refocusEditor(); } }}>
-          <CalendarPopup
-            initial={parseDesktopDate(calendar.initial)}
-            style={calendarDrag.style ?? { position: "fixed", left: calendar.left, top: calendar.top }}
-            dragHandle={calendarDrag.handle}
-            onClose={() => { setCalendar(null); refocusEditor(); }}
-            onPick={(date) => {
-              const text = date ? formatDesktopDate(date) : "";
-              if (calendar.grid === "add") setAddText(text); else setEditText(text);
-              setCalendar(null);
-              refocusEditor();
-            }}
-          />
-        </div>
-      )}
-
-      {calc && (
-        <div className="mp-calc-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCalc(null); }}>
-          <Calculator
-            style={calcDrag.style}
-            dragHandle={calcDrag.handle}
-            initial={calc.initial}
-            caretAtEnd={calc.caretAtEnd}
-            decimals={calc.decimals}
-            onClose={() => { setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
-            onUse={(value) => {
-              if (calc.grid === "add") setAddText(value); else setEditText(value);
-              setCalc(null);
-              document.querySelector<HTMLInputElement>(".mp-editor")?.focus();
-            }}
-          />
-        </div>
-      )}
+      {tools.popups}
 
       <div className="mp-status">
         <span>{rowStatus}</span>
@@ -3016,9 +2481,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         {selectionTotals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{selectionTotals}</span>}
         <span>{(() => {
           const setup = editing ? cursorColumn?.setup : addEditing ? addRows[addCursor]?.setup : undefined;
-          if (setup?.field_type === "D") return "Alt+↓ Calendar · Ctrl+Del Clear";
-          if (setup?.field_type === "N" || setup?.field_type === "C") return "Alt+C or + * / = Calculator · Ctrl+Del Clear";
-          return hotKeys;
+          return (setup && tools.hint(editorKindOf(setup.field_type))) || hotKeys;
         })()}</span>
         {warnings.length > 0 && <span className="mp-warn" title={warnings.join("\n")}>{warnings.length} setup query warning{warnings.length === 1 ? "" : "s"}</span>}
       </div>

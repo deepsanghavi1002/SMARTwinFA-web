@@ -52,13 +52,16 @@ test("server-renders the SMARTwinFA login shell", async () => {
 });
 
 test("keeps the latest migrated application surface wired into the root route", async () => {
-  const [page, layout, startup, master, packageJson] = await Promise.all([
+  const [page, layout, startup, masterScreen, packageJson, ...gridLibrary] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../features/startup/StartupGate.tsx", import.meta.url), "utf8"),
     readFile(new URL("../features/master-program/MasterProgram.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    // The grid features the master uses live in the shared grid library (features/grid).
+    ...["filter.ts", "ColumnFilter.tsx", "EditorTools.tsx", "useDraggable.ts"].map((name) => readFile(new URL(`../features/grid/${name}`, import.meta.url), "utf8")),
   ]);
+  const master = [masterScreen, ...gridLibrary].join("\n");
 
   // The menu roots used to be literals here. They now come from
   // smart_setup.menumaster for the company that was opened, so the page is
@@ -77,7 +80,7 @@ test("keeps the latest migrated application surface wired into the root route", 
     assert.match(master, new RegExp(action));
   }
   // Print, image tab, edit log, module password, program 39/50 boxes, zoom and the Ezeone push.
-  for (const action of ["Print", "Image", "Log", "module-password", "product-image", "master-log", "zoom-book", "cloud-push", "SCH_SALEHO", "PL_SRATE", "Numeric Filter", "Text Filter", "Date Filter", "Arrange Columns", "Clear the ", "\"figure\"", "useDraggable", "↓ Calendar", "Del Clear", "toolKeys", "CalendarPopup"]) {
+  for (const action of ["Print", "Image", "Log", "module-password", "product-image", "master-log", "zoom-book", "cloud-push", "SCH_SALEHO", "PL_SRATE", "Numeric Filter", "Text Filter", "Date Filter", "Arrange Columns", "Clear the ", "\"figure\"", "useDraggable", "↓ Calendar", "Del Clear", "useEditorTools", "CalendarPopup"]) {
     assert.match(master, new RegExp(action));
   }
   assert.match(layout, /title:\s*"SMARTwinFA Web"/);

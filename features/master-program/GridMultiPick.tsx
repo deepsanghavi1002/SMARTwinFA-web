@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { Matched } from "../ui/Matched";
 import { keyListNames, keyListText, parseKeyList } from "../../lib/master-program/multi-pick";
-import type { GridComboPlace } from "./GridCombo";
+import type { GridComboPlace } from "../grid/GridCombo";
 
 /**
  * The drop-down of a multi-pick cell (multiple_chkbox): the same list as GridCombo, but every

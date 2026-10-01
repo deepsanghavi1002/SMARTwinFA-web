@@ -626,7 +626,7 @@
 .mp-grid .mp-cell select.mp-combo-list option:checked,.mp-grid .mp-cell select.mp-combo-list:focus option:checked{color:#fff;background:#1f64b8 linear-gradient(#1f64b8,#1f64b8)}
 .mp-grid .mp-cell select.mp-combo-list option:hover{background:#dbe9fb}
 
-/* Grid combo (features/master-program/GridCombo): the value held stays in sight while choosing. */
+/* Grid combo (features/grid/GridCombo): the value held stays in sight while choosing. */
 .mp-grid-combo{position:fixed;z-index:1000;display:flex;flex-direction:column;border:1px solid #1f64b8;border-radius:3px;background:#fff;box-shadow:0 8px 22px #0b1a2e55;font-size:11px;color:#10233d;overflow:hidden}
 .mp-grid-combo-now{padding:3px 8px;background:#fff4c2;border-bottom:1px solid #e6cf6a;color:#5a4300;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mp-grid-combo ul{margin:0;padding:2px 0;list-style:none;overflow-y:auto}
@@ -774,11 +774,12 @@
 /* New grid: "▲ n rows up" at the right of the Heading/Input title row, "▼ n rows down" in a strip under
    the grid, so neither covers a field; only the help list of a main field may open over the strip.
    A click scrolls a page. */
-.mp-add-foot{width:min(760px,100%);height:22px;display:flex;align-items:center;justify-content:flex-end;padding-right:22px;box-sizing:border-box}
 .mp-add-more{position:absolute;z-index:5;left:min(760px,100%);transform:translateX(calc(-100% - 22px));height:18px;padding:0 9px;border:1px solid #9db8dd;border-radius:9px;background:#eef5ff;color:#1f4f8f;font:inherit;font-size:10px;font-weight:700;line-height:16px;white-space:nowrap;cursor:pointer;box-shadow:0 1px 3px #0b1a2e26}
 .mp-add-more:hover{background:#dcebff}
 .mp-add-more-up{top:2px}
-.mp-add-more-down{position:static;transform:none}
+/* Down sits in the button bar under the New grid's right edge (grid: 6px margin + 1px border, max 760px). */
+.mp-buttons{position:relative}
+.mp-add-more-down{left:min(767px,100%);top:50%;transform:translate(calc(-100% - 22px),-50%)}
 
 /* Print / Save as PDF dialog */
 .mp-print-dialog{width:min(430px,94vw);display:grid;border-radius:10px;overflow:hidden;background:#fff;color:#1d2b3a;font-size:13px;box-shadow:0 18px 48px #0b2c5766,0 2px 6px #0003}
@@ -813,3 +814,10 @@
 .mp-print-cancel{border:1px solid #c3d3e6;background:#fff;color:#1d2b3a}
 .mp-print-cancel:hover{background:#eef3f9}
 .mp-print-dialog footer button:focus-visible{outline:2px solid #ffb400;outline-offset:2px}
+
+/* Small entry (features/small-entry): header text/date boxes, the book-balance label, the status warnings and the grid area before the grid is filled. */
+.mp-control{width:120px;height:22px;padding:0 5px;border:1px solid #7fa6d6;border-radius:3px;background:#fff;font:inherit;font-size:11px}
+.mp-control:disabled{background:#e8eef6;color:#56616d}
+.mp-balance{padding:0 8px;color:#0d3a73;font-weight:700;white-space:nowrap}
+.mp-empty-grid{background:#eef4fb}
+.mp-status .mp-warning{color:#ffe08a;overflow:hidden;text-overflow:ellipsis}

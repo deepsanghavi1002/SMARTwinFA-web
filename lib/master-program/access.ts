@@ -13,9 +13,9 @@ export function requiredEditRights(records: readonly { deleted: boolean }[]): ("
 type Menu = Readonly<{ actionCode: string | null; actionMenu: string | null; menuShortName: string | null; children: readonly Menu[] }>;
 
 /** Only accept module names attached to this program in the company's visible menu. */
-export function allowedMasterMenu(menus: readonly Menu[], program: string, module: string): boolean {
+export function allowedMasterMenu(menus: readonly Menu[], program: string, module: string, actionCode = "MASTER"): boolean {
   return menus.some((menu) => (
-    menu.actionCode?.toUpperCase() === "MASTER" && menu.actionMenu === program &&
+    menu.actionCode?.toUpperCase() === actionCode && menu.actionMenu === program &&
     (menu.menuShortName ?? "") === module
-  ) || allowedMasterMenu(menu.children, program, module));
+  ) || allowedMasterMenu(menu.children, program, module, actionCode));
 }

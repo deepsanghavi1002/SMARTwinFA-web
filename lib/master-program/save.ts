@@ -2,7 +2,7 @@ import type { Client } from "pg";
 import { requiredEditRights } from "./access";
 import type { SysValueContext } from "../sys-values";
 import { isNumeric, parseDesktopDate, removeTableAlias, runFormula, securityRead, securityWrite, toDecimal, toInt, toText, writePw, formatDesktopDate, formatDesktopTime } from "./legacy";
-import { displayValue, Loader, loadContext, prepareProgram, replaceControlValues, updateColumnShown } from "./load";
+import { displayValue, Loader, loadContext, prepareProgram, rateAddon, replaceControlValues, updateColumnShown } from "./load";
 import type { BodyRow, PreparedProgram } from "./load";
 import { columnName, replaceSessionValues } from "./sql";
 import { readRights, SETUP_SCHEMA, SYSTEM_SCHEMA } from "./session";
@@ -1137,22 +1137,6 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
     await client.query("ROLLBACK TO SAVEPOINT master_edit");
     return { ok: false, message: `Error while Saving, Error Message ${error instanceof Error ? error.message : String(error)}`, statements, dryRun, warnings: loader.warnings };
   }
-}
-
-/** int_rate_addon2 / int_rate_addon3, as Form Load reads them from addon_fld. */
-export async function rateAddon(loader: Loader, programId: number, which: 2 | 3): Promise<number> {
-  const s = loader.session.companySchema;
-  const first = async (where: string) => toInt(field((await loader.readTable(`SELECT fiel_key FROM ${s}.addon_fld WHERE ${where} ORDER BY fiel_key LIMIT 1`))?.[0], "fiel_key"));
-  const partyRate = "((fiel_err IS NOT NULL AND POSITION('ADDONRate,' IN fiel_err) > 0) OR fiel_partyrate = 'Y')";
-  if (which === 3) return programId === 22 ? first(`${partyRate} AND fiel_relate = 'P' AND fiel_pos = 'A'`) : 0;
-  let value = 0;
-  let found = false;
-  if (programId === 22) { value = await first(`${partyRate} AND fiel_relate = 'A' AND fiel_pos = 'A'`); found = value > 0; }
-  else if ([23, 26, 28, 32].includes(programId) || (programId === 36 && s.toUpperCase().includes("SHAH_TRADING"))) { value = await first(`${partyRate} AND fiel_relate = 'P' AND fiel_pos = 'A'`); found = value > 0; }
-  else if (programId === 29 || programId === 36) { value = await first(`fiel_err IS NOT NULL AND POSITION('PBRFN,' IN fiel_err) > 0 AND fiel_relate = 'P' AND fiel_pos = 'A'`); found = value > 0; }
-  else if (programId === 50) { value = await first(`fiel_partyrate = 'Y' AND fiel_relate = 'P' AND fiel_pos = 'A'`); found = value > 0; }
-  if (!found && programId === 36) value = await first(`fiel_err IS NOT NULL AND POSITION('BRFN,' IN fiel_err) > 0 AND fiel_relate = 'P' AND fiel_pos = 'A'`);
-  return value;
 }
 
 async function editSysValue(loader: Loader, programId: number, request: EditSaveRequest, record: EditedRecord, saveRow: SaveRow): Promise<string> {

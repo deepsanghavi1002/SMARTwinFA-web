@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MasterProgram } from "../features/master-program/MasterProgram";
+import { SmallEntry } from "../features/small-entry/SmallEntry";
 import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
 
 /**
@@ -91,11 +92,12 @@ function MainMenu() {
   /**
    * Which screen the chosen menu row maps to. Every MASTER row runs the one generic master
    * screen for the program_top program its ActionMenu names, as Main_Menu_New opens
-   * Master_ProgramGrid; other rows are answered honestly rather than dropped, so a menu
+   * Master_ProgramGrid, and every SMALL_ENTRY row the one Small_Entry screen; other rows are answered honestly rather than dropped, so a menu
    * that does nothing can be told apart from one that is broken.
    */
   const screen = running === null ? "home"
     : running.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master"
+    : running.actionCode?.toUpperCase() === "SMALL_ENTRY" && running.actionMenu ? "small-entry"
     : "pending";
 
   /** One dropdown row: a leaf runs, a branch opens its submenu beside it. */
@@ -115,7 +117,7 @@ function MainMenu() {
   );
 
   return (
-    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${running?.actionCode?.toUpperCase() === "MASTER" && running.actionMenu ? "master-open" : ""}`}>
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "master" || screen === "small-entry" ? "master-open" : ""}`}>
       <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
 
       <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)}>
@@ -150,11 +152,12 @@ function MainMenu() {
         </div>
       </section>
 
-      <section className={`work-area ${screen === "master" ? "workflow-open" : ""}`}>
+      <section className={`work-area ${screen === "master" || screen === "small-entry" ? "workflow-open" : ""}`}>
         {/* The SMART WINFA artwork already carries the logo, the tagline and
             the Pranav Computers credit, so it is drawn as one background
             rather than reassembled from separate elements. */}
         {screen === "master" ? <MasterProgram key={running!.id} programName={running!.actionMenu!} menuShortName={running!.menuShortName ?? ""} title={running!.label} onClose={goHome} />
+          : screen === "small-entry" ? <SmallEntry key={running!.id} entryName={running!.actionMenu!} menuShortName={running!.menuShortName ?? ""} title={running!.label} onClose={goHome} />
           : screen === "pending" ? <NotBuiltYet node={running!} />
           : <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
       </section>
