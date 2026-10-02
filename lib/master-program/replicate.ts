@@ -1,6 +1,7 @@
 import { toInt, toText } from "./legacy";
 import { Loader } from "./load";
 import { allocateKey, primaryKeyField } from "./save";
+import { runStatement } from "./statement";
 import { SYSTEM_SCHEMA } from "./session";
 import type { CloudPush, GroupState } from "./types";
 
@@ -86,7 +87,7 @@ async function insertRow(loader: Loader, out: Replication, schema: string, table
   }
   const sql = `INSERT INTO ${schema}.${table.toLowerCase()} (${names.join(",")}) VALUES (${params.map((_, index) => `$${index + 1}`).join(",")})`;
   out.statements.push(render(sql, params));
-  await loader.client.query(sql, params);
+  await runStatement(loader.client, sql, params);
   return key;
 }
 

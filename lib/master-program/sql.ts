@@ -7,7 +7,7 @@ import type { MasterSession } from "./session";
  * The desktop runs this over every setup query before Func_ReplaceSysVal_CtrlValue: it
  * swaps the placeholders that depend only on the session - the company database, the
  * year, the operator, today. `|sys.db|` becomes `<schema>.`, the PostgreSQL spelling of
- * the desktop's `[COMPANY].[dbo].`.
+ * the desktop's `[COMPANY].[dbo].`; `|sys.fromdb|` the group's from-company schema (session.fromSchema).
  *
  * Dates keep the desktop's dd/MMM/yyyy literal; PostgreSQL reads '05/Sep/2026' as a date
  * under any DateStyle, so the stored queries need no change.
@@ -19,6 +19,7 @@ export function replaceSessionValues(source: string | null | undefined, session:
     if (sql.toLowerCase().includes(token)) sql = sql.split(token).join(value);
   };
   swap("|sys.db|", `${session.companySchema}.`);
+  swap("|sys.fromdb|", `${session.fromSchema ?? session.companySchema}.`);
   swap("|sys.user_id|", String(session.userNo));
   swap("|sys.yearid|", `'${session.yearId}'`);
   swap("|sys.year_id|", `'${session.yearId}'`);

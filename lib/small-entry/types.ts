@@ -1,3 +1,5 @@
+import type { PublicProgramBodySetup } from "../master-rules";
+
 /**
  * The generic small-entry screen (the desktop's Small_Entry form), as the browser and the
  * server exchange it. One screen serves every SMALL_ENTRY menu; which one is named by
@@ -28,6 +30,10 @@ export type EntryDefinition = Readonly<{
   firstCombo: Readonly<{ label: string; options: readonly EntryOption[] }> | null;
   controls: readonly EntryControl[];
   rights: Readonly<{ restricted: boolean; edit: boolean; editPassword: boolean; modulePassword: boolean }>;
+  /** The company licence (smart_lic), which some typing rules read. */
+  licence: number;
+  /** The Delete key removes selected rows (Small_Entry KeyUp: entries 7, 36, 75, 100, 111, and 103 for an AD user). */
+  canDelete: boolean;
   /** Setup the web cannot run yet, named so the screen can say so rather than misbehave. */
   unsupported: readonly string[];
 }>;
@@ -54,15 +60,35 @@ export type EntryColumn = Readonly<{
   /** An addon column (product master addon or a godown's column group). */
   addon: boolean;
   tooltip: string;
+  /**
+   * Every entry_grid_body setting of the column, named as the table names them (the same columns
+   * as program_body, less the SQL ones), so the shared grid rules (features/grid/rules) type and
+   * check it as the desktop does.
+   */
+  setup: PublicProgramBodySetup;
   /** A combo column's list (combo_value F, L, Q or X): the cell holds the text, the key goes with it for saving. */
   options?: readonly EntryOption[];
+  /** A true / false column (the query gives a boolean, as Bank Statement's Tick): shown as a tick box, "True" / "False" in the cell. */
+  boolean?: boolean;
 }>;
 
+/**
+ * query_condition (qc_control_event "GV"): ticking `field` fills `target` with a header control's
+ * value (dtp_date3, the Bank Reco. Date); unticking empties it when `untickBlank` (sys.false.blank).
+ */
+export type TickRule = Readonly<{ field: string; target: string; control: string; untickBlank: boolean }>;
+
 export type EntryGrid = Readonly<{
+  /** The entry's tick rules (Small_Entry AfterEdit with Arrint_TrueCol). */
+  tickRules?: readonly TickRule[];
   columns: readonly EntryColumn[];
   rows: readonly Record<string, string>[];
+  /** How many columns from the left stay put while the grid scrolls sideways (Cols.Frozen). */
+  frozen: number;
   /** Text for the desktop's lbl_Book_Balance, when a control event fills it. */
   balance: string;
+  /** Text for the desktop's tbx_Final_Amt (Bank Statement's balance as per passbook). */
+  finalAmount?: string;
 }>;
 
 /** One edited grid row, as the screen sends it to Save. */

@@ -23,3 +23,11 @@ export function roundEven(value: number, places = 2): string {
   const rounded = Math.abs(diff - 0.5) < 1e-9 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(scaled);
   return String(rounded / factor);
 }
+
+/**
+ * A column alias in single quotes (`case ... end as 'Withdrawals'`): SQL Server reads it as a name,
+ * PostgreSQL as a string and refuses it. It becomes a double-quoted name, spelt as written.
+ */
+export function quotedAliases(sql: string): string {
+  return sql.replace(/\bas\s+'([^'\s][^']*)'/gi, (_all, name: string) => `as "${name.replace(/"/g, "")}"`);
+}

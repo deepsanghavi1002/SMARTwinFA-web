@@ -1,4 +1,5 @@
 import type { Client } from "pg";
+import { runStatement } from "./statement";
 import { requiredEditRights } from "./access";
 import type { SysValueContext } from "../sys-values";
 import { isNumeric, parseDesktopDate, removeTableAlias, runFormula, securityRead, securityWrite, toDecimal, toInt, toText, writePw, formatDesktopDate, formatDesktopTime } from "./legacy";
@@ -440,7 +441,7 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
       const key = dryRun && fields.length === 0 ? null : await withAllocatedKey(loader, schema, table, keyField, fields, values);
       const sql = `INSERT INTO ${schema}.${table.toLowerCase()} (${fields.join(",")}) VALUES (${values.join(",")})`;
       statements.push(sql);
-      await client.query(sql);
+      await runStatement(client, sql);
       pkTable[i] = key ?? 0;
 
       if (programId === 1) statements.push(...await addonFieldColumns(client, session.companySchema, addonType, addonName, addonPos, addonActMaster));
@@ -465,7 +466,7 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
         await withAllocatedKey(loader, session.companySchema, "outclear", "", fields, values);
         const sql = `INSERT INTO ${session.companySchema}.outclear (${fields.join(",")}) VALUES (${values.join(",")})`;
         statements.push(sql);
-        await client.query(sql);
+        await runStatement(client, sql);
       }
     }
 
@@ -537,7 +538,7 @@ async function addonFieldColumns(client: Client, schema: string, type: string, n
   const add = async (table: string, column: string, sqlType: string) => {
     const sql = `ALTER TABLE ${schema}.${table} ADD COLUMN IF NOT EXISTS ${column.toLowerCase()} ${sqlType} NULL`;
     statements.push(sql);
-    await client.query(sql);
+    await runStatement(client, sql);
   };
   if (type === "M") {
     if (activeMaster === "Y") { await add("addon_data", `KEY_${name}`, "integer"); await add("addon_data", `TXT_${name}`, "varchar(100) DEFAULT ' '"); }
@@ -562,7 +563,7 @@ async function masterLog(loader: Loader, programId: number, mode: "A" | "E" | "D
   const valueList = splitValues(values);
   await withAllocatedKey(loader, session.companySchema, "log_master", "", fieldList, valueList);
   const sql = `INSERT INTO ${session.companySchema}.log_master (${fieldList.join(",")}) VALUES (${valueList.join(",")})`;
-  await loader.client.query(sql);
+  await runStatement(loader.client, sql);
   return sql;
 }
 
@@ -654,7 +655,7 @@ async function specialLog(loader: Loader, programId: number, request: { group: G
   }
 
   const sql = `INSERT INTO ${schema}.log_allmaster (lmaster_id,lmaster_top,lmaster_new_grid,lmaster_user,lmaster_firstname,lmaster_firstvalue,lmaster_savedate,lmaster_savetime,lmaster_machine_name,lmaster_mode,lmaster_code,lmaster_name,lmaster_short,lmaster_head,lmaster_opening) VALUES (${programId},${quote(JSON.stringify([top]))},${quote(JSON.stringify([grid]))},${session.userNo},${quote(request.group.firstCombo.text)},${toInt(request.group.firstCombo.value)},${quote(formatDesktopDate(now))},${quote(logSaveTime(now))},'WEB','${mode}',${code},${quote(name)},${quote(short)},${quote(head)},${toDecimal(opening)})`;
-  await client.query(sql);
+  await runStatement(client, sql);
   return [sql];
 }
 
@@ -680,7 +681,7 @@ async function productAddFollowUp(loader: Loader, request: AddSaveRequest, prepa
     await withAllocatedKey(loader, schema, "level_desc", "LEVEL_KEY", fields, values);
     const sql = `INSERT INTO ${schema}.level_desc (${fields.join(",")}) VALUES (${values.join(",")})`;
     statements.push(sql);
-    await client.query(sql);
+    await runStatement(client, sql);
   }
   // Godown balances for the new product
   const productKey = pkTable[prepared.addBody.length > 0 ? 0 : 0] ?? 0;
@@ -701,7 +702,7 @@ async function productAddFollowUp(loader: Loader, request: AddSaveRequest, prepa
         await withAllocatedKey(loader, schema, "prod_balance", "PRODBAL_KEY", fields, values);
         const sql = `INSERT INTO ${schema}.prod_balance (${fields.join(",")}) VALUES (${values.join(",")})`;
         statements.push(sql);
-        await client.query(sql);
+        await runStatement(client, sql);
       }
     }
   }
@@ -729,7 +730,7 @@ async function godownAddFollowUp(loader: Loader): Promise<string[]> {
       await withAllocatedKey(loader, schema, "prod_balance", "PRODBAL_KEY", fields, values);
       const sql = `INSERT INTO ${schema}.prod_balance (${fields.join(",")}) VALUES (${values.join(",")})`;
       statements.push(sql);
-      await client.query(sql);
+      await runStatement(client, sql);
     }
   }
   return statements;
@@ -1119,7 +1120,7 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
           sql = rest.split("__KEY__").join(String(key?.value ?? 1));
         }
         statements.push(sql);
-        await client.query(sql);
+        await runStatement(client, sql);
       }
       if (session.flags.logFileSpecial) statements.push(...await specialLog(loader, programId, request, prepared, pkTable[0] ?? 0, { kind: "update", tableName: grid.updateTables[0] ?? "", deleted: record.deleted, values: record.values, shown: shownSource }));
       if (!boolRunDelete) {

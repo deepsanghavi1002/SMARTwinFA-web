@@ -880,9 +880,10 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
     });
 
     // Programs 43, 44, 45 (targets) overlay the saved target values onto the listed rows.
+    // target.trg_value is money in PostgreSQL, so its blank stands in as 0::money (a plain 0 is refused).
     if (programId === 43 || programId === 45) {
       const sql = programId === 43
-        ? "select a.*,b.sub_name,b.para_id,b.sub_code from |sys.db|target a left join |sys.db|addon_sub b on a.trg_aaocode=b.sub_code where coalesce(trg_value,0) = 0 and b.sub_pos='A' order by trg_aaocode,trg_from,trg_upto"
+        ? "select a.*,b.sub_name,b.para_id,b.sub_code from |sys.db|target a left join |sys.db|addon_sub b on a.trg_aaocode=b.sub_code where coalesce(trg_value,0::money) = 0::money and b.sub_pos='A' order by trg_aaocode,trg_from,trg_upto"
         : "select a.*,b.sub_name,b.para_id,b.sub_code from |sys.db|target a left join |sys.db|addon_sub b on a.trg_aaocode=b.sub_code where coalesce(trg_perc,0) = 0 and b.sub_pos='A' order by trg_aaocode,trg_from,trg_upto";
       const targets = await loader.readTable(sql);
       for (const record of records) {

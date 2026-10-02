@@ -13,6 +13,12 @@ import { securityRead, securityWrite, toText } from "./legacy";
 export type MasterSession = Readonly<{
   /** CO_DATANAME, lowercased: the schema every |sys.db| points at. */
   companySchema: string;
+  /**
+   * CO_FROM_DATANAME, lowercased: the schema |sys.fromdb| points at (Company_From_Database,
+   * where a group keeps its shared product masters). The company's own schema when it is
+   * blank or not on this server.
+   */
+  fromSchema: string;
   companyKey: number;
   companyName: string;
   companyGroup: string;
@@ -74,7 +80,8 @@ export async function readSession(client: Client, request: SessionRequest): Prom
   const company = (await client.query(
     `SELECT c.co_key, BTRIM(c.name) AS name, LOWER(BTRIM(COALESCE(c.co_dataname, ''))) AS schema_name,
             BTRIM(COALESCE(c.co_group, '')) AS co_group, BTRIM(COALESCE(c.state_name, '')) AS state_name,
-            BTRIM(COALESCE(c.gst_req, '')) AS gst_req, BTRIM(COALESCE(c.business_nat, '')) AS business_nat
+            BTRIM(COALESCE(c.gst_req, '')) AS gst_req, BTRIM(COALESCE(c.business_nat, '')) AS business_nat,
+            LOWER(BTRIM(COALESCE(c.co_from_dataname, ''))) AS from_schema_name
        FROM ${SYSTEM_SCHEMA}.company c
       WHERE c.co_key = $1 AND c.co_pos = 'A'
         AND c.co_key IN (SELECT c_id FROM ${SYSTEM_SCHEMA}.cname WHERE c_yearid = $2)`,
@@ -84,6 +91,10 @@ export async function readSession(client: Client, request: SessionRequest): Prom
   if (!identifier.test(company.schema_name)) throw new Error("The company's database name is not a valid schema");
   const exists = (await client.query("SELECT 1 FROM information_schema.schemata WHERE schema_name = $1", [company.schema_name])).rowCount;
   if (!exists) throw new Error(`This installation has no database for ${company.name}`);
+  const fromName = String(company.from_schema_name ?? "");
+  const fromExists = fromName !== "" && identifier.test(fromName)
+    && (await client.query("SELECT 1 FROM information_schema.schemata WHERE schema_name = $1", [fromName])).rowCount;
+  const fromSchema = fromExists ? fromName : company.schema_name;
 
   const year = (await client.query(
     `SELECT year_key, year_start::date AS year_start, year_end::date AS year_end,
@@ -102,6 +113,7 @@ export async function readSession(client: Client, request: SessionRequest): Prom
 
   return {
     companySchema: company.schema_name,
+    fromSchema,
     companyKey: company.co_key,
     companyName: company.name,
     companyGroup: company.co_group,

@@ -1,4 +1,5 @@
 import type { EntryColumn } from "../../lib/small-entry/types";
+import { POSITIVE_ONLY_MESSAGE } from "../grid/rules";
 
 /**
  * C1dg_SmallEntryGrid_KeyPressEdit / ValidateEdit for the columns the ported entries edit:
@@ -33,7 +34,7 @@ export function commitCell(column: Pick<EntryColumn, "fieldType" | "positiveOnly
   const plain = text.replace(/,/g, "");
   if (!/^-?\d*\.?\d+$|^-?\d+\.?$/.test(plain)) return { ok: false, message: `Only a number is allowed in ${column.caption}` };
   const value = Number(plain);
-  if (column.positiveOnly && value < 0) return { ok: false, message: "Only positive value allowed in this column" };
+  if (column.positiveOnly && value < 0) return { ok: false, message: POSITIVE_ONLY_MESSAGE };
   const places = column.fieldType === "I" ? 0 : Math.max(0, Math.min(4, column.decimals));
   return { ok: true, value: roundTo(value, places) };
 }

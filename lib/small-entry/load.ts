@@ -3,7 +3,12 @@ import { formatDesktopDate, formatDesktopTime, parseDesktopDate, toInt, toText }
 import { readRights, SETUP_SCHEMA } from "../master-program/session";
 import type { MasterSession } from "../master-program/session";
 import { replaceSessionValues } from "../master-program/sql";
-import { orderByAliases } from "./text";
+import { publicSetup, toSetup } from "../master-rules";
+import { properHeading } from "../master-program/heading";
+import { orderByAliases, quotedAliases } from "./text";
+import { ENTRY_APPROVED, lockStoppedParties } from "./entry32";
+import { BANK_RECO, bankBalances } from "./bankReco";
+import { entryGridSql } from "./gridSql";
 import type { EntryColumn, EntryControl, EntryDefinition, EntryGrid, EntryOption, EntryState } from "./types";
 
 /**
@@ -23,7 +28,13 @@ const text = (row: Row | undefined, name: string) => toText(field(row, name));
 const flag = (row: Row | undefined, name: string) => field(row, name) === true;
 
 /** Entries whose own branches of Small_Entry.cs are ported; the rest may be viewed, not saved. */
-export const PORTED_ENTRIES: ReadonlySet<number> = new Set([11]);
+export const PORTED_ENTRIES: ReadonlySet<number> = new Set([BANK_RECO, 11, ENTRY_APPROVED]);
+
+/** Small_Entry KeyUp: the Delete key removes selected rows in these entries (103 only for an AD user). */
+const DELETE_ENTRIES = new Set([7, 36, 75, 100, 111]);
+
+/** Entries whose queries name |sys.stk_module| (Small_Entry.Func_ReplaceSysVal_CtrlValue). */
+const STK_MODULE_ENTRIES = new Set([32, 57, 60, 65, 68]);
 
 /** "Select distinct" instead of "Select" for these entries' grid query. */
 const DISTINCT_ENTRIES = new Set([20, 22, 27, 29, 33, 39, 70]);
@@ -66,6 +77,10 @@ export type SysContext = Readonly<{
   addonType: string;
   /** The column group being saved: RP main balance, or one addon (godown) sub code. */
   addonColumn: Readonly<{ fieldKey: number; subCode: number }> | null;
+  /** Each header control's label, by control name (lbl_ComboBox2 and the like). */
+  labels?: Readonly<Record<string, string>>;
+  /** |sys.stk_module|: the first combo's book's stkm_short (entries 32, 57, 60, 65, 68). */
+  stkModule?: string;
 }>;
 
 const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
@@ -88,6 +103,17 @@ export function replaceEntryValues(source: string, context: SysContext, now = ne
   };
   const choice = (name: string) => context.choices[name] ?? { text: context.state.controls[name] ?? "", value: "" };
   const first = context.state.firstCombo;
+  // |sys.dt_join|: an Add lists what was entered up to Date Upto, an Update what was reconciled between the dates.
+  const option = (context.state.controls.cmb_smallentry2 ?? "").toLowerCase();
+  if (option.includes("add")) swap("|sys.dt_join|", " and a.doc_date <= |sys.dtp_date2| ");
+  else if (option.includes("update")) swap("|sys.dt_join|", " and a.reco_date between |sys.dtp_date1| and |sys.dtp_date2| ");
+  // |sys.value.cmb_smallentry2|: with an "Entry" option, Add lists the rows not reconciled yet, Update the reconciled ones
+  // (isnull(a.reco_date,0) = 0 / > 0 on SQL Server, where a missing date read as 0); entries 27 and 29 take the option's value.
+  if ((context.labels?.cmb_smallentry2 ?? "").toLowerCase().includes("entry")) {
+    if (option.includes("add")) swap("|sys.value.cmb_smallentry2|", " and a.reco_date is null order by doc_date,doc_no");
+    else if (option.includes("update")) swap("|sys.value.cmb_smallentry2|", " and a.reco_date is not null order by doc_date,doc_no");
+  }
+  if (context.entryId === 27 || context.entryId === 29) swap("|sys.value.cmb_smallentry2|", choice("cmb_smallentry2").value || "0");
   if (has("'|sys.left.firstcombotext|'")) swap("|sys.left.firstcombotext|", (first?.text ?? "").replace(/'/g, "''"));
   swap("|sys.left.firstcombotext|", quote(first?.text ?? ""));
   swap("|sys.firstcombovalue|", first?.value || "0");
@@ -112,6 +138,7 @@ export function replaceEntryValues(source: string, context: SysContext, now = ne
   swap("|sys.last_savetime|", quote(formatDesktopTime(now)));
   swap("|sys.smart_lic|", String(context.session.licence));
   swap("|sys.entry_id|", String(context.entryId));
+  if (context.stkModule !== undefined) swap("|sys.stk_module|", context.stkModule.replace(/'/g, "''"));
   return sql;
 }
 
@@ -218,6 +245,8 @@ export async function loadEntry(loader: Loader, entryName: string, menuShortName
     firstCombo,
     controls,
     rights: { restricted: rights.restricted, edit: rights.edit, editPassword: rights.editPassword !== "", modulePassword: rights.modulePassword !== "" },
+    licence: session.licence,
+    canDelete: DELETE_ENTRIES.has(entryId) || (entryId === 103 && session.userType.trim().toUpperCase() === "AD"),
     unsupported,
   };
 }
@@ -347,7 +376,7 @@ function specialRestore(restore: string, context: SysContext): string | null {
   return key.includes("reco") ? "(a.reco_date is not null) as Tick" : "(a.form_recddate is not null) as Tick";
 }
 
-export async function gridPlan(loader: Loader, entryName: string, state: EntryState, choices: Readonly<Record<string, EntryOption>>): Promise<GridPlan> {
+export async function gridPlan(loader: Loader, entryName: string, state: EntryState, choices: Readonly<Record<string, EntryOption>>, now = new Date()): Promise<GridPlan> {
   const { session } = loader;
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
@@ -357,7 +386,13 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
   const entryNat = entryNature(entryId, shownControls, state);
   const fillStyle = text(gridControl, entryNat === "A" ? "ctrl_fill_style_add" : "ctrl_fill_style_upd");
   const warnings: string[] = [];
-  let context: SysContext = { session, entryId, state, choices, entryNat, addonType: "", addonColumn: null };
+  const labels = Object.fromEntries(controls.map((row) => [text(row, "control_name").toLowerCase(), text(row, "label_caption")]));
+  let context: SysContext = { session, entryId, state, choices, entryNat, addonType: "", addonColumn: null, labels };
+  // Func_ReplaceSysVal_CtrlValue: |sys.stk_module| is the stock module of the book chosen in the first combo.
+  if (STK_MODULE_ENTRIES.has(entryId)) {
+    const book = (await loader.readTable(`SELECT stkm_short FROM ${session.companySchema}.book_properties WHERE stkm_pos <> 'D' AND BTRIM(book_desc) = $1 LIMIT 1`, [(state.firstCombo?.text ?? "").trim()]))?.[0];
+    context = { ...context, stkModule: text(book, "stkm_short") };
+  }
 
   let sql = "";
   let balanceSql = "";
@@ -409,8 +444,11 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
       select += fill;
     }
     if (!/select/i.test(select) || select.length <= 10) continue;
-    if (entryId === 11 && session.licence === 14) select = select.split("prodmast.prod_short").join("prodmast.prod_desc");
-    const ready = replaceEntryValues(select, context);
+    // The desktop's per-entry changes to the query (dates, Add / Update filters, order): gridSql.ts.
+    const changed = entryGridSql(select, { context, date: (name) => dateOf(state.controls[name]) || defaultDate(entryId, name, session, now) });
+    select = changed.sql;
+    for (const warning of changed.warnings) if (!warnings.includes(warning)) warnings.push(warning);
+    const ready = replaceEntryValues(quotedAliases(select), context, now);
     if (text(event, "control_type").toLowerCase() === "lbl") { balanceSql = ready; continue; }
     if (!fillStyle.includes("RecDS,")) { warnings.push(`Fill style "${fillStyle}" without RecDS is not ported yet`); continue; }
     // Each event binds the grid in turn, so the last one's query is the grid.
@@ -443,6 +481,7 @@ function columnFor(key: string, plan: GridPlan): EntryColumn {
     compulsory,
     addon: match?.addon ?? false,
     tooltip: text(row, "field_tooltips"),
+    setup: publicSetup(toSetup(row ?? {})),
   };
 }
 
@@ -455,6 +494,10 @@ export async function planColumns(loader: Loader, plan: GridPlan): Promise<strin
 
 export async function loadEntryGrid(loader: Loader, entryName: string, state: EntryState, choices: Readonly<Record<string, EntryOption>>): Promise<EntryGrid & { warnings: string[] }> {
   const plan = await gridPlan(loader, entryName, state, choices);
+  const properties = await entryProperties(loader, entryName);
+  // entry_properties.no_of_col_frozen: that many visible columns, from the left, stay put while
+  // the grid scrolls sideways (the master's program_top.no_of_col_frozen). None when not set.
+  const frozen = Math.max(0, toInt(field(properties, "no_of_col_frozen")));
   const warnings = [...plan.warnings];
   let balance = "";
   if (plan.balanceSql !== "") {
@@ -462,18 +505,41 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
     const first = rows?.[0];
     if (first) balance = toText(displayValue(Object.values(first)[0]));
   }
-  if (plan.sql === "") return { columns: [], rows: [], balance, warnings: [...warnings, ...loader.warnings] };
+  if (plan.sql === "") return { columns: [], rows: [], frozen, balance, warnings: [...warnings, ...loader.warnings] };
   const result = await loader.client.query(plan.sql);
   const keys = result.fields.map((item) => item.name);
   // A combo column the operator can edit gets its list, as Setting_GridCol gives it one (combo_value F, L, Q, X).
   const columns = await Promise.all(keys.map(async (key) => {
-    const column = columnFor(key, plan);
+    // Headings show in Proper Case, as the master's do (GST, PAN and other short forms kept in capitals).
+    const setupColumn = columnFor(key, plan);
+    // PostgreSQL's boolean (type 16) is the desktop's bit column: a tick box.
+    const isBoolean = result.fields.find((item) => item.name === key)?.dataTypeID === 16;
+    const column = { ...setupColumn, caption: properHeading(setupColumn.caption), ...(isBoolean ? { boolean: true } : {}) };
     const row = [...plan.body].reverse().find((item) => item.column.toLowerCase() === key.toLowerCase())?.row;
     if (!column.editable || !row || !["F", "L", "Q", "X"].includes(text(row, "combo_value").toUpperCase())) return column;
     return { ...column, options: await controlOptions(loader, row, plan.context) };
   }));
   const rows = result.rows.map((row: Row) => Object.fromEntries(keys.map((key) => [key, toText(displayValue(row[key]))])));
-  return { columns, rows, balance, warnings: [...warnings, ...loader.warnings] };
+  // Entry Approved: a party over its credit days or limit is locked on the SALE - ORDER book (entry32.ts).
+  if (plan.entryId === ENTRY_APPROVED) await lockStoppedParties(loader, rows, state.firstCombo?.text ?? "");
+  // Bank Statement: Cmb_FirstCombo_Leave's fc_lostfocus_qry gives the bank book's balance; the passbook's follows from the rows.
+  let finalAmount: string | undefined;
+  if (plan.entryId === BANK_RECO) {
+    const query = text(properties, "fc_lostfocus_qry");
+    const first = query === "" ? undefined : (await loader.readTable(replaceEntryValues(query, plan.context)))?.[0];
+    if (first) {
+      const balances = bankBalances(Number(Object.values(first)[0]) || 0, rows);
+      balance = balances.book;
+      finalAmount = balances.passbook;
+    }
+  }
+  // Small_Entry's Arrint_TrueCol: query_condition rows of event GV, for the columns this grid has.
+  const conditions = (await loader.readTable(`SELECT qc_fieldname, qc_bn_fieldname, qc_variablename, qc_systemvalue FROM ${SETUP_SCHEMA}.query_condition WHERE BTRIM(qc_control_event) = 'GV' AND BTRIM(qc_prog_id) = $1`, [String(plan.entryId)])) ?? [];
+  const hasColumn = (name: string) => keys.some((key) => key.toLowerCase() === name.toLowerCase());
+  const tickRules = conditions
+    .map((row) => ({ field: text(row, "qc_fieldname"), target: text(row, "qc_bn_fieldname"), control: text(row, "qc_variablename").toLowerCase(), untickBlank: text(row, "qc_systemvalue").toLowerCase() === "sys.false.blank" }))
+    .filter((rule) => hasColumn(rule.field) && hasColumn(rule.target));
+  return { columns, rows, frozen, balance, finalAmount, tickRules, warnings: [...warnings, ...loader.warnings] };
 }
 
 export { columnFor };

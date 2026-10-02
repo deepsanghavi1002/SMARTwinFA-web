@@ -59,7 +59,7 @@ test("keeps the latest migrated application surface wired into the root route", 
     readFile(new URL("../features/master-program/MasterProgram.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     // The grid features the master uses live in the shared grid library (features/grid).
-    ...["filter.ts", "ColumnFilter.tsx", "EditorTools.tsx", "useDraggable.ts"].map((name) => readFile(new URL(`../features/grid/${name}`, import.meta.url), "utf8")),
+    ...["filter.ts", "ColumnFilter.tsx", "EditorTools.tsx", "useDraggable.ts", "GridMenu.tsx", "LogViewer.tsx"].map((name) => readFile(new URL(`../features/grid/${name}`, import.meta.url), "utf8")),
   ]);
   const master = [masterScreen, ...gridLibrary].join("\n");
 

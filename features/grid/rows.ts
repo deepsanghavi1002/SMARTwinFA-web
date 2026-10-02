@@ -20,3 +20,15 @@ export function nextEntryCell(editable: readonly boolean[], row: number, col: nu
   if (first < 0 || row + 1 >= rowCount) return null;
   return { row: row + 1, col: first };
 }
+
+/**
+ * Enter in a grid whose open cells differ row by row (row rules, a locked party): the next open
+ * cell after (row, col) along the row, then on the rows below. `open` decides each cell; at most
+ * `rowsAhead` further rows are looked at, so a grid with nothing open is not searched end to end.
+ */
+export function nextOpenCell(open: (row: number, col: number) => boolean, row: number, col: number, rowCount: number, columnCount: number, rowsAhead = 3): { row: number; col: number } | null {
+  for (let at = row; at < Math.min(rowCount, row + rowsAhead + 1); at += 1) {
+    for (let c = at === row ? col + 1 : 0; c < columnCount; c += 1) if (open(at, c)) return { row: at, col: c };
+  }
+  return null;
+}

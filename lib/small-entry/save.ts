@@ -1,4 +1,7 @@
 import { allocateKey, primaryKeyField } from "../master-program/save";
+import { runStatement } from "../master-program/statement";
+import { ENTRY_APPROVED, isLocked, LOCKED_BOOK, lockStoppedParties, PARTY_STOP_MESSAGE } from "./entry32";
+import { BANK_RECO, recoDateProblem } from "./bankReco";
 import { Loader } from "../master-program/load";
 import { formatDesktopDate, formatDesktopTime, parseDesktopDate, removeTableAlias, toInt, toText } from "../master-program/legacy";
 import { readRights, SETUP_SCHEMA } from "../master-program/session";
@@ -160,7 +163,13 @@ function saveLoop(rules: readonly Row[], rows: readonly EditedRow[], plan: GridP
           case "T": { const left = toInt(field(rule, "save_leftchrno")); value = quote(left > 0 ? raw.slice(0, left) : raw); break; }
           case "I": { const key = cell(values, `${column}__key`); value = numberText(key ?? raw, column) || "null"; break; }
           case "C": case "N": value = numberText(raw, column) || "0"; break;
-          case "D": { const date = parseDesktopDate(raw); value = date ? quote(formatDesktopDate(date)) : "null"; break; }
+          case "D": {
+            // A grid with a Tick column saves the date only on a ticked row; an unticked one is cleared (Save_MultipleLoop_forGrid).
+            const tick = cell(values, "Tick");
+            const date = parseDesktopDate(raw);
+            value = tick !== undefined && tick.trim().toLowerCase() !== "true" ? "null" : date ? quote(formatDesktopDate(date)) : "null";
+            break;
+          }
           default: value = quote(raw);
         }
       } else if (system !== "") {
@@ -266,7 +275,7 @@ async function specialLog(loader: Loader, entryId: number, request: SaveRequest,
       lsmall_from: date("dtp_date"), lsmall_upto: date("dtp_date2"), lsmall_pkv: pkv, lsmall_mode: previous ? (queryTypeOf(edited) === "U" ? "E" : "D") : "A",
     };
     const names = Object.keys(all).filter((name) => columns.has(name));
-    await client.query(`INSERT INTO ${schema}.log_smallentry (${names.join(",")}) VALUES (${names.map((_, at) => `$${at + 1}`).join(",")})`, names.map((name) => all[name]));
+    await runStatement(client, `INSERT INTO ${schema}.log_smallentry (${names.join(",")}) VALUES (${names.map((_, at) => `$${at + 1}`).join(",")})`, names.map((name) => all[name]));
     written.push(`log_smallentry row for ${pkv}`);
   }
   return written;
@@ -288,6 +297,24 @@ export async function saveEntry(loader: Loader, request: SaveRequest): Promise<E
   if (!rights.edit) return fail("Entry Rights Not Available For User");
   if (rights.editPassword !== "" && (request.editPassword ?? "") !== rights.editPassword) return fail("Edit password required", { needs: "edit-password" });
   if (request.rows.length === 0) return fail("Nothing has been changed");
+
+  // Bank Statement: a reconciliation date falls within 90 days after the entry (checked again here, not only on screen).
+  if (entryId === BANK_RECO) {
+    for (const row of request.rows) {
+      const problem = recoDateProblem(cell(row.values, "doc_date") ?? "", cell(row.values, "reco_date") ?? "");
+      if (problem !== "") return fail(`${problem} (${cell(row.values, "full_docno") ?? ""})`);
+    }
+  }
+
+  // Entry Approved: an order of a locked party (over its credit days or limit) is never approved.
+  // The lock is worked out again here from the database, not taken from the browser.
+  if (entryId === ENTRY_APPROVED && (request.state.firstCombo?.text ?? "").trim() === LOCKED_BOOK) {
+    const approving = request.rows.filter((row) => !row.deleted && (cell(row.values, "ENT_APPROVE") ?? "").trim().toUpperCase().startsWith("Y"));
+    const checked = approving.map((row) => ({ ...row.values, allowed: "", lock_status: "" }));
+    await lockStoppedParties(loader, checked, LOCKED_BOOK);
+    const stopped = approving.find((row, at) => isLocked(row.values) || isLocked(checked[at]));
+    if (stopped) return fail(`${PARTY_STOP_MESSAGE}: ${cell(stopped.values, "name") ?? ""} ${cell(stopped.values, "full_docno") ?? ""}`.trim());
+  }
 
   const plan = await gridPlan(loader, request.entryName, request.state, request.choices);
   warnings.push(...plan.warnings);
@@ -341,7 +368,7 @@ export async function saveEntry(loader: Loader, request: SaveRequest): Promise<E
       } else {
         sql = sql.replace(/^(Update|Delete from) (\w+)/i, (_all, verb: string, table: string) => `${verb} ${session.companySchema}.${table}`);
       }
-      await client.query(sql);
+      await runStatement(client, sql);
       executed.push(sql);
     }
     if (session.flags.logFileSpecial) {

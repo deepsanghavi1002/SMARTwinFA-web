@@ -385,6 +385,7 @@
 .mp-calc{width:230px;display:grid;gap:6px;padding:10px;border:1px solid #3d6fa8;border-radius:4px;background:#eef4fb;box-shadow:3px 5px 16px #0005}
 .mp-calc-input{height:28px;padding:0 6px;border:1px solid #6d93c4;font:inherit;font-size:14px;text-align:right}
 .mp-calc-result{height:20px;color:#0d3a73;font-size:14px;font-weight:700;text-align:right}
+.mp-calc-result.mp-calc-refused{color:#c62828;font-size:12px}
 .mp-calc-keys{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
 .mp-calc-keys button{height:30px;border:1px solid #8aa8cf;border-radius:3px;background:linear-gradient(#fff,#dbe7f5);font:inherit;font-size:14px;cursor:pointer}
 .mp-calc-keys button:hover{background:#e6f0fb}
@@ -821,3 +822,22 @@
 .mp-balance{padding:0 8px;color:#0d3a73;font-weight:700;white-space:nowrap}
 .mp-empty-grid{background:#eef4fb}
 .mp-status .mp-warning{color:#ffe08a;overflow:hidden;text-overflow:ellipsis}
+
+/* Type to find: the letters typed, marked at the start of the cell the search landed on (features/grid/FoundText). */
+.mp-cell mark.mp-found{padding:0;border-radius:2px;background:#ffe27a;color:#1b1b1b;font-weight:700}
+
+/* Small entry header: three lines in a grid, three columns of label + field, so every label and field lines up (features/small-entry). */
+.mp-combos.se-head{display:grid;grid-template-columns:repeat(3,104px 220px) minmax(0,1fr);column-gap:8px;row-gap:4px;align-items:center}
+.se-head .se-label{color:#fff;font-weight:700;text-shadow:0 1px 0 #3d6fa8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.se-head .se-field{display:flex;min-width:0}
+.se-head .se-field .search-combo,.se-head .se-field .mp-editor-wrap,.se-head .se-field .mp-control{width:100%}
+.se-head .se-field .search-combo input{width:100%;min-width:0;height:24px}
+.se-head .se-date .mp-editor{height:24px;border:1px solid #6d93c4;border-radius:3px;padding:0 5px}
+.se-head .se-date-disabled .mp-editor{background:#e8eef6;color:#56616d}
+.se-head .se-actions{display:flex;align-items:center;gap:8px;min-width:0}
+.se-head .se-title{justify-self:end}
+@media(max-width:1100px){.mp-combos.se-head{grid-template-columns:96px minmax(0,1fr)}.se-head>*{grid-row:auto!important;grid-column:auto!important}.se-head .se-actions{grid-column:1/-1!important}}
+
+/* Small entry tick box (a boolean column such as Bank Statement's Tick): click, Space or Enter ticks it. */
+.se-tick{display:inline-block;width:13px;height:13px;margin-top:2px;border:1px solid #4f6f96;border-radius:2px;background:#fff;vertical-align:top}
+.se-tick.se-ticked{background:#1f64b8 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8l3 3 7-7' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E") center/11px no-repeat;border-color:#1f64b8}

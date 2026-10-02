@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatDesktopDate, parseDesktopDate } from "../../lib/master-program/legacy";
 import { Calculator } from "./Calculator";
+import type { NumberRules } from "./rules";
 import { CalendarPopup } from "./CalendarPopup";
 import { shorthandDate } from "./dates";
 import { useDraggable } from "./useDraggable";
@@ -20,7 +21,7 @@ export type EditorKind = "number" | "date" | "text";
 /** A field type as the tools read it: D a date; N, C a number (I is a whole key, no calculator). */
 export const editorKindOf = (fieldType: string): EditorKind => (fieldType === "D" ? "date" : fieldType === "N" || fieldType === "C" ? "number" : "text");
 
-type CalcState = { initial: string; decimals: number; caretAtEnd?: boolean; set: (value: string) => void };
+type CalcState = { initial: string; rules: NumberRules; caretAtEnd?: boolean; set: (value: string) => void };
 type CalendarState = { initial: string; left: number; top: number; set: (value: string) => void };
 
 /** Puts the keyboard back in the open editor once a tool closes. */
@@ -56,14 +57,17 @@ export function useEditorTools(yearStart: Date | null) {
     setCalendar({ initial: value, left, top, set });
   };
 
-  /** The tools from the keyboard; true when the key was theirs. */
-  const keys = (event: ReactKeyboardEvent, kind: EditorKind, value: string, set: (value: string) => void, decimals: number): boolean => {
+  /**
+   * The tools from the keyboard; true when the key was theirs. rules (rules.ts numberRules of
+   * the column's setup) give the calculator its places and what answer it may hand back.
+   */
+  const keys = (event: ReactKeyboardEvent, kind: EditorKind, value: string, set: (value: string) => void, rules: NumberRules): boolean => {
     if (event.ctrlKey && event.key === "Delete") { event.preventDefault(); set(""); return true; }
     if (kind === "date" && event.altKey && event.key === "ArrowDown") { event.preventDefault(); openCalendar(value, set); return true; }
-    if (kind === "number" && event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); setCalc({ initial: value, decimals, set }); return true; }
+    if (kind === "number" && event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); setCalc({ initial: value, rules, set }); return true; }
     if (kind === "number" && !event.ctrlKey && !event.altKey && !event.metaKey && ["+", "*", "/", "="].includes(event.key)) {
       event.preventDefault();
-      setCalc({ initial: event.key === "=" ? value : `${value}${event.key}`, decimals, caretAtEnd: event.key !== "=", set });
+      setCalc({ initial: event.key === "=" ? value : `${value}${event.key}`, rules, caretAtEnd: event.key !== "=", set });
       return true;
     }
     return false;
@@ -84,7 +88,7 @@ export function useEditorTools(yearStart: Date | null) {
   );
 
   /** The small buttons inside the editor: calendar or calculator, and clear. */
-  const buttons = (kind: EditorKind, value: string, set: (value: string) => void, decimals: number) => (
+  const buttons = (kind: EditorKind, value: string, set: (value: string) => void, rules: NumberRules) => (
     <>
       {kind === "date" && (
         <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); openCalendar(value, set); }}>
@@ -93,7 +97,7 @@ export function useEditorTools(yearStart: Date | null) {
       )}
       {kind === "date" && clearButton(set, "date")}
       {kind === "number" && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); setCalc({ initial: value, decimals, set }); }}>
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); setCalc({ initial: value, rules, set }); }}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
         </button>
       )}
@@ -125,7 +129,7 @@ export function useEditorTools(yearStart: Date | null) {
             dragHandle={calcDrag.handle}
             initial={calc.initial}
             caretAtEnd={calc.caretAtEnd}
-            decimals={calc.decimals}
+            rules={calc.rules}
             onClose={() => { setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
             onUse={(value) => { calc.set(value); setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
           />

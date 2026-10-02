@@ -8,7 +8,19 @@ import { applyPermission, formatDesktopDate, getPermission, parseDesktopDate, ru
 import type { AddRow, CloudPush, ComboOption, GroupLoad, GroupState, ProgramDefinition, UpdateColumn, UpdateRecord } from "../../lib/master-program/types";
 import { masterCall } from "./api";
 import type { ExportCell, ExportColumn, ExportTable } from "../../lib/export/table";
-import { carryString, dateOutsideYear, dropPadding, duplicateAgainstUpdate, duplicateInGrid, fitCase, pairedClosed, pairedMessage, gstStateMismatch, isNumberField as isNumberSetup, keyPress, sameGroup, styleCase, typingAllowed, validate } from "./rules";
+import { carryString, closedByPartner as partnerCloses, closedByRow as rowRulesClose, dateOutsideYear, dropPadding, duplicateAgainstUpdate, duplicateInGrid, fitCase, pairedClosed, pairedMessage, gstStateMismatch, isNumberField as isNumberSetup, keyPress, numberRules, rowRuled as rowRuledColumn, sameGroup, styleCase, typingAllowed, validate } from "./rules";
+import { alignOf, roundToPlaces, tooltipText, zeroAsBlank } from "../grid/cellText";
+import { keepGridFocus as keepFocusOn } from "../grid/focus";
+import { remainingAfterKey, typeAtCaret } from "../grid/caret";
+import { findNextCell } from "../grid/find";
+import { columnLefts, revealColumn, ROW_MARKER_WIDTH } from "../grid/frozen";
+import { copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
+import type { CopiedCell } from "../grid/clipboard";
+import { cellAt, columnMenuItems, GridMenu } from "../grid/GridMenu";
+import { LogViewer } from "../grid/LogViewer";
+import { FoundText } from "../grid/FoundText";
+import { printVertical } from "../grid/printVertical";
+import type { LogTable } from "../grid/LogViewer";
 import { HelpList } from "./HelpList";
 import { cleanMainValue, duplicateKey, isMainField } from "../../lib/master-program/main-field";
 import { GridCombo } from "../grid/GridCombo";
@@ -29,7 +41,7 @@ import { useDraggable } from "../grid/useDraggable";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { useGridOutput } from "../grid/useGridOutput";
 import { GridButtons } from "../grid/GridButtons";
-import { refreshQuestion } from "../grid/prompts";
+import { confirmLeave, refreshQuestion } from "../grid/prompts";
 
 /**
  * Master_ProgramGrid, the one screen every MASTER menu opens.
@@ -43,7 +55,6 @@ import { refreshQuestion } from "../grid/prompts";
 
 type Grids = Extract<GroupLoad, { kind: "grids" }>;
 type Meta = { yearStart: string; yearEnd: string; coStateName: string; coGstReq: boolean; partyAccode: boolean; productCode: boolean; logFileSpecial: boolean; companyName: string; userName: string };
-type LogTable = { columns: string[]; rows: string[][]; message: string };
 type AddState = AddRow & { recFound: boolean; compulsory: boolean };
 type Cell = { row: number; key: string };
 type DialogButton = MessageButton;
@@ -53,7 +64,7 @@ const ROW_HEIGHT = 21;
 /** Entries a help list shows at once, at the bottom of the grid, so it covers about half the screen. */
 const HELP_ROWS = 9;
 /** The row indicator column (C1FlexGrid's fixed column): a marker, not a second row number. */
-const INDICATOR_WIDTH = 16;
+const INDICATOR_WIDTH = ROW_MARKER_WIDTH;
 const DELETE_BLOCKED_PROGRAMS = [4, 11, 16, 19, 24, 25, 34, 35, 27, 47];
 const SECOND_RESET_PROGRAMS = [21, 22, 23, 26, 28, 29, 32, 36, 42, 49, 50, 51];
 /** Master_ProgramGrid_KeyUp: the Pause key closes SMARTwinFA for these licences. */
@@ -68,33 +79,6 @@ const SCHEME_BOXES = [
   { name: "temproute", label: "Route %", column: "SCH_ROUTE" },
 ] as const;
 
-const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
-
-/** Prints a page through a hidden frame, the browser's stand-in for the C1 print preview. */
-function printHtml(heading: string, body: string) {
-  const frame = document.createElement("iframe");
-  frame.style.position = "fixed";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  if (!doc) { frame.remove(); return; }
-  doc.open();
-  doc.write(`<!doctype html><html><head><title>${escapeHtml(heading)}</title><style>
-    body{font-family:Calibri,Segoe UI,sans-serif;font-size:11px;margin:16px;color:#000}
-    h1{font-size:14px;text-decoration:underline;color:#1f3fa8;margin:0 0 8px}
-    p{margin:0 0 12px;font-weight:bold}
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #999;padding:2px 4px;text-align:left;vertical-align:top}
-    th{background:#eee}
-    td.r{text-align:right}
-  </style></head><body>${body}</body></html>`);
-  doc.close();
-  frame.contentWindow?.focus();
-  frame.contentWindow?.print();
-  setTimeout(() => frame.remove(), 1000);
-}
 
 const lower = (name: string) => name.split(".").pop()!.trim().toLowerCase();
 const keyOf = (record: UpdateRecord, name: string) => Object.keys(record).find((candidate) => candidate.toLowerCase() === lower(name));
@@ -103,12 +87,6 @@ const cellOf = (record: UpdateRecord | undefined, name: string) => {
   const key = keyOf(record, name);
   return key ? record[key] : "";
 };
-
-/** A number field (not a list) opens its editor blank rather than showing a zero: 0, 0.00, 0.000 ... */
-function zeroAsBlank(setup: Parameters<typeof isNumberSetup>[0], hasList: boolean, value: string): string {
-  const text = value.trim();
-  return isNumberSetup(setup) && !hasList && /[0-9]/.test(text) && /^-?[0-9,]*\.?[0-9]*$/.test(text) && Number(text.replace(/,/g, "")) === 0 ? "" : value;
-}
 
 async function fetchHelp(selection: StartupSelection, programName: string, group: GroupState) {
   const body = await masterCall<{ help: { columns: { key: string; caption: string; width: number; align: string; format: string }[]; rows: Record<string, string>[]; frozen: number; total: string } | null }>(selection, programName, "help", {}, group);
@@ -129,34 +107,6 @@ function columnFilterHolds(column: UpdateColumn, filter: ColumnFilter, record: U
 
 
 
-
-/**
- * DECIMAL_POINTS: a number typed with more places than the field allows is rounded to them
- * (half away from zero, as the desktop's number styles show it) and written with exactly
- * that many places. Fields of type N and C only; anything that is not a number is left as is.
- */
-export function roundToPlaces(text: string, setup: Pick<UpdateColumn["setup"], "field_type" | "decimal_points">): string {
-  if (setup.field_type !== "N" && setup.field_type !== "C") return text;
-  const raw = text.replace(/,/g, "").trim();
-  if (raw === "" || !/^[-+]?(\d+\.?\d*|\.\d+)$/.test(raw)) return text;
-  const places = Math.max(0, Math.min(6, setup.decimal_points || 0));
-  if (setup.field_type === "C" && places === 0) return text;
-  const factor = 10 ** places;
-  const value = Number(raw);
-  const rounded = (Math.sign(value) * Math.round(Math.abs(value) * factor + 1e-9)) / factor;
-  return rounded.toFixed(places);
-}
-
-/** FIELD_TOOLTIPS as shown in the status row: the text without its leading "SELECT", options split by " / ". */
-export function tooltipText(tooltip: string | null | undefined): string {
-  const text = (tooltip ?? "").trim().replace(/^SELECT\s+/i, "");
-  return text.split("|").map((part) => part.trim()).filter(Boolean).join(" / ");
-}
-
-const alignOf = (align: string | null | undefined): "left" | "right" | "center" => {
-  const code = (align ?? "").trim().toUpperCase();
-  return code === "R" ? "right" : code === "C" || code === "M" ? "center" : "left";
-};
 
 /** The value a filter, search or sort reads: the stored one, as the grid shows it (a multi-pick cell's names, not its keys). */
 const shownText = (record: UpdateRecord | undefined, column: UpdateColumn) => cellShown(cellOf(record, column.key), column);
@@ -224,7 +174,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   /** The Update grid's columns as the operator lays them out: order, hidden ones, widths (features/grid/useColumnLayout). */
   const setupColumns = useMemo(() => (grids?.columns ?? []).filter((column) => column.visible), [grids]);
   const layout = useColumnLayout(setupColumns, grids?.frozen ?? 0);
-  const { fixedKeys, columns, hiddenColumns, setHiddenColumns, columnOrder, setColumnOrder, hideColumn, placeColumn, moveColumn, shiftColumn, widthOf } = layout;
+  const { fixedKeys, columns, hiddenColumns, setHiddenColumns, columnOrder, setColumnOrder, placeColumn, moveColumn, shiftColumn, widthOf } = layout;
   const [dropMark, setDropMark] = useState<{ key: string; after: boolean } | null>(null);
   const dragColumn = useRef<string | null>(null);
   const [cursor, setCursor] = useState<Cell>({ row: 0, key: "" });
@@ -271,7 +221,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   /** New grid: each field's value before its first change in this entry, for Ctrl+Z (Restore Old Value). */
   const addOld = useRef(new Map<number, { fieldInput: string; fieldComboValue: string }>());
-  const [copied, setCopied] = useState<{ value: string; addonId: string } | null>(null);
+  const [copied, setCopied] = useState<CopiedCell | null>(null);
   const [find, setFind] = useState("");
   // Sorting, per-column filters and column widths the operator sets on the Update grid
   const [sort, setSort] = useState<SortState>(null);
@@ -506,7 +456,14 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       if ((await ask(`There are unsaved changes in the ${where} grid.
 Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") return;
     }
+    resetScreen();
+  };
+
+  /** The screen as it opens: no grids, nothing typed or marked, the first combo ready for a group. */
+  const resetScreen = () => {
     setEditing(false);
+    setEdited(new Set());
+    setDeleted(new Set());
     setAddEditing(false);
     setAddChanged(false);
     setGrids(null);
@@ -670,33 +627,16 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     return () => observe.disconnect();
   }, [grids, tab]);
 
-  /**
-   * A column open for editing that its row rules close on this row: STATUS_AGAINST_FLD with
-   * ENABLE_FOR / DISABLE_FOR, read from the record the way BeforeRowColChange reads it, so the
-   * cell can be shown closed before the cursor reaches it. A record_exist rule is known only
-   * once the record has been checked.
-   */
-  /** Paired fields (value_diff_than): closed while the partner holds a value; this wins over any other rule. */
+  /** Paired fields and STATUS_AGAINST_FLD close cells row by row (features/grid/rules closedByRow). */
   const closedByPartner = (row: number, column: UpdateColumn) =>
-    column.editable && pairedClosed(toText(column.setup.value_diff_than), cellOf(records[row], column.key), (name) => cellOf(records[row], name));
+    partnerCloses(column.setup, column.editable, cellOf(records[row], column.key), (name) => cellOf(records[row], name));
   const closedByRow = (row: number, column: UpdateColumn): boolean => {
-    if (closedByPartner(row, column)) return true;
-    const status = toText(column.setup.status_against_fld);
-    if (!column.editable || status === "" || toText(first?.value) === "") return false;
     const record = records[row];
-    if (!record) return false;
-    if (status.toLowerCase() === "record_exist") {
-      const exists = cellOf(record, "record_exist");
-      if (exists === "") return false;
-      if (column.setup.enable_for === "Y") return exists !== "Y";
-      if (column.setup.disable_for === "Y") return exists === "Y";
-      return false;
-    }
-    const setting = toText(column.setup.enable_for) !== "" ? column.setup.enable_for.trim() : toText(column.setup.disable_for) !== "" ? column.setup.disable_for.trim() : "";
-    return setting !== "" && applyPermission(getPermission(permissionSource(record), "E", status, setting, false, false)).editable === false;
+    if (!record) return closedByPartner(row, column);
+    return rowRulesClose(column.setup, column.editable, cellOf(record, column.key), permissionSource(record));
   };
   /** A column whose cells open or close row by row (see closedByRow). */
-  const rowRuled = (column: UpdateColumn) => column.editable && (toText(column.setup.value_diff_than) !== "" || (toText(column.setup.status_against_fld) !== "" && (toText(column.setup.enable_for) !== "" || toText(column.setup.disable_for) !== "")));
+  const rowRuled = (column: UpdateColumn) => rowRuledColumn(column.setup, column.editable);
   const isEditable = (row: number, column: UpdateColumn | undefined) => {
     if (!column) return false;
     if (closedByPartner(row, column)) return false;
@@ -945,32 +885,12 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
    * edit has settled, the grid takes it back.
    */
   function keepGridFocus() {
-    setTimeout(() => {
-      const holder = document.activeElement;
-      if (isMessageBoxOpen() || (holder && holder !== document.body && holder.isConnected)) return;
-      (gridFocus.current ?? addFocus.current)?.focus({ preventScroll: true });
-    }, 0);
+    keepFocusOn(gridFocus, addFocus);
   }
 
-  /**
-   * Scrolls the grid sideways so the whole of a column is in sight: past the frozen columns on
-   * the left, and not cut off on the right (a column wider than the view shows from its start).
-   */
-  const showWholeColumn = (element: HTMLElement, key: string) => {
-    const index = columns.findIndex((candidate) => candidate.key === key);
-    if (index < 0) return;
-    const frozen = grids ? Math.min(grids.frozen, columns.length) : 0;
-    if (index < frozen) return; // a frozen column never scrolls away
-    let left = INDICATOR_WIDTH;
-    for (let at = 0; at < index; at += 1) left += widthOf(columns[at]);
-    const right = left + widthOf(columns[index]);
-    let frozenRight = INDICATOR_WIDTH;
-    for (let at = 0; at < frozen; at += 1) frozenRight += widthOf(columns[at]);
-    const shownFrom = element.scrollLeft + frozenRight;
-    const shownTo = element.scrollLeft + element.clientWidth;
-    if (right > shownTo) element.scrollLeft = right - element.clientWidth;
-    if (left < element.scrollLeft + frozenRight || left < shownFrom) element.scrollLeft = Math.max(0, left - frozenRight);
-  };
+  /** Scrolls the grid sideways so the whole of a column is in sight, clear of the frozen ones (features/grid/frozen). */
+  const showWholeColumn = (element: HTMLElement, key: string) =>
+    revealColumn(element, columns, widthOf, columns.findIndex((candidate) => candidate.key === key), grids?.frozen ?? 0, INDICATOR_WIDTH);
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
   /** `editAfter`: open the editor once the cursor gets there (used when a commit makes the move wait). */
@@ -1018,7 +938,12 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         }
       } else if (status !== "") {
         const setting = toText(newColumn.setup.enable_for) !== "" ? newColumn.setup.enable_for.trim() : toText(newColumn.setup.disable_for) !== "" ? newColumn.setup.disable_for.trim() : "";
-        if (setting !== "") {
+        if (setting !== "" && newColumn.editable) {
+          // An editable column's STATUS_AGAINST_FLD rule is worked out live from the record (closedByRow),
+          // so it follows the field it depends on. Kept as a per-cell answer it went stale: arriving at
+          // SALE UOM while SALE RATE was blank closed it for good, and a rate typed later never opened it.
+          setCellEditable((current) => { if (!(permissionKey in current)) return current; const copy = { ...current }; delete copy[permissionKey]; return copy; });
+        } else if (setting !== "") {
           const effect = applyPermission(getPermission(permissionSource(record), "E", status, setting, false, false));
           if (effect.editable !== undefined) setCellEditable((current) => ({ ...current, [permissionKey]: effect.editable! }));
         }
@@ -1192,9 +1117,10 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (result.cloud) await sendToCloud(result.cloud);
       if (zoomAccode > 0) { onClose(); return; }
       if (SECOND_RESET_PROGRAMS.includes(programId) && programId !== 49 && programId !== 50) {
-        setGrids(null);
-        setSecond(null);
-        setRowStatus("");
+        // The rate masters start again as "Cancel & Change Group" leaves them, and the second combo is
+        // read afresh so a period just saved is in its list.
+        resetScreen();
+        await loadGroup(group.firstCombo, null);
       } else {
         await loadGroup(group.firstCombo, group.secondCombo);
       }
@@ -1225,14 +1151,9 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const copyCell = async () => {
     const column = columnByKey.get(cursor.key);
     if (!column) return;
-    const value = cellOf(records[cursor.row], column.key);
-    if (column.setup.combo_value.toUpperCase() === "X") {
-      const option = column.options?.find((candidate) => candidate.text === value);
-      if (!option || toInt(option.value) <= 0) { await ask("Pl. First Enter This Column And Again Copy", "Warning"); setCopied(null); return; }
-      setCopied({ value, addonId: option.value });
-      return;
-    }
-    setCopied({ value, addonId: "0" });
+    const outcome = copyOf(cellOf(records[cursor.row], column.key), column.setup, column.options);
+    if (!outcome.ok) { await ask(outcome.message, "Warning"); setCopied(null); return; }
+    setCopied(outcome.copied);
   };
   const pasteCell = async () => {
     if (!copied || !grids) return;
@@ -1240,23 +1161,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const from = rows[0] ?? cursor.row;
     const column = columnByKey.get(cursor.key);
     if (!column) return;
-    let problem = "";
-    if (!isEditable(from, column)) problem = `Column. : ${column.caption} is readonly`;
-    else if (toText(column.setup.status_against_fld) !== "" && toText(column.setup.enable_for) !== "" && getPermission(permissionSource(records[from]), "E", column.setup.status_against_fld.trim(), column.setup.enable_for.trim(), false, false).toUpperCase().includes("D")) problem = `Column. : ${column.caption} is disabled`;
-    else if (["L", "Q"].includes(column.setup.combo_value.toUpperCase())) problem = `Column ${column.caption} isn't allow for Paste, as it is drop down column`;
-    // A date pastes when the copied value reads as one; it goes in written as the grid writes dates.
-    let value = copied.value;
-    // A multi-pick column takes only keys its list has, written the stored way.
-    if (column.comboKind === "M") {
-      if (validKeyList(value, column.options ?? [], "")) value = keyListText(parseKeyList(value));
-      else problem = `Value = ${copied.value} isn't a list of ${column.caption} keys`;
-    }
-    if (column.setup.field_type === "D" && value.trim() !== "") {
-      const date = typedDate(value, "");
-      if (date) value = dateText(value, date);
-      else problem = `Value = ${copied.value} isn't valid date for Column ${column.caption}`;
-    }
-    if (problem !== "") { await ask(problem, "Invalid Paste Selection"); return; }
+    // The checks, a multi-pick's keys and a date's form are features/grid/clipboard's.
+    const disabled = toText(column.setup.status_against_fld) !== "" && toText(column.setup.enable_for) !== "" && getPermission(permissionSource(records[from]), "E", column.setup.status_against_fld.trim(), column.setup.enable_for.trim(), false, false).toUpperCase().includes("D");
+    const outcome = pasteValue(copied, { caption: column.caption, setup: column.setup, multiPick: column.comboKind === "M", options: column.options }, { editable: isEditable(from, column), disabled }, { parse: (text) => typedDate(text, ""), write: dateText });
+    if (!outcome.ok) { await ask(outcome.message, "Invalid Paste Selection"); return; }
+    const value = outcome.value;
     // Every selected row takes the value, except one marked for deletion or locked for this column.
     let pasted = 0;
     for (const row of rows) {
@@ -1266,7 +1175,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       markEdited(row);
       pasted += 1;
     }
-    setMessage(`Pasted "${value}" into ${pasted} row${pasted === 1 ? "" : "s"} of ${column.caption}`);
+    setMessage(pastedMessage(value, pasted, column.caption));
   };
 
   // ---- Restore_Master (F4)
@@ -1332,37 +1241,29 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     setLogTable(body.log);
   };
 
-  /** ShowGridForm1's gridForm.Load: a value that differs from the column before it is coloured, cycling yellow, green, red. */
-  const logColours = (table: LogTable) => table.rows.map((row) => {
-    const colours: string[] = row.map(() => "");
-    for (let at = 2; at < row.length; at += 1) {
-      const current = row[at].trim();
-      const previous = row[at - 1].trim();
-      const numbers = current !== "" && previous !== "" && Number.isFinite(Number(current)) && Number.isFinite(Number(previous));
-      const equal = numbers ? Number(current) === Number(previous) : current.toLowerCase() === previous.toLowerCase();
-      if (!equal) colours[at] = colours[at - 1] === "mp-log-yellow" ? "mp-log-green" : colours[at - 1] === "mp-log-green" ? "mp-log-red" : "mp-log-yellow";
-    }
-    return colours;
-  });
-
-  const exportLog = (table: LogTable) => {
-    const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const lines = [table.columns.map(quote).join(","), ...table.rows.map((row) => row.map(quote).join(","))];
-    const url = URL.createObjectURL(new Blob([String.fromCharCode(0xfeff) + lines.join(String.fromCharCode(13, 10))], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${first?.text ?? programName} Log.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // ---- Btn_Master_AddPrint_Click / Btn_Master_EditPrint_Click
-  /** Accounts (14) and licence 35's products (48, 49) print the Add grid's print_inmaster rows as a master sheet. */
-  const printsMasterSheet = programId === 14 || ((programId === 48 || programId === 49) && licence === 35);
-  const printMasterSheet = () => {
-    const rows = addRows.filter((row) => row.visible && row.setup.print_inmaster);
-    const heading = programId === 48 ? "Product Master" : programId === 49 ? "Product Child Master" : "Account Master";
-    printHtml(heading, `<h1>${escapeHtml(meta?.companyName ?? "")}</h1><p>${escapeHtml(heading)} : ${escapeHtml(first?.text ?? "")}</p><table><tbody>${rows.map((row) => `<tr><th>${escapeHtml(row.headLabel)}</th><td>${escapeHtml(row.setup.force_inputtype === "P" ? "" : row.fieldInput)}</td></tr>`).join("")}</tbody></table>`);
+  // ---- Btn_Master_AddPrint_Click: the New grid's record, printed in the vertical layout only
+  /**
+   * Every master's New grid prints the record on screen, each field's heading beside its value
+   * (features/grid/printVertical). The fields are the ones marked print_inmaster when the setup
+   * marks any (Account master), otherwise every field shown; a password never prints.
+   */
+  const printNewRecord = async () => {
+    const shown = addRows.filter((row) => row.visible);
+    const marked = shown.filter((row) => row.setup.print_inmaster);
+    const rows = marked.length > 0 ? marked : shown;
+    const valueOf = (row: AddState) => (row.setup.force_inputtype === "P" ? "" : row.comboKind === "M" ? keyListNames(row.fieldInput, row.options) : row.fieldInput);
+    if (rows.every((row) => valueOf(row).trim() === "")) { await ask("There is nothing in the New grid to print.", "Print"); return; }
+    const heading = programId === 48 ? "Product Master" : programId === 49 ? "Product Child Master" : def?.heading || title;
+    const titleRow = Math.max(0, rows.findIndex((row) => isMainField(row.setup)));
+    printVertical({
+      company: meta?.companyName ?? "",
+      title: heading,
+      subtitle: [],
+      titleRight: [first?.text, second?.text].filter(Boolean).join(" / "),
+      columns: rows.map((row) => ({ caption: row.headLabel.replace(/^\*\s*/, ""), kind: "text", decimals: 0, align: "left", width: 120 })),
+      rows: [rows.map(valueOf)],
+      recordTitleColumn: titleRow,
+    }, `${heading} - ${valueOf(rows[titleRow]) || "New"}`, meta?.userName ?? "");
   };
 
   // ---- Excel, PDF and print preview of the Update grid, as shown (columns, filters, sort)
@@ -1471,7 +1372,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (ctrl && event.key.toLowerCase() === "f") { event.preventDefault(); document.getElementById("mp-find")?.focus(); return; }
     if (ctrl && event.key.toLowerCase() === "a") {
       event.preventDefault();
-      const text = [grids.columns.map((candidate) => candidate.caption).join("\t"), ...records.map((record) => grids.columns.map((candidate) => cellOf(record, candidate.key)).join("\t"))].join("\n");
+      const text = gridText(grids.columns.map((candidate) => candidate.caption), records.map((record) => grids.columns.map((candidate) => cellOf(record, candidate.key))));
       await navigator.clipboard?.writeText(text).catch(() => undefined);
       return;
     }
@@ -1521,29 +1422,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   };
 
   const findNext = () => {
-    const needle = find.trim().toUpperCase();
-    if (needle === "" || !grids) return;
-    const start = shownRows.indexOf(cursor.row);
-    for (let step = 1; step <= shownRows.length; step += 1) {
-      const row = shownRows[(start + step) % shownRows.length];
-      const hit = columns.find((column) => cellOf(records[row], column.key).toUpperCase().includes(needle));
-      if (hit) { void moveTo(row, hit.key); return; }
-    }
+    if (!grids) return;
+    const hit = findNextCell(shownRows, cursor.row, columns, (row, column) => cellOf(records[row], column.key), find);
+    if (hit) void moveTo(hit.row, hit.column.key);
   };
 
-  /** The editor's text once a typed key replaces whatever is selected in it. */
-  const remainingAfterKey = (input: HTMLInputElement) => {
-    const from = input.selectionStart ?? input.value.length;
-    const to = input.selectionEnd ?? from;
-    return input.value.slice(0, from) + input.value.slice(to);
-  };
-  /** Types `text` where the caret is, for a key taken in another case than the one pressed. */
-  const typeAtCaret = (input: HTMLInputElement, text: string, apply: (value: string) => void) => {
-    const from = input.selectionStart ?? input.value.length;
-    const to = input.selectionEnd ?? from;
-    apply(input.value.slice(0, from) + text + input.value.slice(to));
-    requestAnimationFrame(() => input.setSelectionRange(from + text.length, from + text.length));
-  };
 
   /** The open editor's own keys (KeyPressEdit). */
   const editorKeys = async (event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -1551,7 +1434,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (!column) return;
     // Esc undoes what was typed: the cell keeps the value it had before editing began.
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
-    if (tools.keys(event, editorKindOf(column.setup.field_type), editText, setEditText, column.setup.decimal_points)) return;
+    if (tools.keys(event, editorKindOf(column.setup.field_type), editText, setEditText, numberRules(column.setup))) return;
     if (event.key === "Enter" || event.key === "Tab") {
       event.preventDefault();
       if (await commitEdit()) {
@@ -1976,7 +1859,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (addEditing) {
       // Esc undoes what was typed: the row keeps the value it had before editing began.
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setAddEditing(false); addFocus.current?.focus({ preventScroll: true }); return; }
-      if (row && tools.keys(event, editorKindOf(row.setup.field_type), addText, setAddText, row.setup.decimal_points)) return;
+      if (row && tools.keys(event, editorKindOf(row.setup.field_type), addText, setAddText, numberRules(row.setup))) return;
       if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (event.target instanceof HTMLSelectElement && (event.key === "ArrowDown" || event.key === "ArrowUp")) return;
         event.preventDefault();
@@ -2029,7 +1912,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
   // Master_ProgramGrid_KeyUp / Cmb_Master_GroupFld_KeyPress: Escape asks to leave.
   const leave = async () => {
-    if ((await ask("Returning To Main Menu ? ", "Confirmation", ["Yes", "No"])) === "Yes") onClose();
+    if (await confirmLeave(ask)) onClose();
   };
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
@@ -2057,8 +1940,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 5);
   const endIndex = Math.min(visibleRows.length, startIndex + Math.ceil(viewport / ROW_HEIGHT) + 10);
   const frozenCount = grids ? Math.min(grids.frozen, columns.length) : 0;
-  const frozenLeft: number[] = [];
-  columns.reduce((left, column, index) => { frozenLeft[index] = left; return left + widthOf(column); }, INDICATOR_WIDTH);
+  const frozenLeft = columnLefts(columns, widthOf, INDICATOR_WIDTH);
   const cursorColumn = columnByKey.get(cursor.key);
   const pickedRows = new Set(selectionEnd === null ? [] : selectedRows());
   /**
@@ -2192,7 +2074,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                       ) : (
                         <span className="mp-editor-wrap" role="presentation" onClick={(event) => event.stopPropagation()}>
                           <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(row.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(row.setup) ? "c" : undefined} value={addText} onChange={(event) => { if (typingAllowed(row.setup, addText, event.target.value)) setAddText(event.target.value); }} onKeyDown={(event) => void addKeys(event)} />
-                          {tools.buttons(editorKindOf(row.setup.field_type), addText, setAddText, row.setup.decimal_points)}
+                          {tools.buttons(editorKindOf(row.setup.field_type), addText, setAddText, numberRules(row.setup))}
                         </span>
                       )
                     ) : row.setup.force_inputtype === "P" && row.fieldInput !== "" ? "*********" : row.comboKind === "M" ? keyListNames(row.fieldInput, row.options) : row.fieldInput}
@@ -2237,13 +2119,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               onContextMenu={(event) => {
                 event.preventDefault();
                 // The menu acts on the cell clicked: the cursor goes there first.
-                const cell = (event.target as Element).closest("[data-cell]")?.getAttribute("data-cell");
-                if (cell) {
-                  const split = cell.indexOf(":");
-                  const row = Number(cell.slice(0, split));
-                  const key = cell.slice(split + 1);
-                  if (row !== cursor.row || key !== cursor.key) void moveTo(row, key);
-                }
+                const cell = cellAt(event);
+                if (cell && (cell.row !== cursor.row || cell.key !== cursor.key)) void moveTo(cell.row, cell.key);
                 setMenu({ x: event.clientX, y: event.clientY });
               }}
             >
@@ -2337,12 +2214,12 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                             ) : (
                               <span className="mp-editor-wrap">
                                 <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(column.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(column.setup) ? "c" : undefined} value={editText} onChange={(event) => { if (!typingAllowed(column.setup, editText, event.target.value)) return; setEditText(event.target.value); followHelp(column.key, event.target.value); }} onKeyDown={(event) => void editorKeys(event)} />
-                                {tools.buttons(editorKindOf(column.setup.field_type), editText, setEditText, column.setup.decimal_points)}
+                                {tools.buttons(editorKindOf(column.setup.field_type), editText, setEditText, numberRules(column.setup))}
                               </span>
                             )
                           ) : (
                             <>
-                              {column.comboKind === "M" ? shownText(record, column) : formatCell(cellOf(record, column.key), column.format)}
+                              <FoundText text={column.comboKind === "M" ? shownText(record, column) : formatCell(cellOf(record, column.key), column.format)} typed={current ? typed : ""} />
                               {editable && column.options?.length ? (
                                 <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
                                   onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); void openCombo(row, column.key); }}>
@@ -2361,20 +2238,14 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
           </div>
           {help && helpRow !== null && cursorColumn && isMainField(cursorColumn.setup) && helpWindow(helpRow, setHelpRow, helpSearchKey(cursorColumn.setup), null)}
           {menu && (
-            <div className="mp-menu" style={{ left: menu.x, top: menu.y }} onMouseLeave={() => setMenu(null)}>
-              <button type="button" onClick={() => { setMenu(null); void copyCell(); }}>Copy</button>
-              <button type="button" disabled={!copied} onClick={() => { setMenu(null); void pasteCell(); }}>Paste</button>
-              <button type="button" disabled={fixedKeys.includes(cursor.key)} title={fixedKeys.includes(cursor.key) ? "A frozen column cannot be hidden" : undefined} onClick={() => { setMenu(null); hideColumn(cursor.key); }}>Hide Column</button>
-              <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns((current) => current.slice(0, -1)); }}>Visible Column</button>
-              <button type="button" disabled={fixedKeys.includes(cursor.key) || columns[fixedKeys.length]?.key === cursor.key} onClick={() => { setMenu(null); shiftColumn(cursor.key, -1); }}>Move Column Left (Ctrl+Shift+←)</button>
-              <button type="button" disabled={fixedKeys.includes(cursor.key) || columns[columns.length - 1]?.key === cursor.key} onClick={() => { setMenu(null); shiftColumn(cursor.key, 1); }}>Move Column Right (Ctrl+Shift+→)</button>
-              <button type="button" disabled={columnOrder.length === 0} onClick={() => { setMenu(null); setColumnOrder([]); }}>Reset Column Order</button>
-              <button type="button" onClick={() => { setMenu(null); setColumnChooser(true); }}>Arrange Columns (Show / Hide / Move)…</button>
-              <button type="button" disabled={hiddenColumns.length === 0} onClick={() => { setMenu(null); setHiddenColumns([]); }}>Show All Columns</button>
-              <button type="button" onClick={() => { setMenu(null); restoreCell(cursor.row, cursor.key); }}>Restore Cell Value (Ctrl+Z)</button>
-              <button type="button" onClick={() => { setMenu(null); void deleteSelected("row"); }}>Delete Row</button>
-              <button type="button" onClick={() => { setMenu(null); void deleteSelected("selection"); }}>Delete Selection</button>
-            </div>
+            <GridMenu at={menu} onClose={() => setMenu(null)} items={[
+              { label: "Copy", onClick: () => void copyCell() },
+              { label: "Paste", disabled: !copied, onClick: () => void pasteCell() },
+              ...columnMenuItems(layout, cursor.key, () => setColumnChooser(true)),
+              { label: "Restore Cell Value (Ctrl+Z)", onClick: () => restoreCell(cursor.row, cursor.key) },
+              { label: "Delete Row", onClick: () => void deleteSelected("row") },
+              { label: "Delete Selection", onClick: () => void deleteSelected("selection") },
+            ]} />
           )}
         </div>
       )}
@@ -2388,25 +2259,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         </div>
       )}
 
-      {logTable && (
-        <div className="mp-dialog-backdrop" role="presentation">
-          <div className="mp-dialog mp-log" role="dialog" aria-modal="true" aria-label={`${first?.text ?? ""} Log`}>
-            <strong>{first?.text} Log</strong>
-            <div className="mp-log-scroll">
-              <table>
-                <thead><tr>{logTable.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-                <tbody>
-                  {(() => { const colours = logColours(logTable); return logTable.rows.map((row, index) => <tr key={index}>{row.map((value, at) => <td key={at} className={colours[index][at]}>{value}</td>)}</tr>); })()}
-                </tbody>
-              </table>
-            </div>
-            <div className="mp-dialog-buttons">
-              <button type="button" onClick={() => exportLog(logTable)}>Export to EXCEL</button>
-              <button type="button" ref={focusOnMount} onClick={() => setLogTable(null)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {logTable && <LogViewer table={logTable} title={`${first?.text ?? programName} Log`} onClose={() => { setLogTable(null); keepGridFocus(); }} />}
 
       {grids && (
         tab === "update" ? (
@@ -2443,7 +2296,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
             source="master"
             busy={Boolean(busy)}
             save={{ onClick: () => void saveAdd(), disabled: def ? !def.rights.add : true }}
-            print={printsMasterSheet ? { onClick: printMasterSheet } : undefined}
+            print={{ onClick: () => void printNewRecord() }}
             cancel={{ onClick: () => void cancelAdd() }}
             quit={{ onClick: () => void leave() }}
           >
