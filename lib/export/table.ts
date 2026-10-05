@@ -18,6 +18,9 @@ export type ExportColumn = Readonly<{
 
 export type ExportCell = string | number | Date | null;
 
+/** A row drawn as the grid draws it: a report's heading or subtotal row (fill as RRGGBB). */
+export type ExportRowStyle = Readonly<{ fill?: string; bold?: boolean }>;
+
 export type ExportTable = Readonly<{
   /** The company the report belongs to, first line of every page. */
   company: string;
@@ -33,6 +36,8 @@ export type ExportTable = Readonly<{
   rows: readonly (readonly ExportCell[])[];
   /** Column totals (null where a column is not summed); omitted when nothing is summed. */
   totals?: readonly (number | null)[];
+  /** Each row's colour and weight (null: plain), as the grid shows its headings and subtotals. */
+  rowStyles?: readonly (ExportRowStyle | null)[];
   /** The column that names a record on the "one record per page" layout (default: the first). */
   recordTitleColumn?: number;
 }>;

@@ -20,6 +20,7 @@ import { ArrangeColumns } from "../grid/ArrangeColumns";
 import { comboPlace } from "../grid/comboPlace";
 import { exportTableFrom, NOT_SUMMED } from "../grid/exportTable";
 import { GridButtons } from "../grid/GridButtons";
+import { BillsGrid } from "./BillsGrid";
 import { confirmLeave, refreshQuestion } from "../grid/prompts";
 import { nextOpenCell, rowChanged } from "../grid/rows";
 import { GridCombo } from "../grid/GridCombo";
@@ -79,6 +80,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const [controls, setControls] = useState<Record<string, string>>({});
   const [grid, setGrid] = useState<EntryGrid | null>(null);
   const [records, setRecords] = useState<Record<string, string>[]>([]);
+  /** Outstanding Allocation: the set-off typed against each bill, by the bill's led_key. */
+  const [setoffs, setSetoffs] = useState<Record<string, string>>({});
   const [edited, setEdited] = useState<ReadonlySet<number>>(new Set());
   /** Rows the Delete key removed (Selected_RowDelete): hidden, and deleted by Save. */
   const [deleted, setDeleted] = useState<ReadonlySet<number>>(new Set());
@@ -223,6 +226,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       }
       setGrid(body.grid);
       setRecords(body.grid.rows.map((row) => ({ ...row })));
+      setSetoffs({});
       setEdited(new Set());
       setDeleted(new Set());
       setSort(null);
@@ -298,7 +302,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
 
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);
   const endIndex = Math.min(shownRows.length, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + 10);
-  const unsaved = edited.size > 0 || editing;
+  const unsaved = edited.size > 0 || editing || Object.values(setoffs).some((value) => value.trim() !== "");
   /** Whether the cell at a position in the rows shown is open for editing on its row. */
   const editableAt = useCallback((position: number, column: EntryColumn | undefined) => Boolean(column) && shownRows[position] !== undefined && isEditable(shownRows[position], column!), [shownRows, isEditable]);
   const captionOf = useCallback((name: string) => grid?.columns.find((column) => column.key.toLowerCase() === name.toLowerCase())?.caption ?? name, [grid]);
@@ -749,6 +753,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   };
 
   const clearGrid = useCallback(() => {
+    setSetoffs({});
     setGrid(null);
     setRecords([]);
     setEdited(new Set());
@@ -780,10 +785,15 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     if (!def || !grid) return;
     if (editing && !(await commit())) return;
     if (!def.rights.edit) { await ask("Entry Rights Not Available For User", "Rights Validation"); return; }
-    if (edited.size === 0) { await ask("Nothing has been changed", "Entry Save"); return; }
+    // Outstanding Allocation saves the receipt chosen above with the set-offs typed against its bills.
+    const allocation = grid.detail ? {
+      receipt: records[shownRows[cursor.row]],
+      detail: grid.detail.rows.filter((bill) => Number((setoffs[bill.led_key] ?? "").replace(/,/g, "")) > 0).map((bill) => ({ led_key: bill.led_key, setoff: setoffs[bill.led_key] })),
+    } : null;
+    if (allocation ? !allocation.receipt || allocation.detail.length === 0 : edited.size === 0) { await ask("Nothing has been changed", "Entry Save"); return; }
     const changedRows = [...edited].sort((a, b) => a - b);
     // Func_BlankFieldValidation, as the master's: a compulsory column on screen and open on the row may not be blank.
-    const blank = blankCompulsory(changedRows.map((index) => ({ rowNumber: index + 1, deleted: deleted.has(index), valueOf: (key: string) => records[index][key] })), setupColumns, (rowNumber, column) => isEditable(rowNumber - 1, column));
+    const blank = allocation ? "" : blankCompulsory(changedRows.map((index) => ({ rowNumber: index + 1, deleted: deleted.has(index), valueOf: (key: string) => records[index][key] })), setupColumns, (rowNumber, column) => isEditable(rowNumber - 1, column));
     if (blank !== "") { await ask(blank, BLANK_COMPULSORY_TITLE); return; }
     if ((await ask("Save Entry To Data ?", "Entry Add Save", ["Yes", "No", "Cancel"])) !== "Yes") return;
     let editPassword: string | undefined;
@@ -794,8 +804,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     }
     setBusy("Saving");
     try {
-      const rows = changedRows.map((index) => ({ values: records[index], deleted: deleted.has(index) }));
-      const reply = await call<SaveReply>("save", { state: state(), rows, editPassword });
+      const rows = allocation ? [{ values: allocation.receipt, deleted: false }] : changedRows.map((index) => ({ values: records[index], deleted: deleted.has(index) }));
+      const reply = await call<SaveReply>("save", { state: state(), rows, editPassword, ...(allocation ? { detail: allocation.detail } : {}) });
       if (!reply.ok) { await ask(reply.message, reply.needs ? "Password" : "Entry Validation"); return; }
       setWarnings([...def.unsupported, ...reply.warnings]);
       setMessage(reply.message);
@@ -1014,6 +1024,17 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         </div>
       ) : (
         <div className="mp-update mp-empty-grid" aria-hidden="true" />
+      )}
+
+      {grid?.detail && (
+        <BillsGrid
+          bills={grid.detail.rows}
+          setoffs={setoffs}
+          receiptAmount={Number((current?.AMOUNT ?? "").replace(/,/g, "")) || 0}
+          receiptLabel={current?.full_docno ?? ""}
+          onChange={(key, value) => setSetoffs((now) => ({ ...now, [key]: value }))}
+          onRefused={(text) => void ask(text, "Entry Validation")}
+        />
       )}
 
       {grid && (

@@ -89,6 +89,8 @@ export type EntryGrid = Readonly<{
   balance: string;
   /** Text for the desktop's tbx_Final_Amt (Bank Statement's balance as per passbook). */
   finalAmount?: string;
+  /** Outstanding Allocation's second grid: the pending bills (led_key, Date, Bill_No, AMOUNT ...). */
+  detail?: Readonly<{ rows: readonly Record<string, string>[] }>;
 }>;
 
 /** One edited grid row, as the screen sends it to Save. */

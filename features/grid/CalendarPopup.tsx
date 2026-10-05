@@ -21,7 +21,8 @@ const addMonths = (date: Date, months: number) => {
   return new Date(date.getFullYear(), date.getMonth() + months, Math.min(date.getDate(), last));
 };
 
-export function CalendarPopup({ initial, onPick, onClose, style, dragHandle }: { initial: Date | null; onPick: (date: Date | null) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement> }) {
+/** `canClear` false: a compulsory date, with no Clear button and Delete ignored. */
+export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, canClear = true }: { initial: Date | null; onPick: (date: Date | null) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement>; canClear?: boolean }) {
   const today = new Date();
   const [focused, setFocused] = useState<Date>(initial ?? new Date(today.getFullYear(), today.getMonth(), today.getDate()));
   const grid = useRef<HTMLDivElement>(null);
@@ -45,7 +46,7 @@ export function CalendarPopup({ initial, onPick, onClose, style, dragHandle }: {
       case "End": move(new Date(focused.getFullYear(), focused.getMonth() + 1, 0)); return;
       case "t": case "T": move(new Date(today.getFullYear(), today.getMonth(), today.getDate())); return;
       case "Enter": case " ": event.preventDefault(); onPick(focused); return;
-      case "Delete": case "Backspace": event.preventDefault(); onPick(null); return;
+      case "Delete": case "Backspace": event.preventDefault(); if (canClear) onPick(null); return;
       case "Escape": event.preventDefault(); onClose(); return;
     }
   };
@@ -82,7 +83,7 @@ export function CalendarPopup({ initial, onPick, onClose, style, dragHandle }: {
       </div>
       <div className="mp-cal-actions">
         <button type="button" onClick={() => onPick(new Date(today.getFullYear(), today.getMonth(), today.getDate()))}>Today (T)</button>
-        <button type="button" onClick={() => onPick(null)}>Clear (Del)</button>
+        {canClear && <button type="button" onClick={() => onPick(null)}>Clear (Del)</button>}
         <button type="button" onClick={onClose}>Close (Esc)</button>
       </div>
       <div className="mp-cal-hint">←→↑↓ day · PgUp/PgDn month · Shift+PgUp/PgDn year · Enter pick</div>

@@ -113,8 +113,11 @@ export function previewPages(table: ExportTable, options: PdfOptions): PreviewPa
         }
         return `<td${alignClass(column.align)}>${marked(fit(cellText(table.rows[line][source] ?? null, column), room, size, false), needle)}</td>`;
       }).join("");
-      const classes = [isTotal ? "pv-total" : line % 2 === 1 ? "pv-alt" : "", search && line === search.currentLine ? "pv-hit-row" : ""].filter(Boolean).join(" ");
-      rows.push(`<tr style="height:${pt(rowHeight)}"${classes ? ` class="${classes}"` : ""} data-line="${line}">${cells}</tr>`);
+      const classes = [isTotal ? "pv-total" : line % 2 === 1 && !table.rowStyles?.[line]?.fill ? "pv-alt" : "", search && line === search.currentLine ? "pv-hit-row" : ""].filter(Boolean).join(" ");
+      const rowStyle = isTotal ? null : table.rowStyles?.[line] ?? null;
+      const fill = /^#?[0-9a-f]{6}$/i.test(rowStyle?.fill ?? "") ? `background:#${(rowStyle?.fill ?? "").replace(/^#/, "")};` : "";
+      const weight = rowStyle?.bold ? "font-weight:bold;" : "";
+      rows.push(`<tr style="height:${pt(rowHeight)};${fill}${weight}"${classes ? ` class="${classes}"` : ""} data-line="${line}">${cells}</tr>`);
     }
     const tableHtml = `<table class="pv-table" style="left:${pt(margin)};top:${pt(margin + topHeight)};width:${pt(band.tableWidth)};font-size:${pt(size)}">${colgroups[bandIndex]}${headRows[bandIndex]}<tbody>${rows.join("")}</tbody></table>`;
     const footer = footerHtml(table, options, pageWidth, pageHeight, margin, usable, pageLabel(layout, index));

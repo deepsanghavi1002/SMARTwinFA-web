@@ -102,17 +102,28 @@ const S_TOTAL_LABEL = 6;
 const S_NUMBER = 7; // + decimals (0..4)
 const S_TOTAL = 12; // + decimals (0..4)
 
-function stylesXml(): string {
+/** A row style's own cell formats, after the fixed ones: one per fill / weight / kind of cell. */
+type ExtraXf = { fill: string; bold: boolean; kind: "text" | "date" | number };
+
+function stylesXml(extras: readonly ExtraXf[] = []): string {
+  const fills = [...new Set(extras.map((extra) => extra.fill).filter((fill) => fill !== ""))];
+  const fillId = (fill: string) => (fill === "" ? 0 : 4 + fills.indexOf(fill));
+  const extraXfs = extras.map(({ fill, bold, kind }) => {
+    const font = bold ? 1 : 0;
+    if (kind === "text") return `<xf numFmtId="49" fontId="${font}" fillId="${fillId(fill)}" borderId="1" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>`;
+    if (kind === "date") return `<xf numFmtId="169" fontId="${font}" fillId="${fillId(fill)}" borderId="1" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>`;
+    return `<xf numFmtId="${164 + kind}" fontId="${font}" fillId="${fillId(fill)}" borderId="1" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>`;
+  });
   const formats = [0, 1, 2, 3, 4].map((places) => `<numFmt numFmtId="${164 + places}" formatCode="${places ? `#,##0.${"0".repeat(places)}` : "#,##0"}"/>`).join("");
   const numberXf = (font: number, fill: number, places: number) => `<xf numFmtId="${164 + places}" fontId="${font}" fillId="${fill}" borderId="1" applyNumberFormat="1" applyFont="1" applyBorder="1"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="6">${formats}<numFmt numFmtId="169" formatCode="dd/mm/yyyy"/></numFmts>
 <fonts count="4"><font><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font><font><i/><sz val="10"/><color rgb="FF3D5A80"/><name val="Calibri"/></font></fonts>
-<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFB9D7F7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill></fills>
+<fills count="${4 + fills.length}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFB9D7F7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>${fills.map((fill) => `<fill><patternFill patternType="solid"><fgColor rgb="FF${fill}"/><bgColor indexed="64"/></patternFill></fill>`).join("")}</fills>
 <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FF9FB6D4"/></left><right style="thin"><color rgb="FF9FB6D4"/></right><top style="thin"><color rgb="FF9FB6D4"/></top><bottom style="thin"><color rgb="FF9FB6D4"/></bottom><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="17">
+<cellXfs count="${17 + extraXfs.length}">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="0" applyFont="1"/>
@@ -122,6 +133,7 @@ function stylesXml(): string {
 <xf numFmtId="0" fontId="1" fillId="3" borderId="1" applyFont="1" applyFill="1" applyBorder="1"/>
 ${[0, 1, 2, 3, 4].map((places) => numberXf(0, 0, places)).join("\n")}
 ${[0, 1, 2, 3, 4].map((places) => numberXf(1, 3, places)).join("\n")}
+${extraXfs.join("\n")}
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -144,10 +156,23 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
   const rows: string[] = [];
   lines.forEach((line, index) => rows.push(`<row r="${index + 1}">${cellXml(`A${index + 1}`, line, index === 0 ? S_TITLE : index === 1 ? S_TITLE : S_SUBTITLE)}</row>`));
   rows.push(`<row r="${headRow}" ht="30" customHeight="1">${table.columns.map((column, index) => cellXml(`${columnLetter(index + 1)}${headRow}`, column.caption, S_HEAD)).join("")}</row>`);
+  // Styled rows (a report's headings and subtotals) get formats of their own, numbered after the fixed 17.
+  const extras: ExtraXf[] = [];
+  const extraIndex = new Map<string, number>();
+  const styledXf = (fill: string, bold: boolean, kind: ExtraXf["kind"]) => {
+    const key = `${fill}|${bold}|${kind}`;
+    let at = extraIndex.get(key);
+    if (at === undefined) { at = 17 + extras.length; extras.push({ fill, bold, kind }); extraIndex.set(key, at); }
+    return at;
+  };
   table.rows.forEach((values, offset) => {
     const r = headRow + 1 + offset;
+    const rowStyle = table.rowStyles?.[offset] ?? null;
+    const fill = (rowStyle?.fill ?? "").replace(/^#/, "").toUpperCase();
     rows.push(`<row r="${r}">${table.columns.map((column, index) => {
-      const style = column.kind === "number" ? S_NUMBER + places(column.decimals) : column.kind === "date" ? S_DATE : S_TEXT;
+      const kind: ExtraXf["kind"] = column.kind === "number" ? places(column.decimals) : column.kind === "date" ? "date" : "text";
+      const style = rowStyle && (fill !== "" || rowStyle.bold) ? styledXf(/^[0-9A-F]{6}$/.test(fill) ? fill : "", Boolean(rowStyle.bold), kind)
+        : column.kind === "number" ? S_NUMBER + places(column.decimals) : column.kind === "date" ? S_DATE : S_TEXT;
       return cellXml(`${columnLetter(index + 1)}${r}`, values[index] ?? null, style);
     }).join("")}</row>`);
   });
@@ -196,7 +221,7 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
     { name: "xl/workbook.xml", data: encoder.encode(workbook) },
     { name: "xl/_rels/workbook.xml.rels", data: encoder.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`) },
-    { name: "xl/styles.xml", data: encoder.encode(stylesXml()) },
+    { name: "xl/styles.xml", data: encoder.encode(stylesXml(extras)) },
     { name: "xl/worksheets/sheet1.xml", data: encoder.encode(sheet) },
   ]);
 }

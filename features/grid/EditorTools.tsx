@@ -22,7 +22,7 @@ export type EditorKind = "number" | "date" | "text";
 export const editorKindOf = (fieldType: string): EditorKind => (fieldType === "D" ? "date" : fieldType === "N" || fieldType === "C" ? "number" : "text");
 
 type CalcState = { initial: string; rules: NumberRules; caretAtEnd?: boolean; set: (value: string) => void };
-type CalendarState = { initial: string; left: number; top: number; set: (value: string) => void };
+type CalendarState = { initial: string; left: number; top: number; set: (value: string) => void; required: boolean };
 
 /** Puts the keyboard back in the open editor once a tool closes. */
 const refocusEditor = () => {
@@ -47,23 +47,25 @@ export function useEditorTools(yearStart: Date | null) {
   }, [yearStart]);
 
   /** Opens the calendar just under the open editor (above it when there is no room below). */
-  const openCalendar = (value: string, set: (value: string) => void) => {
-    const box = document.querySelector(".mp-editor")?.getBoundingClientRect();
+  /** `anchor`: the box the calendar opens under (else the focused editor, else the first one). */
+  const openCalendar = (value: string, set: (value: string) => void, required = false, anchor?: Element | null) => {
+    const active = document.activeElement?.closest(".mp-editor-wrap, .mp-editor");
+    const box = (anchor ?? active ?? document.querySelector(".mp-editor"))?.getBoundingClientRect();
     const width = 236;
     const height = 290;
     const left = box ? Math.min(Math.max(4, box.left), window.innerWidth - width - 4) : (window.innerWidth - width) / 2;
     const top = box ? (box.bottom + height + 4 < window.innerHeight ? box.bottom + 2 : Math.max(4, box.top - height - 2)) : (window.innerHeight - height) / 2;
     calendarDrag.reset();
-    setCalendar({ initial: value, left, top, set });
+    setCalendar({ initial: value, left, top, set, required });
   };
 
   /**
    * The tools from the keyboard; true when the key was theirs. rules (rules.ts numberRules of
    * the column's setup) give the calculator its places and what answer it may hand back.
    */
-  const keys = (event: ReactKeyboardEvent, kind: EditorKind, value: string, set: (value: string) => void, rules: NumberRules): boolean => {
-    if (event.ctrlKey && event.key === "Delete") { event.preventDefault(); set(""); return true; }
-    if (kind === "date" && event.altKey && event.key === "ArrowDown") { event.preventDefault(); openCalendar(value, set); return true; }
+  const keys = (event: ReactKeyboardEvent, kind: EditorKind, value: string, set: (value: string) => void, rules: NumberRules, required = false): boolean => {
+    if (event.ctrlKey && event.key === "Delete") { event.preventDefault(); if (!required) set(""); return true; }
+    if (kind === "date" && event.altKey && event.key === "ArrowDown") { event.preventDefault(); openCalendar(value, set, required); return true; }
     if (kind === "number" && event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); setCalc({ initial: value, rules, set }); return true; }
     if (kind === "number" && !event.ctrlKey && !event.altKey && !event.metaKey && ["+", "*", "/", "="].includes(event.key)) {
       event.preventDefault();
@@ -87,21 +89,21 @@ export function useEditorTools(yearStart: Date | null) {
     </button>
   );
 
-  /** The small buttons inside the editor: calendar or calculator, and clear. */
-  const buttons = (kind: EditorKind, value: string, set: (value: string) => void, rules: NumberRules) => (
+  /** The small buttons inside the editor: calendar or calculator, and clear (none for a compulsory value). */
+  const buttons = (kind: EditorKind, value: string, set: (value: string) => void, rules: NumberRules, required = false) => (
     <>
       {kind === "date" && (
-        <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); openCalendar(value, set); }}>
+        <button type="button" className="mp-mini" tabIndex={-1} title="Calendar (Alt+↓)" aria-label="Open calendar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); openCalendar(value, set, required, event.currentTarget.closest(".mp-editor-wrap")); }}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v5M16 3v5" /></svg>
         </button>
       )}
-      {kind === "date" && clearButton(set, "date")}
+      {kind === "date" && !required && clearButton(set, "date")}
       {kind === "number" && (
         <button type="button" className="mp-mini" tabIndex={-1} title="Calculator (Alt+C, or type + * / =)" aria-label="Open calculator" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); setCalc({ initial: value, rules, set }); }}>
           <svg className="mp-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01" /></svg>
         </button>
       )}
-      {kind === "number" && clearButton(set, "figure")}
+      {kind === "number" && !required && clearButton(set, "figure")}
     </>
   );
 
@@ -117,6 +119,7 @@ export function useEditorTools(yearStart: Date | null) {
             initial={parseDesktopDate(calendar.initial)}
             style={calendarDrag.style ?? { position: "fixed", left: calendar.left, top: calendar.top }}
             dragHandle={calendarDrag.handle}
+            canClear={!calendar.required}
             onClose={() => { setCalendar(null); refocusEditor(); }}
             onPick={(date) => { calendar.set(date ? formatDesktopDate(date) : ""); setCalendar(null); refocusEditor(); }}
           />

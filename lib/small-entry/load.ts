@@ -9,6 +9,7 @@ import { orderByAliases, quotedAliases } from "./text";
 import { ENTRY_APPROVED, lockStoppedParties } from "./entry32";
 import { BANK_RECO, bankBalances } from "./bankReco";
 import { entryGridSql } from "./gridSql";
+import { accountAddonFields } from "./accountAddon";
 import type { EntryColumn, EntryControl, EntryDefinition, EntryGrid, EntryOption, EntryState } from "./types";
 
 /**
@@ -27,8 +28,19 @@ const field = Loader.field;
 const text = (row: Row | undefined, name: string) => toText(field(row, name));
 const flag = (row: Row | undefined, name: string) => field(row, name) === true;
 
+/**
+ * Entries whose Add opens an empty grid to type new records into when their fill style builds
+ * the columns itself (Col+): last year's bank reco and outstanding, journal, conference order...
+ */
+const BLANK_ADD_ENTRIES = new Set([9, 7, 15, 16, 34, 36, 46, 53, 61, 62, 71, 72, 73, 74, 77, 78, 80, 82, 83, 84, 85, 94, 95, 96, 99, 100, 104, 105, 106, 115]);
+
+/** Rows an empty entry grid offers (the desktop's c1dg_SmallEntryGrid.Rows.Count = 500). */
+export const BLANK_ROWS = 500;
+
 /** Entries whose own branches of Small_Entry.cs are ported; the rest may be viewed, not saved. */
-export const PORTED_ENTRIES: ReadonlySet<number> = new Set([BANK_RECO, 11, ENTRY_APPROVED]);
+export const PORTED_ENTRIES: ReadonlySet<number> = new Set([
+  BANK_RECO, 6, 7, 9, 11, 19, 26, 31, ENTRY_APPROVED, 33, 34, 35, 37, 38, 39, 41, 42, 43, 44, 46, 47, 48, 51, 52, 54, 57, 60, 64, 65, 68, 108,
+]);
 
 /** Small_Entry KeyUp: the Delete key removes selected rows in these entries (103 only for an AD user). */
 const DELETE_ENTRIES = new Set([7, 36, 75, 100, 111]);
@@ -174,7 +186,7 @@ async function controlOptions(loader: Loader, row: Row, context: SysContext): Pr
       if (query === "") return [];
       if (text(row, "combo_fixwhere") !== "") query += ` where ${text(row, "combo_fixwhere")}`;
       if (text(row, "combo_fixorder") !== "") query += ` order by ${text(row, "combo_fixorder")}`;
-      query = query.replace(/|sys.pk_addon_fld|/gi, String(toInt(field(row, "pk_addon_fld"))));
+      query = query.replace(/\|sys\.pk_addon_fld\|/gi, String(toInt(field(row, "pk_addon_fld"))));
       return queryOptions(loader, replaceEntryValues(query, context));
     }
     case "Q": {
@@ -262,10 +274,14 @@ export type GridPlan = Readonly<{
   sql: string;
   balanceSql: string;
   /** dtbl_Entry_GridBody: the event rows, then the addon rows the fill added, each with the grid column it sets. */
-  body: readonly Readonly<{ row: Row; column: string; addon: boolean }>[];
+  body: readonly Readonly<{ row: Row; column: string; addon: boolean; saveAddon?: boolean }>[];
   /** PRDMulAdd: the addon field every group belongs to, and its type (GW for godown). */
   multi: Readonly<{ fieldKey: number; addonType: string; searchFields: readonly string[]; groups: readonly AddonGroup[] }> | null;
   warnings: readonly string[];
+  /** A grid to type new records into (Col+ with RecBlk, or Add on the entries listed in BLANK_ADD_ENTRIES): columns, no query. */
+  blank?: boolean;
+  /** A second grid's query (Outstanding Allocation's pending bills), or "". */
+  detailSql?: string;
   /** The values the queries were filled with, for the grid's combo lists. */
   context: SysContext;
 }>;
@@ -287,7 +303,7 @@ async function addonBodyRows(loader: Loader, entryId: number): Promise<Row[]> {
  */
 function addonColumns(fields: readonly Row[], bodyRows: readonly Row[], addonFor: string, onlyDisplay: boolean) {
   const select: string[] = [];
-  const body: { row: Row; column: string; addon: boolean }[] = [];
+  const body: { row: Row; column: string; addon: boolean; saveAddon?: boolean }[] = [];
   let comboSerial = 0;
   for (const addon of fields) {
     const save = text(addon, "fiel_save");
@@ -338,7 +354,7 @@ async function multipleAddon(loader: Loader, context: SysContext, eventId: numbe
   const typeRows = (await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.entry_grid_body WHERE entry_control_id = $1 AND BTRIM(field_addon_type) = $2 ORDER BY entry_grid_body_key`, [eventId, addonType])) ?? [];
   const names = [...new Set(typeRows.map((row) => text(row, "field_addon_name")).filter((name) => name !== ""))];
   const select: string[] = [];
-  const body: { row: Row; column: string; addon: boolean }[] = [];
+  const body: { row: Row; column: string; addon: boolean; saveAddon?: boolean }[] = [];
   const groups: AddonGroup[] = [];
   let fieldKey = 0;
   for (const name of names) {
@@ -396,17 +412,18 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
 
   let sql = "";
   let balanceSql = "";
-  let body: { row: Row; column: string; addon: boolean }[] = [];
+  let body: { row: Row; column: string; addon: boolean; saveAddon?: boolean }[] = [];
   let multi: GridPlan["multi"] = null;
+  let blank = false;
+  let detailSql = "";
   for (const event of await firstComboEvents(loader, entryId)) {
     let select = DISTINCT_ENTRIES.has(entryId) ? "Select distinct " : "Select ";
     const eventId = toInt(field(event, "fill_grid_event_id"));
     const fillFor = text(event, "fill_column_for").toLowerCase();
-    const eventBodyRows: { row: Row; column: string; addon: boolean }[] = [];
+    const eventBodyRows: { row: Row; column: string; addon: boolean; saveAddon?: boolean }[] = [];
     if (eventId > 0) {
       const rows = await eventBody(loader, eventId);
       if (rows.length > 0 && fillFor !== "product_addon") {
-        if (!fillStyle.includes("ColDS,")) warnings.push(`Fill style "${fillStyle}" (Col+) is not ported yet`);
         for (const row of rows) {
           select += String(field(row, "defa_formula") ?? "").trim();
           const restore = String(field(row, "field_restore") ?? "").trim();
@@ -428,7 +445,14 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
           warnings.push("Fill style PARTYMulFld (party folders) is not ported yet");
         }
       }
-      if (fillFor === "account_addon" || entryId === 53) warnings.push("Account addon columns are not ported yet");
+      if (entryId === 53) warnings.push("Account addon columns of entry 53 are not ported yet");
+      else if (fillFor === "account_addon") {
+        // The addon fields of the chosen account's book, as editable columns Save writes back to addon_aentry / addon_ientry.
+        const fields = await accountAddonFields(loader, entryId, toInt(state.firstCombo?.value));
+        const added = addonColumns(fields, await addonBodyRows(loader, entryId), "aentry", false);
+        select += added.select.map((item) => `${item},`).join("");
+        eventBodyRows.push(...added.body.map((item) => ({ ...item, saveAddon: true })));
+      }
       if (fillFor === "product_master_addon") {
         const fields = (await loader.readTable(`SELECT * FROM ${session.companySchema}.addon_fld WHERE fiel_relate = 'P' AND fiel_type = 'M' AND fiel_masterpos = 'Y' AND fiel_pos <> 'D' AND COALESCE(fiel_stkmdl, '') = '' ORDER BY fiel_key`)) ?? [];
         const added = addonColumns(fields, await addonBodyRows(loader, entryId), "adata", true);
@@ -447,15 +471,24 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
     // The desktop's per-entry changes to the query (dates, Add / Update filters, order): gridSql.ts.
     const changed = entryGridSql(select, { context, date: (name) => dateOf(state.controls[name]) || defaultDate(entryId, name, session, now) });
     select = changed.sql;
+    const detail = changed.detail ? replaceEntryValues(quotedAliases(changed.detail), context, now) : "";
     for (const warning of changed.warnings) if (!warnings.includes(warning)) warnings.push(warning);
     const ready = replaceEntryValues(quotedAliases(select), context, now);
     if (text(event, "control_type").toLowerCase() === "lbl") { balanceSql = ready; continue; }
+    // An entry grid (Col+ with RecBlk, or Add on the listed entries): the columns, and blank rows to type into.
+    if (fillStyle.includes("Col+,") && (fillStyle.includes("RecBlk,") || (BLANK_ADD_ENTRIES.has(entryId) && entryNat === "A"))) {
+      sql = "";
+      body = eventBodyRows;
+      blank = true;
+      continue;
+    }
     if (!fillStyle.includes("RecDS,")) { warnings.push(`Fill style "${fillStyle}" without RecDS is not ported yet`); continue; }
     // Each event binds the grid in turn, so the last one's query is the grid.
     sql = ready;
     body = eventBodyRows;
+    detailSql = detail;
   }
-  return { entryId, sql, balanceSql, body, multi, warnings, context };
+  return { entryId, sql, balanceSql, body, multi, warnings, context, blank, detailSql };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -487,9 +520,15 @@ function columnFor(key: string, plan: GridPlan): EntryColumn {
 
 /** The query's column names in order, without reading its rows. */
 export async function planColumns(loader: Loader, plan: GridPlan): Promise<string[]> {
+  if (plan.blank) return blankKeys(plan);
   if (plan.sql === "") return [];
   const result = await loader.client.query(`SELECT * FROM (${plan.sql}) q LIMIT 0`);
   return result.fields.map((item) => item.name);
+}
+
+/** An entry grid's columns: its grid body rows' columns, each once. */
+function blankKeys(plan: GridPlan): string[] {
+  return [...new Map(plan.body.map((item) => [item.column.toLowerCase(), item.column])).values()];
 }
 
 export async function loadEntryGrid(loader: Loader, entryName: string, state: EntryState, choices: Readonly<Record<string, EntryOption>>): Promise<EntryGrid & { warnings: string[] }> {
@@ -505,11 +544,13 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
     const first = rows?.[0];
     if (first) balance = toText(displayValue(Object.values(first)[0]));
   }
-  if (plan.sql === "") return { columns: [], rows: [], frozen, balance, warnings: [...warnings, ...loader.warnings] };
-  const result = await loader.client.query(plan.sql);
-  const keys = result.fields.map((item) => item.name);
+  if (plan.sql === "" && !plan.blank) return { columns: [], rows: [], frozen, balance, warnings: [...warnings, ...loader.warnings] };
+  const result = plan.blank ? { fields: [] as { name: string; dataTypeID: number }[], rows: [] as Row[] } : await loader.client.query(plan.sql);
+  const keys = plan.blank ? blankKeys(plan) : result.fields.map((item) => item.name);
   // A combo column the operator can edit gets its list, as Setting_GridCol gives it one (combo_value F, L, Q, X).
-  const columns = await Promise.all(keys.map(async (key) => {
+  // One column at a time: the lists share this connection, and readTable's savepoints must not interleave.
+  const columns: EntryColumn[] = [];
+  for (const key of keys) columns.push(await (async () => {
     // Headings show in Proper Case, as the master's do (GST, PAN and other short forms kept in capitals).
     const setupColumn = columnFor(key, plan);
     // PostgreSQL's boolean (type 16) is the desktop's bit column: a tick box.
@@ -518,8 +559,10 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
     const row = [...plan.body].reverse().find((item) => item.column.toLowerCase() === key.toLowerCase())?.row;
     if (!column.editable || !row || !["F", "L", "Q", "X"].includes(text(row, "combo_value").toUpperCase())) return column;
     return { ...column, options: await controlOptions(loader, row, plan.context) };
-  }));
-  const rows = result.rows.map((row: Row) => Object.fromEntries(keys.map((key) => [key, toText(displayValue(row[key]))])));
+  })());
+  const rows = plan.blank
+    ? Array.from({ length: BLANK_ROWS }, () => Object.fromEntries(keys.map((key) => [key, ""])))
+    : result.rows.map((row: Row) => Object.fromEntries(keys.map((key) => [key, toText(displayValue(row[key]))])));
   // Entry Approved: a party over its credit days or limit is locked on the SALE - ORDER book (entry32.ts).
   if (plan.entryId === ENTRY_APPROVED) await lockStoppedParties(loader, rows, state.firstCombo?.text ?? "");
   // Bank Statement: Cmb_FirstCombo_Leave's fc_lostfocus_qry gives the bank book's balance; the passbook's follows from the rows.
@@ -539,7 +582,13 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
   const tickRules = conditions
     .map((row) => ({ field: text(row, "qc_fieldname"), target: text(row, "qc_bn_fieldname"), control: text(row, "qc_variablename").toLowerCase(), untickBlank: text(row, "qc_systemvalue").toLowerCase() === "sys.false.blank" }))
     .filter((rule) => hasColumn(rule.field) && hasColumn(rule.target));
-  return { columns, rows, frozen, balance, finalAmount, tickRules, warnings: [...warnings, ...loader.warnings] };
+  // Outstanding Allocation: the pending bills a receipt is set off against (c1dg_SmallEntryDataGrid).
+  let detail: EntryGrid["detail"];
+  if (plan.detailSql) {
+    const bills = await loader.client.query(plan.detailSql);
+    detail = { rows: bills.rows.map((row: Row) => Object.fromEntries(bills.fields.map((item) => [item.name, toText(displayValue(row[item.name]))]))) };
+  }
+  return { columns, rows, frozen, detail, balance, finalAmount, tickRules, warnings: [...warnings, ...loader.warnings] };
 }
 
 export { columnFor };

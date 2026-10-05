@@ -394,7 +394,10 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
     let rowY = bodyTop;
     for (let line = first; line < lastLine; line += 1) {
       const isTotal = withTotals && line === table.rows.length;
+      const rowStyle = isTotal ? null : table.rowStyles?.[line] ?? null;
+      const fill = /^#?[0-9a-f]{6}$/i.test(rowStyle?.fill ?? "") ? (rowStyle?.fill ?? "").replace(/^#/, "") : "";
       if (isTotal) ops.push(`1 0.949 0.8 rg ${num(margin)} ${num(rowY - rowHeight)} ${num(tableWidth)} ${num(rowHeight)} re f 0 g`);
+      else if (fill !== "") ops.push(`${[0, 2, 4].map((at) => num(parseInt(fill.slice(at, at + 2), 16) / 255)).join(" ")} rg ${num(margin)} ${num(rowY - rowHeight)} ${num(tableWidth)} ${num(rowHeight)} re f 0 g`);
       else if (line % 2 === 1) ops.push(`0.89 0.933 0.984 rg ${num(margin)} ${num(rowY - rowHeight)} ${num(tableWidth)} ${num(rowHeight)} re f 0 g`);
       const baseline = rowY - rowHeight + (rowHeight - size) / 2 + size * 0.22;
       band.columns.forEach((source, index) => {
@@ -405,7 +408,7 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
           else if (index === band.labelAt) place("Total", { ...column, align: "left" }, index, baseline, true);
           return;
         }
-        place(cellText(table.rows[line][source] ?? null, column), column, index, baseline, false);
+        place(cellText(table.rows[line][source] ?? null, column), column, index, baseline, Boolean(rowStyle?.bold));
       });
       rowY -= rowHeight;
     }

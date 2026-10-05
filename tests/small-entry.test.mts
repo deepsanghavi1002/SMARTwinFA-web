@@ -101,3 +101,77 @@ test("|sys.fromdb| is the from-company schema, the company's own when there is n
   assert.equal(replaceSessionValues("select * from |sys.fromdb|product_master", session("rishabh_plastic27")), "select * from rishabh_plastic27.product_master");
   assert.equal(replaceSessionValues("select * from |sys.fromdb|product_master join |sys.db|x", session("group_master")), "select * from group_master.product_master join rishabh_plastic27.x");
 });
+
+test("desktop save rules that are not in the setup: rows never saved, header dates, Similar Product", async () => {
+  const { entryStatements, headerDate, skipRow } = await import("../lib/small-entry/entrySave.ts");
+  // Production planning saves only planned rows or rows already saved.
+  assert.equal(skipRow(35, { Planing: "0" }, [], 0), true);
+  assert.equal(skipRow(35, { planing: "12" }, [], 0), false);
+  assert.equal(skipRow(48, { Planing: "0" }, [], 51), false, "a saved plan is updated even at 0");
+  // Payment manual allot: column 3 is the amount; challan close: column 9 the quantity set off.
+  assert.equal(skipRow(46, { NAME: "x", PAY_ALLOT_KEY: "0", ALLOT_AMOUNT: "0" }, ["NAME", "PAY_ALLOT_KEY", "ALLOT_AMOUNT"], 0), true);
+  assert.equal(skipRow(46, { NAME: "x", PAY_ALLOT_KEY: "0", ALLOT_AMOUNT: "100" }, ["NAME", "PAY_ALLOT_KEY", "ALLOT_AMOUNT"], 0), false);
+  assert.equal(skipRow(5, {}, [], 0), false, "entries without a rule save every edited row");
+  const state = { firstCombo: { text: "Bowl", value: "8852" }, controls: { dtp_date: "02/Oct/2026" } };
+  assert.equal(headerDate("sys.dt_date", state), "'02/Oct/2026'");
+  assert.equal(headerDate("|sys.dt_date|", state), "'02/Oct/2026'");
+  assert.equal(headerDate("sys.open_pcs", state), null);
+  // Similar Product (51): ticked new row inserted, unticked saved row removed, others untouched.
+  const keys = ["prod_sub_key", "prod_key", "prod_desc", "Tick"];
+  const statements = entryStatements(51, [
+    { values: { prod_sub_key: "0", prod_key: "6154", prod_desc: "Cable", Tick: "Yes" }, deleted: false },
+    { values: { prod_sub_key: "7", prod_key: "6155", prod_desc: "Lid", Tick: "No" }, deleted: false },
+    { values: { prod_sub_key: "0", prod_key: "6156", prod_desc: "Cap", Tick: "No" }, deleted: false },
+  ], keys, state as never);
+  assert.deepEqual(statements, [
+    { sql: "", insert: { table: "prod_subsitude", fields: ["PARENT_PROD_ID", "SUB_PROD_ID", "PROD_SUB"], values: ["8852", "6154", "'Yes'"] } },
+    { sql: "Delete from prod_subsitude where PROD_SUB_KEY=7" },
+  ]);
+  assert.equal(entryStatements(35, [], keys, state as never), null, "other entries save from the setup rows");
+});
+
+test("approvals post a stock line the desktop's way: whole numbers, half to even, less out and the rest in", async () => {
+  const { balanceUpdate, toInt32 } = await import("../lib/small-entry/approvals.ts");
+  assert.equal(toInt32("2.5"), 2);
+  assert.equal(toInt32("3.5"), 4);
+  assert.equal(toInt32("738.0000"), 738);
+  assert.equal(toInt32("1.4"), 1);
+  const line = { prod_id: "20047", trn_pcs: "738", trn_pack: "0", trn_weight: "1.5", trn_qty1: "2", trn_qty2: "0", trn_qty3: "0" };
+  assert.equal(balanceUpdate(line, false), "Update prod_balance set add_pcs=add_pcs+738,add_pack=add_pack+0,add_weight=add_weight+2,add_qty1=add_qty1+2,add_qty2=add_qty2+0,add_qty3=add_qty3+0,clsg_pcs=clsg_pcs+738,clsg_pack=clsg_pack+0,clsg_weight=clsg_weight+2,clsg_qty1=clsg_qty1+2,clsg_qty2=clsg_qty2+0,clsg_qty3=clsg_qty3+0 where prec_flag='RP' and prod_id=20047");
+  assert.match(balanceUpdate(line, true), /^Update prod_balance set less_pcs=less_pcs\+738,.*clsg_pcs=clsg_pcs-738,/);
+});
+
+test("payment approvals save the whole grid, the operator's ticks laid over it", async () => {
+  const { overlayEdits } = await import("../lib/small-entry/payments.ts");
+  const grid = [
+    { out_key: "11", Name: "A", form_amt: "100", FORM_NUMBER: "No" },
+    { out_key: "12", Name: "A", form_amt: "50", FORM_NUMBER: "No" },
+    { out_key: "13", Name: "B", form_amt: "70", FORM_NUMBER: "No" },
+  ];
+  const rows = overlayEdits(grid, [{ values: { out_key: "12", Name: "A", form_amt: "50", FORM_NUMBER: "Yes" }, deleted: false }], "out_key");
+  assert.deepEqual(rows.map((row) => row.values.FORM_NUMBER), ["No", "Yes", "No"]);
+  assert.equal(rows.length, 3, "rows the operator did not touch still come, so their allotment is cleared as on the desktop");
+});
+
+test("Conference Order rounds as the desktop: the paisa half to even, the order total away from zero", async () => {
+  const { roundPaisa, roundRupee } = await import("../lib/small-entry/conference.ts");
+  assert.equal(roundPaisa(4978.656), 4978.66);
+  assert.equal(roundPaisa(0.125), 0.12, "a half goes to the even paisa");
+  assert.equal(roundPaisa(0.135), 0.14);
+  assert.equal(roundRupee(50717.35), 50717);
+  assert.equal(roundRupee(63396.5), 63397, "a half rupee goes up");
+});
+
+test("Outstanding Allocation's queries: unallocated receipts and pending bills, money compared as numbers", async () => {
+  const { entryGridSql } = await import("../lib/small-entry/gridSql.ts");
+  const context = { entryId: 19, session: { licence: 21, companySchema: "s" }, state: { firstCombo: null, controls: { cmb_smallentry2: "Add", cmb_smallentry1: "Sale" } }, entryNat: "A" } as never;
+  const result = entryGridSql("Select c.led_key,c.doc_date,c.full_docno,c.amount,sum(OUT_SETOFF) as \"SETOFF\" from x where c.doc_pos<>'D'", { context, date: (name) => (name === "dtp_date" ? "01/Apr/2026" : "05/Oct/2026") });
+  assert.match(result.sql, /a\.out_dbcode=2 and \(out_ag_outid is null or out_ag_outid=0\)/);
+  assert.match(result.sql, /out_date between '01\/Apr\/2026' and '05\/Oct\/2026'/);
+  assert.match(result.sql, /group by c\.LED_KEY/);
+  assert.ok(result.detail, "the bills grid's query");
+  assert.match(result.detail!, /c\.full_docno as "Bill_No"/);
+  assert.match(result.detail!, /a\.out_dbcode=1 and \(a\.out_entryamt-out_setoff-out_ly_setoff\)::numeric>0/);
+  assert.doesNotMatch(result.detail!, /sum\(OUT_SETOFF\)/);
+  assert.deepEqual(result.warnings, []);
+});

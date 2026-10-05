@@ -77,7 +77,9 @@ export async function POST(request: Request) {
           const def = await loadEntry(loader, body.entryName, moduleName);
           const { state, choices } = checkedState(def, body.state);
           const rows = Array.isArray(body.rows) ? body.rows.map((row) => ({ values: Object.fromEntries(Object.entries(row?.values ?? {}).map(([name, value]) => [String(name), String(value ?? "")])), deleted: row?.deleted === true })) : [];
-          return saveEntry(loader, { entryName: body.entryName, menuShortName: moduleName, state, choices, rows, dryRun: body.dryRun === true, editPassword: typeof body.editPassword === "string" ? body.editPassword : undefined });
+          // Outstanding Allocation's bills grid: each bill's set-off (amounts are read again on the server).
+          const detail = Array.isArray(body.detail) ? (body.detail as unknown[]).map((row) => Object.fromEntries(Object.entries((row ?? {}) as Record<string, unknown>).map(([name, value]) => [String(name), String(value ?? "")]))) : undefined;
+          return saveEntry(loader, { entryName: body.entryName, menuShortName: moduleName, state, choices, rows, detail, dryRun: body.dryRun === true, editPassword: typeof body.editPassword === "string" ? body.editPassword : undefined });
         }
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);

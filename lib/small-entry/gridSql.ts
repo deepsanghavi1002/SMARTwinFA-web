@@ -17,11 +17,11 @@ export type GridSqlInput = Readonly<{
   date: (name: "dtp_date" | "dtp_date2" | "dtp_date3") => string;
 }>;
 
-export type GridSqlResult = Readonly<{ sql: string; warnings: string[] }>;
+/** `detail`: a second grid's query (Outstanding Allocation's bills, c1dg_SmallEntryDataGrid). */
+export type GridSqlResult = Readonly<{ sql: string; warnings: string[]; detail?: string }>;
 
 /** Entries whose grid query the desktop builds in code; the web cannot fill them yet. */
 const REBUILT_IN_CODE: Readonly<Record<number, string>> = {
-  19: "Outstanding Allocation builds two grids from the query in code",
   69: "Product Colour Allocate builds a BOM tree query in code",
   79: "Store Despatch builds its query from the job card in code",
   107: "Challan Transfer Less needs the account chosen on the desktop form",
@@ -32,6 +32,7 @@ export function entryGridSql(source: string, input: GridSqlInput): GridSqlResult
   const { entryId, session } = context;
   const warnings: string[] = [];
   let sql = source;
+  let detail: string | undefined;
   const option = (n: 1 | 2 | 3) => (context.state.controls[`cmb_smallentry${n}`] ?? "").trim();
   const from = `'${input.date("dtp_date")}'`;
   const upto = `'${input.date("dtp_date2")}'`;
@@ -41,6 +42,27 @@ export function entryGridSql(source: string, input: GridSqlInput): GridSqlResult
   if (REBUILT_IN_CODE[entryId]) warnings.push(`${REBUILT_IN_CODE[entryId]}; not ported to the web yet`);
 
   switch (entryId) {
+    case 19: { // Outstanding Allocation, Add: the account's unallocated receipts (or payments), and below them its pending bills.
+      // The pending part of an outstanding row, as money PostgreSQL compares with 0 only once it is numeric.
+      const pending = "(out_entryamt-out_setoff-out_ly_setoff)::numeric";
+      const amount = `sum(case when ${pending} = 0 then c.amount::numeric else ${pending} end) as "AMOUNT"`;
+      let bills = sql.replace("c.doc_date", 'c.doc_date as "Date"').replace("c.full_docno", 'c.full_docno as "Bill_No"').replace("c.amount", amount);
+      sql = sql.replace("c.amount", amount);
+      if (option(2) === "Add") {
+        bills = bills.split("sum(OUT_SETOFF)").join("0");
+        const sale = option(1) === "Sale";
+        if (sale || option(1) === "Purchase" || option(1) === "Expense") {
+          sql += ` and a.out_dbcode=${sale ? 2 : 1} and (out_ag_outid is null or out_ag_outid=0)`;
+          bills += ` and a.out_dbcode=${sale ? 1 : 2} and ${pending.replace("out_entryamt", "a.out_entryamt")}>0`;
+        }
+        sql += ` and${between("out_date")} and OUT_ENTRYAMT::numeric<>0 `;
+        const group = " group by c.LED_KEY,c.doc_date,c.full_docno,c.AMOUNT,c.book,c.AC_DBCODE";
+        sql += group;
+        bills += group;
+        detail = bills;
+      }
+      break;
+    }
     case 4: // Sales Tax Form: Add lists bills without a form number, Update those with one.
       if (option(2) === "Add") swap("  order by a.DOC_DATE,a.FULL_DOCNO", " and (a.FORM_NUMBER is null or a.FORM_NUMBER = '') order by a.DOC_DATE,a.FULL_DOCNO");
       else if (option(2) === "Update") swap("  order by a.DOC_DATE,a.FULL_DOCNO", " and a.FORM_NUMBER is not null and a.FORM_NUMBER <> '' order by a.DOC_DATE,a.FULL_DOCNO");
@@ -125,5 +147,5 @@ export function entryGridSql(source: string, input: GridSqlInput): GridSqlResult
       }
       break;
   }
-  return { sql, warnings };
+  return { sql, warnings, detail };
 }

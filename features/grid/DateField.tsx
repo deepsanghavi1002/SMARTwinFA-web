@@ -11,13 +11,15 @@ import { NO_NUMBER_RULES } from "./rules";
  * the calendar (its button or Alt+↓), Ctrl+Delete to empty it. The value is always dd/MMM/yyyy;
  * text that is not a date goes back to the last good one when the box is left.
  */
-export function DateField({ value, onChange, tools, ariaLabel, disabled = false, title }: {
+export function DateField({ value, onChange, tools, ariaLabel, disabled = false, title, required = false }: {
   value: string;
   onChange: (value: string) => void;
   tools: ReturnType<typeof useEditorTools>;
   ariaLabel: string;
   disabled?: boolean;
   title?: string;
+  /** A compulsory date (a report's From / Upto): no clear button, and it cannot be emptied. */
+  required?: boolean;
 }) {
   /** What is being typed, until it is taken (Enter, Tab, leaving the box); null when not typing. */
   const [typing, setTyping] = useState<string | null>(null);
@@ -26,7 +28,7 @@ export function DateField({ value, onChange, tools, ariaLabel, disabled = false,
   /** Takes the typed text as a date when it reads as one; otherwise the box keeps its date. */
   const take = (text: string) => {
     setTyping(null);
-    if (text.trim() === "") { onChange(""); return; }
+    if (text.trim() === "") { if (!required) onChange(""); return; }
     const date = tools.typedDate(text, value);
     if (date) onChange(formatDesktopDate(date));
   };
@@ -44,12 +46,12 @@ export function DateField({ value, onChange, tools, ariaLabel, disabled = false,
         onChange={(event) => setTyping(event.target.value)}
         onBlur={() => { if (typing !== null) take(typing); }}
         onKeyDown={(event) => {
-          if (tools.keys(event, "date", shown, set, NO_NUMBER_RULES)) return;
+          if (tools.keys(event, "date", shown, set, NO_NUMBER_RULES, required)) return;
           if (event.key === "Enter" && typing !== null) { event.preventDefault(); take(typing); }
           if (event.key === "Escape" && typing !== null) { event.preventDefault(); event.stopPropagation(); setTyping(null); }
         }}
       />
-      {!disabled && tools.buttons("date", shown, set, NO_NUMBER_RULES)}
+      {!disabled && tools.buttons("date", shown, set, NO_NUMBER_RULES, required)}
     </span>
   );
 }

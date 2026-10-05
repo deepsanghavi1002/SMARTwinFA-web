@@ -60,8 +60,9 @@ export function useColumnFilters() {
   return { filters, setFilters, openFilter, setOpenFilter, draft, setDraft, search, setSearch, anchor, open, apply, clear, clearAll };
 }
 
-export function FilterButton({ caption, onOpen }: { caption: string; onOpen: () => void }) {
-  return <button type="button" className="mp-filter-button" aria-label={`Filter ${caption}`} onClick={onOpen}>▾</button>;
+/** `skipTab`: kept out of the Tab order (a screen whose Tab moves through its own fields). */
+export function FilterButton({ caption, onOpen, skipTab = false }: { caption: string; onOpen: () => void; skipTab?: boolean }) {
+  return <button type="button" className="mp-filter-button" tabIndex={skipTab ? -1 : undefined} aria-label={`Filter ${caption}`} onClick={onOpen}>▾</button>;
 }
 
 /**

@@ -16,6 +16,12 @@ const ICONS: Record<string, string> = {
   preview: "M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   excel: "M4 3h11l5 5v13H4zM8 11l4 6M12 11l-4 6M14 3v5h6",
   pdf: "M4 3h11l5 5v13H4zM14 3v5h6M8 13h1.5a1.5 1.5 0 0 1 0 3H8v-3zM8 16v2",
+  tree: "M5 4v16M5 7h6M5 13h6M5 19h6M13 5h6v4h-6zM13 11h6v4h-6zM13 17h6v4h-6z",
+  border: "M4 4h16v16H4zM4 4h16v16H4z",
+  borderOff: "M4 4h3M10 4h4M17 4h3v3M20 10v4M20 17v3h-3M14 20h-4M7 20H4v-3M4 14v-4M4 7V4",
+  mail: "M3 6h18v12H3zM3 6l9 7 9-7",
+  ok: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM7.8 12.4l2.9 2.9 5.6-5.8",
+  close: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 9l6 6M15 9l-6 6",
   move: "M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3",
 };
 
