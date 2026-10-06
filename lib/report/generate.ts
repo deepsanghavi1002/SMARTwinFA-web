@@ -3,7 +3,7 @@ import { toInt, toText } from "../master-program/legacy";
 import { SETUP_SCHEMA } from "../master-program/session";
 import type { ReportCall } from "./call";
 import { convertForOperation, desktopDate, formulaValidation, isNumeric, parseSelectionDate, quotedList } from "./formula";
-import { fillControl, PORTED_REPORTS, readReportProperties } from "./setup";
+import { fillControl, lostFocusItems, PORTED_REPORTS, readReportProperties } from "./setup";
 import { pgFragment, setBooksValueInString, setupSelect } from "./sqlText";
 
 export { pgFragment };
@@ -139,7 +139,9 @@ export async function planReport(loader: Loader, reportName: string, selection: 
   const listItems = async (name: string): Promise<ControlItem[]> => {
     if (!items.has(name)) {
       const row = controlRow(name);
-      items.set(name, row ? (await fillControl(loader, reportKey, toInt(field(row, "rep_control_key")))).items : []);
+      // The combo Cmb_FirstCombo_Leave fills (the day book's series) holds what the first combo's entry gives.
+      if (row && text(properties, "fc_lostfocus_qry") !== "" && text(properties, "lostfocus_qry_control") === name) items.set(name, (await lostFocusItems(loader, reportName, selection.firstCombo)).items);
+      else items.set(name, row ? (await fillControl(loader, reportKey, toInt(field(row, "rep_control_key")))).items : []);
     }
     return items.get(name)!;
   };
@@ -226,7 +228,13 @@ export async function planReport(loader: Loader, reportName: string, selection: 
   }
 
   // dic_FixColumnsId, and the lists GenerateReport fills.
-  const fixColumns = new Map<string, string>(fixRows.map((row) => [text(row, "fix_column_name"), toText(field(row, "fix_column_value"))]));
+  // A fix column with no value ('' in fix_columns) is no column at all: the procedures only kept it
+  // as a placeholder for their UNIONs and INSERTs, which the web builds by name. Such a column comes
+  // in only when the selection fills it (a ticked group's SMART_AC_CODE, ADDON_1_CODE ...).
+  const blankFix = (value: string | undefined) => value === undefined || ["", "''"].includes(value.trim());
+  const fixColumns = new Map<string, string>(fixRows.map((row) => [text(row, "fix_column_name"), toText(field(row, "fix_column_value"))] as [string, string]).filter(([, value]) => !blankFix(value)));
+  /** A report with fix columns takes a group's own one when it has none of that name (dic_FixColumnsId's empty slot). */
+  const fixFillable = (name: string) => fixColumns.size > 0 && blankFix(fixColumns.get(name));
   const subtotalColumns: string[] = [];
   const grouping: string[] = [];
   const hidden: string[] = [];
@@ -490,11 +498,11 @@ export async function planReport(loader: Loader, reportName: string, selection: 
         if (grid === "C1HelpProduct") { productKeys += keys; if (call.selectKey[4] === "") call.selectKey[4] = keys; }
         group1Keys += keys;
         const formatId = text(row, "formating_sp_id");
-        if (formatId !== "" && fixColumns.has(`SMART_${formatId}`) && ["", "''"].includes(fixColumns.get(`SMART_${formatId}`)!.trim())) {
+        if (formatId !== "" && fixFillable(`SMART_${formatId}`)) {
           fixColumns.set(`SMART_${formatId}`, String(field(row, "output_where")).split("in").join("").trim());
         }
         const subtotalGroup = text(row, "output_subtotal_grp");
-        if (subtotalGroup !== "" && fixColumns.has(`SMART_${subtotalGroup.toUpperCase()}`) && ["", "''"].includes(fixColumns.get(`SMART_${subtotalGroup.toUpperCase()}`)!.trim())) {
+        if (subtotalGroup !== "" && fixFillable(`SMART_${subtotalGroup.toUpperCase()}`)) {
           fixColumns.set(`SMART_${subtotalGroup.toUpperCase()}`, text(row, "output_run_select"));
         }
         if (text(row, "output_fieldlist") !== "") chkGroupSelect = `${text(row, "output_fieldlist")},`;
@@ -617,6 +625,18 @@ export async function planReport(loader: Loader, reportName: string, selection: 
       fixColumns.set("SORTING_COL", call.acAddonRepdefa !== "E"
         ? `${head} || CAST(ac.code AS varchar(10)) || '   P' || to_char(led.doc_date, 'YYYYMMDD') || CAST(ledpost.post_dbcode AS varchar(20)) || led.doc_no || CAST(led.led_key AS varchar(20)) || 'LED'`
         : `${groups.length > 0 ? groups.join(" || ' ' || ") : "''"} || '   P' || to_char(led.doc_date, 'YYYYMMDD') || CAST(ledpost.post_dbcode AS varchar(20))${unionRankingGroups.includes("SUBLED") ? " || CAST(led.led_key AS varchar(20))" : ""} || 'LED'`);
+    } else {
+      // Any other report: the groups, then (with a default date column) the date, and for the day
+      // book the voucher number and key; the schedule sorts by its code first. (The stock report's
+      // LEDGER with a book ticked has its own, not ported with it yet.)
+      const groups = unionRankingGroups.replace(/,$/, "").split(",").join(" || ' ' || ");
+      const dateColumn = text(properties, "output_defa_datecol");
+      let sorting: string;
+      if (dateColumn === "") sorting = `${groups} || '   P'`;
+      else if (reportKey === 5 || reportKey === 25 || (reportKey === 3 && unionRankingGroups !== "")) sorting = `${groups} || CAST(ac.code AS varchar(10)) || to_char(${dateColumn}, 'YYYYMMDD') || '   P'`;
+      else if (reportKey === 1) sorting = `${groups} || to_char(${dateColumn}, 'YYYYMMDD') || led.full_docno || CAST(led.led_key AS varchar(20)) || '   P'`;
+      else sorting = `${groups} || to_char(${dateColumn}, 'YYYYMMDD') || '   P'`;
+      fixColumns.set("SORTING_COL", sorting.replace(/bs\.bs_desc/gi, "bs.bs_code || ' ' || bs.bs_desc"));
     }
   }
 
@@ -664,7 +684,7 @@ export async function planReport(loader: Loader, reportName: string, selection: 
     grouping.push(monthlyColumn);
     fixColumns.set(monthlyColumn, `to_char(${dateField}, 'FMMonth')`);
   }
-  const joinFixColumns = () => [...fixColumns].map(([name, value]) => `${value.trim() === "" ? "''" : value} as "${name}",`).join("");
+  const joinFixColumns = () => [...fixColumns].filter(([, value]) => !blankFix(value)).map(([name, value]) => `${value} as "${name}",`).join("");
   const selectList = select.endsWith(",") ? select.slice(0, -1) : select;
   call.queryStart = (reportKey !== 17 ? joinFixColumns() : "") + selectList;
   call.queryStart = call.queryStart.split("|SYS.USER_NO|").join(String(session.userNo));

@@ -4,10 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
 import type { ControlItem, HelpGrid as HelpGridData, ReportDefinition, ReportOutput, ReportSelection } from "../../lib/report/types";
-import { reportCall } from "./api";
+import { reportCall, viewsCall } from "./api";
+import { SavedViews } from "./SavedViews";
+import type { SavedView } from "./SavedViews";
+import type { GroupSpec } from "../../lib/report/groupBy";
 import type { Refusal } from "./api";
 import { HelpGrid } from "./HelpGrid";
 import { OutputGrid } from "./OutputGrid";
+import type { CompareResult } from "./ReportCompare";
 import type { OutputStatus } from "./OutputGrid";
 import type { LogTable } from "../grid/LogViewer";
 import { ReportList } from "./ReportList";
@@ -62,10 +66,18 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const [upto, setUpto] = useState("");
   const [groups, setGroups] = useState<string[]>([]);
   const [choices, setChoices] = useState<Record<string, string>>({});
+  /** The items of the combo the first combo's entry fills (Cmb_FirstCombo_Leave: the day book's series). */
+  const [lostItems, setLostItems] = useState<ControlItem[] | null>(null);
   const [columnsTicked, setColumnsTicked] = useState<string[]>([]);
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [ticks, setTicks] = useState<Record<string, Set<string>>>({});
+  /** A saved view's choice for the lost-focus combo, kept when that combo is refilled. */
+  const viewChoice = useRef<string | null>(null);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  /** The Group By of the output on screen, and the one a saved view starts the next output with. */
+  const groupByNow = useRef<readonly GroupSpec[]>([]);
+  const [startGroupBy, setStartGroupBy] = useState<readonly GroupSpec[]>([]);
   const [helpTab, setHelpTab] = useState("");
   const [addonField, setAddonField] = useState("");
   const [focusHelp, setFocusHelp] = useState(0);
@@ -130,6 +142,23 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     return () => { live = false; };
   }, [call, onClose]);
 
+  // Cmb_FirstCombo_Leave: the chosen entry refills its combo (the series of the account's book), first item chosen.
+  useEffect(() => {
+    if (!def || def.lostFocusControl === "") return;
+    let live = true;
+    const name = def.lostFocusControl;
+    call<{ control: string; items: ControlItem[] }>("lostfocus", { selection: { firstCombo: first } })
+      .then((reply) => {
+        if (!live) return;
+        setLostItems(reply.items);
+        const kept = viewChoice.current;
+        viewChoice.current = null;
+        setChoices((current) => ({ ...current, [name]: kept && reply.items.some((item) => itemKey(item) === kept) ? kept : reply.items[0] ? itemKey(reply.items[0]) : "" }));
+      })
+      .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
+    return () => { live = false; };
+  }, [def, first, call]);
+
   // The keyboard starts in the first combo (or the groups when the report has none).
   useEffect(() => {
     if (!def) return;
@@ -182,6 +211,30 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     checks,
   });
 
+  // Saved views (web only).
+  const listViews = useCallback(async () => (await viewsCall<{ views: SavedView[] }>(selection!, reportName, menuShortName, "list")).views, [selection, reportName, menuShortName]);
+  const saveView = async (name: string) => { await viewsCall(selection!, reportName, menuShortName, "save", { name, payload: { selection: selectionNow(), groupBy: groupByNow.current } }); };
+  const removeView = async (name: string) => { await viewsCall(selection!, reportName, menuShortName, "delete", { name }); };
+  const applyView = (view: SavedView, keepDates: boolean) => {
+    const saved = view.payload as { selection?: Partial<ReportSelection>; groupBy?: GroupSpec[] } | null;
+    const chosen = saved?.selection;
+    if (!chosen) return;
+    const choice = def?.lostFocusControl ? chosen.choices?.[def.lostFocusControl] : undefined;
+    viewChoice.current = (chosen.firstCombo ?? "") !== first ? choice ?? null : null;
+    setFirst(chosen.firstCombo ?? "");
+    if (!keepDates) { setFrom(chosen.from ?? from); setUpto(chosen.upto ?? upto); }
+    setGroups([...(chosen.groups ?? [])]);
+    setTicks(Object.fromEntries(Object.entries(chosen.ticks ?? {}).map(([grid, keys]) => [grid, new Set(keys)])));
+    setChoices({ ...(chosen.choices ?? {}) });
+    setColumnsTicked([...(chosen.columns ?? [])]);
+    setTexts({ ...(chosen.texts ?? {}) });
+    setChecks({ ...(chosen.checks ?? {}) });
+    setStartGroupBy(saved?.groupBy ?? []);
+    groupByNow.current = saved?.groupBy ?? [];
+    setViewsOpen(false);
+    say(`View "${view.name}" applied. Press OK to run it.`);
+  };
+
   // Btn_ok_Click: GenerateReport.
   const generate = async () => {
     if (!def || busy) return;
@@ -200,11 +253,13 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
       const chosen = selectionNow();
       const reply = await call<{ output: ReportOutput }>("generate", { selection: chosen });
       generatedWith.current = chosen;
+      setGeneratedPeriod({ from: chosen.from, upto: chosen.upto });
       if (reply.refusal) { say("Report generation failed...", "", true); await refuse(reply.refusal); return; }
       setOutput(reply.output);
       setOutputRun((count) => count + 1);
       setTab("output");
-      say(`Report generation time : ${reply.output.elapsed}`, "F6 : Summarize F4 : Unsummarize");
+      // The rows and the generation time show by Arrange Columns in the output, not here.
+      say("", "F6 : Summarize F4 : Unsummarize");
     } catch (error) {
       say("Report generation failed...", "", true);
       await messageBox.alert(error instanceof Error ? error.message : String(error), "Report generation failed", "error");
@@ -221,11 +276,24 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const onGridStatus = useCallback((status: OutputStatus) => say(status.message, status.hotKeys, status.red ?? false), [say]);
   /** The selection the output was generated from, for Create Group. */
   const generatedWith = useRef<ReportSelection | null>(null);
+  /** The dates the output on screen is for (Compare periods). */
+  const [generatedPeriod, setGeneratedPeriod] = useState({ from: "", upto: "" });
   const loadGroup = useCallback(async (fields: readonly string[]) => {
     if (!generatedWith.current) return null;
     const reply = await call<{ output: ReportOutput }>("group", { selection: generatedWith.current, fields });
     if (reply.refusal) { await refuse(reply.refusal); return null; }
     return reply.output;
+  }, [call]);
+  /** Compare periods: the same selection for other dates of the year. A period with nothing in it compares as zero. */
+  const loadCompare = useCallback(async (from: string, upto: string): Promise<CompareResult> => {
+    if (!generatedWith.current) return { output: null, error: "Generate the report first." };
+    try {
+      const reply = await call<{ output: ReportOutput }>("generate", { selection: { ...generatedWith.current, from, upto } });
+      if (reply.refusal) return /No Records/i.test(reply.refusal.caption) ? { output: null, empty: true } : { output: null, error: reply.refusal.message };
+      return { output: reply.output };
+    } catch (error) {
+      return { output: null, error: error instanceof Error ? error.message : String(error) };
+    }
   }, [call]);
   const loadLog = useCallback(async (ledKey: number, processKey: number) => (await call<{ log: LogTable }>("log", { ledKey, processKey })).log, [call]);
 
@@ -259,7 +327,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const combos = def?.controls.filter((candidate) => candidate.type === "C") ?? [];
 
   return (
-    <div ref={screen} className="mp-screen rp-screen" role="region" aria-label={def?.head || title} onMouseOver={(event) => setTip((event.target as Element).closest("[title]")?.getAttribute("title") ?? "")} onMouseLeave={() => setTip("")} onFocus={() => setTip("")}>
+    <div ref={screen} className="mp-screen rp-screen" role="region" aria-label={def?.head || title} onMouseOver={(event) => { const owner = (event.target as Element).closest("[data-tip], [title]"); setTip(owner?.getAttribute("data-tip") ?? owner?.getAttribute("title") ?? ""); }} onMouseLeave={() => setTip("")} onFocus={() => setTip("")}>
       <div className="rp-body">
       <div className="rp-main">
       {tab === "select" && def && (
@@ -316,7 +384,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
               <label key={combo.name} className="rp-field">
                 <span>{combo.caption}</span>
                 <select value={choices[combo.name] ?? ""} onChange={(event) => setChoices((current) => ({ ...current, [combo.name]: event.target.value }))}>
-                  {combo.items.map((item) => <option key={itemKey(item)} value={itemKey(item)}>{item.text}</option>)}
+                  {(combo.name === def.lostFocusControl && lostItems ? lostItems : combo.items).map((item) => <option key={itemKey(item)} value={itemKey(item)}>{item.text}</option>)}
                 </select>
               </label>
             ))}
@@ -395,10 +463,12 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
             {def.dates.uptoVisible && <div className="rp-date" onFocus={() => say("Report is generated upto this date", "Alt+↓ : Calendar")}><span>{def.dates.uptoLabel}</span><DateField ariaLabel={def.dates.uptoLabel} value={upto} tools={tools} onChange={setUpto} required /></div>}
             {!def.ported && <span className="rp-warning">Output of this report is not ported yet.</span>}
             <span className="rp-spacer" />
+            <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className={`mp-btn mp-btn-plain ${viewsOpen ? "rp-btn-on" : ""}`} onClick={() => setViewsOpen((open) => !open)} title="Save this selection under a name, or apply a saved one"><Icon name="views" /><HotkeyLabel text="Views" hotkey="v" /></button>
             <button type="button" data-hotkey="k" aria-keyshortcuts="Alt+K" className="mp-btn mp-btn-green rp-ok" onClick={() => void generate()} disabled={Boolean(busy)}><Icon name="ok" /><HotkeyLabel text="OK" hotkey="k" /></button>
             <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red rp-quit" onClick={leave}><Icon name="close" /><HotkeyLabel text="Quit" hotkey="q" /></button>
           </div>
           {tools.popups}
+          {viewsOpen && <SavedViews list={listViews} save={saveView} remove={removeView} apply={applyView} onClose={() => setViewsOpen(false)} />}
         </div>
       )}
 
@@ -416,8 +486,14 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
           onQuit={leave}
           loadLog={loadLog}
           loadGroup={loadGroup}
+          loadCompare={loadCompare}
+          comparePeriod={generatedPeriod}
+          yearStart={def.dates.yearStart}
+          yearEnd={def.dates.yearEnd}
           onStatus={onGridStatus}
           onInfo={onGridInfo}
+          initialGroupBy={startGroupBy}
+          onGroupBy={(specs) => { groupByNow.current = specs; }}
         />
       )}
       </div>
@@ -426,7 +502,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
         <button type="button" role="tab" tabIndex={-1} aria-selected={tab === "output"} className={tab === "output" ? "rp-tab-on" : ""} disabled={!output} onClick={() => setTab("output")}>Output</button>
       </div>
       </div>
-      <ScreenStatus hotKeys={hotKeys} message={tip || message} error={!tip && messageRed} version={version} rows={tab === "output" && output ? gridInfo.rows : ""} totals={tab === "output" ? gridInfo.totals : ""} />
+      <ScreenStatus hotKeys={hotKeys} message={tip || message} error={!tip && messageRed} version={version} rows="" totals={tab === "output" ? gridInfo.totals : ""} />
     </div>
   );
 }

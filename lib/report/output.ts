@@ -4,6 +4,7 @@ import { SETUP_SCHEMA } from "../master-program/session";
 import type { ResultRow, ResultTable } from "./call";
 import type { ReportPlan } from "./generate";
 import { ReportRefusal } from "./generate";
+import { cashBookColumns, FIX_COLUMN_NAMES, parseRowDate, readBudgetUse, readCashPlanning } from "./library";
 import { money, num } from "./run";
 import type { OutputColumn, OutputRow, ReportOutput } from "./types";
 
@@ -102,10 +103,36 @@ export function updateClosingBalance(plan: ReportPlan, table: ResultTable): void
         balance = money(balance + num(get(row, debitCol)) - num(get(row, creditCol)));
       }
       set(row, "CLOSING_BAL", balance);
+      // The day book's bank CC interest: the rate for the days from the voucher to the Upto date.
+      if (reportKey === 1 && plan.call.text[0] !== "" && table.has("DEPOSIT") && table.has("CC_AMT") && toText(get(row, "NAME")).toUpperCase() !== "CLOSING BALANCE") {
+        const date = parseRowDate(toText(get(row, "selected_date")));
+        if (date) {
+          const upto = plan.call.upto;
+          const days = Math.round((Date.UTC(upto.getFullYear(), upto.getMonth(), upto.getDate()) - Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000) + 1;
+          const rate = num(plan.call.text[0]) / 100 / 365;
+          const deposit = num(get(row, "DEPOSIT"));
+          const withdrawal = num(get(row, "WITHDRAWAL"));
+          if (deposit > 0) set(row, "CC_AMT", Math.round(Math.abs(deposit) * rate * days * 100) / 100);
+          else if (withdrawal > 0) set(row, "CC_AMT", -Math.round(Math.abs(withdrawal) * rate * days * 100) / 100);
+        }
+      }
       if (reportKey !== 117 && reportKey !== 118) setDrCr(row, balance === 0 ? "" : balance > 0 ? "DR" : "CR");
       move(row);
     }
   }
+}
+
+/**
+ * GenerateReport before Update_ClosingBalance, the day book (key 1): the closing balance runs on the
+ * book's two amount columns (cash 4, discount 5, bank 6, and the bank's CC interest when its rate
+ * was given); any other book has no running balance and no totals.
+ */
+function cashBookTotals(plan: ReportPlan): void {
+  const list = plan.subtotalColumns;
+  list.splice(0, list.length);
+  const book = plan.call.book;
+  if (book === 4 || book === 5 || book === 6) list.push(...cashBookColumns(book));
+  if (book === 6 && plan.call.text[0] !== "") list.push("CC_AMT");
 }
 
 /** report_style: each subtotal level's colour, and the named colours Report_Combine_Load reads from it. */
@@ -152,6 +179,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const { call, properties } = plan;
   const reportKey = call.reportKey;
   const hidden = [...plan.hidden];
+  if (reportKey === 1 && table.has("closing_bal")) cashBookTotals(plan);
   const subtotalColumns = [...plan.subtotalColumns];
   const grouping = [...plan.grouping];
   const formatted = call.formating !== "";
@@ -218,7 +246,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
         const align = text(settings, "outputcol_alignment").toUpperCase();
         base.align = align === "R" ? (reportKey === 286 ? "C" : "R") : align === "C" ? "C" : "L";
       } else base.visible = false;
-    } else if (plan.fixColumns.has(name)) {
+    } else if (plan.fixColumns.has(name) || FIX_COLUMN_NAMES.has(name.toUpperCase())) {
       base.visible = false;
     } else if (kind === "decimal") {
       // A run-time number column joins the subtotals (not a closing or a rate).
@@ -294,6 +322,13 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     out.push({ kind: "total", level: -1, rowType: "", values, caption: `${"*".repeat(groupColumns.length)}* Final Total : ` });
   }
   void formattedReport;
+  // Day book and register (no format): a last line "Total Entries : n" in the date column.
+  if ((reportKey === 1 || reportKey === 3) && !formatted && table.has("selected_date")) {
+    const count = table.has("ROW_DATA_TYPE") ? table.rows.filter((row) => table.get(row, "ROW_DATA_TYPE") === "LED").length
+      : table.has("led_key") ? table.rows.filter((row) => num(table.get(row, "led_key")) > 0).length
+      : table.rows.length;
+    out.push({ kind: "data", level: -2, rowType: "COUNT", values: { [table.name("selected_date")!]: `Total Entries : ${count}` } });
+  }
 
   // The visible columns and the rows as the grid draws them.
   const shown = columns.filter((column) => column.visible && !removed.has(column.name.toUpperCase()) && !alwaysHidden.has(column.name.toUpperCase()));
@@ -347,6 +382,15 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   });
   const headingColours: Record<string, string> = { AC: styles.named.str_color_account, ST: styles.named.str_color_account, BOOK: styles.named.str_color_book, SCHEDULE: styles.named.str_color_schedule, FT: "Pink" };
 
+  // The group each heading row type stands for (an addon group is ADDON_1, ADDON_2 ... in tick order).
+  const headingCaptions: Record<string, string> = {};
+  let addons = 0;
+  for (const group of plan.tickedGroups) {
+    const name = group.text.trim();
+    if (Number(group.value) > 0) { addons += 1; headingCaptions[`ADDON_${addons}`] = name; }
+    else headingCaptions[({ ACCOUNT: "AC", BOOK: "BOOK", SCHEDULE: "SCHEDULE" } as Record<string, string>)[name.toUpperCase()] ?? name.toUpperCase()] = name;
+  }
+
   const elapsed = Math.round((Date.now() - started) / 1000);
   return {
     title: text(properties, "report_head"),
@@ -361,6 +405,10 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     reportKey,
     levelColours,
     headingColours,
+    headingCaptions,
+    formating: call.formating,
+    planning: reportKey === 1 ? await readCashPlanning(loader, plan) : null,
+    budgets: reportKey === 42 ? null : await readBudgetUse(loader, plan),
     elapsed: `${String(Math.floor(elapsed / 60)).padStart(2, "0")} Minutes ${String(elapsed % 60).padStart(2, "0")} Seconds`,
     warnings: [...loader.warnings],
   };

@@ -2,17 +2,19 @@ import type { Loader } from "../master-program/load";
 import { toText } from "../master-program/legacy";
 import type { ResultTable } from "./call";
 import { sqlServerCompare } from "./formula";
-import { planReport, ReportRefusal } from "./generate";
+import { planReport } from "./generate";
 import type { ReportPlan } from "./generate";
-import { ledgerReport } from "./ledger";
-import { ledgerFormatted } from "./ledgerFormats";
 import { buildOutput } from "./output";
+import { formattedReport } from "./reportFormating";
+import { standardReport } from "./reportStandard";
 import type { ReportOutput, ReportSelection } from "./types";
 
 /**
- * Report_Combine.GenerateReport end to end: the selection's checks and SQL (planReport), the
- * report's procedure (one function per ported SP_REPORT_STANDARD branch), and the grid
- * (buildOutput). Everything runs in one read-only transaction.
+ * Report_Combine: the one program behind every REPORT menu. GenerateReport end to end: the
+ * selection's checks and SQL (planReport, generate.ts), the procedure (SP_REPORT_STANDARD in
+ * reportStandard.ts, or SP_REPORT_FORMATING in reportFormating.ts when a format is chosen; each
+ * keeps a branch per report key, as the desktop procedures do), and the grid (buildOutput,
+ * output.ts). Routines they share are in library.ts. Everything runs in one read-only transaction.
  *
  * Not ported: the report log (log_report via SP_REPORT_XMLWRITE when setup.logfile is Y or S),
  * because the screen's transaction is read-only.
@@ -20,14 +22,12 @@ import type { ReportOutput, ReportSelection } from "./types";
 export async function runReport(loader: Loader, reportName: string, selection: ReportSelection): Promise<ReportOutput> {
   const started = Date.now();
   const plan = await planReport(loader, reportName, selection);
-  return buildOutput(loader, plan, await reportTable(loader, plan, reportName), started);
+  return buildOutput(loader, plan, await reportTable(loader, plan), started);
 }
 
-async function reportTable(loader: Loader, plan: ReportPlan, reportName: string): Promise<ResultTable> {
-  switch (plan.call.reportKey) {
-    case 4: return plan.call.formating !== "" ? ledgerFormatted(loader, plan) : ledgerReport(loader, plan);
-    default: throw new ReportRefusal(`Report ${reportName} is not available in the web version yet.`, "Not ported yet");
-  }
+/** The procedure GenerateReport calls: SP_REPORT_FORMATING for a format other than the first, else SP_STD_REPORT. */
+function reportTable(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  return plan.call.formating !== "" ? formattedReport(loader, plan) : standardReport(loader, plan);
 }
 
 /**
@@ -40,7 +40,7 @@ async function reportTable(loader: Loader, plan: ReportPlan, reportName: string)
 export async function runGroupedReport(loader: Loader, reportName: string, selection: ReportSelection, fields: readonly string[]): Promise<ReportOutput> {
   const started = Date.now();
   const plan = await planReport(loader, reportName, selection);
-  const table = await reportTable(loader, plan, reportName);
+  const table = await reportTable(loader, plan);
 
   const selectedName = table.name("SELECTED_NAME");
   const name = table.name("NAME");

@@ -6,6 +6,8 @@
  * red in turn), and Export to EXCEL as a CSV the spreadsheet opens.
  */
 
+import { useEscapeClose } from "./useEscapeClose";
+
 export type LogTable = Readonly<{ columns: readonly string[]; rows: readonly (readonly string[])[]; message: string }>;
 
 /** gridForm.Load: each cell's colour class, by comparing it with the column before it. */
@@ -36,6 +38,7 @@ export function exportLog(table: LogTable, name: string) {
 }
 
 export function LogViewer({ table, title, onClose }: { table: LogTable; title: string; onClose: () => void }) {
+  useEscapeClose(onClose);
   const colours = logColours(table);
   return (
     <div className="mp-dialog-backdrop" role="presentation">

@@ -27,7 +27,7 @@ const flag = (row: Row | undefined, name: string) => {
 };
 
 /** Reports whose output is ported (their SP_REPORT_STANDARD branch and Report_Combine's handling of it). */
-export const PORTED_REPORTS: ReadonlySet<number> = new Set([4]);
+export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 4, 42]);
 
 /** The help grid each help id fills, when report_controlval does not name one (UNKNOWN_HELP_GRID). */
 const KEY_COLUMN: Readonly<Record<string, string>> = {
@@ -362,5 +362,33 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
     ported: PORTED_REPORTS.has(reportKey),
     licence: session.licence,
     unsupported,
+    lostFocusControl: text(properties, "fc_lostfocus_qry") !== "" && controls.some((control) => control.type === "C" && control.name === text(properties, "lostfocus_qry_control")) ? text(properties, "lostfocus_qry_control") : "",
   };
+}
+
+/**
+ * Cmb_FirstCombo_Leave for a combo: fc_lostfocus_qry run for the chosen first combo entry
+ * (|sys.firstcombovalue|, the year's dates), shown by fc_lf_qry_dispmem with fc_lf_qry_key as its
+ * value, ALL first when lf_qry_cntrl_all. The day book's series (BOOK_NUMBER of the account's book).
+ * Each item carries the control's own Sys.RuntimeFill report_controlval key.
+ */
+export async function lostFocusItems(loader: Loader, reportName: string, firstValue: string): Promise<{ control: string; items: ControlItem[] }> {
+  const { session } = loader;
+  const properties = await readReportProperties(loader, reportName);
+  const reportKey = toInt(field(properties, "report_key"));
+  const query = text(properties, "fc_lostfocus_qry");
+  const control = text(properties, "lostfocus_qry_control");
+  if (query === "" || control === "") return { control: "", items: [] };
+  const controlRow = (await loader.readTable(`SELECT rep_control_key FROM ${SETUP_SCHEMA}.report_control WHERE rep_properties_id = $1 AND control_name = $2`, [reportKey, control]))?.[0];
+  const valueRow = controlRow ? (await loader.readTable(`SELECT rep_controlval_key FROM ${SETUP_SCHEMA}.report_controlval WHERE rep_properties_id = $1 AND rep_control_id = $2 ORDER BY control_serial LIMIT 1`, [reportKey, toInt(field(controlRow, "rep_control_key"))]))?.[0] : undefined;
+  const controlValKey = valueRow ? toInt(field(valueRow, "rep_controlval_key")) : 0;
+  const item = (shown: string, value: string): ControlItem => ({ controlValKey, text: shown, value, extra: ["", "", "", "", ""], showControls: "" });
+  const all = flag(properties, "lf_qry_cntrl_all") ? [item("ALL", "")] : [];
+  if (!/^-?\d+$/.test(firstValue.trim())) return { control, items: all };
+  let sql = setBooksValueInString(query).split("|sys.firstcombovalue|").join(firstValue.trim());
+  sql = literal(literal(sql, "|sys.tarikh1|", desktopDate(session.tarikh1)), "|sys.tarikh2|", desktopDate(session.tarikh2));
+  const rows = await loader.readTable(setupSelect(sql)) ?? [];
+  const display = text(properties, "fc_lf_qry_dispmem");
+  const key = text(properties, "fc_lf_qry_key");
+  return { control, items: [...all, ...rows.map((row) => item(text(row, display), text(row, key)))] };
 }

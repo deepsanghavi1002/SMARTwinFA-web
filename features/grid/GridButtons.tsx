@@ -17,7 +17,7 @@ export type GridButtonsSource = "master" | "small-entry" | "entry" | "report";
 
 type Action = Readonly<{ onClick: () => void; disabled?: boolean; title?: string }>;
 
-export function GridButtons({ source, busy = false, save, output, print, refresh, cancel, quit, log, arrange, extra, beforeQuit, search, clearFilters, count, children }: {
+export function GridButtons({ source, busy = false, save, output, print, refresh, cancel, quit, log, arrange, afterArrange, secondRow, extra, beforeQuit, search, clearFilters, count, children }: {
   /** Which screen the bar belongs to (its buttons' ids and titles name it). */
   source: GridButtonsSource;
   busy?: boolean;
@@ -31,6 +31,10 @@ export function GridButtons({ source, busy = false, save, output, print, refresh
   quit?: Action;
   log?: Action;
   arrange?: Action & { hidden: number };
+  /** Buttons of the screen's own on a second row: Quit ends the first row, these start the next (before Arrange Columns). */
+  secondRow?: ReactNode;
+  /** Shown right after Arrange Columns (the report's rows and generation time). */
+  afterArrange?: ReactNode;
   /** Buttons of the screen's own, between Refresh / Cancel and Quit (the report's Create Tree ... Log). */
   beforeQuit?: ReactNode;
   /** Controls of the screen's own, before the search box (the master's scheme boxes). */
@@ -59,12 +63,15 @@ export function GridButtons({ source, busy = false, save, output, print, refresh
       {cancel && <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={cancel.onClick} disabled={cancel.disabled} title={cancel.title}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>}
       {beforeQuit}
       {quit && <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={quit.onClick} disabled={quit.disabled} title={quit.title}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>}
+      {secondRow !== undefined && <span className="mp-break" aria-hidden="true" />}
+      {secondRow}
       {log && <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={log.onClick} disabled={busy || log.disabled} title={log.title}><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>}
       {arrange && <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={arrange.onClick} title={arrange.title ?? "Arrange columns: change their order, show or hide them"}><Icon name="columns" /><HotkeyLabel text="Arrange Columns" hotkey="o" />{arrange.hidden ? ` (${arrange.hidden} hidden)` : ""}</button>}
+      {clearFilters && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" onClick={clearFilters}><Icon name="clear" /><HotkeyLabel text="Clear filters" hotkey="a" /></button>}
+      {afterArrange}
       {(search || count !== undefined) && <span className="mp-spacer" />}
       {extra}
       {search && <label className="mp-search"><Icon name="search" /><input id={search.id} type="search" placeholder="Search all columns (Ctrl+F)" value={search.value} onChange={(event) => search.onChange(event.target.value)} onKeyDown={(event) => { if (search.onEnter && (event.key === "Enter" || event.key === "F3")) { event.preventDefault(); search.onEnter(); } }} /></label>}
-      {clearFilters && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" onClick={clearFilters}><Icon name="clear" /><HotkeyLabel text="Clear filters" hotkey="a" /></button>}
       {count !== undefined && <span className="mp-count">{count}</span>}
       {children}
     </div>

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { HotkeyLabel } from "../ui/hotkeys";
+import { useEscapeClose } from "./useEscapeClose";
 
 /**
  * The Arrange Columns screen: every column of the Update grid in its order, numbered. A column
@@ -25,6 +26,7 @@ export function ArrangeColumns({
   onResetOrder: () => void;
   onClose: () => void;
 }) {
+  useEscapeClose(onClose);
   const fixedCount = items.filter((item) => item.fixed).length;
   const firstMovable = items.find((item) => !item.fixed)?.key ?? null;
   const [picked, setPicked] = useState<string | null>(firstMovable);

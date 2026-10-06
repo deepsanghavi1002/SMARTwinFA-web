@@ -41,9 +41,14 @@ export function literal(sql: string, token: string, value: string): string {
  */
 export function pgFragment(sql: string, plan: Readonly<{ moneyColumns: readonly string[] }>, schema: string): string {
   let out = sql.split("|sys.db|").join(`${schema}.`);
+  // The few columns PostgreSQL keeps in capitals: ledger."TYPE", prod_ledger."TYPE", account."LIMIT".
+  out = out.replace(/\b(led|ledger|prodled|pled|prod_ledger)\.type\b(?!")/gi, '$1."TYPE"').replace(/\b(ac|account)\.limit\b(?!")/gi, '$1."LIMIT"');
   if (plan.moneyColumns.length > 0) {
     const pattern = new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)\\.(${plan.moneyColumns.join("|")})\\b(?!\\s*::)`, "gi");
     out = out.replace(pattern, "$1.$2::numeric");
+    // A bare money column as a CASE result (case when bk_dbcode=1 then amount else 0.00 end).
+    const bare = new RegExp(`\\b(then|else)\\s+(${plan.moneyColumns.join("|")})\\b(?!\\s*::|\\s*\\.|\\s*\\()`, "gi");
+    out = out.replace(bare, "$1 $2::numeric");
   }
   return out;
 }

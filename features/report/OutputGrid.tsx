@@ -5,6 +5,8 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as 
 import type { ExportRowStyle } from "../../lib/export/table";
 import type { OutputColumn, OutputRow, ReportOutput } from "../../lib/report/types";
 import { ArrangeColumns } from "../grid/ArrangeColumns";
+import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
+import { filterHolds, sortedDistinct } from "../grid/filter";
 import { exportTableFrom } from "../grid/exportTable";
 import { FoundText } from "../grid/FoundText";
 import { GridButtons } from "../grid/GridButtons";
@@ -18,6 +20,14 @@ import { useGridOutput } from "../grid/useGridOutput";
 import { HotkeyLabel } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { messageBox } from "../ui/MessageBox";
+import { ReportChart } from "./ReportChart";
+import { applyGroupBy } from "../../lib/report/groupBy";
+import type { GroupSpec } from "../../lib/report/groupBy";
+import { BudgetPanel } from "./BudgetPanel";
+import { GrowthPanel } from "./GrowthPanel";
+import { GroupByPanel } from "./GroupByPanel";
+import { ReportCompare } from "./ReportCompare";
+import type { CompareResult } from "./ReportCompare";
 
 /**
  * C1_OUTPUT, the report's output grid: headings, opening, entries, closing, a subtotal under each
@@ -36,10 +46,15 @@ import { messageBox } from "../ui/MessageBox";
  *   Colour (BorderColour_Click) colours every border; 3 px outside a block, 1 px between its cells.
  * - Columns: drag a heading's right edge to size one; right-click a heading or cell to hide, show
  *   or move columns; Arrange Columns lists them all.
+ * - Filters: a report with no groups and no subtotals has the ▾ column filters of the other grids.
+ *   With a column filter or the search box in use, the final total (and the day book's "Total
+ *   Entries") is worked out again from the rows shown.
+ * - Chart (web only): summary cards and a donut of an amount column by group (ReportChart).
  * - Log (btn_Log_Click): the edit log of the voucher of the current row.
  * - Excel, PDF, Print and Preview keep the headings', subtotals' and total's colours.
  */
 
+const NO_GROUPS: readonly GroupSpec[] = [];
 const ROW = 22;
 const MARK = 16;
 const TREE = 20;
@@ -67,7 +82,7 @@ function hexColour(colour: string): string {
   }
 }
 
-export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onBack, onQuit, loadLog, loadGroup, onStatus, onInfo }: {
+export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onBack, onQuit, loadLog, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy }: {
   output: ReportOutput;
   fallbackTitle: string;
   companyName: string;
@@ -80,9 +95,17 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   loadLog: (ledKey: number, processKey: number) => Promise<LogTable>;
   /** Create Group: the report's entries grouped on these fields (none: the final total only). */
   loadGroup: (fields: readonly string[]) => Promise<ReportOutput | null>;
+  /** Compare periods: the report for other dates of the year, and the dates this one is for. */
+  loadCompare: (from: string, upto: string) => Promise<CompareResult>;
+  comparePeriod: Readonly<{ from: string; upto: string }>;
+  yearStart: string;
+  yearEnd: string;
   onStatus: (status: OutputStatus) => void;
   /** What the status line shows for the grid: its rows, and the selected cells' total. */
   onInfo: (rows: string, totals: string) => void;
+  /** Group By to start with (a saved view), and told whenever it changes (to save it with a view). */
+  initialGroupBy?: readonly GroupSpec[];
+  onGroupBy?: (specs: readonly GroupSpec[]) => void;
 }) {
   // ---- Create Group (C1_OUTPUT_GROUP) ----
   const [groupMode, setGroupMode] = useState(false);
@@ -90,7 +113,13 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [groupFields, setGroupFields] = useState<string[]>([]);
   const [groupPick, setGroupPick] = useState("");
   const [groupBusy, setGroupBusy] = useState(false);
-  const output = groupMode && groupOutput ? groupOutput : base;
+  /** Group By: the levels the rows on screen are regrouped by (none: the report as it is). */
+  // (kept with the report it was set for, so a report generated again starts ungrouped)
+  const [grouping, setGrouping] = useState<{ forBase: ReportOutput; specs: readonly GroupSpec[] }>({ forBase: base, specs: initialGroupBy ?? [] });
+  const groupSpecs = grouping.forBase === base ? grouping.specs : NO_GROUPS;
+  const setGroupSpecs = (specs: readonly GroupSpec[]) => { setGrouping({ forBase: base, specs }); onGroupBy?.(specs); };
+  const served = groupMode && groupOutput ? groupOutput : base;
+  const output = useMemo(() => applyGroupBy(served, groupSpecs), [served, groupSpecs]);
 
   const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
@@ -108,6 +137,9 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [logTable, setLogTable] = useState<LogTable | null>(null);
   const [menu, setMenu] = useState<(GridMenuPlace & { key: string }) | null>(null);
   const [arranging, setArranging] = useState(false);
+  /** The side panel: the chart, or the comparison with another period. */
+  const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | null>(null);
+  const charting = panel === "chart";
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
   const scroller = useRef<HTMLDivElement>(null);
@@ -141,20 +173,90 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     return starts;
   }, [output]);
 
-  /** The rows shown, with their index in output.rows. */
+  // ---- Column filters (a report with no groups and no subtotals) and the search box ----
+  const filterable = output.groups.length === 0 && !output.rows.some((row) => row.kind === "subtotal");
+  const columnFilters = useColumnFilters();
+  const { filters } = columnFilters;
+  const clearAllFilters = columnFilters.clearAll;
+  useEffect(() => { clearAllFilters(); }, [output, clearAllFilters]);
+  const activeFilters = filterable ? Object.keys(filters).length : 0;
+  const needle = search.trim().toUpperCase();
+  /** The rows a filter or the search can leave out: the entries, not the total or the day book's "Total Entries" line. */
+  const filteredKind = (row: OutputRow) => row.kind === "data" && row.rowType !== "COUNT";
+  /** Whether a row passes the search and every column filter but `except` (the one whose list is being opened). */
+  const passes = (row: OutputRow, except?: string) => {
+    if (!filteredKind(row)) return true;
+    if (needle !== "" && !Object.values(row.values).some((value) => value.toUpperCase().includes(needle))) return false;
+    if (activeFilters === 0) return true;
+    return Object.entries(filters).every(([key, columnFilter]) => {
+      if (key === except) return true;
+      const column = output.columns.find((candidate) => candidate.key === key);
+      const value = row.values[key] ?? "";
+      return !column || filterHolds(column.kind, columnFilter, value.replace(/,/g, ""), value);
+    });
+  };
+  const valuesOf = (column: OutputColumn) => sortedDistinct(output.rows.filter((row) => filteredKind(row) && passes(row, column.key)).map((row) => row.values[column.key] ?? ""));
+
+  /**
+   * The rows shown, with their index in output.rows. With a filter or a search in use the final
+   * total holds the shown entries' sums (the columns the total sums), and "Total Entries" their count.
+   */
   const shown = useMemo(() => {
     const hidden = new Set<number>();
     if (tree) for (const node of closed) { const start = groupStart.get(node) ?? node; for (let at = start; at < node; at += 1) hidden.add(at); }
-    const needle = search.trim().toUpperCase();
+    const narrowed = needle !== "" || activeFilters > 0;
     const list: { row: OutputRow; index: number }[] = [];
+    const sums = new Map<string, number>();
+    let entries = 0;
     output.rows.forEach((row, index) => {
       if (hidden.has(index)) return;
+      if (!passes(row)) return;
+      if (narrowed && filteredKind(row)) {
+        for (const column of output.columns) if (column.kind === "number") sums.set(column.key, (sums.get(column.key) ?? 0) + (Number((row.values[column.key] ?? "").replace(/,/g, "")) || 0));
+        if (row.rowType === "LED") entries += 1;
+      }
+      let drawn = row;
+      if (narrowed && row.kind === "total") {
+        const values = { ...row.values };
+        for (const column of output.columns) {
+          if (column.kind !== "number" || (row.values[column.key] ?? "") === "") continue;
+          values[column.key] = (sums.get(column.key) ?? 0).toLocaleString("en-IN", { minimumFractionDigits: column.decimals, maximumFractionDigits: column.decimals });
+        }
+        drawn = { ...row, values };
+      } else if (narrowed && row.rowType === "COUNT") {
+        drawn = { ...row, values: Object.fromEntries(Object.entries(row.values).map(([key, value]) => [key, value.startsWith("Total Entries") ? `Total Entries : ${entries}` : value])) };
+      }
       if (!tree && collapsed && row.kind === "data") return;
-      if (needle !== "" && row.kind === "data" && !Object.values(row.values).some((value) => value.toUpperCase().includes(needle))) return;
-      list.push({ row, index });
+      list.push({ row: drawn, index });
     });
     return list;
-  }, [output, tree, closed, groupStart, collapsed, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
+  }, [output, tree, closed, groupStart, collapsed, needle, filters, activeFilters]);
+  /** The column the chart filtered the grid on (its picked slice), which the chart itself does not apply. */
+  const [chartFilter, setChartFilter] = useState<string | null>(null);
+  /** The rows the filters and the search let through, whatever the tree or F6 hides (what the chart counts). */
+  const passingIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row) ? [index] : []))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
+    [output, needle, filters, activeFilters]);
+  /** The same without the chart's own pick, so its donut stays whole and another slice can be picked. */
+  const donutIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row, chartFilter ?? undefined) ? [index] : []))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
+    [output, needle, filters, activeFilters, chartFilter]);
+  /** A slice picked in the chart: the grid's column filtered to its value (null clears it). */
+  const filterTo = (columnKey: string, value: string | null) => {
+    setChartFilter(value === null ? null : columnKey);
+    columnFilters.setFilters((current) => {
+      const next = { ...current };
+      if (value === null) delete next[columnKey]; else next[columnKey] = { values: [value] };
+      return next;
+    });
+  };
+  /** A row as drawn (a recalculated total), else as the report gave it. */
+  const rowByIndex = useMemo(() => {
+    const map = new Map(output.rows.map((row, index) => [index, row]));
+    for (const entry of shown) map.set(entry.index, entry.row);
+    return map;
+  }, [output, shown]);
 
   const at: Point = { row: Math.min(cursor.row, Math.max(0, shown.length - 1)), col: Math.min(cursor.col, Math.max(0, columns.length - 1)) };
   const box = selEnd === null ? null : { r1: Math.min(at.row, selEnd.row), r2: Math.max(at.row, selEnd.row), c1: Math.min(at.col, selEnd.col), c2: Math.max(at.col, selEnd.col) };
@@ -176,7 +278,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     if (box) for (let row = box.r1; row <= box.r2; row += 1) for (let col = box.c1; col <= box.c2; col += 1) { const key = cellKey(row, col); if (key) keys.add(key); }
     if (picked.size > 0) { const key = cellKey(at.row, at.col); if (key) keys.add(key); }
     if (keys.size < 2) return "";
-    const byIndex = new Map(output.rows.map((row, index) => [index, row]));
+    const byIndex = rowByIndex;
     const cells: string[] = [];
     let places = 0;
     for (const key of keys) {
@@ -188,7 +290,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       places = Math.max(places, column.decimals);
     }
     return selectionTotals(cells, places) ?? "";
-  }, [box?.r1, box?.r2, box?.c1, box?.c2, picked, at.row, at.col, columns, shown, output]); // eslint-disable-line react-hooks/exhaustive-deps -- box is derived from these
+  }, [box?.r1, box?.r2, box?.c1, box?.c2, picked, at.row, at.col, columns, shown, output, rowByIndex]); // eslint-disable-line react-hooks/exhaustive-deps -- box is derived from these
   const rowsText = `Rows : ${shown.length}${shown.length !== output.rows.length ? ` of ${output.rows.length}` : ""}${collapsed && !tree ? " · Summary" : ""}${tree ? " · Tree" : ""}${groupMode ? " · Group" : ""}`;
   /**
    * The bordered (coloured) cells' total: those of the current column when it is a number column
@@ -196,7 +298,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
    */
   const borderTotals = useMemo(() => {
     if (borders.size === 0) return "";
-    const byIndex = new Map(output.rows.map((row, index) => [index, row]));
+    const byIndex = rowByIndex;
     const currentKey = columns[at.col]?.key ?? "";
     const entries = [...borders].map((key) => { const split = key.indexOf("|"); return { row: byIndex.get(Number(key.slice(0, split))), column: output.columns.find((candidate) => candidate.key === key.slice(split + 1)) }; })
       .filter((entry) => entry.row && entry.column?.kind === "number");
@@ -206,7 +308,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     const places = Math.max(0, ...used.map((entry) => entry.column?.decimals ?? 0));
     const sum = selectionTotals(used.map((entry) => entry.row?.values[entry.column?.key ?? ""] ?? ""), places);
     return sum ? `Bordered${inCurrent.length > 0 ? ` ${columns[at.col]?.caption ?? ""}` : ""} ▸ ${sum}` : "";
-  }, [borders, output, columns, at.col]);
+  }, [borders, output, columns, at.col, rowByIndex]);
   useEffect(() => { onInfo(rowsText, [totals, borderTotals].filter(Boolean).join("   ‖   ")); }, [rowsText, totals, borderTotals, onInfo]);
 
   const lefts = useMemo(() => {
@@ -526,7 +628,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       const start = col;
       let width = widthOf(column);
       const value = row.values[column.key] ?? "";
-      if (column.kind === "text" && value !== "" && value.length * 7 > width) {
+      // Any non-number column spills (the day book's "Total Entries : n" sits in the date column).
+      if (column.kind !== "number" && value !== "" && value.length * 7 > width) {
         while (col + 1 < columns.length && (row.values[columns[col + 1].key] ?? "") === "" && value.length * 7 > width) {
           col += 1;
           width += widthOf(columns[col]);
@@ -557,6 +660,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         <b>{output.title}</b>
         <span>{output.dateLine}</span>
         <span>{output.selectionLine}</span>
+        {groupSpecs.length > 0 && <span>Group By : {output.groups.join(" › ")}</span>}
       </div>
       {groupMode && (
         <div className="rp-group-bar" role="group" aria-label="Create Group">
@@ -571,6 +675,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           <button type="button" className="mp-btn mp-btn-red" onClick={exitGroup} disabled={groupBusy} title="Leave Create Group and go back to the report"><Icon name="quit" />Exit Group</button>
         </div>
       )}
+      <div className="rp-out-body">
       <div className="mp-update">
         <div
           className={`mp-scroll rp-out-scroll ${drawing ? "rp-drawing" : ""}`}
@@ -587,12 +692,14 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         >
           <div className="mp-grid" style={{ height: (shown.length + 1) * ROW, minWidth: totalWidth + 20 }}>
             <div className="mp-row mp-head" style={{ top: 0 }}>
-              <div className="mp-cell mp-rownum rp-count" title="Entries">{output.records}</div>
+              <div className="mp-cell mp-rownum rp-count" data-tip="Entries">{output.records}</div>
               {tree && <div className="mp-cell rp-tree" aria-hidden="true" />}
               {columns.map((column, col) => (
-                <div key={column.key} data-head={column.key} className={`mp-cell ${col === at.col ? "rp-head-on" : ""}`} style={{ width: widthOf(column), textAlign: align(column) }} title={`${column.caption} · right-click to hide · drag the right edge to size`}>
+                <div key={column.key} data-head={column.key} className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""}`} style={{ width: widthOf(column), textAlign: align(column) }} data-tip={`${column.caption} · ${filterable ? "▾ to filter · " : ""}right-click to hide · drag the right edge to size`}>
                   <span className="mp-head-label">{column.caption}</span>
+                  {filterable && <FilterButton caption={column.caption} onOpen={() => columnFilters.open(column.key, valuesOf(column))} skipTab />}
                   {layout.resizeHandle(column)}
+                  {filterable && <FilterPopup state={columnFilters} columnKey={column.key} caption={column.caption} kind={column.kind} values={columnFilters.openFilter === column.key ? valuesOf(column) : []} area={scroller} />}
                 </div>
               ))}
             </div>
@@ -605,7 +712,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                   <div className="mp-cell mp-rownum" aria-hidden="true">{current ? "▶" : ""}</div>
                   {tree && (
                     <div className="mp-cell rp-tree">
-                      {row.kind === "subtotal" && <button type="button" tabIndex={-1} className="rp-tree-node" aria-label={closed.has(source) ? "Open group" : "Close group"} title={closed.has(source) ? "Open group" : "Close group"} onClick={() => toggleNode(source)}>{closed.has(source) ? "⊞" : "⊟"}</button>}
+                      {row.kind === "subtotal" && <button type="button" tabIndex={-1} className="rp-tree-node" aria-label={closed.has(source) ? "Open group" : "Close group"} data-tip={closed.has(source) ? "Open group" : "Close group"} onClick={() => toggleNode(source)}>{closed.has(source) ? "⊞" : "⊟"}</button>}
                     </div>
                   )}
                   {spill(row).map(({ column, col, width }) => {
@@ -618,7 +725,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                         data-col={col}
                         className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""}`}
                         style={{ width, textAlign: align(column), ...(current || selected ? {} : style), ...borderStyle(position, col) }}
-                        title={text}
+                        data-tip={text}
                       >
                         {here && typed ? <FoundText text={text} typed={typed} /> : text}
                       </div>
@@ -630,6 +737,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           </div>
         </div>
       </div>
+      {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterTo(columnKey, party) : undefined} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto) => { const result = await loadCompare(from, upto); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      </div>
       <GridButtons
         source="report"
         busy={busy || groupBusy}
@@ -637,20 +750,30 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         refresh={{ onClick: () => { setGroupMode(false); setGroupOutput(null); onRefresh(); }, title: "Generate the report again" }}
         beforeQuit={(
           <>
-            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-plain" onClick={() => void createTree()} title={tree ? "Remove the tree format" : "Show the groups as a tree that opens and closes"}><Icon name="tree" /><HotkeyLabel text={tree ? "Remove Tree" : "Create Tree"} hotkey="c" /></button>
+            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-plain" onClick={() => void createTree()} disabled={!tree && (output.groups.length === 0 || !output.subtotals)} title={tree ? "Remove the tree format" : "Show the groups as a tree that opens and closes"}><Icon name="tree" /><HotkeyLabel text={tree ? "Remove Tree" : "Create Tree"} hotkey="c" /></button>
             <button type="button" data-hotkey="g" aria-keyshortcuts="Alt+G" className={`mp-btn mp-btn-plain ${groupMode ? "rp-btn-on" : ""}`} onClick={() => void createGroup()} disabled={groupBusy} title="Group the entries on fields of your choice"><Icon name="columns" /><HotkeyLabel text="Create Group" hotkey="g" /></button>
             <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className={`mp-btn mp-btn-plain ${drawing ? "rp-btn-on" : ""}`} onClick={borderOn} title="Border the selected cells, then click cells to border them (Esc stops)"><Icon name="border" /><HotkeyLabel text="Border On" hotkey="o" /></button>
             <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-plain" onClick={borderOff} title="Remove Border from the selected cells, and stop drawing"><Icon name="borderOff" /><HotkeyLabel text="Border Off" hotkey="b" /></button>
             <button type="button" data-hotkey="e" aria-keyshortcuts="Alt+E" className="mp-btn mp-btn-plain rp-colour-btn" onClick={() => colourInput.current?.click()} title="Border Colour"><span className="rp-colour-swatch" style={{ background: borderColour }} aria-hidden="true" /><HotkeyLabel text="Border Colour" hotkey="e" /></button>
             <input ref={colourInput} type="color" className="rp-colour-input" tabIndex={-1} aria-label="Border colour" value={borderColour} onChange={(event) => setBorderColour(event.target.value)} />
             <button type="button" data-hotkey="m" aria-keyshortcuts="Alt+M" className="mp-btn mp-btn-blue" onClick={email} title="e-Mail the ledger confirmation"><Icon name="mail" /><HotkeyLabel text="eMail" hotkey="m" /></button>
-            <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={busy} title="The edit log of the voucher of the current row"><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>
           </>
         )}
         quit={{ onClick: onQuit }}
+        secondRow={(
+          <>
+            <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={busy} title="The edit log of the voucher of the current row"><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>
+            <button type="button" data-hotkey="y" aria-keyshortcuts="Alt+Y" className={`mp-btn mp-btn-plain ${panel === "groupby" || groupSpecs.length > 0 ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "groupby" ? null : "groupby"))} title="Regroup the rows on screen by a column or a period"><Icon name="groupby" /><HotkeyLabel text="Group By" hotkey="y" /></button>
+            <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" className={`mp-btn mp-btn-plain ${panel === "growth" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "growth" ? null : "growth"))} title="Top parties (A/B/C), who is up or down, who to follow up"><Icon name="growth" /><HotkeyLabel text="Growth" hotkey="n" /></button>
+            <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" className={`mp-btn mp-btn-plain ${panel === "budget" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "budget" ? null : "budget"))} title="Budget against actual for the accounts in this report"><Icon name="budget" /><HotkeyLabel text="Budget" hotkey="u" /></button>
+            <button type="button" data-hotkey="k" aria-keyshortcuts="Alt+K" className={`mp-btn mp-btn-plain ${panel === "compare" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "compare" ? null : "compare"))} title="Compare with another period of the year"><Icon name="compare" /><HotkeyLabel text="Compare" hotkey="k" /></button>
+            <button type="button" data-hotkey="h" aria-keyshortcuts="Alt+H" className={`mp-btn mp-btn-plain ${charting ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "chart" ? null : "chart"))} title="Summary cards and a donut chart of the amounts, by group"><Icon name="chart" /><HotkeyLabel text="Chart" hotkey="h" /></button>
+          </>
+        )}
         arrange={{ onClick: () => setArranging(true), hidden: layout.hiddenColumns.length }}
+        afterArrange={<span className="rp-run-info"><span>{rowsText}</span><span>Time : {output.elapsed.replace(" Minutes ", " Min ").replace(" Seconds", " Sec")}</span></span>}
         search={{ id: "rp-search", value: search, onChange: (value) => { setSearch(value); setCursor({ row: 0, col: at.col }); setSelEnd(null); } }}
-        clearFilters={search ? () => setSearch("") : null}
+        clearFilters={search || activeFilters > 0 ? () => { setSearch(""); clearAllFilters(); setChartFilter(null); } : null}
       />
       {gridOutput.dialogs}
       {menu && <GridMenu at={menu} items={columnMenuItems(layout, menu.key, () => setArranging(true))} onClose={() => { setMenu(null); scroller.current?.focus(); }} />}

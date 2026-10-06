@@ -1,3 +1,4 @@
+import type { BudgetUse, CashPlanning } from "./planning";
 /**
  * The generic report screen (the desktop's Report_Combine form), as the browser and the server
  * exchange it. One screen serves every REPORT menu; which report is named by menumaster.actionmenu,
@@ -132,6 +133,8 @@ export type ReportDefinition = Readonly<{
   licence: number;
   /** Setup the web cannot run yet, named so the screen can say so. */
   unsupported: readonly string[];
+  /** lostfocus_qry_control: the combo Cmb_FirstCombo_Leave refills for the chosen first combo entry (cmb_BookSeries); "" when none. */
+  lostFocusControl: string;
 }>;
 
 /** The selection as the operator made it, sent with Generate. */
@@ -197,6 +200,14 @@ export type ReportOutput = Readonly<{
   levelColours: Readonly<Record<string, string>>;
   /** Heading row colours by ROW_DATA_TYPE (AC, BOOK, SCHEDULE ...). */
   headingColours: Readonly<Record<string, string>>;
+  /** What each heading row type stands for, from the ticked groups (AC: Account, BOOK: Book, ADDON_1: Area ...). */
+  headingCaptions: Readonly<Record<string, string>>;
+  /** The format that ran (MONTHLY, DAILY, WEEKLY, HALF_MONTH, QUATER_YEAR, HALF_YEAR, SUMMARY ...); "" for the standard report. */
+  formating: string;
+  /** The account's own cash position (day book of a cash, discount or bank account); null for other reports. */
+  planning: CashPlanning | null;
+  /** The budgets (account master) of the accounts the report was run for, against the period's actuals; null when no account was ticked. */
+  budgets: readonly BudgetUse[] | null;
   elapsed: string;
   warnings: readonly string[];
   /** report_properties.subtotal_req: the output can be shown as a tree (Create Tree). */
