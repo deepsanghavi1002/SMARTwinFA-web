@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { addDays, formatDate, monthBefore, parseDate, periodBefore } from "../../lib/report/compare";
-import { movers, quietParties, rankParties } from "../../lib/report/growth";
+import { GROUP_PREFIX, movers, quietParties, rankParties, withGroups } from "../../lib/report/growth";
 import type { MoverKind } from "../../lib/report/growth";
 import type { ReportOutput } from "../../lib/report/types";
 import { useEscapeClose } from "../grid/useEscapeClose";
@@ -43,24 +43,30 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
 }) {
   useEscapeClose(onClose);
   const [tab, setTab] = useState<"top" | "movers" | "quiet">("top");
-  const texts = output.columns.filter((column) => column.kind === "text" && column.key !== "HEADING_COLUMN_BY_SYSTEM");
+  // The report's own groups (area, zone, the party heading ...) join the party list, so a growth can be measured by any of them.
+  const grouped = useMemo(() => withGroups(output), [output]);
+  const work = grouped.output;
+  const texts: { key: string; caption: string }[] = [
+    ...output.columns.filter((column) => column.kind === "text" && column.key !== "HEADING_COLUMN_BY_SYSTEM"),
+    ...grouped.groups.map((group) => ({ key: group.key, caption: `${group.caption} (group)` })),
+  ];
   const numbers = output.columns.filter((column) => column.kind === "number" && !/CLOSING|BAL|RATE|PERC|%|^DR_CR$/i.test(`${column.key} ${column.caption}`));
   const dates = output.columns.filter((column) => column.kind === "date");
   const [byKey, setByKey] = useState("");
   const [valueKey, setValueKey] = useState("");
   const [dateKey, setDateKey] = useState("");
-  const by = texts.find((column) => column.key === byKey) ?? texts.find((column) => /PARTICULARS|PARTY|NAME|ACCOUNT/i.test(`${column.key} ${column.caption}`)) ?? texts[0];
+  const by = texts.find((column) => column.key === byKey) ?? texts.find((column) => !column.key.startsWith(GROUP_PREFIX) && /PARTICULARS|PARTY|NAME|ACCOUNT/i.test(`${column.key} ${column.caption}`)) ?? texts.find((column) => column.key === `${GROUP_PREFIX}AC`) ?? texts[0];
   const value = numbers.find((column) => column.key === valueKey) ?? numbers[0];
   const dateColumn = dates.find((column) => column.key === dateKey) ?? dates[0];
   const places = value?.decimals ?? 2;
 
-  const ranked = by && value ? rankParties(output, by.key, value.key) : [];
+  const ranked = by && value ? rankParties(work, by.key, value.key) : [];
 
   const [mode, setMode] = useState<"period" | "month">("period");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [before, setBefore] = useState<{ output: ReportOutput | null; from: string; upto: string } | null>(null);
-  const moved = before && by && value ? movers(output, before.output ?? { columns: output.columns, rows: [] }, by.key, value.key) : [];
+  const moved = before && by && value ? movers(work, before.output ? withGroups(before.output).output : { columns: output.columns, rows: [] }, by.key, value.key) : [];
   const counts = { new: 0, gone: 0, up: 0, down: 0, same: 0 };
   for (const item of moved) counts[item.kind] += 1;
 
@@ -85,15 +91,16 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
 
   const [days, setDays] = useState(30);
   const asOf = parseDate(period.upto) ?? addDays(new Date(), 0);
-  const quiet = by && value && dateColumn ? quietParties(output, by.key, value.key, dateColumn.key, asOf, Math.max(0, days)) : [];
+  const quiet = by && value && dateColumn ? quietParties(work, by.key, value.key, dateColumn.key, asOf, Math.max(0, days)) : [];
 
   const gradeTotals = (["A", "B", "C"] as const).map((grade) => {
     const items = ranked.filter((item) => item.grade === grade);
     return { grade, count: items.length, share: items.reduce((all, item) => all + item.share, 0) };
   });
   const biggest = ranked[0]?.value || 1;
-  const pick = (party: string) => { if (by && onPick) onPick(by.key, party === "(blank)" ? "" : party); };
-  const rowProps = (party: string) => (onPick ? { onClick: () => pick(party), className: "rp-growth-pick", title: `Show ${party} in the grid` } : {});
+  const drill = onPick && by && !by.key.startsWith(GROUP_PREFIX) ? onPick : undefined;
+  const pick = (party: string) => { if (by && drill) drill(by.key, party === "(blank)" ? "" : party); };
+  const rowProps = (party: string) => (drill ? { onClick: () => pick(party), className: "rp-growth-pick", title: `Show ${party} in the grid` } : {});
 
   return (
     <aside className="rp-chart rp-growth" aria-label="Business growth">

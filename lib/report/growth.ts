@@ -84,3 +84,35 @@ export function quietParties(output: Entries, byKey: string, valueKey: string, d
     .filter((item) => item.days >= days)
     .sort((x, y) => y.days - x.days || x.party.localeCompare(y.party));
 }
+
+// ---- The report's own groups (area, zone, book, the account heading ...) as columns ----
+
+const HEADING_ROW = /^(AC|BOOK|SCHEDULE|ADDON_\d+|ST)$/;
+/** Outer groups first, the account last; an outer heading ends the groups inside it. */
+const GROUP_ORDER = ["BOOK", "SCHEDULE", "ADDON_1", "ADDON_2", "ADDON_3", "ADDON_4", "AC"];
+export const GROUP_PREFIX = "__group:";
+
+/**
+ * A report that heads its entries by group (the ageing and the clearance head each party; with addon groups an
+ * area or a zone above it) keeps the group's name only on the heading row. Each entry row of the returned output
+ * also carries it in a column of its own (GROUP_PREFIX + the heading type), so a growth can be measured by a
+ * party, an area or a zone alike. `groups` lists them, the outer groups first.
+ */
+export function withGroups(output: ReportOutput): { output: ReportOutput; groups: { key: string; caption: string }[] } {
+  const types = GROUP_ORDER.filter((type) => output.rows.some((row) => row.kind === "data" && row.rowType === type));
+  if (types.length === 0) return { output, groups: [] };
+  const headed = (column: { key: string }) => output.rows.some((row) => row.kind === "data" && HEADING_ROW.test(row.rowType) && (row.values[column.key] ?? "").trim() !== "");
+  const nameColumn = output.columns.find((column) => /^name$/i.test(column.key) && headed(column)) ?? output.columns.find((column) => column.kind === "text" && headed(column));
+  if (!nameColumn) return { output, groups: [] };
+  const current = new Map<string, string>();
+  const rows = output.rows.map((row) => {
+    if (row.kind === "data" && HEADING_ROW.test(row.rowType)) {
+      // The clearance appends the party's phone, credit days and limit to its heading: not part of the name.
+      current.set(row.rowType, (row.values[nameColumn.key] ?? "").replace(/^\*+\s*/, "").replace(/ (Contact |Tel No\. |Mobil No\. |Cr\.Days |Gr\.Days |Limit : |Budget ).*$/, "").trim());
+      const at = GROUP_ORDER.indexOf(row.rowType);
+      if (at >= 0) for (const inner of GROUP_ORDER.slice(at + 1)) current.delete(inner);
+    }
+    return { ...row, values: { ...row.values, ...Object.fromEntries(types.map((type) => [GROUP_PREFIX + type, current.get(type) ?? ""])) } };
+  });
+  return { output: { ...output, rows }, groups: types.map((type) => ({ key: GROUP_PREFIX + type, caption: output.headingCaptions[type] ?? type })) };
+}

@@ -40,7 +40,8 @@ type Entry = { row: OutputRow; groups: ReadonlyMap<string, string> };
 type Slice = { label: string; value: number; count: number; colour: string; others: boolean };
 
 /** A voucher row: ROW_DATA_TYPE LED from a voucher (not the day book's Closing Balance), or a row of a report with no row types. */
-const isEntry = (row: OutputRow) => row.kind === "data" && !/^\s*Opening Balance/i.test(row.values.NAME ?? "") && ((row.rowType === "LED" && row.ledKey > 0) || row.rowType === "");
+/** (The ageing and the clearance have no ledger key: with none on any row, every LED row is an entry.) */
+const isEntry = (row: OutputRow, keyed = true) => row.kind === "data" && !/^\s*Opening Balance/i.test(row.values.NAME ?? "") && ((row.rowType === "LED" && (row.ledKey > 0 || !keyed)) || row.rowType === "");
 
 /** "01-Apr-2026" / "01/04/2026" → "Apr-2026" (null when the text is no date). */
 function monthOf(text: string): string | null {
@@ -115,12 +116,13 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
   // Each row's value under each group the report heads: the last heading row of that type above it.
   const groupOf = useMemo(() => {
     const types = [...new Set(output.rows.filter((row) => row.kind === "data" && HEADING_TYPES.test(row.rowType)).map((row) => row.rowType))];
-    const nameColumn = output.columns.find((column) => /^name$/i.test(column.key))
+    const headed = (column: OutputColumn) => output.rows.some((row) => HEADING_TYPES.test(row.rowType) && (row.values[column.key] ?? "").trim() !== "");
+    const nameColumn = output.columns.find((column) => /^name$/i.test(column.key) && headed(column))
       ?? output.columns.find((column) => column.kind === "text" && output.rows.some((row) => HEADING_TYPES.test(row.rowType) && (row.values[column.key] ?? "").trim() !== ""));
     const current = new Map<string, string>();
     const values: Map<string, string>[] = [];
     for (const row of output.rows) {
-      if (row.kind === "data" && HEADING_TYPES.test(row.rowType) && nameColumn) current.set(row.rowType, (row.values[nameColumn.key] ?? "").replace(/^\*\s*/, "").trim());
+      if (row.kind === "data" && HEADING_TYPES.test(row.rowType) && nameColumn) current.set(row.rowType, (row.values[nameColumn.key] ?? "").replace(/^\*+\s*/, "").trim());
       values.push(new Map(current));
     }
     // Named as the operator ticked them; the outer groups (book, area ...) before the account.
@@ -143,7 +145,8 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
   const [splitKey, setSplitKey] = useState(defaultSplit);
   const [picked, setPicked] = useState<{ split: string; label: string } | null>(null);
 
-  const entriesOf = (indexes: ReadonlySet<number>): Entry[] => output.rows.flatMap((row, index) => (indexes.has(index) && isEntry(row) ? [{ row, groups: groupOf.values[index] }] : []));
+  const ledgerKeyed = useMemo(() => output.rows.some((row) => row.rowType === "LED" && row.ledKey > 0), [output]);
+  const entriesOf = (indexes: ReadonlySet<number>): Entry[] => output.rows.flatMap((row, index) => (indexes.has(index) && isEntry(row, ledgerKeyed) ? [{ row, groups: groupOf.values[index] }] : []));
   const entries = useMemo(() => entriesOf(shownIndexes), [output, shownIndexes, groupOf]); // eslint-disable-line react-hooks/exhaustive-deps -- entriesOf reads these
   const donutEntries = useMemo(() => entriesOf(donutIndexes), [output, donutIndexes, groupOf]); // eslint-disable-line react-hooks/exhaustive-deps -- entriesOf reads these
   const labelOf = (entry: Entry) => {
