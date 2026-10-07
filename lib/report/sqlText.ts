@@ -50,5 +50,7 @@ export function pgFragment(sql: string, plan: Readonly<{ moneyColumns: readonly 
     const bare = new RegExp(`\\b(then|else)\\s+(${plan.moneyColumns.join("|")})\\b(?!\\s*::|\\s*\\.|\\s*\\()`, "gi");
     out = out.replace(bare, "$1 $2::numeric");
   }
+  // SQL Server reads '' as 0 in a numeric CASE (case when ... then amount else '' end).
+  out = out.replace(/(::numeric\s+else\s+)''/gi, (_match, head: string) => `${head}0`);
   return out;
 }

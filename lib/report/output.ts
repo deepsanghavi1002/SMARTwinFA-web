@@ -287,13 +287,15 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   }
 
   // Update_Subtotal: a subtotal row under each group of each level, then the final total.
-  const groupColumns = grouping.filter((name) => table.has(name)).map((name) => table.name(name)!);
+  const groupColumns = grouping.filter((name) => !(reportKey === 21 && call.formating.toUpperCase() === "SUMMARY" && name.toUpperCase() === "NAME")).filter((name) => table.has(name)).map((name) => table.name(name)!);
   const sumColumns = subtotalColumns.filter((name) => !name.includes("%") && !name.includes("INTEREST") && table.has(name) && !hidden.includes(name)).map((name) => table.name(name)!);
   const formattedReport = false;
   const allowSubtotal = !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
   const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string }[] = [];
   const subtotalsWanted = (flag(properties, "subtotal_req") || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
-  if (subtotalsWanted && groupColumns.length > 0 && flag(properties, "subtotal_req")) {
+  // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
+  const oneRowAParty = (reportKey === 5 && ["SUMMARY", "MONTHLY"].includes(plan.call.filterText.toUpperCase()));
+  if (subtotalsWanted && groupColumns.length > 0 && flag(properties, "subtotal_req") && !oneRowAParty) {
     const sums = groupColumns.map(() => new Map<string, number>());
     const reset = (level: number) => { for (const column of sumColumns) sums[level].set(column, 0); };
     groupColumns.forEach((_, level) => reset(level));
@@ -301,11 +303,26 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     const rows = table.rows;
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
+      // The journal's SP builds no heading rows (the ledger's and day book's do): a heading for each group that starts here, outermost first.
+      if ((reportKey === 2 || reportKey === 3) && table.name("NAME")) {
+        const headingTypes: Record<string, string> = { SMART_NAME: "AC", SMART_SELECTED_BOOK: "BOOK", SMART_SELECTED_SCHDULE: "SCHEDULE", SMART_SELECTED_ADDON1: "ADDON_1", SMART_SELECTED_ADDON2: "ADDON_2", SMART_SELECTED_ADDON3: "ADDON_3", SMART_SELECTED_ADDON4: "ADDON_4" };
+        const previous = rows[index - 1];
+        const changed = groupColumns.findIndex((_, level) => previous === undefined || key(previous, level) !== key(row, level));
+        if (changed >= 0) {
+          for (let level = changed; level < groupColumns.length; level += 1) {
+            const type = headingTypes[groupColumns[level].toUpperCase()];
+            const value = cellString(row[groupColumns[level]]);
+            if (type && value !== "") out.push({ kind: "data", level: -2, rowType: type, values: { [table.name("NAME")!]: value } });
+          }
+        }
+      }
       out.push({ kind: "data", level: -2, rowType: toText(table.get(row, "ROW_DATA_TYPE")), values: row });
       for (let level = 0; level < groupColumns.length; level += 1) for (const column of sumColumns) sums[level].set(column, money((sums[level].get(column) ?? 0) + num(row[column])));
       const next = rows[index + 1];
       for (let level = groupColumns.length - 1; level >= 0; level -= 1) {
         if (next !== undefined && key(next, level) === key(row, level)) continue;
+        // A group's heading row has no value for the groups inside it yet: nothing to subtotal there (it showed as "Subtotal For :" of nothing, 0.00).
+        if (/^(ADDON_[0-9]|BOOK|SCHEDULE)$/.test(toText(table.get(row, "ROW_DATA_TYPE")).toUpperCase()) && cellString(row[groupColumns[level]]) === "") continue;
         const values: Record<string, unknown> = {};
         for (const column of sumColumns) values[column] = sums[level].get(column) ?? 0;
         out.push({ kind: "subtotal", level, rowType: "", values, caption: `${"*".repeat(level + 1)} Subtotal For : ${cellString(row[groupColumns[level]])} ` });
@@ -315,6 +332,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   } else {
     for (const row of table.rows) out.push({ kind: "data", level: -2, rowType: toText(table.get(row, "ROW_DATA_TYPE")), values: row });
   }
+  // A blank line between a group's subtotal and the next addon heading (web only), so one addon's block stands apart from the next.
+  for (let at = out.length - 1; at > 0; at -= 1) if (/^ADDON_[0-9]$/.test(out[at].rowType) && out[at - 1].kind === "subtotal") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   const finalTotal = ![18, 22, 57, 136, 138, 156, 279, 280, 281].includes(reportKey) || reportKey === 80;
   if (finalTotal && subtotalsWanted && !(reportKey === 4 && call.formating === "MONTHLY")) {
     const values: Record<string, unknown> = {};
@@ -335,6 +354,18 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const ledgerDrawing = (reportKey === 4 && call.formating !== "MONTHLY") || reportKey === 38 || reportKey === 62;
   const drCrName = table.name("DR_CR");
   const nameColumn = shown.find((column) => column.name.toUpperCase() === "NAME")?.name;
+  // A group's heading carries as many stars as its subtotal does (the outermost group one, the next two ...), so the two can be matched by eye.
+  const headingLevel: Record<string, number> = {};
+  if (subtotalsWanted && flag(properties, "subtotal_req")) {
+    const typeOf: Record<string, string> = { SMART_NAME: "AC", SMART_SELECTED_BOOK: "BOOK", SMART_SELECTED_SCHDULE: "SCHEDULE", SMART_SELECTED_ADDON1: "ADDON_1", SMART_SELECTED_ADDON2: "ADDON_2", SMART_SELECTED_ADDON3: "ADDON_3", SMART_SELECTED_ADDON4: "ADDON_4" };
+    groupColumns.forEach((column, level) => { const type = typeOf[column.toUpperCase()]; if (type) headingLevel[type] = level; });
+  }
+  // A blank line before each main group's heading (the first group, level 0; the ledger's account), so where one group ends stands out. The grid draws it white.
+  for (let at = out.length - 1; at > 0; at -= 1) {
+    const type = out[at].rowType.toUpperCase();
+    const main = out[at].kind === "data" && (headingLevel[type] === 0 || (reportKey === 4 && type === "AC"));
+    if (main && out[at - 1].rowType !== "GAP") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
+  }
   const rows: OutputRow[] = out.map((entry) => {
     const values: Record<string, string> = {};
     const node = entry.kind !== "data";
@@ -368,7 +399,15 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     }
     if (entry.caption !== undefined && headingColumn !== "") values[headingColumn] = entry.caption;
     // A ledger's heading row reads "* Name".
-    if (reportKey === 4 && rowType === "AC" && nameColumn && (values[nameColumn] ?? "").trim() !== "") values[nameColumn] = `* ${values[nameColumn].trim()}`;
+    if (nameColumn && (values[nameColumn] ?? "").trim() !== "" && (headingLevel[rowType] !== undefined || (reportKey === 4 && rowType === "AC"))) values[nameColumn] = `${"*".repeat((headingLevel[rowType] ?? 0) + 1)} ${values[nameColumn].trim()}`;
+    // The ageing's detail heading already reads in the first (document) column: the name column keeps nothing on it, and the marker moves to that text.
+    if (reportKey === 5 && rowType === "AC" && !node) {
+      const docColumn = shown.find((column) => column.name.toUpperCase() === "FULL_DOCNO")?.name;
+      if (docColumn && nameColumn && (values[docColumn] ?? "").trim() !== "") {
+        values[docColumn] = `${"*".repeat((headingLevel[rowType] ?? 0) + 1)} ${values[docColumn].trim()}`;
+        values[nameColumn] = "";
+      }
+    }
     const keyOf = (name: string) => { const column = table.name(name); return column && !node ? Math.max(0, Math.trunc(num(entry.values[column]))) : 0; };
     return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY") };
   });
@@ -380,7 +419,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     const colour = { SMART_NAME: styles.named.str_color_account, SMART_SELECTED_BOOK: styles.named.str_color_book, SMART_SELECTED_ADDON1: styles.named.str_color_addon1, SMART_SELECTED_ADDON2: styles.named.str_color_addon2, SMART_SELECTED_ADDON3: styles.named.str_color_addon3, SMART_SELECTED_ADDON4: styles.named.str_color_addon4 }[column.toUpperCase()];
     if (colour) levelColours[String(level)] = colour;
   });
-  const headingColours: Record<string, string> = { AC: styles.named.str_color_account, ST: styles.named.str_color_account, BOOK: styles.named.str_color_book, SCHEDULE: styles.named.str_color_schedule, FT: "Pink" };
+  const headingColours: Record<string, string> = { AC: styles.named.str_color_account, ST: styles.named.str_color_account, BOOK: styles.named.str_color_book, SCHEDULE: styles.named.str_color_schedule, FT: "Pink", ADDON_1: styles.named.str_color_addon1, ADDON_2: styles.named.str_color_addon2, ADDON_3: styles.named.str_color_addon3, ADDON_4: styles.named.str_color_addon4 };
 
   // The group each heading row type stands for (an addon group is ADDON_1, ADDON_2 ... in tick order).
   const headingCaptions: Record<string, string> = {};
@@ -405,6 +444,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     reportKey,
     levelColours,
     headingColours,
+    headingLevels: headingLevel,
     headingCaptions,
     formating: call.formating,
     planning: reportKey === 1 ? await readCashPlanning(loader, plan) : null,

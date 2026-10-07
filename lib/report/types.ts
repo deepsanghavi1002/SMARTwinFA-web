@@ -200,6 +200,8 @@ export type ReportOutput = Readonly<{
   levelColours: Readonly<Record<string, string>>;
   /** Heading row colours by ROW_DATA_TYPE (AC, BOOK, SCHEDULE ...). */
   headingColours: Readonly<Record<string, string>>;
+  /** The level (0 the first grouping column) each heading row type opens, matching its subtotals (AC, BOOK, ADDON_1 ...). */
+  headingLevels?: Readonly<Record<string, number>>;
   /** What each heading row type stands for, from the ticked groups (AC: Account, BOOK: Book, ADDON_1: Area ...). */
   headingCaptions: Readonly<Record<string, string>>;
   /** The format that ran (MONTHLY, DAILY, WEEKLY, HALF_MONTH, QUATER_YEAR, HALF_YEAR, SUMMARY ...); "" for the standard report. */

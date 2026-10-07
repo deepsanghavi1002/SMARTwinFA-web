@@ -1,7 +1,7 @@
 import type { Loader } from "../master-program/load";
 import { toText } from "../master-program/legacy";
 import type { ResultRow } from "./call";
-import type { ResultTable } from "./call";
+import { ResultTable } from "./call";
 import { dateStyle112, dateStyle6, desktopDate } from "./formula";
 import type { ReportPlan } from "./generate";
 import { pgFragment, ReportRefusal } from "./generate";
@@ -18,11 +18,14 @@ import { money, num, runReportSql } from "./run";
  * to the database. What branches share is in library.ts; Report_Combine's own work before and
  * after is in generate.ts and output.ts.
  *
- * Ported branches: 1 (day book), 4 (ledger).
+ * Ported branches: 1 (day book), 2 (journal), 3 (register), 4 (ledger), 5 (outstanding ageing).
  */
 export async function standardReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   switch (plan.call.reportKey) {
     case 1: return daybook(loader, plan);
+    case 2: return journal(loader, plan);
+    case 3: return register(loader, plan);
+    case 5: return ageing(loader, plan);
     case 4: return ledger(loader, plan);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey} is not available in the web version yet.`, "Not ported yet");
   }
@@ -45,6 +48,607 @@ export async function cashBookOpening(loader: Loader, plan: ReportPlan, csFrom: 
 
 /** The day book's FROM with the entry addon join the procedure puts in. */
 export const cashBookFrom = (plan: ReportPlan): string => withEntryAddon(plan.call.from_, `left join ${plan.call.database}addon_aentry aentry on led.led_key=aentry.aona_ledid`);
+
+// ======================================================================================
+// 3: REGISTER (lines 1012-2268, "ACTIONS FOR REGISTER")
+// ======================================================================================
+//
+// The vouchers of a sale / purchase book (books 8 to 18), one row each: date, number, party, GST
+// numbers, amount, credit days, e-invoice details ... in the order the sort says (date and voucher
+// number by default). With groups ticked the group columns follow and the output adds subtotals.
+//
+// Options and formats, as the procedure takes them:
+//  - Quantity, Factor, MRP Value, Credit Days: the columns are 0 / blank unless ticked.
+//  - Show Narration (in rows): each voucher's narration under it, 40 characters a row (N01 .. N13).
+//  - Print All Slabs (option ALL_SLABS): a column for each slab of the book (gross, discounts, GST ...),
+//    the amount net of the discounts and the tax's name (TAX_DESCRIPTION / TAX_DESCRIPTION1).
+//  - Format Include Slab / Exclude Slab: only the vouchers that have (do not have) the ticked slabs,
+//    with the ticked (the unticked non-tax) slabs as columns. The tax slabs' own columns are not
+//    drawn in Exclude Slab, as in the procedure.
+//  - Include Form / Exclude Form: the procedure refuses them for this report; so does the web.
+
+export type RegisterSlab = { short: string; key: number; master: boolean; mathop: string; order: number };
+
+/** The slab book of the voucher book: a sale return (16) or purchase return (11) reads the slabs of the book it is against. */
+export function registerSlabBook(book: number, against: number): number {
+  if (book === 16 && against === 8) return 8;
+  if (book === 16 && against === 13) return 13;
+  if (book === 11 && against === 13) return 13;
+  if (book === 11 && against === 8) return 8;
+  if (book === 10 || book === 15) return 15;
+  return book;
+}
+
+/** The slabs the period's vouchers carry (cursor TMP_SLAB), in slab order. */
+export async function registerSlabs(loader: Loader, plan: ReportPlan, inReport = true): Promise<RegisterSlab[]> {
+  const { call } = plan;
+  const db = call.database;
+  const sql = `SELECT ltrim(rtrim(SLAB_REPOHD)) AS slab_short, SLAB_KEY AS slab_id, SLAB_MASTER AS slab_master, SLAB_MATHOP AS slab_mathop, SLAB_ORDER AS slab_ord FROM ${db}SLAB_MASTER`
+    + ` WHERE BOOK=${registerSlabBook(call.book, call.againstBook)} AND SLAB_FROMDT='${desktopDate(call.tarikh1)}' AND SLAB_UPTODT='${desktopDate(call.tarikh2)}' ${inReport ? " AND SLAB_INREP='Y'" : ""} AND SLAB_ACTIVE<>'N'`
+    + ` AND SLAB_KEY IN (SELECT SLAB_ID FROM ${db}LEDGER_EXT ledext LEFT JOIN ${db}LEDGER led ON led.led_key=ledext.led_id WHERE led.doc_pos='A' AND led.doc_date BETWEEN '${desktopDate(call.from)}' AND '${desktopDate(call.upto)}' AND led.book_code=${Number(call.fcValue)} AND ledext.il_id IS NULL)`
+    + ` ORDER BY SLAB_ORDER`;
+  const result = await runReportSql(loader, pgFragment(sql, plan, loader.session.companySchema));
+  return result.rows.map((row) => ({ short: toText(row.slab_short), key: Number(row.slab_id), master: toText(row.slab_master) === "Y", mathop: toText(row.slab_mathop), order: Number(row.slab_ord) }));
+}
+
+async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  const format = call.filterId.toUpperCase();
+  if (call.dateField === "") throw new ReportRefusal("DATE FIELD FOUND BLANKS\nPLEASE CHECK DATABASE", "INTERNAL PROGRAM FAILURE");
+  if (format === "IFORM") throw new ReportRefusal("Include Form Only Possible For Master Details In Format Box", "INTERNAL PROGRAM FAILURE");
+  if (format === "EFORM") throw new ReportRefusal("Exclude Form Only Possible For Master Details In Format Box", "INTERNAL PROGRAM FAILURE");
+  if (format !== "NONE" && format !== "ISLAB" && format !== "ESLAB") throw new ReportRefusal(call.filterId.trim() === "" ? "Blank Filter Condition\nPlease Check Database." : "Unknown Filter Condition\nPlease Check Database.", "INTERNAL PROGRAM FAILURE");
+
+  const printSlabs = call.printAllSlabs && format === "NONE";
+  const useUnion = call.showNarration && call.useUnion;
+  const entryAddon = call.addonEntryPos.includes("P");
+  const orderText = call.orderBy.toLowerCase();
+
+  // The slabs: every slab of the period (Print All Slabs, Exclude Slab) or the ticked ones (Include Slab).
+  const slabs = printSlabs || format === "ESLAB" ? await registerSlabs(loader, plan) : [];
+  const tickedKeys = call.slabsKey.split(",").map((key) => key.trim()).filter((key) => key !== "" && key !== "-1");
+  const tickedShorts = call.slabText.split(",").map((text) => text.trim()).filter((text) => text !== "");
+
+  // The from: the addon joins the procedure puts in place of the setup's markers; Print All Slabs joins the slab amounts.
+  let from = call.from_;
+  if (orderText.includes("aentry") || orderText.includes("aientry")) {
+    if (entryAddon && orderText.includes("aentry")) {
+      from = from.replace("sys.aents", "((").replace("sys.aente", `left join ${db}addon_ientry aientry on led.led_key=aientry.AONI_LEDID) left join ${db}addon_aentry aentry on led.led_key=aentry.aona_ledid)`);
+    } else if (entryAddon) {
+      from = from.replace("sys.aents", "(").replace("sys.aente", `left join ${db}ADDON_IENTRY aientry on led.led_key = aientry.AONI_LEDID)`);
+    } else {
+      from = from.replace("sys.aents", "(").replace("sys.aente", `left join ${db}ADDON_AENTRY aentry on led.led_key = aentry.aona_ledid)`);
+    }
+  } else {
+    from = from.replace("sys.aents", "").replace("sys.aente", "");
+  }
+  const withoutSlabJoin = (text: string) => text.replace("sys.pdatas", "").replace("sys.pdatae", "");
+  const slabJoin = `left join ${db}LEDGER_EXT ledext on ledext.LED_ID = led.LED_KEY and ledext.IL_ID is null and ledext.SLAB_ID in (${slabs.length > 0 ? slabs.map((slab) => slab.key).join(",") : "1"})) left join ${db}SLAB_MASTER slabmst on ledext.SLAB_ID = slabmst.SLAB_KEY)`;
+  let plainFrom: string;
+  if (call.prodAddonRelate === "P" && !entryAddon) {
+    from = from.replace("sys.pdatas", "((").replace("sys.pdatae", `left join ${db}prod_ledger prodled on led.led_key = prodled.led_id)left join ${db}addon_data padata on prodled.prod_id = padata.prod_id)`);
+    plainFrom = from;
+  } else {
+    plainFrom = withoutSlabJoin(from);
+    if (printSlabs) from = from.replace("sys.pdatas", "((").replace("sys.pdatae", slabJoin);
+    else from = plainFrom;
+  }
+
+  // The select list: the quantity, factor and MRP columns are 0 unless their option is ticked; credit days per voucher when ticked.
+  let select = call.queryStart;
+  if (!call.checkQuery.includes("CHK_QUANTITY,")) select = select.replace('coalesce(Qty,0) as "Quantity"', '0 as "Quantity"');
+  if (!call.checkQuery.includes("CHK_FACTOR,")) select = select.replace('coalesce(Factor,0.00) as "Factor"', '0.00 as "Factor"');
+  if (!call.checkQuery.includes("CHK_MRPVAL,")) select = select.replace('coalesce(Mrp_Value,0.00) as "Mrp_Value"', '0.00 as "Mrp_Value"');
+  if (call.checkQuery.includes("CHK_CRDAYS,")) select = select.replace('case when ac.credit_days=0 then null else ac.credit_days end AS "CRDAY"', 'case when coalesce(led.credit_days,0)=0 then CAST(ac.CREDIT_DAYS AS TEXT) else CAST(led.credit_days AS TEXT) end AS "CRDAY"');
+  const distinct = printSlabs || !entryAddon ? "" : "Distinct ";
+
+  // Include / Exclude Slab: a column for each slab, and the vouchers that have none of the ticked slabs left out (or in).
+  const slabColumn = (key: number | string, short: string) => `,COALESCE((SELECT SLAB_AMT::numeric FROM ${db}LEDGER_EXT WHERE LED_ID=LED.LED_KEY AND SLAB_ID=${key} AND (IL_ID IS NULL) LIMIT 1),0.00) AS "${short}"`;
+  let slabColumns = "";
+  let where = call.where;
+  if (format === "ISLAB") {
+    tickedKeys.forEach((key, at) => { slabColumns += slabColumn(key, tickedShorts[at] ?? key); });
+    where += ` and led.LED_KEY in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0 and led_id=led.led_key)`;
+  } else if (format === "ESLAB") {
+    for (const slab of slabs) if (!tickedKeys.includes(String(slab.key)) && !slab.master) slabColumns += slabColumn(slab.key, slab.short);
+    where += ` and led.LED_KEY not in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0 and led_id=led.led_key)`;
+  }
+
+  // OUTER APPLY: the expense account's name, and the product lines' quantity, factor and MRP value.
+  let apply = ` LEFT JOIN LATERAL (SELECT acc.name AS exp_name FROM ${db}ACCOUNT acc WHERE acc.Code=led.post_bkcode) ALIAS1 ON TRUE`;
+  if (call.checkQuery.includes("CHK_QUANTITY,")) apply += ` LEFT JOIN LATERAL (SELECT SUM(Quantity) AS qty FROM ${db}prod_ledger WHERE LED_ID=led.led_key AND IL_POS='A') ALIAS4 ON TRUE`;
+  if (call.checkQuery.includes("CHK_FACTOR,")) {
+    apply += ` LEFT JOIN LATERAL (SELECT SUM(CASE WHEN PRODUCT.REP2_UOM=PRODUCT.PCS_UOM THEN prodled.TRN_PCS-prodled.ag_qty`
+      + ` WHEN PRODUCT.REP2_UOM=PRODUCT.QTY1_UOM THEN prodled.TRN_QTY1-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_qty1)::numeric,4)`
+      + ` WHEN PRODUCT.REP2_UOM=PRODUCT.QTY2_UOM THEN prodled.TRN_QTY2-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_qty2)::numeric,4)`
+      + ` WHEN PRODUCT.REP2_UOM=PRODUCT.qty3_uom THEN prodled.TRN_QTY3-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_qty3)::numeric,4)`
+      + ` WHEN PRODUCT.REP2_UOM=PRODUCT.PACK_UOM THEN prodled.TRN_PACK-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_pack)::numeric,4)`
+      + ` WHEN PRODUCT.REP2_UOM=PRODUCT.WEIGHT_UOM THEN prodled.TRN_WEIGHT-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_weight)::numeric,4)`
+      + ` ELSE CAST(factor AS NUMERIC(20,2)) END) AS factor FROM ${db}prod_ledger prodled LEFT JOIN ${db}product_master PRODUCT ON PRODUCT.prod_key=prodled.prod_id WHERE LED_ID=led.led_key AND IL_POS='A' AND PRODUCT.PROD_POS='A') ALIAS5 ON TRUE`;
+  }
+  if (call.checkQuery.includes("CHK_MRPVAL,")) apply += ` LEFT JOIN LATERAL (SELECT round(SUM(master_rate*quantity),2) AS mrp_value FROM ${db}prod_ledger WHERE LED_ID=led.led_key AND IL_POS='A') ALIAS6 ON TRUE`;
+
+  const end = call.queryEnd.trim() !== "" ? `,${call.queryEnd}` : "";
+  const order = call.orderBy.trim();
+  const orderBy = order !== "" && !order.toLowerCase().startsWith("led.doc_no")
+    ? ` ORDER BY ${order},LED.DOC_NO,LED.FULL_DOCNO${printSlabs ? ",slabmst.SLAB_ORDER" : ""}`
+    : printSlabs ? ` ORDER BY SORTING_DATE,LED.DOC_NO,slabmst.SLAB_ORDER` : ` ORDER BY SORTING_DATE,LED.DOC_NO`;
+  const slabCells = printSlabs ? `,COALESCE(ltrim(rtrim(SLAB_REPOHD)),'') AS "SLAB_DESC",COALESCE(ledext.SLAB_AMT::numeric,0.00) AS "SLAB_AMOUNT"` : slabColumns;
+  const narrationColumn = useUnion ? "NARRATION1" : "NARRATION";
+  const sql = `SELECT ${distinct}${select}${slabCells},LED.DOC_REMARK,LED.NARRATION AS "${narrationColumn}"${end}${from}${apply}${where}${orderBy}`;
+  const result = await runReportSql(loader, frag(sql));
+  let table = tableFromFields(result.fields);
+  table.rows = result.rows.map((row) => ({ ...row }));
+
+  // Print All Slabs: one row a voucher, a column for each slab (PIVOT), then NET_AMOUNT and the tax's name.
+  const headings: string[] = [];
+  const tax = { seen: false, first: 0, second: 0 };
+  if (printSlabs) {
+    const net: { name: string; minus: boolean }[] = [];
+    for (const slab of slabs) {
+      if (!slab.master && !tax.seen) net.push({ name: slab.short, minus: slab.order !== 1 && slab.mathop === "L" });
+      if (headings.length === 0) headings.push(slab.short);
+      else {
+        if (slab.master) {
+          const name = !tax.seen ? "TAX_DESCRIPTION" : "TAX_DESCRIPTION1";
+          if (!tax.seen) { headings.push("NET_AMOUNT"); tax.first = slab.key; } else tax.second = slab.key;
+          if (!headings.includes(name)) headings.push(name);
+          tax.seen = true;
+        }
+        headings.push(slab.short);
+      }
+    }
+    const descColumn = table.name("SLAB_DESC")!;
+    const amountColumn = table.name("SLAB_AMOUNT")!;
+    const voucherColumn = table.name("SMART_LED_KEY") ?? table.name("LED_KEY")!;
+    const base = table.columns.filter((name) => name !== descColumn && name !== amountColumn);
+    const pivot = tableFromFields(result.fields.filter((field) => field.name !== descColumn && field.name !== amountColumn));
+    const slabNames = new Set(slabs.map((slab) => slab.short));
+    const sums = new Map<string, Map<string, number>>();
+    const vouchers: ResultRow[] = [];
+    const index = new Map<string, ResultRow>();
+    for (const row of table.rows) {
+      const key = String(row[voucherColumn]);
+      let voucher = index.get(key);
+      if (!voucher) {
+        voucher = Object.fromEntries(base.map((name) => [name, row[name]]));
+        index.set(key, voucher);
+        vouchers.push(voucher);
+        sums.set(key, new Map());
+      }
+      const short = toText(row[descColumn]);
+      if (slabNames.has(short)) { const bucket = sums.get(key)!; bucket.set(short, money((bucket.get(short) ?? 0) + num(row[amountColumn]))); }
+    }
+    for (const heading of headings) {
+      pivot.addColumn(heading);
+      if (heading !== "TAX_DESCRIPTION" && heading !== "TAX_DESCRIPTION1") pivot.setKind(heading, "decimal");
+    }
+    // TAX_DESCRIPTION: the tax master's name of the voucher's tax slab (product-wise taxes read just TAX).
+    const productWise = tax.seen && toText((await runReportSql(loader, frag(`SELECT count(*) AS n FROM ${db}SLAB_MASTER WHERE SLAB_ACTIVE = 'Y' AND SLAB_MASTER = 'Y' AND SLAB_POS = 'P' AND BOOK IN (${registerSlabBook(call.book, call.againstBook)}) AND SLAB_FROMDT >= '${desktopDate(call.tarikh1)}' AND SLAB_UPTODT <= '${desktopDate(call.tarikh2)}'`))).rows[0]?.n) !== "0";
+    const taxName = async (slabKey: number) => {
+      const names = new Map<string, string>();
+      if (productWise || slabKey === 0) return names;
+      const rows = (await runReportSql(loader, frag(`SELECT ledext.LED_ID AS led_id, taxmst.tax_repohd AS tax_name FROM ${db}LEDGER_EXT ledext LEFT JOIN ${db}TAX_MASTER taxmst ON taxmst.tax_rec=ledext.tax_id WHERE ledext.IL_ID IS NULL AND ledext.SLAB_ID = ${slabKey}`))).rows;
+      for (const row of rows) names.set(String(row.led_id), toText(row.tax_name));
+      return names;
+    };
+    const firstTax = await taxName(tax.first);
+    const secondTax = await taxName(tax.second);
+    pivot.rows = vouchers.map((voucher) => {
+      const key = String(voucher[voucherColumn]);
+      const bucket = sums.get(key)!;
+      const row: ResultRow = { ...voucher };
+      for (const heading of headings) if (heading !== "NET_AMOUNT" && heading !== "TAX_DESCRIPTION" && heading !== "TAX_DESCRIPTION1") row[heading] = bucket.get(heading) ?? null;
+      if (tax.seen) {
+        // NET_AMOUNT = the first slab less / plus the slabs before the first tax slab.
+        let value: number | null = null;
+        net.forEach((term, at) => {
+          const amount = bucket.get(term.name);
+          if (at === 0) value = amount === undefined ? null : amount;
+          else if (value !== null) value = money(value + (term.minus ? -1 : 1) * (amount ?? 0));
+        });
+        row.NET_AMOUNT = value;
+        if (headings.includes("TAX_DESCRIPTION")) row.TAX_DESCRIPTION = productWise ? "TAX" : firstTax.get(key) ?? null;
+        if (headings.includes("TAX_DESCRIPTION1")) row.TAX_DESCRIPTION1 = productWise ? "TAX" : secondTax.get(key) ?? null;
+      }
+      return row;
+    });
+    // The order of REGISTER5: the groups, the name when sorted on it, then date and voucher number.
+    const groupColumns = order !== "" ? call.selectKey.slice(0, 4).map((key, at) => (key !== "" ? pivot.name(`SMART_SELECTED_ADDON${at + 1}`) : undefined)).filter((name): name is string => name !== undefined) : [];
+    sortRows(pivot, [
+      ...groupColumns.map((name) => (row: ResultRow) => textKey(row[name])),
+      ...(order.toLowerCase().startsWith("ac.name") ? [(row: ResultRow) => textKey(pivot.get(row, "name"))] : []),
+      (row) => textKey(pivot.get(row, "SORTING_DATE")),
+      (row) => rightAlignedKey(pivot.get(row, "doc_no")),
+      (row) => textKey(pivot.get(row, "full_docno")),
+    ]);
+    table = pivot;
+  }
+
+  // Show Narration in rows: ORDERCOL / ORDERCOL1 ('L'), the narration of each voucher under it (REGISTER2).
+  if (useUnion) {
+    table.columns.push("ORDERCOL", "ORDERCOL1");
+    table.setKind("ORDERCOL", "int");
+    table.rows.forEach((row, at) => { row.ORDERCOL = at + 1; row.ORDERCOL1 = "L"; });
+    if (call.unionQuery === "") throw new ReportRefusal("Blank Groups For Narration\nCheck Database..OUTPUT", "INTERNAL PROGRAM FAILURE");
+    const fixCols = call.fixCols.replace(`'LED' as "ROW_DATA_TYPE"`, `'NARRATION' as "ROW_DATA_TYPE"`);
+    const narrationOrder = order !== "" && !order.toLowerCase().startsWith("led.doc_no") ? ` ORDER BY ${order},LED.DOC_NO,LED.FULL_DOCNO` : ` ORDER BY SORTING_DATE,LED.DOC_NO`;
+    const narration = await runReportSql(loader, frag(`SELECT ${fixCols}${call.unionQuery}${plainFrom}${where}${narrationOrder}`));
+    const names = table.columns.filter((name) => name !== "ORDERCOL" && name !== "ORDERCOL1");
+    const nameAt = names.findIndex((name) => name.toUpperCase() === "NAME");
+    const numberColumns = new Set(names.filter((name) => table.kind(name) !== "text"));
+    narration.rows.forEach((source, rowAt) => {
+      const cells = narration.fields.map((field) => source[field.name]);
+      const blank: ResultRow = Object.fromEntries(table.columns.map((name) => [name, null]));
+      cells.forEach((value, at) => { if (at < names.length) blank[names[at]] = value === "" && numberColumns.has(names[at]) ? 0 : value; });
+      for (const heading of headings) blank[heading] = heading.startsWith("TAX_DESCRIPTION") ? "" : 0;
+      blank.ORDERCOL = rowAt + 1;
+      const full = cells[nameAt];
+      if (full === null || full === undefined || toText(full).trim() === "\\") return;
+      narrationPieces(String(full), { count: 13, firstMarked: false, lastUnbounded: true })
+        .forEach((piece, chunk) => table.rows.push({ ...blank, [names[nameAt]]: piece, ORDERCOL1: `N${String(chunk + 1).padStart(2, "0")}` }));
+    });
+    const addonOrder = call.prodAddonRelate === "P" ? call.selectKey.slice(0, 4).map((key, at) => (key !== "" ? table.name(`SMART_SELECTED_ADDON${at + 1}`) : undefined)).filter((name): name is string => name !== undefined) : [];
+    sortRows(table, [...addonOrder.map((name) => (row: ResultRow) => textKey(row[name])), (row) => numberKey(row.ORDERCOL), (row) => textKey(row.ORDERCOL1)]);
+  }
+  return table;
+}
+
+// ======================================================================================
+// 5: OUTSTANDING AGEING (lines 3375-7003, "ACTIONS FOR OUTSTANDING AGEING")
+// ======================================================================================
+//
+// Each party's bills still to be paid, aged in days since the bill, in the buckets 0-30, 31-60,
+// 61-90, 91-180 and 181 and above. The procedure works a row at a time through temp tables; the web
+// does the same sums with set queries and in memory (the results are the same, only quicker):
+//  - The party's closing balance at the Upto date (opening of the year + debits - credits) plus the
+//    advances not yet set against a bill is what is owed on the bills.
+//  - It is spread over the party's bills, the newest first; a bill it does not reach is left out and
+//    one it reaches in part shows what is left of it (CLEAR_AMOUNT is the rest).
+//  - What is left after the last bill is one "Opening" row, dated the start of the year.
+//  - A party whose balance is the other way shows one "Unadjusted" row with its amount below zero.
+//  - With On Account To Settle the advances are rows of their own (negative), dated their entry.
+// Party Wise puts a heading row for the party over its rows; Date Wise lists the rows by date.
+//
+// Summary: a row for each party (and credit days) with its bills added up, the party's oldest age in
+// days, and its last receipt (or payment) and last invoice.
+//
+// The sortings (the value typed in their box is the limit):
+//  - Party Wise: the parties, each with its heading; Date Wise: by date, no headings.
+//  - Above Days / Below Days: only the rows older (not older) than the days.
+//  - Above Amount / Below Amount: only the rows whose pending is at least (at most) the amount.
+//  - Grace Days: the days are added to every bill's credit days.
+//  - Interest Perc: the procedure does nothing with it for this report; it lists like Party Wise.
+//
+// Not ported (the web says so rather than print a different report): Multi Company, With FIFO,
+// Outstanding With All Entries, With PDC, Only On Account Detail, and the ageing columns picked
+// from DAYS_GAP.
+//
+// Monthly: a row for each party (and credit days) with its pending bills added up by the month of
+// the bill (Oct_25_AMT ...), from the first bill's month (or From's month) to Upto's month; bills
+// before From are one OPEN_AMT column; then TOT_AMT and the last receipt / invoice as in Summary.
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const AGEING_BUCKETS: readonly [string, number, number][] = [["Days_0_30", 0, 30], ["Days_31_60", 31, 60], ["Days_61_90", 61, 90], ["Days_91_180", 91, 180], ["Days_181_Above", 181, 99999]];
+
+async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  const checks = (name: string) => call.checkQuery.includes(`${name},`);
+  const unsupported = (what: string) => new ReportRefusal(`${what} is not available in the web version of the ageing yet.`, "Not ported yet");
+  for (const [name, caption] of [["CHK_MULTICO", "Multi Company Report"], ["CHK_FIFO", "Outstanding With FIFO"], ["CHK_WITHALLENT", "Outstanding With All Entries"], ["CHK_PDC", "With PDC"], ["CHK_ONACCSTL", "Only On Account Detail"], ["CHK_AGCOLSEL", "Ageing Column Selection"]] as const) {
+    if (checks(name)) throw unsupported(caption);
+  }
+  const summary = call.filterText === "Summary";
+  const monthly = call.filterText === "Monthly";
+  if (call.filterText !== "Detail" && !summary && !monthly) throw unsupported(`The ${call.filterText} filter`);
+  const sorting = call.sortingText;
+  const partyWise = sorting !== "Date Wise";
+  const limitText = call.text.find((value) => value.trim() !== "")?.trim() ?? "";
+  const limit = Number(limitText.replace(/,/g, ""));
+  if (limitText !== "" && !Number.isFinite(limit)) throw new ReportRefusal(`Enter a number for ${sorting}`, "Report Generation Failed");
+  if (call.dateField === "") throw new ReportRefusal("DATE FIELD FOUND BLANKS\nPLEASE CHECK DATABASE", "INTERNAL PROGRAM FAILURE");
+
+  // Sale (8): the bills are debits of the debtors (book 2); purchase (13) and expense (15): credits of the creditors (3) / expense parties (1).
+  const book = Number(call.fcValue);
+  const sale = book === 8;
+  const partyBook = book === 8 ? 2 : book === 13 ? 3 : 1;
+  const billSide = sale ? 1 : 2;
+  const adviceSide = sale ? 2 : 1;
+  const upto = desktopDate(call.upto);
+  const yearStart = desktopDate(call.tarikh1);
+
+  // The bills: the setup's own select, from and where, with the setoffs up to the Upto date.
+  const start = call.queryStart.split("ac.co_short").join("''").split("'|SYS.FROMDT|'").join(`'${upto}'`).split("|SYS.FROMDT|").join(`'${upto}'`);
+  const from = `${call.from_.replace("|sys.aente|", "")} left join (select OUT_AG_OUTID, SUM(out_setoff::numeric) as OUTSETOF from ${db}OUTCLEAR where out_date<='${upto}' group by OUT_AG_OUTID) outsetoff on outsetoff.OUT_AG_OUTID=outclr.OUT_KEY`;
+  const where = `${call.where.split("|sys.yearid|").join(call.yearId)} and outclr.out_dbcode=${billSide} and ac.book=${partyBook} and ac.os_flag<>'N' and ((led.doc_posting='L' and outclr.OUT_ENTRYAMT-outclr.OUT_LY_SETOFF<>0) or led.doc_posting<>'L') and (outclr.OUT_ENTRYAMT-coalesce(OUTSETOF,0.00)-outclr.out_ly_setoff) > 0`;
+  const series = call.seriesText.trim() !== "" && call.seriesText.trim().toUpperCase() !== "ALL" ? ` and rtrim(led.doc_series) = '${call.seriesText.trim().replace(/'/g, "''")}'` : "";
+  const bills = await runReportSql(loader, frag(`SELECT ${start},coalesce(led.credit_days,0) AS "_LEDDAYS",to_char(led.doc_date,'YYYYMMDD') AS "_SORTDATE"${from}${where}${series}`));
+  const table = tableFromFields(bills.fields.filter((field) => field.name !== "_LEDDAYS" && field.name !== "_SORTDATE"));
+  for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "SMART_AC_CODE", "SORTING_DATE"]) if (!table.has(name)) table.addColumn(name);
+  const col = (name: string) => table.name(name) ?? name;
+
+  // The parties: those ticked (or, with an addon group, those that have bills).
+  const ticked = call.selectKey[4].replace(/[()]/g, "").split(",").map((code) => Number(code.trim())).filter((code) => Number.isFinite(code) && code > 0);
+  const codes = ticked.length > 0 ? ticked : [...new Set(bills.rows.map((row) => Number(row[bills.fields.find((field) => field.name.toLowerCase() === "ac_code")?.name ?? "ac_code"])))];
+  if (codes.length === 0) throw new ReportRefusal("No Records Found", "No Data");
+  const list = codes.join(",");
+
+  // Closing balance of each party at the Upto date, and its name and credit days.
+  const sums = await runReportSql(loader, frag(`SELECT ac.code AS code, ac.name AS name, ac.credit_days AS credit_days, ac.grace_days AS grace_days, coalesce(MAX(acbal.opening::numeric),0.00) AS opening,`
+    + ` coalesce((select sum(case when led.ac_dbcode=1 then led.amount::numeric else 0.00 end) - sum(case when led.ac_dbcode=2 then led.amount::numeric else 0.00 end) from ${db}LEDGER led where led.code=ac.code and led.doc_pos<>'D' and led.doc_date<='${upto}' and led.doc_posting='P' and led.book_code in (select code from ${db}ACCOUNT where a_pos<>'D')),0.00) AS movement`
+    + ` FROM ${db}ACCOUNT ac left join ${db}AC_BALANCE acbal on acbal.code=ac.code and acbal.year_id='${call.yearId}' WHERE ac.a_pos<>'D' and ac.book=${partyBook} and ac.os_flag<>'N' and ac.code in (${list}) GROUP BY ac.code,ac.name,ac.credit_days,ac.grace_days`));
+  const parties = new Map<number, { name: string; closing: number }>();
+  for (const row of sums.rows) parties.set(Number(row.code), { name: toText(row.name), closing: money(num(row.opening) + num(row.movement)) });
+
+  // Advances not yet set against a bill: rows of their own, below zero.
+  const advances = await runReportSql(loader, frag(`SELECT outclr.out_ledid AS led_key, ac.code AS code, ac.name AS name, ac.a_short AS a_short, outclr.out_entrybook AS book, outclr.out_fulldocno AS full_docno, outclr.out_date AS out_date, outclr.out_entryamt::numeric AS amount, to_char(led.doc_date,'YYYYMMDD') AS sortdate, led.doc_no AS doc_no`
+    + ` FROM ${db}ACCOUNT ac left join ${db}OUTCLEAR outclr on outclr.code=ac.code left join ${db}LEDGER led on led.led_key=outclr.out_ledid`
+    + ` WHERE coalesce(out_ag_outid,0)=0 and outclr.out_dbcode=${adviceSide} and outclr.out_entryamt::numeric<>0 and ac.book=${partyBook} and outclr.out_fulldocno<>'OPENING' and led.doc_posting<>'L' and led.doc_pos<>'D' and ac.os_flag<>'N' and ac.code in (${list}) and led.doc_date<='${upto}'${series}`));
+  const advanceOf = new Map<number, ResultRow[]>();
+  for (const row of advances.rows) { const code = Number(row.code); (advanceOf.get(code) ?? advanceOf.set(code, []).get(code)!).push(row); }
+
+  const billsOf = new Map<number, ResultRow[]>();
+  const codeColumn = bills.fields.find((field) => field.name.toLowerCase() === "ac_code")!.name;
+  bills.rows.forEach((row) => { (billsOf.get(Number(row[codeColumn])) ?? billsOf.set(Number(row[codeColumn]), []).get(Number(row[codeColumn]))!).push(row); });
+
+  const upToDate = call.upto;
+  const dayStart = Date.UTC(call.tarikh1.getFullYear(), call.tarikh1.getMonth(), call.tarikh1.getDate());
+  const dayEnd = Date.UTC(upToDate.getFullYear(), upToDate.getMonth(), upToDate.getDate());
+  const openingDays = Math.round((dayEnd - dayStart) / 86400000) + 1;
+  const dateText = (value: Date | string) => dateStyle6(value instanceof Date ? value : new Date(value)).replace(/ /g, "-");
+  const out: ResultRow[] = [];
+  const blank = (): ResultRow => Object.fromEntries(table.columns.map((name) => [name, null]));
+  const baseRow = (code: number, name: string, extra: Record<string, unknown>): ResultRow => {
+    const row = blank();
+    row[col("SMART_AC_CODE")] = code; row[col("SMART_NAME")] = name; row[col("NAME")] = name; row[col("SELECTED_NAME")] = name; row[col("ac_Code")] = code;
+    for (const [key, value] of Object.entries(extra)) row[col(key)] = value;
+    return row;
+  };
+  const sortingCol = (name: string, code: number, suffix: string) => `${name.trim()}${code}${suffix}`;
+  const graceTyped = sorting === "Grace Days" && limitText !== "";
+  const graceAdd = checks("CHK_GRCDAYS") || graceTyped ? 1 : 0;
+
+  for (const code of codes) {
+    const party = parties.get(code);
+    if (!party) continue;
+    const sumRow = sums.rows.find((row) => Number(row.code) === code)!;
+    const graceDays = graceTyped ? limit : graceAdd ? num(sumRow.grace_days) : 0;
+    const credit = num(sumRow.credit_days) + graceDays;
+    const advance = advanceOf.get(code) ?? [];
+    const advanceTotal = money(advance.reduce((sum, row) => sum + num(row.amount), 0));
+    // What is owed on the bills (positive): the closing plus the advances (sale), or the closing's other side (purchase).
+    let open = sale ? money(party.closing + advanceTotal) : money(-(party.closing - advanceTotal));
+    const rows: ResultRow[] = [];
+    // The newest bill first (date, then voucher number, both falling).
+    const docNo = (row: ResultRow) => Number(toText(row[col("DOC_NO")]).replace(/\D/g, "")) || 0;
+    const mine = (billsOf.get(code) ?? []).slice().sort((a, b) => toText(b._SORTDATE).localeCompare(toText(a._SORTDATE)) || docNo(b) - docNo(a));
+    if (open < 0) {
+      if (!checks("CHK_OVERDUE")) {
+        const row = baseRow(code, party.name, { SORTING_COL: sortingCol(party.name, code, `${dateStyle112(call.upto)}   P`), FULL_DOCNO: "Unadjusted", selected_date: dateText(call.upto), INVOICE_AMT: open, CLEAR_AMOUNT: 0, PENDING: open, Days: 0, ROW_DATA_TYPE: "LED", SORTING_DATE: dateStyle112(call.upto) });
+        row._MD = dateStyle112(call.upto);
+        rows.push(row);
+      }
+      open = 0;
+    } else {
+      for (const bill of mine) {
+        const pending = num(bill[col("PENDING")]);
+        const current = Math.min(open, pending);
+        if (current <= 0) continue;
+        const copy: ResultRow = { ...bill };
+        delete copy._LEDDAYS; delete copy._SORTDATE;
+        const days = num(bill[col("Days")]);
+        const entryDays = checks("CHK_ENTCDAY") && num(bill._LEDDAYS) > 0 ? num(bill._LEDDAYS) + graceDays : credit;
+        copy[col("PENDING")] = current;
+        copy[col("Clear_Amount")] = money(num(bill[col("INVOICE_AMT")]) - current);
+        copy[col("CDays")] = entryDays;
+        copy[col("ROW_DATA_TYPE")] = "LED"; copy[col("SMART_NAME")] = party.name; copy[col("SMART_AC_CODE")] = code; copy[col("SORTING_DATE")] = toText(bill._SORTDATE);
+        copy[col("MONTH_TOTAL")] = current; copy._MD = toText(bill._SORTDATE);
+        if (checks("CHK_OVERDUE") && entryDays >= days) { open = money(open - current); continue; }
+        open = money(open - current);
+        rows.push(copy);
+      }
+      if (open > 0) {
+        rows.push(baseRow(code, party.name, { SORTING_COL: sortingCol(party.name, code, `${dateStyle112(call.tarikh1)} OP`), FULL_DOCNO: "Opening", selected_date: dateText(call.tarikh1), INVOICE_AMT: open, CLEAR_AMOUNT: 0, PENDING: open, MONTH_TOTAL: open, Days: openingDays, CDays: credit, ROW_DATA_TYPE: "LED", SORTING_DATE: dateStyle112(call.tarikh1), _MD: dateStyle112(call.tarikh1) }));
+      }
+    }
+    // The advances, below zero (On Account To Settle).
+    if (checks("CHK_ACCSTL")) {
+      for (const row of advance) {
+        const amount = -num(row.amount);
+        rows.push(baseRow(code, party.name, { SORTING_COL: sortingCol(party.name, code, `${toText(row.sortdate)}   P`), LED_KEY: row.led_key, FULL_DOCNO: toText(row.full_docno), selected_date: dateText(row.out_date as Date), INVOICE_AMT: amount, CLEAR_AMOUNT: 0, PENDING: amount, MONTH_TOTAL: amount, Days: 0, CDays: credit, a_short: toText(row.a_short), BOOK: row.book, ROW_DATA_TYPE: "LED", SORTING_DATE: toText(row.sortdate), _MD: dateStyle112(row.out_date as Date) }));
+      }
+    }
+    // Above / Below Days and Amount: rows past the limit are left out.
+    if (limitText !== "") {
+      const keep = (row: ResultRow) => {
+        const days = num(row[col("Days")]);
+        const pending = num(row[col("PENDING")]);
+        if (sorting === "Above Days") return !(days < limit);
+        if (sorting === "Below Days") return !(days > limit);
+        if (sorting === "Above Amount") return !(pending < limit);
+        if (sorting === "Below Amount") return !(pending > limit);
+        return true;
+      };
+      for (let at = rows.length - 1; at >= 0; at -= 1) if (!keep(rows[at])) rows.splice(at, 1);
+    }
+    if (rows.length === 0) continue;
+    // The ageing columns: the pending amount in the bucket its days fall in.
+    for (const row of rows) {
+      const days = num(row[col("Days")]);
+      const pending = num(row[col("PENDING")]);
+      for (const [name, low, high] of AGEING_BUCKETS) row[col(name)] = days >= low && days <= high ? pending : 0;
+    }
+    if (partyWise) out.push(baseRow(code, party.name, { SORTING_COL: `${party.name.trim()}${code}   H`, FULL_DOCNO: party.name, ROW_DATA_TYPE: "AC" }));
+    out.push(...rows);
+  }
+  if (out.length === 0) throw new ReportRefusal("No Records Found", "No Data");
+  // The last receipt (or payment) and the last invoice of each party, by the party's code.
+  const lastReceipts = async (): Promise<(sum: ResultRow, code: number) => void> => {
+    const last = async (books: string, side: number | null) => {
+      const found = await runReportSql(loader, frag(`SELECT DISTINCT ON (led.code) led.code AS code, to_char(led.doc_date,'DD Mon YY') AS doc_date, led.amount::numeric AS amount FROM ${db}LEDGER led WHERE led.code in (${list}) and led.doc_pos='A' and led.book in (${books})${side === null ? "" : ` and led.ac_dbcode=${side} and led.doc_posting='P'`} ORDER BY led.code, led.doc_date DESC, led.led_key DESC`));
+      return new Map(found.rows.map((row) => [Number(row.code), { date: toText(row.doc_date).replace(/ /g, "-"), amount: num(row.amount) }]));
+    };
+    const cash = await last("4,6", sale ? 2 : 1);
+    const invoice = await last(book === 8 ? "8" : book === 13 ? "13" : "15", null);
+    const cashName = "LAST_" + (sale ? "RECD" : "PAY");
+    return (sum, code) => {
+      sum[cashName + "_DATE"] = cash.get(code)?.date ?? null;
+      sum[cashName + "_AMT"] = cash.get(code)?.amount ?? null;
+      sum.LAST_INV_DATE = invoice.get(code)?.date ?? null;
+      sum.LAST_INV_AMT = invoice.get(code)?.amount ?? null;
+    };
+  };
+  if (summary) {
+    const result = new ResultTable();
+    const mobile = checks("CHK_MOBILE");
+    for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "NAME", ...(mobile ? ["MOBILE_NO"] : []), "INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", "CDays", "Days", ...AGEING_BUCKETS.map((bucket) => bucket[0]), "SORTING_COL", "LAST_" + (sale ? "RECD" : "PAY") + "_DATE", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_DATE", "LAST_INV_AMT"]) result.addColumn(name);
+    for (const name of ["INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_AMT", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) result.setKind(name, "decimal");
+    for (const name of ["CDays", "Days"]) result.setKind(name, "int");
+    // The party's oldest age, over all its rows.
+    const oldest = new Map<number, number>();
+    for (const row of out) { const code = Number(row[col("SMART_AC_CODE")]); oldest.set(code, Math.max(oldest.get(code) ?? 0, num(row[col("Days")]))); }
+    const grouped = new Map<string, ResultRow>();
+    for (const row of out) {
+      if (toText(row[col("ROW_DATA_TYPE")]) === "AC") continue;
+      const code = Number(row[col("SMART_AC_CODE")]);
+      const key = `${code}|${num(row[col("CDays")])}`;
+      let sum = grouped.get(key);
+      if (!sum) {
+        sum = { ROW_DATA_TYPE: "LED", SMART_NAME: row[col("SMART_NAME")], NAME: row[col("SMART_NAME")], ...(mobile ? { MOBILE_NO: row[col("MOBILE_NO")] } : {}), INVOICE_AMT: 0, CLEAR_AMOUNT: 0, PENDING: 0, CDays: num(row[col("CDays")]), Days: oldest.get(code) ?? 0, SORTING_COL: toText(row[col("SMART_NAME")]), _code: code };
+        for (const [name] of AGEING_BUCKETS) sum[name] = 0;
+        grouped.set(key, sum);
+      }
+      sum.INVOICE_AMT = money(num(sum.INVOICE_AMT) + num(row[col("INVOICE_AMT")]));
+      sum.CLEAR_AMOUNT = money(num(sum.CLEAR_AMOUNT) + num(row[col("Clear_Amount")]));
+      sum.PENDING = money(num(sum.PENDING) + num(row[col("PENDING")]));
+      for (const [name] of AGEING_BUCKETS) sum[name] = money(num(sum[name]) + num(row[col(name)]));
+    }
+    const setLast = await lastReceipts();
+    for (const sum of grouped.values()) { const code = Number(sum._code); delete sum._code; setLast(sum, code); }
+    result.rows = [...grouped.values()];
+    sortRows(result, [(row) => textKey(row.SORTING_COL), (row) => numberKey(row.CDays)]);
+    return result;
+  }
+  if (monthly) {
+    const mobile = checks("CHK_MOBILE");
+    const lastName = "LAST_" + (sale ? "RECD" : "PAY");
+    const monthStart = (value: string) => new Date(Number(value.slice(0, 4)), Number(value.slice(4, 6)) - 1, 1);
+    const fromText = dateStyle112(call.from);
+    const midYear = call.from.getTime() !== call.tarikh1.getTime();
+    // The first month: From's, or (From being the year's start) that of the oldest bill.
+    const dated = out.filter((row) => toText(row[col("ROW_DATA_TYPE")]) === "LED" && /^\d{8}$/.test(toText(row._MD)));
+    const oldest = dated.reduce((least, row) => (toText(row._MD) < least ? toText(row._MD) : least), "99999999");
+    let month = midYear || oldest === "99999999" ? new Date(call.from.getFullYear(), call.from.getMonth(), 1) : monthStart(oldest);
+    const months: Date[] = [];
+    for (; month <= call.upto; month = new Date(month.getFullYear(), month.getMonth() + 1, 1)) months.push(month);
+    const monthName = (value: Date) => `${MONTH_SHORT[value.getMonth()]}_${String(value.getFullYear()).slice(-2)}_AMT`;
+    const names = ["ROW_DATA_TYPE", "SMART_NAME", "NAME", "CDays", ...(mobile ? ["MOBILE_NO"] : []), ...(midYear ? ["OPEN_AMT"] : []), ...months.map(monthName), "TOT_AMT", "SORTING_COL", lastName + "_DATE", lastName + "_AMT", "LAST_INV_DATE", "LAST_INV_AMT"];
+    const result = new ResultTable();
+    for (const name of names) result.addColumn(name);
+    for (const name of names.filter((candidate) => candidate === "OPEN_AMT" || candidate === "TOT_AMT" || candidate.endsWith("_AMT"))) result.setKind(name, "decimal");
+    result.setKind("CDays", "int");
+    const grouped = new Map<string, ResultRow>();
+    for (const row of out) {
+      if (toText(row[col("ROW_DATA_TYPE")]) === "AC") continue;
+      const code = Number(row[col("SMART_AC_CODE")]);
+      const key = `${code}|${num(row[col("CDays")])}`;
+      let sum = grouped.get(key);
+      if (!sum) {
+        sum = { ROW_DATA_TYPE: "LED", SMART_NAME: row[col("SMART_NAME")], NAME: row[col("SMART_NAME")], CDays: num(row[col("CDays")]), ...(mobile ? { MOBILE_NO: row[col("MOBILE_NO")] } : {}), SORTING_COL: toText(row[col("SMART_NAME")]), _code: code, TOT_AMT: 0 };
+        if (midYear) sum.OPEN_AMT = 0;
+        for (const value of months) sum[monthName(value)] = 0;
+        grouped.set(key, sum);
+      }
+      const pending = num(row[col("PENDING")]);
+      const day = toText(row._MD);
+      sum.TOT_AMT = money(num(sum.TOT_AMT) + pending);
+      if (midYear && day < fromText) sum.OPEN_AMT = money(num(sum.OPEN_AMT) + pending);
+      else {
+        const target = months.find((value) => /^\d{8}$/.test(day) && value.getFullYear() === Number(day.slice(0, 4)) && value.getMonth() === Number(day.slice(4, 6)) - 1);
+        if (target) sum[monthName(target)] = money(num(sum[monthName(target)]) + pending);
+      }
+    }
+    const setLast = await lastReceipts();
+    for (const sum of grouped.values()) { const code = Number(sum._code); delete sum._code; setLast(sum, code); }
+    result.rows = [...grouped.values()];
+    sortRows(result, [(row) => textKey(row.SORTING_COL), (row) => numberKey(row.CDays)]);
+    return result;
+  }
+  for (const name of ["INVOICE_AMT", "Clear_Amount", "PENDING", "MONTH_TOTAL", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) if (table.has(name)) table.setKind(name, "decimal");
+  for (const name of ["CDays", "Days"]) if (table.has(name)) table.setKind(name, "int");
+  table.rows = out;
+  // Due date of each bill: its date plus the credit days.
+  if (checks("CHK_PRINTDUEDATE")) {
+    for (const row of table.rows) {
+      if (toText(row[col("ROW_DATA_TYPE")]) !== "LED") continue;
+      const sort = toText(row[col("SORTING_DATE")]);
+      if (!/^\d{8}$/.test(sort)) continue;
+      const base = new Date(Number(sort.slice(0, 4)), Number(sort.slice(4, 6)) - 1, Number(sort.slice(6, 8)));
+      const cdays = num(row[col("CDays")]);
+      const due = cdays === 0 ? base : new Date(base.getTime() + (cdays - 1) * 86400000);
+      row[col("DUE_DATE")] = dateText(due);
+    }
+  }
+  // The order: by party name then date (Party Wise: the heading first), or by date (Date Wise).
+  if (partyWise) sortRows(table, [(row) => textKey(row[col("SORTING_COL")])]);
+  else sortRows(table, [(row) => textKey(row[col("SORTING_DATE")]), (row) => textKey(row[col("SMART_NAME")])]);
+  return table;
+}
+
+// ======================================================================================
+// 2: JOURNAL (lines 975-1011, "ACTIONS FOR JV")
+// ======================================================================================
+//
+// Every posted line (DOC_POSTING P) of each journal voucher that has a line in the period and
+// the selection: the voucher is found by its FULL_DOCNO, so all its lines come, even those of
+// accounts that were not ticked. In date, voucher and debit/credit order. Only a voucher's
+// first line shows its date (and narration); the others are blank, so a voucher reads as a block.
+// The rank is per (DOC_NO, SYSTEM_BLANK2) in the table's own order.
+
+async function journal(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  if (call.dateField === "") throw new ReportRefusal("DATE FIELD FOUND BLANK\nPLEASE CHECK DATABASE", "INTERNAL PROGRAM FAILURE");
+  const csFrom = cashBookFrom(plan);
+  const dated = call.text[0] === "" ? ` AND ${call.dateField} BETWEEN '${desktopDate(call.from)}' AND '${desktopDate(call.upto)}'` : "";
+  const inner = `SELECT LED.FULL_DOCNO${csFrom}${call.where}${/\bbetween\b/i.test(call.where) ? "" : dated} and led.DOC_POSTING='P' `;
+  // bit_use_union 0: the narration is a column of its own; otherwise (Show Narration in rows) it is left out.
+  const narration = call.showNarration && call.useUnion ? "" : ",led.NARRATION";
+  const sql = `SELECT ${call.queryStart}${narration}${csFrom} WHERE LED.FULL_DOCNO IN (${inner}) and led.DOC_POS<>'D' and led.DOC_POSTING='P'${dated} ORDER BY LED.DOC_NO,LED.AC_DBCODE,"SORTING_DATE"`;
+  const lines = await runReportSql(loader, frag(sql));
+  const table = tableFromFields(lines.fields);
+  table.rows = lines.rows.map((row) => ({ ...row }));
+
+  // TEMP_TABLE_JV2: ROW_NUMBER() per (doc_no, SYSTEM_BLANK2); the lines ranked after the first lose their date and narration.
+  const docNo = table.name("doc_no");
+  const blank = table.name("SYSTEM_BLANK2");
+  const date = table.name("selected_date");
+  const narrationName = table.name("NARRATION");
+  // With groups ticked a voucher's lines fall under different groups, so every line keeps its date and narration.
+  const grouped = plan.tickedGroups.length > 0;
+  const seen = new Set<string>();
+  for (const row of grouped ? [] : table.rows) {
+    const key = `${docNo ? toText(row[docNo]) : ""}\u0001${blank ? toText(row[blank]) : ""}`;
+    if (!seen.has(key)) { seen.add(key); continue; }
+    if (date) row[date] = "";
+    if (narrationName) row[narrationName] = "";
+  }
+  const dbcode = table.name("ac_dbcode");
+  // The groups first (Area, then Account ...), as the subtotals break on them.
+  const groupKeys = plan.grouping.map((name) => table.name(name)).filter((name): name is string => name !== undefined);
+  sortRows(table, [
+    ...groupKeys.map((name) => (row: ResultRow) => textKey(row[name])),
+    (row) => textKey(table.get(row, "SORTING_DATE")),
+    (row) => rightAlignedKey(table.get(row, "doc_no")),
+    (row) => textKey(table.get(row, "full_docno")),
+    (row) => (dbcode ? numberKey(row[dbcode]) : 0),
+  ]);
+  return table;
+}
 
 // ======================================================================================
 // 1: DAYBOOK (lines 234-975)
@@ -534,7 +1138,7 @@ async function ledger(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       const paraId = (await runReportSql(loader, `SELECT para_id FROM ${db}ADDON_SUB WHERE sub_code IN ${call.selectKey[index]} LIMIT 1`)).rows[0]?.para_id;
       const fieldName = toText((await runReportSql(loader, `SELECT fiel_save FROM ${db}ADDON_FLD WHERE fiel_key = $1`, [paraId ?? 0])).rows[0]?.fiel_save);
       if (!/^[A-Za-z0-9_]+$/.test(fieldName)) continue;
-      const data = await accountOf(`SELECT code, txt_${fieldName} AS value FROM ${db}addon_data WHERE code = ANY($1::int[])`);
+      const data = await accountOf(`SELECT code, txt_${fieldName} AS value, to_jsonb(ad) ->> 'key_${fieldName.toLowerCase()}' AS key FROM ${db}addon_data ad WHERE code = ANY($1::int[])`);
       for (const type of ["AC", "CLOSING"]) {
         for (const row of headingRows(type)) {
           const value = data.get(String(table.get(row, "AC_CODE")));
@@ -545,6 +1149,21 @@ async function ledger(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
           for (let level = 0; level <= index; level += 1) parts.push(table.get(row, `SMART_SELECTED_ADDON${level + 1}`), " ");
           table.set(row, "SORTING_COL", concat(...parts, table.get(row, "SMART_NAME"), table.get(row, "AC_CODE"), tail(type)));
         }
+      }
+      // The heading rows came from the vouchers, so an account shown only for its opening balance (nothing
+      // posted in the period) had no heading for its addon value (Dehradun, Firozabad). Give each one a heading.
+      const levelValue = (row: ResultRow, level: number) => table.get(row, `SMART_SELECTED_ADDON${level + 1}`);
+      const levelKey = (row: ResultRow) => Array.from({ length: index + 1 }, (_, level) => String(levelValue(row, level) ?? "")).join("\u0001");
+      const headed = new Set(headingRows(`ADDON_${index + 1}`).map(levelKey));
+      for (const row of headingRows("AC")) {
+        if (levelValue(row, index) === null || levelValue(row, index) === undefined || headed.has(levelKey(row))) continue;
+        headed.add(levelKey(row));
+        const added: Record<string, unknown> = { ROW_DATA_TYPE: `ADDON_${index + 1}`, NAME: levelValue(row, index), [`ADDON_${index + 1}_CODE`]: data.get(String(table.get(row, "AC_CODE")))?.key ?? null };
+        const parts: unknown[] = [];
+        for (let level = 0; level <= index; level += 1) { added[`SMART_SELECTED_ADDON${level + 1}`] = levelValue(row, level); parts.push(levelValue(row, level)); }
+        added.SORTING_COL = parts.some((part) => part === null || part === undefined) ? null : parts.map((part) => String(part)).join(" ");
+        table.addColumn(`ADDON_${index + 1}_CODE`);
+        table.insert(added);
       }
     }
     // An account left with only its heading and closing rows (nothing to show) goes.

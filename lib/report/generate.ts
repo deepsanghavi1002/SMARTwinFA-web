@@ -256,6 +256,8 @@ export async function planReport(loader: Loader, reportName: string, selection: 
     call.filterId = text(filterRow, "formating_sp_id");
     const controls = text(filterRow, "visible_controls_lst");
     if (controls !== "") {
+      // The filter's own control (a slab combo or list) is a control of the report; one the setup lacks stops the desktop too.
+      if (!controlRows.some((row) => text(row, "control_name") === controls)) throw new ReportRefusal("Control Missing To Process\nCheck Database", "Internal Program Error");
       const value = selection.choices[controls] ?? "";
       if (value === "") throw new ReportRefusal(`No selection done for : ${text(filterRow, "display_fixvalue")}`, "Report Generation Failed");
       call.slabKey = Number(value.split("|").pop()) || 0;
@@ -597,7 +599,7 @@ export async function planReport(loader: Loader, reportName: string, selection: 
           fixColumns.set(`SMART_SELECTED_ADDON${addonCount}`, orderString);
         }
         unionRankingGroups += `${orderString},`;
-        if (!formatted || [11, 12, 19, 20].includes(reportKey) || (reportKey === 21 && call.formating === "SUMMARY")) {
+        if (!formatted || [11, 12, 19, 20].includes(reportKey) || (reportKey === 21 && text(formatingRow, "formating_sp_id").toUpperCase() === "SUMMARY")) {
           if (text(row, "output_subtotal_grp") !== "") grouping.push(`SMART_SELECTED_ADDON${addonCount}`);
         } else {
           grouping.push(text(row, "output_subtotal_grp").split("|run.addoncaption|").join(caption));

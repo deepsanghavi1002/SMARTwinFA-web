@@ -9,9 +9,11 @@ import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilte
 import { filterHolds, sortedDistinct } from "../grid/filter";
 import { exportTableFrom } from "../grid/exportTable";
 import { FoundText } from "../grid/FoundText";
-import { GridButtons } from "../grid/GridButtons";
+import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuPlace } from "../grid/GridMenu";
+import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import type { RowKind, RowLook } from "../grid/levelStyle";
 import { LogViewer } from "../grid/LogViewer";
 import type { LogTable } from "../grid/LogViewer";
 import { selectionTotals } from "../grid/totals";
@@ -448,6 +450,24 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     }
   };
 
+  /** Ctrl+C: the cell at the cursor, or the block / Ctrl+clicked cells selected, as text for the clipboard (a block as tab-separated lines, for Excel). */
+  const copySelection = async () => {
+    const textAt = (row: number, col: number) => { const entry = shown[row]; const column = columns[col]; return entry && column ? (rowByIndex.get(entry.index)?.values[column.key] ?? "").trim() : ""; };
+    let text: string;
+    if (picked.size > 0) {
+      const wanted = selectedKeys();
+      const lines: string[] = [];
+      for (let row = 0; row < shown.length; row += 1) { const cells = columns.flatMap((column, col) => (wanted.has(cellKey(row, col)) ? [textAt(row, col)] : [])); if (cells.length > 0) lines.push(cells.join("\t")); }
+      text = lines.join("\n");
+    } else if (box) {
+      text = Array.from({ length: box.r2 - box.r1 + 1 }, (_, i) => Array.from({ length: box.c2 - box.c1 + 1 }, (_, j) => textAt(box.r1 + i, box.c1 + j)).join("\t")).join("\n");
+    } else {
+      text = textAt(at.row, at.col);
+    }
+    try { await navigator.clipboard.writeText(text); onStatus({ hotKeys: "", message: box || picked.size > 0 ? "Selected cells copied" : `Copied : ${text}` }); }
+    catch { onStatus({ hotKeys: "", message: "The browser did not allow copying", red: true }); }
+  };
+
   // ---- Keyboard ----
   const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const page = Math.max(1, Math.floor(viewHeight / ROW) - 2);
@@ -464,6 +484,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       if (column) { layout.shiftColumn(column.key, event.key === "ArrowLeft" ? -1 : 1); setCursor({ row: at.row, col: at.col + (event.key === "ArrowLeft" ? -1 : 1) }); }
       return;
     }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); void copySelection(); return; }
     if (event.key in moves) { event.preventDefault(); go(moves[event.key], event.shiftKey); setTyped(""); return; }
     switch (event.key) {
       case "Home": event.preventDefault(); go(event.ctrlKey ? { row: 0, col: 0 } : { row: from.row, col: 0 }, event.shiftKey); setTyped(""); return;
@@ -564,16 +585,27 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   };
 
   // ---- Drawing ----
-  const rowColours = (row: OutputRow): { background?: string; bold: boolean } => {
-    if (row.kind === "total") return { background: output.levelColours["-1"] ?? "Pink", bold: true };
-    if (row.kind === "subtotal") return { background: output.levelColours[String(row.level)] ?? "MistyRose", bold: true };
-    const heading = output.headingColours[row.rowType];
-    return heading ? { background: heading, bold: true } : { bold: false };
-  };
+  // Four level colours (features/grid/levelStyle): a heading and its subtotal share a colour.
+  const levelColours = useMemo(() => resolveLevelColours(NO_SCREEN_COLOUR), []);
+  const tickOrder = useMemo(() => Object.keys(output.headingCaptions), [output]);
+  const isHeading = (row: OutputRow) => row.kind === "data" && row.rowType !== "FT" && output.headingColours[row.rowType] !== undefined;
+  const kindOf = (row: OutputRow): RowKind => (row.kind === "total" || (row.kind === "data" && row.rowType === "FT") ? "total" : row.kind === "subtotal" ? "subtotal" : isHeading(row) ? "heading" : "detail");
+  const headingLevel = (row: OutputRow) => headingLevelOf(row.rowType, output.headingLevels, tickOrder);
+  const lookOf = (row: OutputRow): RowLook => rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), levelColours);
+  const rowColours = (row: OutputRow): { background?: string; bold: boolean } => { const look = lookOf(row); return { background: look.background, bold: look.bold }; };
   const rowStyle = (row: OutputRow): CSSProperties | undefined => {
-    const colours = rowColours(row);
-    return colours.background ? { background: colours.background, fontWeight: 700 } : undefined;
+    // The blank line before a main group stays white, whatever the alternate colour would be.
+    if (row.rowType === "GAP") return { background: "#ffffff" };
+    const look = lookOf(row);
+    if (!look.background) return undefined;
+    return { background: look.background, color: look.color, fontWeight: 700, borderTop: look.borderTop, borderBottom: look.borderBottom };
   };
+  /** Fold a heading: it closes with its subtotal, so a click there turns the tree on and shuts that group. */
+  const foldOf = (row: OutputRow, source: number) => {
+    if (!output.subtotals || !isHeading(row)) return -1;
+    return closingSubtotal(output.rows, source, headingLevel(row), groupStart);
+  };
+  const toggleHeading = (node: number) => { if (!tree) { setTree(true); setCollapsed(false); } toggleNode(node); };
 
   // ---- Output (print / export), with the grid's heading and subtotal colours ----
   const gridOutput = useGridOutput({
@@ -616,6 +648,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     pdf: () => rightsCheck("export", () => void gridOutput.pdf()),
     csv: () => rightsCheck("export", () => void gridOutput.csv()),
   };
+  const ribbonOutput = guardedOutput as unknown as typeof gridOutput;
 
   /**
    * C1_OUTPUT.AllowMerging = Spill: text too long for its cell runs on over the empty cells to its
@@ -707,16 +740,21 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               const position = first + offset;
               const current = position === at.row;
               const style = rowStyle(row);
+              const look = lookOf(row);
+              const node = foldOf(row, source);
+              const spilled = spill(row);
+              const labelAt = spilled.findIndex(({ column }) => column.kind !== "number" && (row.values[column.key] ?? "") !== "");
               return (
-                <div key={source} className={`mp-row ${position % 2 ? "mp-alt" : ""} ${current ? "mp-current-row" : ""} rp-${row.kind}`} style={{ top: (position + 1) * ROW }} data-row={position}>
+                <div key={source} className={`mp-row ${position % 2 && row.rowType !== "GAP" ? "mp-alt" : ""} ${current ? "mp-current-row" : ""} rp-${row.kind}`} style={{ top: (position + 1) * ROW }} data-row={position}>
                   <div className="mp-cell mp-rownum" aria-hidden="true">{current ? "▶" : ""}</div>
                   {tree && (
                     <div className="mp-cell rp-tree">
                       {row.kind === "subtotal" && <button type="button" tabIndex={-1} className="rp-tree-node" aria-label={closed.has(source) ? "Open group" : "Close group"} data-tip={closed.has(source) ? "Open group" : "Close group"} onClick={() => toggleNode(source)}>{closed.has(source) ? "⊞" : "⊟"}</button>}
                     </div>
                   )}
-                  {spill(row).map(({ column, col, width }) => {
+                  {spilled.map(({ column, col, width }, drawn) => {
                     const here = current && col === at.col;
+                    const label = drawn === labelAt;
                     const text = row.values[column.key] ?? "";
                     const selected = isSelected(position, col);
                     return (
@@ -724,9 +762,14 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                         key={column.key}
                         data-col={col}
                         className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""}`}
-                        style={{ width, textAlign: align(column), ...(current || selected ? {} : style), ...borderStyle(position, col) }}
+                        style={{ width, textAlign: label && look.captionRight ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...borderStyle(position, col) }}
                         data-tip={text}
                       >
+                        {label && kindOf(row) === "heading" && output.subtotals && (
+                          node >= 0
+                            ? <button type="button" tabIndex={-1} className="rp-fold" aria-label={tree && closed.has(node) ? "Open group" : "Close group"} data-tip={tree && closed.has(node) ? "Open group" : "Close group"} onClick={() => toggleHeading(node)}>{tree && closed.has(node) ? "▸" : "▾"}</button>
+                            : <span className="rp-fold rp-fold-none" aria-hidden="true" />
+                        )}
                         {here && typed ? <FoundText text={text} typed={typed} /> : text}
                       </div>
                     );
@@ -743,37 +786,58 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto) => { const result = await loadCompare(from, upto); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       </div>
-      <GridButtons
+      <GridRibbon
         source="report"
-        busy={busy || groupBusy}
-        output={guardedOutput as unknown as typeof gridOutput}
-        refresh={{ onClick: () => { setGroupMode(false); setGroupOutput(null); onRefresh(); }, title: "Generate the report again" }}
-        beforeQuit={(
+        actions={(
           <>
-            <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-plain" onClick={() => void createTree()} disabled={!tree && (output.groups.length === 0 || !output.subtotals)} title={tree ? "Remove the tree format" : "Show the groups as a tree that opens and closes"}><Icon name="tree" /><HotkeyLabel text={tree ? "Remove Tree" : "Create Tree"} hotkey="c" /></button>
-            <button type="button" data-hotkey="g" aria-keyshortcuts="Alt+G" className={`mp-btn mp-btn-plain ${groupMode ? "rp-btn-on" : ""}`} onClick={() => void createGroup()} disabled={groupBusy} title="Group the entries on fields of your choice"><Icon name="columns" /><HotkeyLabel text="Create Group" hotkey="g" /></button>
-            <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className={`mp-btn mp-btn-plain ${drawing ? "rp-btn-on" : ""}`} onClick={borderOn} title="Border the selected cells, then click cells to border them (Esc stops)"><Icon name="border" /><HotkeyLabel text="Border On" hotkey="o" /></button>
-            <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-plain" onClick={borderOff} title="Remove Border from the selected cells, and stop drawing"><Icon name="borderOff" /><HotkeyLabel text="Border Off" hotkey="b" /></button>
-            <button type="button" data-hotkey="e" aria-keyshortcuts="Alt+E" className="mp-btn mp-btn-plain rp-colour-btn" onClick={() => colourInput.current?.click()} title="Border Colour"><span className="rp-colour-swatch" style={{ background: borderColour }} aria-hidden="true" /><HotkeyLabel text="Border Colour" hotkey="e" /></button>
-            <input ref={colourInput} type="color" className="rp-colour-input" tabIndex={-1} aria-label="Border colour" value={borderColour} onChange={(event) => setBorderColour(event.target.value)} />
-            <button type="button" data-hotkey="m" aria-keyshortcuts="Alt+M" className="mp-btn mp-btn-blue" onClick={email} title="e-Mail the ledger confirmation"><Icon name="mail" /><HotkeyLabel text="eMail" hotkey="m" /></button>
+            <RibbonAction kind="refresh" disabled={busy || groupBusy} onClick={() => { setGroupMode(false); setGroupOutput(null); onRefresh(); }} title="Generate the report again" />
+            <RibbonAction kind="log" disabled={busy} onClick={() => void showLog()} title="The edit log of the voucher of the current row" />
+            <RibbonAction kind="quit" onClick={onQuit} />
           </>
         )}
-        quit={{ onClick: onQuit }}
-        secondRow={(
+        tabs={[
+          { title: "Print", icon: "print", content: (
+            <>
+              <RibbonOutputButton kind="print" output={ribbonOutput} />
+              <RibbonOutputButton kind="preview" output={ribbonOutput} />
+              <button type="button" data-hotkey="y" aria-keyshortcuts="Alt+Y" className={`mp-btn mp-btn-plain ${panel === "groupby" || groupSpecs.length > 0 ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "groupby" ? null : "groupby"))} title="Regroup the rows on screen by a column or a period"><Icon name="groupby" /><HotkeyLabel text="Group By" hotkey="y" /></button>
+            </>
+          ) },
+          { title: "Export", icon: "export", content: (
+            <>
+              <RibbonOutputButton kind="excel" output={ribbonOutput} />
+              <RibbonOutputButton kind="pdf" output={ribbonOutput} />
+              <RibbonOutputButton kind="csv" output={ribbonOutput} />
+              <button type="button" data-hotkey="m" aria-keyshortcuts="Alt+M" className="mp-btn mp-btn-blue" onClick={email} title="e-Mail the ledger confirmation"><Icon name="mail" /><HotkeyLabel text="eMail" hotkey="m" /></button>
+            </>
+          ) },
+          { title: "Design", icon: "tree", content: (
+            <>
+              <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-plain" onClick={() => void createTree()} disabled={!tree && (output.groups.length === 0 || !output.subtotals)} title={tree ? "Remove the tree format" : "Show the groups as a tree that opens and closes"}><Icon name="tree" /><HotkeyLabel text={tree ? "Remove Tree" : "Create Tree"} hotkey="c" /></button>
+              <button type="button" data-hotkey="g" aria-keyshortcuts="Alt+G" className={`mp-btn mp-btn-plain ${groupMode ? "rp-btn-on" : ""}`} onClick={() => void createGroup()} disabled={groupBusy} title="Group the entries on fields of your choice"><Icon name="columns" /><HotkeyLabel text="Create Group" hotkey="g" /></button>
+              <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className={`mp-btn mp-btn-plain ${drawing ? "rp-btn-on" : ""}`} onClick={borderOn} title="Border the selected cells, then click cells to border them (Esc stops)"><Icon name="border" /><HotkeyLabel text="Border On" hotkey="o" /></button>
+              <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-plain" onClick={borderOff} title="Remove Border from the selected cells, and stop drawing"><Icon name="borderOff" /><HotkeyLabel text="Border Off" hotkey="b" /></button>
+              <button type="button" data-hotkey="e" aria-keyshortcuts="Alt+E" className="mp-btn mp-btn-plain rp-colour-btn" onClick={() => colourInput.current?.click()} title="Border Colour"><span className="rp-colour-swatch" style={{ background: borderColour }} aria-hidden="true" /><HotkeyLabel text="Border Colour" hotkey="e" /></button>
+              <input ref={colourInput} type="color" className="rp-colour-input" tabIndex={-1} aria-label="Border colour" value={borderColour} onChange={(event) => setBorderColour(event.target.value)} />
+              <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setArranging(true)} title="Arrange columns: change their order, show or hide them"><Icon name="columns" /><HotkeyLabel text="Arrange Columns" hotkey="o" />{layout.hiddenColumns.length ? ` (${layout.hiddenColumns.length} hidden)` : ""}</button>
+            </>
+          ) },
+          { title: "Planning", icon: "growth", content: (
+            <>
+              <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" className={`mp-btn mp-btn-plain ${panel === "growth" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "growth" ? null : "growth"))} title="Top parties (A/B/C), who is up or down, who to follow up"><Icon name="growth" /><HotkeyLabel text="Growth" hotkey="n" /></button>
+              <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" className={`mp-btn mp-btn-plain ${panel === "budget" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "budget" ? null : "budget"))} title="Budget against actual for the accounts in this report"><Icon name="budget" /><HotkeyLabel text="Budget" hotkey="u" /></button>
+              <button type="button" data-hotkey="k" aria-keyshortcuts="Alt+K" className={`mp-btn mp-btn-plain ${panel === "compare" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "compare" ? null : "compare"))} title="Compare with another period of the year"><Icon name="compare" /><HotkeyLabel text="Compare" hotkey="k" /></button>
+              <button type="button" data-hotkey="h" aria-keyshortcuts="Alt+H" className={`mp-btn mp-btn-plain ${charting ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "chart" ? null : "chart"))} title="Summary cards and a donut chart of the amounts, by group"><Icon name="chart" /><HotkeyLabel text="Chart" hotkey="h" /></button>
+            </>
+          ) },
+        ]}
+        info={(
           <>
-            <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className="mp-btn mp-btn-blue" onClick={() => void showLog()} disabled={busy} title="The edit log of the voucher of the current row"><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>
-            <button type="button" data-hotkey="y" aria-keyshortcuts="Alt+Y" className={`mp-btn mp-btn-plain ${panel === "groupby" || groupSpecs.length > 0 ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "groupby" ? null : "groupby"))} title="Regroup the rows on screen by a column or a period"><Icon name="groupby" /><HotkeyLabel text="Group By" hotkey="y" /></button>
-            <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" className={`mp-btn mp-btn-plain ${panel === "growth" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "growth" ? null : "growth"))} title="Top parties (A/B/C), who is up or down, who to follow up"><Icon name="growth" /><HotkeyLabel text="Growth" hotkey="n" /></button>
-            <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" className={`mp-btn mp-btn-plain ${panel === "budget" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "budget" ? null : "budget"))} title="Budget against actual for the accounts in this report"><Icon name="budget" /><HotkeyLabel text="Budget" hotkey="u" /></button>
-            <button type="button" data-hotkey="k" aria-keyshortcuts="Alt+K" className={`mp-btn mp-btn-plain ${panel === "compare" ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "compare" ? null : "compare"))} title="Compare with another period of the year"><Icon name="compare" /><HotkeyLabel text="Compare" hotkey="k" /></button>
-            <button type="button" data-hotkey="h" aria-keyshortcuts="Alt+H" className={`mp-btn mp-btn-plain ${charting ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "chart" ? null : "chart"))} title="Summary cards and a donut chart of the amounts, by group"><Icon name="chart" /><HotkeyLabel text="Chart" hotkey="h" /></button>
+            <span className="rp-run-info"><span>{rowsText}</span><span>Time : {output.elapsed.replace(" Minutes ", " Min ").replace(" Seconds", " Sec")}</span></span>
+            {(search || activeFilters > 0) && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" onClick={() => { setSearch(""); clearAllFilters(); setChartFilter(null); }}><Icon name="clear" /><HotkeyLabel text="Clear filters" hotkey="a" /></button>}
+            <label className="mp-search"><Icon name="search" /><input id="rp-search" type="search" placeholder="Search all columns (Ctrl+F)" value={search} onChange={(event) => { setSearch(event.target.value); setCursor({ row: 0, col: at.col }); setSelEnd(null); }} /></label>
           </>
         )}
-        arrange={{ onClick: () => setArranging(true), hidden: layout.hiddenColumns.length }}
-        afterArrange={<span className="rp-run-info"><span>{rowsText}</span><span>Time : {output.elapsed.replace(" Minutes ", " Min ").replace(" Seconds", " Sec")}</span></span>}
-        search={{ id: "rp-search", value: search, onChange: (value) => { setSearch(value); setCursor({ row: 0, col: at.col }); setSelEnd(null); } }}
-        clearFilters={search || activeFilters > 0 ? () => { setSearch(""); clearAllFilters(); setChartFilter(null); } : null}
       />
       {gridOutput.dialogs}
       {menu && <GridMenu at={menu} items={columnMenuItems(layout, menu.key, () => setArranging(true))} onClose={() => { setMenu(null); scroller.current?.focus(); }} />}
