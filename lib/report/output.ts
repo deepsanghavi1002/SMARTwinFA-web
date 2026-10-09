@@ -288,8 +288,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
 
   // Update_Subtotal: a subtotal row under each group of each level, then the final total.
   const groupColumns = grouping.filter((name) => !(reportKey === 21 && call.formating.toUpperCase() === "SUMMARY" && name.toUpperCase() === "NAME")).filter((name) => table.has(name)).map((name) => table.name(name)!)
-    // Form Summary's "Summary For Period Selected" subtotals the tax level only, not each tax inside it (the desktop's grid).
-    .slice(0, reportKey === 14 && call.formating.toUpperCase() === "SUMMARY" ? 1 : undefined);
+    // Form Summary subtotals the tax level only, not each tax inside it, in all three formats (the desktop's grid).
+    .slice(0, reportKey === 14 ? 1 : undefined);
   const sumColumns = subtotalColumns.filter((name) => !name.includes("%") && !name.includes("INTEREST") && table.has(name) && !hidden.includes(name)).map((name) => table.name(name)!);
   const formattedReport = false;
   const allowSubtotal = !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
