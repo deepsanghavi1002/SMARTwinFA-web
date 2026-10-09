@@ -32,6 +32,6 @@ export function partyBooks(book: number): readonly number[] | null {
  * Account tab of every other report the parties of the book (partyBooks). null leaves every account.
  */
 export function accountHelpBooks(reportKey: number, book: number, firstComboHelp: boolean): readonly number[] | null {
-  if (reportKey === 14 && firstComboHelp) return registerBooks(book);
+  if ((reportKey === 14 || reportKey === 18) && firstComboHelp) return registerBooks(book);
   return firstComboHelp ? null : partyBooks(book);
 }

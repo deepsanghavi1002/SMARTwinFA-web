@@ -63,6 +63,8 @@ const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? r
  * books none of the rows has, leaves every row.
  */
 /** The outstanding reports (ageing 5 and 20, clearance 21): their BOOK combo's value is the book number when the combo gives no book column. */
+/** Reports whose first combo (REGISTER) has its own Account help: Form Summary and Yearly Tax Summary. */
+const FORM_SUMMARY_LIKE: ReadonlySet<number> = new Set([14, 18]);
 const OUTSTANDING: ReadonlySet<number> = new Set([5, 20, 21]);
 
 function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
@@ -70,12 +72,12 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   const option = def.firstCombo.options.find((candidate) => candidate.value === first);
   const book = option?.book ?? (OUTSTANDING.has(def.key) && /^\d+$/.test(first) ? Number(first) : undefined);
   if (book === undefined || book < 0) return null;
-  const help = def.key === 14 ? def.helps.find((candidate) => candidate.first) : def.helps.find((candidate) => candidate.grid === "C1HelpAccount" && !candidate.first);
+  const help = FORM_SUMMARY_LIKE.has(def.key) ? def.helps.find((candidate) => candidate.first) : def.helps.find((candidate) => candidate.grid === "C1HelpAccount" && !candidate.first);
   const books = accountHelpBooks(def.key, book, help?.first === true);
   const bookKey = Object.keys(help?.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
   if (!help || !books || !bookKey) return null;
   const keep = (row: Readonly<Record<string, string>>) => books.includes(Number(row[bookKey]));
-  return help.rows.some(keep) ? { help, keep, defaultTicked: def.key === 14 } : null;
+  return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
 export function ReportCombine({ reportName, menuShortName, title, onClose }: { reportName: string; menuShortName: string; title: string; onClose: () => void }) {

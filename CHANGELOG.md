@@ -3,6 +3,20 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Yearly Tax Summary)
+- Ported `SP_FRT_RPT_TAXSUMM` (REPORT > Register > Yearly Tax Summary, report_key 18, format SUMMARY): `lib/report/taxSummary.ts` (queries)
+  and `lib/report/taxSummarySql.ts` (the net / tax column lists). Wired as `case 18` in `standardReport` and `formattedReport`, and in
+  `PORTED_REPORTS` (`lib/report/setup.ts`). Test: `tests/tax-summary-sql.test.mts`.
+  - A "Net Amount" and a "Tax Amount" row for each month, then the year's "Total Net" and "Total Tax"; a column for each tax, a total for each
+    tax place, the tax total (`TOTAL TAX AMT`), the slabs after the taxes (TCS, rounding ...) with their total, and `TOTAL MONTHLY AMT`.
+  - With the "CHK_MONTHCOL" option: a row for each tax and amount, a column for each month, and TOTAL (rows of nil total left out).
+  - Column names carry the desktop's |..| heading markers; the grid shows them without the bars (`lib/report/output.ts`, all reports).
+- Account tab: same logic as Form Summary (the register's books, all ticked): `lib/report/registerBooks.ts`, `features/report/ReportCombine.tsx`.
+- Where the desktop SQL is loose: the slab that ends the taxes is the last linked slab (its "top 1" had no order); a tax name used twice is one
+  column; the ordering columns are left out of the grid.
+- To confirm: compare a month and the year's totals with the desktop; if the standard first format of this report is another procedure
+  (SP_STD_RPT_TAXSUMM), send it.
+
 ## 2026-10-09 (Form Summary: subtotal the tax level only, all formats)
 - `lib/report/output.ts`: Form Summary (14) subtotals the tax level only (`* Subtotal For : EXPORT / LOCAL / OUT-STATE / SLABS ...`, then the
   Final Total), as the desktop's grid, in all three formats (Details Unsummarized, Details Summarized, Summary For Period Selected); the web
