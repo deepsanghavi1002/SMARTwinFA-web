@@ -3,6 +3,10 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (One program per layer)
+- Drop Analysis (232) and Party Wise Bill PDF (255) are now written inside `lib/report/reportStandard.ts` (exported `dropAnalysis`, `partyBillPdf`; `reportFormating.ts` imports them from there) instead of
+  `dropAnalysis*.ts` / `partyBillPdf*.ts`; those files and their tests are removed. New reports go into `reportStandard.ts` / `reportFormating.ts` / `ReportCombine`, not into files of their own.
+
 ## 2026-10-09 (Party Wise Bill PDF - Particulars column)
 - `lib/report/partyBillPdfSql.ts` / `partyBillPdf.ts`: the voucher key is returned as the hidden `SMART_LED_KEY` (text) instead of a visible number column `LED_KEY`. The grid had taken that number as the
   first calculation column and added an empty PARTICULARS column in front; the grid now shows DATE, NAME, DOC NO., AMOUNT, NOTE NATURE like the desktop.
