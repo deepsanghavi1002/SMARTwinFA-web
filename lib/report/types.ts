@@ -94,6 +94,8 @@ export type HelpGrid = Readonly<{
   columns: readonly HelpColumn[];
   rows: readonly Record<string, string>[];
   frozen: number;
+  /** The first combo's own help (REP_CONTROL_ID -1): always live, and it lists the chosen entry's book. */
+  first?: boolean;
 }>;
 
 export type ReportDefinition = Readonly<{
@@ -101,7 +103,7 @@ export type ReportDefinition = Readonly<{
   name: string;
   /** report_head, the output's title. */
   head: string;
-  firstCombo: Readonly<{ visible: boolean; label: string; options: readonly Readonly<{ text: string; value: string }>[] }>;
+  firstCombo: Readonly<{ visible: boolean; label: string; options: readonly Readonly<{ text: string; value: string; book?: number }>[] }>;
   dates: Readonly<{
     fromVisible: boolean;
     uptoVisible: boolean;

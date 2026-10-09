@@ -210,7 +210,7 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
   const unsupported: string[] = [];
 
   // First combo (first_combo_query; |sys.tarikh1| etc. in dd/MMM/yyyy; FIRST_COMBO_ALL adds ALL / -1).
-  const firstCombo: { visible: boolean; label: string; options: { text: string; value: string }[] } = { visible: flag(properties, "first_combo_visible"), label: text(properties, "first_label_caption"), options: [] };
+  const firstCombo: { visible: boolean; label: string; options: { text: string; value: string; book?: number }[] } = { visible: flag(properties, "first_combo_visible"), label: text(properties, "first_label_caption"), options: [] };
   if (firstCombo.visible) {
     let sql = setBooksValueInString(text(properties, "first_combo_query"));
     sql = sql
@@ -221,7 +221,8 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
     const keyColumn = text(properties, "key_col_name");
     if (sql !== "") {
       for (const row of await loader.readTable(setupSelect(sql)) ?? []) {
-        firstCombo.options.push({ text: toText(field(row, displayColumn)), value: toText(field(row, keyColumn)) });
+        const book = field(row, "book");
+        firstCombo.options.push({ text: toText(field(row, displayColumn)), value: toText(field(row, keyColumn)), ...(book !== undefined && toText(book) !== "" ? { book: toInt(book) } : {}) });
       }
     }
     if (flag(properties, "first_combo_all") && !(reportKey === 121 && session.licence === 71)) firstCombo.options.unshift({ text: "ALL", value: "-1" });
@@ -231,7 +232,7 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
   const controlRows = await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.report_control WHERE rep_properties_id = $1 ORDER BY control_disporder`, [reportKey]) ?? [];
   const controls: ReportControl[] = [];
   const runtimeKeys: number[] = [];
-  const helpRequests: { helpId: string; grid: string; frozen: number }[] = [];
+  const helpRequests: { helpId: string; grid: string; frozen: number; first?: boolean }[] = [];
   for (const row of controlRows) {
     const name = text(row, "control_name");
     if (name === "") continue;
@@ -266,12 +267,12 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
     `SELECT visible_controls_lst, display_help_query FROM ${SETUP_SCHEMA}.report_controlval WHERE rep_properties_id = $1 AND rep_control_id = -1 ORDER BY display_order LIMIT 1`,
     [reportKey],
   ))?.[0];
-  if (firstComboHelp && text(firstComboHelp, "display_help_query") !== "") helpRequests.push({ helpId: text(firstComboHelp, "display_help_query"), grid: text(firstComboHelp, "visible_controls_lst"), frozen: -1 });
+  if (firstComboHelp && text(firstComboHelp, "display_help_query") !== "") helpRequests.push({ helpId: text(firstComboHelp, "display_help_query"), grid: text(firstComboHelp, "visible_controls_lst"), frozen: -1, first: true });
   const helps: HelpGrid[] = [];
   for (const request of helpRequests) {
     if (helps.some((help) => help.grid === request.grid)) continue;
     const help = await loadHelp(loader, request.helpId, request.grid, request.frozen);
-    if (help) helps.push(help);
+    if (help) helps.push(request.first ? { ...help, first: true } : help);
   }
 
   const runtime: RuntimeControl[] = [];

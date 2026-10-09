@@ -3,6 +3,16 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Form Summary: Account help live, listed by register)
+- Problem: REPORT > Register > Form Summary, REGISTER : SALE gave an Account tab that was greyed (nothing could be ticked) and listed
+  every account (4457) instead of the sale accounts.
+- `features/report/ReportCombine.tsx`: the first combo's own help (marked `first`, REP_CONTROL_ID -1) is always live (before, a help
+  grid was only live when a Group ticked it, and Form Summary has no group); it lists the accounts whose book is the chosen
+  register's book (`firstHelpOf`), every row when the entry has no book or no row has it; ticks of accounts the register no longer
+  lists are dropped when the report runs.
+- `lib/report/setup.ts`, `lib/report/types.ts`: first combo options carry their `book`; the first combo's help is marked `first`.
+- To confirm on the desktop: the Account tab of Form Summary lists only the accounts of the register's book (e.g. book 8 for SALE).
+
 ## 2026-10-09 (Form Summary formats)
 - Ported `SP_FRT_RPT_FORM_SUMM` (REPORT > Register > Form Summary, report_key 14, with a format): `lib/report/formSummaryFormats.ts`
   (queries) and `lib/report/formSummaryFormatsSql.ts` (summed columns, the two formats). Wired as `case 14` in `formattedReport`
