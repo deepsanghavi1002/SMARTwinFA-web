@@ -14,8 +14,6 @@ import { checklistInvoice } from "./checklistInvoice";
 import { bookwise } from "./bookwise";
 import { dailyTransaction } from "./dailyTransaction";
 import { fundFlow } from "./fundFlow";
-import { dropAnalysis } from "./dropAnalysis";
-import { partyBillPdf } from "./partyBillPdf";
 import { topReports } from "./topReports";
 import { tdsReport } from "./tdsReport";
 import { target } from "./target";
@@ -3139,5 +3137,203 @@ export async function monthlyClosingStock(loader: Loader, plan: ReportPlan): Pro
   // Products with no stock in any month are not shown.
   table.rows = table.rows.filter((row) => months.some((month) => num(table.get(row, month)) !== 0));
   sortRows(table, [...headNames.map((name) => (row: ResultRow) => textKey(table.get(row, name))), (row: ResultRow) => textKey(table.get(row, "Description"))]);
+  return table;
+}
+
+// ---- SP_FRT_RPT_DROP_ANALYSIS (report 232) and SP_FRT_RPT_PARTY_BILL_PDF (report 255): kept here, in the one program, not in files of their own ----
+/**
+ * SP_FRT_RPT_DROP_ANALYSIS' SQL and pivot, apart from the database (so they can be tested on their own). PostgreSQL; the SQL Server original is
+ * quoted where it differs. A "drop" is one sale invoice (party) or one sale line (product); the figure is their count, quantity or amount.
+ */
+type DropMeasure = "count" | "quantity" | "amount";
+
+type DropAddon = { save: string; text: boolean };
+
+const DROP_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"] as const;
+const LONG_MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+
+/** 'Drop Count' / 'Quantity' / 'Amount' (the sorting combo's text); anything else leaves the desktop with no select, so the count is used. */
+function dropMeasure(sortingText: string): DropMeasure {
+  const text = sortingText.trim().toLowerCase();
+  return text === "quantity" ? "quantity" : text === "amount" ? "amount" : "count";
+}
+
+type DropWindow = { from: string; upto: string; days: string[] };
+
+const dropPad = (n: number): string => String(n).padStart(2, "0");
+
+/**
+ * The month the first combo names: January to March are in the year the financial year ends, April to December in the year it starts. February
+ * ends on the 28th or 29th by the end year's leap year. The days are the pivot's columns "01".."31". Null when the text is no month.
+ */
+function dropWindow(monthText: string, startYear: number, endYear: number): DropWindow | null {
+  const index = LONG_MONTHS.indexOf(monthText.trim().toUpperCase());
+  if (index < 0) return null;
+  const year = index <= 2 ? endYear : startYear;
+  const last = new Date(Date.UTC(year, index + 1, 0)).getUTCDate();
+  return { from: `${year}-${dropPad(index + 1)}-01`, upto: `${year}-${dropPad(index + 1)}-${dropPad(last)}`, days: Array.from({ length: last }, (_, i) => dropPad(i + 1)) };
+}
+
+/** The addon columns of the select (COALESCE(adata.txt_X,'') AS "X") and of the group by. */
+const dropAddonSelect = (addons: readonly DropAddon[]): string => addons.map((a) => `COALESCE(adata.${a.text ? "txt_" : "input_"}${a.save},'') AS "${a.save}"`).join(",");
+const dropAddonGroup = (addons: readonly DropAddon[]): string => addons.map((a) => `adata.${a.text ? "txt_" : "input_"}${a.save}`).join(",");
+
+type DropQueryInput = {
+  db: string;
+  product: boolean;
+  measure: DropMeasure;
+  /** Month-wise (CHK_MONTH): no date window, the bucket is the month's name. */
+  monthly: boolean;
+  window: DropWindow | null;
+  /** SLAB_KEY of the sale book's first master slab (the party's amount). */
+  slab: number;
+  addons: readonly DropAddon[];
+};
+
+/** The rows of TEMP_TABLE_DROP_ANALYSIS1: name, bucket (day "01" or month "Apr"), Drop_Count and the addon columns, ordered by name and bucket. */
+function dropQuery(input: DropQueryInput): string {
+  const { db, product, measure, monthly, window, slab, addons } = input;
+  const dateColumn = product ? "il_date" : "doc_date";
+  const bucket = monthly ? `to_char(${dateColumn},'Mon')` : `to_char(${dateColumn},'DD')`;
+  const bucketName = monthly ? "Month_Name" : "Day_Name";
+  const figure = measure === "count" ? "COUNT(*)"
+    : measure === "quantity" ? `sum(${product ? "a" : "d"}.quantity::numeric)`
+    : product ? "sum(a.il_value::numeric)"
+    : `coalesce((select sum(s_lastot::numeric-slab_amt::numeric) from ${db}LEDGER_EXT where led_id=a.led_key and il_id is null and slab_id=${Math.trunc(slab)}),0)`;
+  const nameColumn = product ? `c.PROD_DESC AS "Description"` : `b.name AS "name"`;
+  const nameGroup = product ? "c.PROD_DESC" : "b.name";
+  const select = `SELECT ${nameColumn},${bucket} as "${bucketName}",${figure} as "Drop_Count"${addons.length > 0 ? `,${dropAddonSelect(addons)}` : ""}`;
+  const dates = !monthly && window ? ` and a.${dateColumn} BETWEEN '${window.from}'::date and '${window.upto}'::date` : "";
+  const group = `group by ${nameGroup},${bucket}${!product && measure === "amount" ? ",a.led_key" : ""}${addons.length > 0 ? `,${dropAddonGroup(addons)}` : ""} order by ${nameGroup},${bucket}`;
+  if (product) {
+    return `${select} FROM ${db}PROD_LEDGER a LEFT JOIN ${db}ADDON_DATA adata on adata.PROD_ID=a.PROD_ID LEFT JOIN ${db}PRODUCT_MASTER c on c.PROD_KEY=a.PROD_ID`
+      + ` where a.IL_POS='A' and a.book=8 and c.prod_pos='A' and a.led_id is not null and c.inventory='Y' and position('PACKING CHARGE' in c.prod_desc)=0 and position('DELIVERY CHARGES' in c.prod_desc)=0${dates} ${group}`;
+  }
+  return `${select} FROM ${db}LEDGER a left join ${db}ACCOUNT b on a.CODE=b.CODE LEFT JOIN ${db}ADDON_DATA adata on adata.CODE=b.CODE${measure === "quantity" ? ` LEFT JOIN ${db}PROD_LEDGER d on d.led_id=a.led_key` : ""}`
+    + ` where a.DOC_POS='A' and a.DOC_POSTING='P' and a.book=8 and b.a_pos='A'${measure === "quantity" ? " and d.il_pos='A' and d.led_id is not null" : ""}${dates} ${group}`;
+}
+
+type DropRow = Record<string, unknown>;
+
+const dropCell = (value: unknown): number => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * PIVOT SUM(Drop_Count) FOR Day_Name / Month_Name IN (...): one line per name and addon values, the figure of each bucket (blank where
+ * there was none), then TOTAL = the sum of the cells each cut to an integer (CAST(... AS int)). Ordered by name.
+ */
+function pivotDrops(rows: readonly DropRow[], nameColumn: string, bucketColumn: string, buckets: readonly string[], addons: readonly string[]): DropRow[] {
+  const lines = new Map<string, DropRow>();
+  for (const row of rows) {
+    const key = JSON.stringify([row[nameColumn], ...addons.map((a) => row[a])]);
+    let line = lines.get(key);
+    if (!line) {
+      line = { [nameColumn]: row[nameColumn] ?? null };
+      for (const b of buckets) line[b] = null;
+      line.TOTAL = 0;
+      for (const a of addons) line[a] = row[a] ?? "";
+      lines.set(key, line);
+    }
+    const bucket = String(row[bucketColumn]);
+    if (!buckets.includes(bucket)) continue;
+    line[bucket] = (line[bucket] === null ? 0 : dropCell(line[bucket])) + dropCell(row.Drop_Count);
+  }
+  const result = [...lines.values()];
+  for (const line of result) line.TOTAL = buckets.reduce((sum, b) => sum + Math.trunc(dropCell(line[b])), 0);
+  return result.sort((a, b) => String(a[nameColumn] ?? "").localeCompare(String(b[nameColumn] ?? ""), "en", { sensitivity: "base" }));
+}
+
+
+/**
+ * SP_FRT_RPT_DROP_ANALYSIS (REPORT > Extra > Drop Analysis, report 232): how many drops (sale invoices, or sale lines in the Product format),
+ * or what quantity or amount, each customer (or product) had on every day of the month the first combo names, with a TOTAL; the Month-wise
+ * option (CHK_MONTH) shows April to March of the whole year instead. The master addon fields follow as columns. The desktop pivots a temp table
+ * (TEMP_TABLE_DROP_ANALYSIS_<machine>); here the pivot is made in memory from a read-only query.
+ */
+export async function dropAnalysis(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  const product = call.formating.toUpperCase() === "PRODUCT";
+  const monthly = call.checkQuery.includes("CHK_MONTH,");
+  const measure = dropMeasure(call.sortingText);
+  const window = dropWindow(call.fcText, call.tarikh1.getFullYear(), call.tarikh2.getFullYear())
+    ?? { from: toIso(call.from), upto: toIso(call.upto), days: Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, "0")) };
+
+  // The master addon fields: the product's, or the account's that belong to the sale book (' 2,' in FIEL_INBOOK).
+  const columnsOf = new Set((await runReportSql(loader, `select lower(column_name) as c from information_schema.columns where table_schema = $1 and table_name = 'addon_data'`, [loader.session.companySchema.toLowerCase()])).rows.map((row) => String(row.c)));
+  const addons: DropAddon[] = (await runReportSql(loader, `SELECT btrim(fiel_save) AS save, fiel_type AS kind FROM ${db}ADDON_FLD WHERE fiel_relate = $1 AND fiel_masterpos = 'Y' AND fiel_entrypos = 'N' AND fiel_pos <> 'D'${product ? "" : " AND position(' 2,' in fiel_inbook) > 0"} ORDER BY fiel_key`, [product ? "P" : "A"])).rows
+    .map((row) => ({ save: toText(row.save), text: toText(row.kind) === "M" }))
+    .filter((a) => /^[A-Za-z0-9_]+$/.test(a.save) && columnsOf.has(`${a.text ? "txt_" : "input_"}${a.save}`.toLowerCase()));
+
+  const slab = !product && measure === "amount"
+    ? num((await runReportSql(loader, `SELECT slab_key FROM ${db}SLAB_MASTER WHERE slab_master = 'Y' AND slab_link = 0 AND book = 8 ORDER BY slab_order LIMIT 1`)).rows[0]?.slab_key) : 0;
+  const result = await runReportSql(loader, frag(dropQuery({ db, product, measure, monthly, window, slab, addons })));
+
+  const nameColumn = product ? "Description" : "name";
+  const buckets: string[] = monthly ? [...DROP_MONTHS] : window.days;
+  const names = addons.map((a) => a.save);
+  const lines = pivotDrops(result.rows, nameColumn, monthly ? "Month_Name" : "Day_Name", buckets, names);
+
+  const table = new ResultTable();
+  for (const column of [nameColumn, ...buckets, "TOTAL", ...names]) table.addColumn(column);
+  for (const bucket of buckets) table.setKind(bucket, measure === "count" ? "int" : "decimal");
+  table.setKind("TOTAL", "int");
+  table.rows = lines;
+  return table;
+}
+
+const toIso = (date: Date): string => desktopDate(date).replace(/^(\d+)\/(\w+)\/(\d+)$/, (_all, d, m, y) => `${y}-${String(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(m) + 1).padStart(2, "0")}-${d}`);
+
+/**
+ * SP_FRT_RPT_PARTY_BILL_PDF's SQL, apart from the database (so it can be tested on its own). PostgreSQL; the SQL Server original is quoted where
+ * it differs. `from` and `upto` are SQL date literals; `codes` the selected accounts (none: every account).
+ */
+type PartyBillInput = {
+  db: string;
+  book: number;
+  codes: readonly number[];
+  from: string;
+  upto: string;
+  /** Licences 19, 29, 68 and 73 keep out the entries booked in a CA_ENT cash account, unless no account is short-named CA_ENT. */
+  hideCaEnt: boolean;
+};
+
+/** The selected account codes out of the "(1,2,3)" list the Account tab gives. */
+const codesOf = (list: string): number[] => [...list.matchAll(/-?\d+/g)].map((match) => Number(match[0])).filter((code) => Number.isInteger(code) && code > 0);
+
+/** CONVERT(varchar(11),DOC_DATE,103) is the SELECTED_DATE text; Note_Nature is 1 when the voucher has inventory lines. */
+function partyBillQuery(input: PartyBillInput): string {
+  const { db, book, codes, from, upto, hideCaEnt } = input;
+  return `select led.LED_KEY::text AS "SMART_LED_KEY",ac.Name AS "name",to_char(led.DOC_DATE,'DD/MM/YYYY') as "SELECTED_DATE",led.FULL_DOCNO as "FULL_DOCNO",led.AMOUNT::numeric AS "AMOUNT",`
+    + `coalesce((select case when count(*) > 0 then 1 else 0 end from ${db}prod_ledger where il_pos='A' and led_id=led.led_key),0) as "Note_Nature"`
+    + ` from ${db}LEDGER led left join ${db}ACCOUNT ac on ac.code=led.code where led.DOC_POS='A'${codes.length > 0 ? ` and led.code in (${codes.join(",")})` : ""}`
+    + ` and led.book=${Math.trunc(book)} and led.DOC_DATE BETWEEN ${from} AND ${upto}`
+    + `${hideCaEnt ? ` AND LED.BOOK_CODE in (select code from ${db}ACCOUNT where A_SHORT<>'CA_ENT')` : ""}`;
+}
+
+
+/**
+ * SP_FRT_RPT_PARTY_BILL_PDF (REPORT > Extra > Party Wise Bill PDF, report 255): the bills of the first combo's book (sale, purchase, ...) in the
+ * period, of the selected accounts, to be made into a PDF per party: LED_KEY (hidden, as SMART_LED_KEY), name, date, bill no, amount and Note_Nature (1 when the voucher has
+ * inventory lines). The desktop builds it in TEMP_TABLE_PARTY_BILL_PDF_<machine>; here it comes straight from a read-only query.
+ */
+export async function partyBillPdf(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  // Licences 19 / 29 / 68 / 73 hide the CA_ENT books, unless there is no CA_ENT account at all (then nothing is hidden).
+  let hideCaEnt = false;
+  if ([19, 29, 68, 73].includes(call.licence)) {
+    hideCaEnt = num((await runReportSql(loader, `SELECT count(*) AS n FROM ${call.database}ACCOUNT WHERE A_POS <> 'D' AND position('CA_ENT' in A_SHORT) > 0`)).rows[0]?.n) === 0;
+  }
+  const day = (date: Date) => `'${desktopDate(date)}'::date`;
+  const table = tableFromResult(await runReportSql(loader, frag(partyBillQuery({ db: call.database, book: call.fcValue, codes: codesOf(call.selectKey[4]), from: day(call.from), upto: day(call.upto), hideCaEnt }))));
+  table.setKind("AMOUNT", "decimal");
+  table.setKind("Note_Nature", "int");
+  // ORDER BY Name, the date (yyyymmdd), FULL_DOCNO.
+  const sortDate = (row: Record<string, unknown>): string => String(row.SELECTED_DATE).split("/").reverse().join("");
+  sortRows(table, [(row) => textKey(row.name), (row) => sortDate(row), (row) => textKey(row.FULL_DOCNO)]);
   return table;
 }
