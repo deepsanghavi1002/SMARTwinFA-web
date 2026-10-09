@@ -7,6 +7,7 @@ import type { ReportPlan } from "./generate";
 import { pgFragment, ReportRefusal } from "./generate";
 import { cashBookColumns, dayBefore, ddMmYyyy, dropColumn, formatPeriod, groupOrderTail, insertFirst, MONTH_NAMES, requireWhere, sortRows, tableFromFields, tableFromResult, textKey, unknownFormat, withEntryAddon } from "./library";
 import { cashBookFrom, cashBookOpening, registerSlabBook, registerSlabs, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
+import { checklistDaybook } from "./checklistDaybook";
 import { fundFlow } from "./fundFlow";
 import { money, num, runReportSql } from "./run";
 
@@ -16,7 +17,7 @@ import { money, num, runReportSql } from "./run";
  * procedure's common tail (LBL_RESULT) that adds FROM, WHERE, GROUP BY and ORDER BY to the
  * format's select. The periods' SQL is shared (library.formatPeriod).
  *
- * Ported branches: 1 (day book), 3 (register), 4 (ledger), 21 (outstanding clearance), 29 (stock summary, in reportStandard.ts), 42 (budget), 93 (stock movement, in reportStandard.ts), 109 (fund flow, in fundFlow.ts), 258 (monthly closing stock, in reportStandard.ts).
+ * Ported branches: 1 (day book), 3 (register), 4 (ledger), 21 (outstanding clearance), 29 (stock summary, in reportStandard.ts), 42 (budget), 93 (stock movement, in reportStandard.ts), 109 (fund flow, in fundFlow.ts), 120 (checklist daybook, in checklistDaybook.ts), 258 (monthly closing stock, in reportStandard.ts).
  */
 export async function formattedReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   switch (plan.call.reportKey) {
@@ -29,6 +30,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 42: return budget(loader, plan);
     case 93: return stockMovement(loader, plan);
     case 109: return fundFlow(loader, plan);
+    case 120: return checklistDaybook(loader, plan);
     case 258: return monthlyClosingStock(loader, plan);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey}'s formats are not available in the web version yet.`, "Not ported yet");
   }
