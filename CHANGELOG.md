@@ -3,6 +3,12 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Form Summary: Summary For Period Selected subtotals)
+- `lib/report/output.ts`: Form Summary (14) with the "Summary For Period Selected" format (SUMMARY) subtotals the tax level only
+  (`* Subtotal For : EXPORT / LOCAL / OUT-STATE / SLABS ...`, then the Final Total), as the desktop's grid; the web also put a `**` subtotal under
+  each tax (`** Subtotal For : CGST 9%`). Other formats and reports unchanged.
+- To confirm: the same for "Details (Summarized Taxes)" on the desktop (send its screenshot if its subtotals differ).
+
 ## 2026-10-09 (Outstanding Clearance: Account help by the book)
 - `features/report/ReportCombine.tsx`: the Account tab of Outstanding Clearance (21) and Ageing (5, 20) reads the book from the BOOK combo's
   value when the combo query has no `book` column, so the party books rule (SALE debtors 2, PURCHASE creditors 3, EXPENSE general 1) applies
