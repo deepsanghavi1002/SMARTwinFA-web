@@ -14,7 +14,7 @@ export function registerBooks(book: number): readonly number[] {
 }
 
 /**
- * The account books an Agewise Outstanding BOOK lists parties of: sale (and its cash and credit note
+ * The account books a report's Account tab lists parties of for its chosen BOOK (Agewise Outstanding and every report with an Account tab): sale (and its cash and credit note
  * books) the debtors, book 2; purchase (and cash purchase, debit note) the creditors, book 3; expense
  * the general accounts, book 1. null for any other book (every account).
  */
@@ -27,9 +27,11 @@ export function partyBooks(book: number): readonly number[] | null {
   }
 }
 
-/** What the account help lists for a report's chosen book: null leaves every account. */
+/**
+ * What a report's Account help lists for its chosen book: Form Summary's own (first combo) help the books the register covers; the
+ * Account tab of every other report the parties of the book (partyBooks). null leaves every account.
+ */
 export function accountHelpBooks(reportKey: number, book: number, firstComboHelp: boolean): readonly number[] | null {
   if (reportKey === 14 && firstComboHelp) return registerBooks(book);
-  if (reportKey === 5) return partyBooks(book);
-  return null;
+  return firstComboHelp ? null : partyBooks(book);
 }

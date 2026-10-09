@@ -58,8 +58,8 @@ const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? r
 
 /**
  * The account help narrowed to the chosen book. Form Summary's own (first combo) help lists the accounts of the books the
- * register covers (REGISTER : SALE gives the sale books, debit note and credit note, all ticked until changed); Agewise
- * Outstanding's Account tab lists the parties of the book (EXPENSE gives the general accounts, book 1). An entry with no book, or
+ * register covers (REGISTER : SALE gives the sale books, debit note and credit note, all ticked until changed); the Account tab of
+ * every other report lists the parties of the chosen book (EXPENSE gives the general accounts, book 1; SALE the debtors, 2; PURCHASE the creditors, 3). An entry with no book, or
  * books none of the rows has, leaves every row.
  */
 function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
@@ -67,7 +67,7 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   const option = def.firstCombo.options.find((candidate) => candidate.value === first);
   const book = option?.book ?? (def.key === 5 && /^\d+$/.test(first) ? Number(first) : undefined);
   if (book === undefined || book < 0) return null;
-  const help = def.key === 14 ? def.helps.find((candidate) => candidate.first) : def.key === 5 ? def.helps.find((candidate) => candidate.grid === "C1HelpAccount") : undefined;
+  const help = def.key === 14 ? def.helps.find((candidate) => candidate.first) : def.helps.find((candidate) => candidate.grid === "C1HelpAccount" && !candidate.first);
   const books = accountHelpBooks(def.key, book, help?.first === true);
   const bookKey = Object.keys(help?.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
   if (!help || !books || !bookKey) return null;

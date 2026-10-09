@@ -3,6 +3,14 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Account tab by the book in every report)
+- The Agewise Outstanding rule (the Account tab lists the parties of the chosen BOOK: SALE / cash sale / credit note the debtors, book 2;
+  PURCHASE / cash purchase / debit note the creditors, book 3; EXPENSE the general accounts, book 1) now applies to every report with an
+  Account tab (`accountHelpBooks` in `lib/report/registerBooks.ts`, `accountScopeOf` in `features/report/ReportCombine.tsx`). Form Summary
+  keeps its own (the register's books, all ticked); a first-combo help of any other report, and a BOOK with no party book, list every
+  account. A book none of the rows has also lists every account. Test in `tests/register-books.test.mts`.
+- To confirm: any report whose Account tab should list every account even with a book chosen (send a screenshot; it is one exception).
+
 ## 2026-10-09 (Agewise Outstanding: Account help by the book)
 - Desktop, REPORT > Outstanding > Agewise, BOOK : EXPENSE: the Account tab lists only the general accounts (book 1), none ticked; the web
   listed all 4,457 accounts. `lib/report/registerBooks.ts` `partyBooks` / `accountHelpBooks`: SALE (8, 9, 16) the debtors (book 2),
