@@ -8,8 +8,8 @@ Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
   New: `lib/report/fundFlow.ts` (read-only queries: receipts and payments by schedule per cash/bank book,
   "  Opening" rows, TOTAL, PERC) and `lib/report/fundFlowPivot.ts` (the pivot and percentage arithmetic).
   Test: `tests/fund-flow-pivot.test.mts` (passes; typecheck and lint clean).
-- NOT yet wired to the menu: needs the report's `report_key` from `smart_setup.report_properties`. Then add it to
-  `PORTED_REPORTS` (`lib/report/setup.ts`) and to the `switch` in `standardReport` or `formattedReport`.
+- Wired as report_key 109: added to `PORTED_REPORTS` (`lib/report/setup.ts`) and to the key switch of both
+  `standardReport` and `formattedReport`, so it runs with or without a format chosen.
 - Deliberate differences from the desktop SQL: opening balances read for the report's year only; duplicate
   book names make one column; a side that nets to zero gets no PERC (the desktop divides by zero).
 
