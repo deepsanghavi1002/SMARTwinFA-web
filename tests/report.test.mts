@@ -129,6 +129,9 @@ test("group by: regroup the entries by a column or a period, with subtotals and 
   type ReportOutput = import("../lib/report/types.ts").ReportOutput;
   assert.equal(periodOf(cellDate("03-Apr-2026")!, "month").label, "Apr-2026");
   assert.equal(periodOf(cellDate("03-Apr-2026")!, "quarter").label, "Apr - Jun 2026");
+  assert.deepEqual(["03-Apr-2026", "30-Sep-2026", "01-Oct-2026", "15-Feb-2027", "31-Mar-2027"].map((day) => periodOf(cellDate(day)!, "half").label),
+    ["Apr - Sep 2026", "Apr - Sep 2026", "Oct 2026 - Mar 2027", "Oct 2026 - Mar 2027", "Oct 2026 - Mar 2027"], "half years of the financial year: Apr-Sep and Oct-Mar");
+  assert.ok(periodOf(cellDate("30-Sep-2026")!, "half").order < periodOf(cellDate("01-Oct-2026")!, "half").order);
   assert.equal(periodOf(cellDate("15-Feb-2027")!, "year").label, "FY 2026-27", "the financial year runs April to March");
   assert.equal(periodOf(cellDate("08-Apr-2026")!, "week").label, "05/04/2026 To 11/04/2026", "Sunday to Saturday");
   assert.equal(cellDate("31/12/2026")?.getMonth(), 11);

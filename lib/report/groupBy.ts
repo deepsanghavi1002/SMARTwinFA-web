@@ -12,10 +12,10 @@ import type { OutputColumn, OutputRow, ReportOutput } from "./types";
  * and DR / CR columns are left blank.
  */
 
-export type PeriodUnit = "day" | "week" | "fifteen" | "fourweek" | "month" | "quarter" | "year";
+export type PeriodUnit = "day" | "week" | "fifteen" | "fourweek" | "month" | "quarter" | "half" | "year";
 export type GroupSpec = Readonly<{ kind: "column"; key: string } | { kind: "period"; key: string; unit: PeriodUnit }>;
 
-export const PERIOD_UNITS: readonly (readonly [PeriodUnit, string])[] = [["day", "Day"], ["week", "Week"], ["fifteen", "15 Days"], ["fourweek", "4 Week Month"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
+export const PERIOD_UNITS: readonly (readonly [PeriodUnit, string])[] = [["day", "Day"], ["week", "Week"], ["fifteen", "15 Days"], ["fourweek", "4 Week Month"], ["month", "Month"], ["quarter", "Quarter"], ["half", "Half Year"], ["year", "Year"]];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -33,7 +33,7 @@ export function cellDate(text: string): Date | null {
 
 const dayText = (date: Date) => `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 
-/** The period a date falls in: its label and where it sorts (its first day). A week runs Sunday to Saturday, 15 Days are the 1st-15th and the 16th to month end (as the formats of the reports do), 4 Weeks are 7-day blocks from the financial year's 1 April (1-7, 8-14, 15-21, 22-28, then 29-5 ...), a quarter is Jan-Mar, Apr-Jun ..., a year is the financial year (April to March). */
+/** The period a date falls in: its label and where it sorts (its first day). A week runs Sunday to Saturday, 15 Days are the 1st-15th and the 16th to month end (as the formats of the reports do), 4 Weeks are 7-day blocks from the financial year's 1 April (1-7, 8-14, 15-21, 22-28, then 29-5 ...), a quarter is Jan-Mar, Apr-Jun ..., a half year is Apr-Sep or Oct-Mar, a year is the financial year (April to March). */
 export function periodOf(date: Date, unit: PeriodUnit): { label: string; order: number } {
   switch (unit) {
     case "day": return { label: `${pad(date.getDate())}-${MONTHS[date.getMonth()]}-${date.getFullYear()}`, order: date.getTime() };
@@ -64,6 +64,14 @@ export function periodOf(date: Date, unit: PeriodUnit): { label: string; order: 
     case "quarter": {
       const first = Math.floor(date.getMonth() / 3) * 3;
       return { label: `${MONTHS[first]} - ${MONTHS[first + 2]} ${date.getFullYear()}`, order: new Date(date.getFullYear(), first, 1).getTime() };
+    }
+    case "half": {
+      // The financial year's halves, as the reports' Half Year format: Apr-Sep and Oct-Mar.
+      const first = date.getMonth() >= 3 && date.getMonth() <= 8;
+      const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+      return first
+        ? { label: `Apr - Sep ${year}`, order: new Date(year, 3, 1).getTime() }
+        : { label: `Oct ${year} - Mar ${year + 1}`, order: new Date(year, 9, 1).getTime() };
     }
     case "year": {
       const start = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
