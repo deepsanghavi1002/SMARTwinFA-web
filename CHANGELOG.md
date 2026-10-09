@@ -3,6 +3,11 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Yearly Tax Summary: Account help by the register)
+- `features/report/ReportCombine.tsx`: the REGISTER combo's value is read as the book number for Form Summary and Yearly Tax Summary (14, 18)
+  when the combo query gives no `book` column, so the Account tab lists the register's books (SALE: 8, 9, 11, 16) all ticked, as Form Summary's.
+- To confirm: the Yearly Tax Summary's Account tab must be the first combo's own help (rep_control_id -1) like Form Summary's; send a screenshot if it still lists every account.
+
 ## 2026-10-09 (Yearly Tax Summary)
 - Ported `SP_FRT_RPT_TAXSUMM` (REPORT > Register > Yearly Tax Summary, report_key 18, format SUMMARY): `lib/report/taxSummary.ts` (queries)
   and `lib/report/taxSummarySql.ts` (the net / tax column lists). Wired as `case 18` in `standardReport` and `formattedReport`, and in
