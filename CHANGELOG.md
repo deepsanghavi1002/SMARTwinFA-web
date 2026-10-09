@@ -3,6 +3,17 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Top Reports)
+- Ported `SP_FRT_RPT_TOP_REPORTS` (REPORT > Extra > Top Reports, report_key 211): `lib/report/topReports.ts` (queries) and `lib/report/topReportsSql.ts` (the five selects). Wired as `case 211` in
+  `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/top-reports-sql.test.mts`.
+  - The first combo names the report: Customers / Suppliers (the parties ranked by amount: the sale or purchase less its credit / debit notes, net of the book's first tax slab when it has one, with
+    closing balance, number of invoices and quantity; customers also carry the account's master addon fields), Item Sold / Purchase by Value (the products by IL_VALUE, with the product's addon fields),
+    Item Sold / Purchase by Quantity (the products by quantity with their closing stock, licence 2 counting TRN_QTY1).
+  - Licence 51 lists those with nothing sold or bought after the ranked ones (Row_No 0).
+- Where the desktop SQL is loose: the closing balance is that of the report's year (its join had no year, so a second year's row would double the amounts); the licence-51 quantity insert had a typo (`Row_Noname`)
+  and is written as meant.
+- To confirm: compare Customers and one item report with the desktop for the same period.
+
 ## 2026-10-09 (TDS Report)
 - Ported `SP_FRT_RPT_TDS_REPORT` (REPORT > Extra > TDS Report, report_key 162): `lib/report/tdsReport.ts` (queries) and `lib/report/tdsReportSql.ts` (the voucher query, the TDS the rate gives). Wired as
   `case 162` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/tds-report-sql.test.mts`.
