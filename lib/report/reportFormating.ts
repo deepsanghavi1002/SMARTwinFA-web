@@ -13,6 +13,7 @@ import { formSummaryFormats } from "./formSummaryFormats";
 import { bookwise } from "./bookwise";
 import { dailyTransaction } from "./dailyTransaction";
 import { fundFlow } from "./fundFlow";
+import { dropAnalysis } from "./dropAnalysis";
 import { topReports } from "./topReports";
 import { tdsReport } from "./tdsReport";
 import { target } from "./target";
@@ -36,6 +37,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 14: return formSummaryFormats(loader, plan);
     case 16: return partyStock(loader, plan);
     case 211: return topReports(loader, plan);
+    case 232: return dropAnalysis(loader, plan);
     case 162: return tdsReport(loader, plan);
     case 156: return dailyTransaction(loader, plan);
     case 152: return target(loader, plan);

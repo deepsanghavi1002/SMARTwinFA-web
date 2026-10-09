@@ -3,6 +3,13 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Drop Analysis)
+- Ported `SP_FRT_RPT_DROP_ANALYSIS` (REPORT > Extra > Drop Analysis, report_key 232): `lib/report/dropAnalysis.ts` (queries + table) and `lib/report/dropAnalysisSql.ts` (the selects and the pivot). Wired as
+  `case 232` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/drop-analysis-sql.test.mts`.
+  - Product format: sale lines by product; other formats: sale invoices by customer. Sorting picks the figure: Drop Count, Quantity or Amount (the party's amount is the net before the book's first tax slab).
+  - One column per day of the first-combo month (Jan-Mar in the year the financial year ends, Apr-Dec in the year it starts, February by leap year) plus TOTAL (sum of the cells as integers); the
+    Month-wise option (CHK_MONTH) gives Apr..Mar instead. The master addon fields follow as columns. The desktop's PIVOT over a temp table is done in memory.
+
 ## 2026-10-09 (Top Reports)
 - Ported `SP_FRT_RPT_TOP_REPORTS` (REPORT > Extra > Top Reports, report_key 211): `lib/report/topReports.ts` (queries) and `lib/report/topReportsSql.ts` (the five selects). Wired as `case 211` in
   `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/top-reports-sql.test.mts`.
