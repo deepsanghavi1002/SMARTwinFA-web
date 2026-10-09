@@ -28,7 +28,7 @@ const flag = (row: Row | undefined, name: string) => {
 };
 
 /** Reports whose output is ported (their SP_REPORT_STANDARD branch and Report_Combine's handling of it). */
-export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 14, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 135, 152, 156, 162, 211, 232, 258]);
+export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 14, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 135, 152, 156, 162, 211, 232, 255, 258]);
 
 /** The help grid each help id fills, when report_controlval does not name one (UNKNOWN_HELP_GRID). */
 const KEY_COLUMN: Readonly<Record<string, string>> = {
