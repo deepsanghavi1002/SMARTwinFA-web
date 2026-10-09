@@ -3,6 +3,10 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Party Wise Bill PDF - Account help)
+- `features/report/ReportCombine.tsx`: report 255's Account tab now lists only the parties of the chosen book (SALE: debtors, PURCHASE: creditors, EXPENSE: general accounts), like Agewise Outstanding;
+  255 added to the `OUTSTANDING` set (its first combo's value is the book number).
+
 ## 2026-10-09 (Party Wise Bill PDF)
 - Ported `SP_FRT_RPT_PARTY_BILL_PDF` (REPORT > Extra > Party Wise Bill PDF, report_key 255): `lib/report/partyBillPdf.ts` and `lib/report/partyBillPdfSql.ts`. Wired as `case 255` in `standardReport` and
   `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/party-bill-pdf-sql.test.mts`.
