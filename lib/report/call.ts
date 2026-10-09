@@ -79,6 +79,8 @@ export type ReportCall = {
   printAllSlabs: boolean;
   jvDetailsRequired: boolean;
   fromDateEnabled: boolean;
+  /** The keys ticked in the first combo's own help grid (REP_CONTROL_ID -1): the bank / sale accounts of the Form Summary and the like. */
+  firstHelpKeys: string[];
 };
 
 /** One row of a report's result table: column name (as the procedure names it) to value. */

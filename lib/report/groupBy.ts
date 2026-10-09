@@ -140,3 +140,15 @@ export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]):
     headingCaptions: {},
   };
 }
+
+/**
+ * Remove Group (web only): the report's group headings (AC, BOOK, ADDON_1 ...) and its subtotal
+ * lines taken off, leaving the entries and the final total, so the ▾ column filters and the
+ * Planning buttons can narrow the rows instead.
+ */
+export function removeGroups(output: ReportOutput): ReportOutput {
+  const headings = new Set([...Object.keys(output.headingColours), ...Object.keys(output.headingLevels ?? {}), ...Object.keys(output.headingCaptions)]);
+  const isHeading = (row: OutputRow) => row.kind === "data" && (row.rowType === "GAP" || headings.has(row.rowType) || /^(ADDON_\d|AC|BOOK|SCHEDULE|GROUP\d*)$/.test(row.rowType));
+  const rows = output.rows.filter((row) => row.kind !== "subtotal" && !isHeading(row));
+  return { ...output, rows, groups: [], subtotals: false, headingCaptions: {}, headingLevels: {} };
+}

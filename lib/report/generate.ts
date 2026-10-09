@@ -247,7 +247,7 @@ export async function planReport(loader: Loader, reportName: string, selection: 
     filterId: "", book: -1, againstBook: -1, fcValue: Number(firstValue) || 0, fcText: firstText, database: `${schema}.`, prvDatabase: "", openingFrom: "",
     slabKey: 0, slabsKey: "", slabsCount: 0, slabText: "", tarikh1: session.tarikh1, tarikh2: session.tarikh2, yearId: session.yearId,
     userMachineNo: String(session.userNo), userNo: String(session.userNo), licence: session.licence, companyKey: session.companyKey,
-    unionQuery: "", unionGroups: "", fixCols: "", sorting: "", showNarration: false, useUnion: false, groupsAsHeadings: false, printAllSlabs: false, jvDetailsRequired: false, fromDateEnabled: false,
+    unionQuery: "", unionGroups: "", fixCols: "", sorting: "", showNarration: false, useUnion: false, groupsAsHeadings: false, printAllSlabs: false, jvDetailsRequired: false, fromDateEnabled: false, firstHelpKeys: [],
   };
 
   // Filter's own control (a slab combo or a ticked list), when the filter names one.
@@ -725,6 +725,10 @@ export async function planReport(loader: Loader, reportName: string, selection: 
   call.jvDetailsRequired = checks.get("CHK_JV_DTLS") ?? checks.get("CHK_LCKED") ?? false;
   call.sorting = sortingRow ? text(sortingRow, "output_orderby") : "";
   call.fromDateEnabled = false;
+  {
+    const firstHelp = (await loader.readTable(`SELECT visible_controls_lst FROM smart_setup.report_controlval WHERE rep_properties_id = $1 AND rep_control_id = -1 ORDER BY display_order LIMIT 1`, [reportKey]))?.[0];
+    call.firstHelpKeys = firstHelp ? (selection.ticks[text(firstHelp, "visible_controls_lst")] ?? []).map(String) : [];
+  }
   if (!uptoVisible) upto = new Date();
   call.upto = upto;
 

@@ -23,7 +23,7 @@ import { HotkeyLabel } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { messageBox } from "../ui/MessageBox";
 import { ReportChart } from "./ReportChart";
-import { applyGroupBy } from "../../lib/report/groupBy";
+import { applyGroupBy, removeGroups } from "../../lib/report/groupBy";
 import type { GroupSpec } from "../../lib/report/groupBy";
 import { BudgetPanel } from "./BudgetPanel";
 import { GrowthPanel } from "./GrowthPanel";
@@ -121,7 +121,10 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const groupSpecs = grouping.forBase === base ? grouping.specs : NO_GROUPS;
   const setGroupSpecs = (specs: readonly GroupSpec[]) => { setGrouping({ forBase: base, specs }); onGroupBy?.(specs); };
   const served = groupMode && groupOutput ? groupOutput : base;
-  const output = useMemo(() => applyGroupBy(served, groupSpecs), [served, groupSpecs]);
+  /** Remove Group: the group headings and subtotal lines taken off (kept with the report it was set for). */
+  const [ungroup, setUngroup] = useState<{ forBase: ReportOutput; forServed: ReportOutput } | null>(null);
+  const ungrouped = ungroup !== null && ungroup.forBase === base && ungroup.forServed === served;
+  const output = useMemo(() => (ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, groupSpecs, ungrouped]);
 
   const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
@@ -384,6 +387,15 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     } finally {
       setGroupBusy(false);
     }
+  };
+  /** Remove Group / Restore Group: the report without its group headings and subtotal lines, and back. */
+  const toggleUngroup = () => {
+    setUngroup(ungrouped ? null : { forBase: base, forServed: served });
+    setTree(false);
+    setClosed(new Set());
+    resetView();
+    onStatus({ hotKeys: GRID_KEYS, message: ungrouped ? "Groups restored" : "Groups removed: use the ▾ filters on the headings" });
+    scroller.current?.focus();
   };
   /** Leaves Create Group: back to the report as generated (ResetGroupReport's No). */
   const exitGroup = () => {
@@ -814,6 +826,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           { title: "Design", icon: "tree", content: (
             <>
               <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-plain" onClick={() => void createTree()} disabled={!tree && (output.groups.length === 0 || !output.subtotals)} title={tree ? "Remove the tree format" : "Show the groups as a tree that opens and closes"}><Icon name="tree" /><HotkeyLabel text={tree ? "Remove Tree" : "Create Tree"} hotkey="c" /></button>
+              <button type="button" data-hotkey="j" aria-keyshortcuts="Alt+J" className={`mp-btn mp-btn-plain ${ungrouped ? "rp-btn-on" : ""}`} onClick={toggleUngroup} disabled={!ungrouped && output.groups.length === 0 && !output.rows.some((row) => row.kind === "subtotal")} title={ungrouped ? "Bring the group headings and subtotals back" : "Take off all group headings and subtotal lines, to filter the rows with the ▾ buttons"}><Icon name="clear" /><HotkeyLabel text={ungrouped ? "Restore Group" : "Remove Group"} hotkey="j" /></button>
               <button type="button" data-hotkey="g" aria-keyshortcuts="Alt+G" className={`mp-btn mp-btn-plain ${groupMode ? "rp-btn-on" : ""}`} onClick={() => void createGroup()} disabled={groupBusy} title="Group the entries on fields of your choice"><Icon name="columns" /><HotkeyLabel text="Create Group" hotkey="g" /></button>
               <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className={`mp-btn mp-btn-plain ${drawing ? "rp-btn-on" : ""}`} onClick={borderOn} title="Border the selected cells, then click cells to border them (Esc stops)"><Icon name="border" /><HotkeyLabel text="Border On" hotkey="o" /></button>
               <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-plain" onClick={borderOff} title="Remove Border from the selected cells, and stop drawing"><Icon name="borderOff" /><HotkeyLabel text="Border Off" hotkey="b" /></button>
