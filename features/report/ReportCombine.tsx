@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
-import { registerBooks } from "../../lib/report/registerBooks";
+import { accountHelpBooks } from "../../lib/report/registerBooks";
 import type { ControlItem, HelpGrid as HelpGridData, ReportDefinition, ReportOutput, ReportSelection } from "../../lib/report/types";
 import { reportCall, viewsCall } from "./api";
 import { SavedViews } from "./SavedViews";
@@ -57,19 +57,22 @@ const EMPTY_TICKS: ReadonlySet<string> = new Set();
 const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? row.FIEL_KEY ?? ""}|${row.sub_code ?? row.SUB_CODE ?? ""}`;
 
 /**
- * The first combo's own help (Form Summary's Account tab) lists the accounts of the books the chosen
- * entry covers (REGISTER : SALE gives the sale books, debit note and credit note, not every account); an
- * entry with no book, or books none of the rows has, leaves every row.
+ * The account help narrowed to the chosen book. Form Summary's own (first combo) help lists the accounts of the books the
+ * register covers (REGISTER : SALE gives the sale books, debit note and credit note, all ticked until changed); Agewise
+ * Outstanding's Account tab lists the parties of the book (EXPENSE gives the general accounts, book 1). An entry with no book, or
+ * books none of the rows has, leaves every row.
  */
-function firstHelpOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean } | null {
-  const help = def?.helps.find((candidate) => candidate.first);
-  const book = def?.firstCombo.options.find((option) => option.value === first)?.book;
-  if (!help || book === undefined || book < 0) return null;
-  const bookKey = Object.keys(help.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
-  if (!bookKey) return null;
-  const books = registerBooks(book);
+function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
+  if (!def) return null;
+  const option = def.firstCombo.options.find((candidate) => candidate.value === first);
+  const book = option?.book ?? (def.key === 5 && /^\d+$/.test(first) ? Number(first) : undefined);
+  if (book === undefined || book < 0) return null;
+  const help = def.key === 14 ? def.helps.find((candidate) => candidate.first) : def.key === 5 ? def.helps.find((candidate) => candidate.grid === "C1HelpAccount") : undefined;
+  const books = accountHelpBooks(def.key, book, help?.first === true);
+  const bookKey = Object.keys(help?.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
+  if (!help || !books || !bookKey) return null;
   const keep = (row: Readonly<Record<string, string>>) => books.includes(Number(row[bookKey]));
-  return help.rows.some(keep) ? { help, keep } : null;
+  return help.rows.some(keep) ? { help, keep, defaultTicked: def.key === 14 } : null;
 }
 
 export function ReportCombine({ reportName, menuShortName, title, onClose }: { reportName: string; menuShortName: string; title: string; onClose: () => void }) {
@@ -221,10 +224,10 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   /** A grid's ticks; the first combo's help drops the ticks of accounts the chosen register no longer lists. */
   const ticksOf = (grid: string): ReadonlySet<string> => {
     const ticked = ticks[grid] ?? EMPTY_TICKS;
-    const scope = firstHelpOf(def, first);
+    const scope = accountScopeOf(def, first);
     if (!scope || scope.help.grid !== grid) return ticked;
     const allowed = new Set(scope.help.rows.filter(scope.keep).map((row) => row[scope.help.keyColumn] ?? ""));
-    if (firstEdited !== first) return allowed;
+    if (scope.defaultTicked && firstEdited !== first) return allowed;
     return [...ticked].every((key) => allowed.has(key)) ? ticked : new Set([...ticked].filter((key) => allowed.has(key)));
   };
   const selectionNow = (): ReportSelection => ({
@@ -342,7 +345,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
 
   const helpShown = def?.helps.filter((help) => def.helpTabs.includes(help.grid.replace("C1Help", "Tab_")) || def.helpTabs.length === 0) ?? [];
   const helpEnabled = (grid: string) => def?.helps.some((help) => help.grid === grid && help.first) === true || groupOfGrid(grid).length > 0 || (grid === "C1HelpAddon" && groups.some((key) => Number(key.split("|")[1]) > 0));
-  const helpFilter = (help: HelpGridData): ((row: Readonly<Record<string, string>>) => boolean) | undefined => (help.grid === "C1HelpAddon" ? addonFilter : help.first ? firstHelpOf(def, first)?.keep : undefined);
+  const helpFilter = (help: HelpGridData): ((row: Readonly<Record<string, string>>) => boolean) | undefined => (help.grid === "C1HelpAddon" ? addonFilter : accountScopeOf(def, first)?.help.grid === help.grid ? accountScopeOf(def, first)?.keep : undefined);
   const addonGroups = groupControl?.items.filter((item) => Number(item.value) > 0) ?? [];
   const addonItem = addonGroups.find((item) => item.value === addonField);
   const addonEnabled = addonItem ? groups.includes(itemKey(addonItem)) : helpEnabled("C1HelpAddon");
