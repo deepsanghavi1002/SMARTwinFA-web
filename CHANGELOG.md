@@ -3,6 +3,15 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (TDS Report)
+- Ported `SP_FRT_RPT_TDS_REPORT` (REPORT > Extra > TDS Report, report_key 162): `lib/report/tdsReport.ts` (queries) and `lib/report/tdsReportSql.ts` (the voucher query, the TDS the rate gives). Wired as
+  `case 162` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/tds-report-sql.test.mts`.
+  - Vouchers of the period of the purchase (13), expense (15) and expense return (10) books with the party's address, PAN and deductee type, the TDS chart's nature of payment, section and rate
+    (company or individual by the deductee type), the net amount (before the book's first tax slab), the TDS deducted (the TDS journal set against it; for a return the other side's clearing),
+    ACT_TDS_AMT (net x rate / 100 to the rupee) and DIFF_TDS_AMT; only vouchers with a rate and TDS deducted show.
+- As the desktop does it: the address is blank when any part of it (a line, city or pin) is missing; the TDS chart is the setup's `TDS_CHART`.
+- To confirm: compare a period with the desktop.
+
 ## 2026-10-09 (Daily Transaction)
 - Ported `SP_FRT_RPT_DAILY_TRANSACTION` (REPORT > Extra > Daily Transaction, report_key 156): `lib/report/dailyTransaction.ts` (queries) and `lib/report/dailyTransactionSql.ts` (the summary's lines, the detail's
   nine voucher kinds). Wired as `case 156` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/daily-transaction-sql.test.mts`.
