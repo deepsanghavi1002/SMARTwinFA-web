@@ -3,6 +3,14 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Outstanding Bookwise)
+- Ported `SP_FRT_RPT_BOOKWISE` (REPORT > Outstanding > Bookwise, report_key 135): `lib/report/bookwise.ts` (query) and `lib/report/bookwiseSql.ts` (select, where, the SR_NO clean-up).
+  Wired as `case 135` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/bookwise-sql.test.mts`.
+  - Entries of the period of the accounts of books 1, 2, 3 (the expense book 15: general accounts, bills from EXPENSE_LINK; any other book: bills from OUTCLEAR), with the
+    bill's date, number and the amount set off (AG_DATE, AG_NO, AG_AMT); a voucher set against several bills shows once with the bills under it (SR_NO > 1 rows blanked).
+  - The BOOK combo's value is read as the book number when the combo gives no book column.
+- To confirm: compare a period with the desktop; if the report's first format is a different procedure (SP_STD_RPT_BOOKWISE) send it.
+
 ## 2026-10-09 (Against Book: two entries, SALE and PURCHASE)
 - Desktop (credit / debit note): Against Book offers SALE and PURCHASE only; the web showed six (the setup's list repeats the books: SALE, PURCHASE, SALE, PURCHASE, SALE,
   SALE - Direct) in Register, and the Against Book chosen then filtered the register on `led.ag_book` even for a plain SALE register.
