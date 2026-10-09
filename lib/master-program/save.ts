@@ -1255,7 +1255,7 @@ async function accountOpeningFollowUp(loader: Loader, prepared: PreparedProgram,
     const amount = toDecimal(value);
     const existing = await loader.readTable(`SELECT out_key FROM ${s}.outclear WHERE out_fulldocno = 'OPENING' AND code = $1`, [code]);
     if (!existing) {
-      out.push(`__ALLOC__outclear__INSERT INTO ${s}.outclear (out_key,out_date,out_fulldocno,out_entryamt,out_setoff,out_ly_setoff,out_on_acamt,out_dbcode,out_entrybook,code,ref_no,set_off,clear_pos,year_id) VALUES (__KEY__,${quote(formatDesktopDate(session.tarikh1))},'OPENING',${amount},0,0,0,${amount < 0 ? 2 : 1},${debtor ? 8 : 13},${code},'',0,'P',${quote(session.yearId)})`);
+      out.push(`__ALLOC__outclear__INSERT INTO ${s}.outclear (out_key,out_date,out_fulldocno,out_entryamt,out_setoff,out_ly_setoff,out_on_acamt,out_dbcode,out_entrybook,code,ref_no,set_off,clear_pos,year_id) VALUES (__KEY__,${quote(formatDesktopDate(session.tarikh1))},'OPENING',${amount},0,0,0,${amount < 0 ? 2 : 1},${debtor ? 8 : 13},${code},'','0','P',${quote(session.yearId)})`);
       continue;
     }
     const settled = await loader.readTable(
