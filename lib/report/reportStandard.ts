@@ -2332,8 +2332,8 @@ async function bankReconciliation(loader: Loader, plan: ReportPlan): Promise<Res
 // books) broken up by tax slab and tax: net, tax and final amounts of each slab line, with the
 // cash memos and returns in their own columns when the book has them.
 //
-// Not ported: the "Summary For Period Selected" and "Details (Summarized Taxes)" formats (they go
-// through SP_REPORT_FORMATING).
+// The "Summary For Period Selected" and "Details (Summarized Taxes)" formats go through
+// SP_REPORT_FORMATING (SP_FRT_RPT_FORM_SUMM): formSummaryFormats.ts.
 
 async function formSummary(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { session } = loader;

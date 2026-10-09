@@ -9,6 +9,7 @@ import { cashBookColumns, dayBefore, ddMmYyyy, dropColumn, formatPeriod, groupOr
 import { cashBookFrom, cashBookOpening, registerSlabBook, registerSlabs, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
 import { checklistDaybook } from "./checklistDaybook";
 import { checklistInvoice } from "./checklistInvoice";
+import { formSummaryFormats } from "./formSummaryFormats";
 import { fundFlow } from "./fundFlow";
 import { money, num, runReportSql } from "./run";
 
@@ -18,13 +19,14 @@ import { money, num, runReportSql } from "./run";
  * procedure's common tail (LBL_RESULT) that adds FROM, WHERE, GROUP BY and ORDER BY to the
  * format's select. The periods' SQL is shared (library.formatPeriod).
  *
- * Ported branches: 1 (day book), 3 (register), 4 (ledger), 21 (outstanding clearance), 29 (stock summary, in reportStandard.ts), 42 (budget), 93 (stock movement, in reportStandard.ts), 109 (fund flow, in fundFlow.ts), 119 (checklist invoice, in checklistInvoice.ts), 120 (checklist daybook, in checklistDaybook.ts), 258 (monthly closing stock, in reportStandard.ts).
+ * Ported branches: 14 (form summary, in formSummaryFormats.ts), 1 (day book), 3 (register), 4 (ledger), 21 (outstanding clearance), 29 (stock summary, in reportStandard.ts), 42 (budget), 93 (stock movement, in reportStandard.ts), 109 (fund flow, in fundFlow.ts), 119 (checklist invoice, in checklistInvoice.ts), 120 (checklist daybook, in checklistDaybook.ts), 258 (monthly closing stock, in reportStandard.ts).
  */
 export async function formattedReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   switch (plan.call.reportKey) {
     case 1: return daybookFormats(loader, plan);
     case 3: return registerFormats(loader, plan);
     case 4: return ledgerFormats(loader, plan);
+    case 14: return formSummaryFormats(loader, plan);
     case 16: return partyStock(loader, plan);
     case 21: return outstandingClearance(loader, plan);
     case 29: return stockSummary(loader, plan);
