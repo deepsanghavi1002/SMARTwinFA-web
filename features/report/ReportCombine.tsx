@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
+import { registerBooks } from "../../lib/report/registerBooks";
 import type { ControlItem, HelpGrid as HelpGridData, ReportDefinition, ReportOutput, ReportSelection } from "../../lib/report/types";
 import { reportCall, viewsCall } from "./api";
 import { SavedViews } from "./SavedViews";
@@ -56,9 +57,9 @@ const EMPTY_TICKS: ReadonlySet<string> = new Set();
 const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? row.FIEL_KEY ?? ""}|${row.sub_code ?? row.SUB_CODE ?? ""}`;
 
 /**
- * The first combo's own help (Form Summary's Account tab) lists the accounts of the chosen entry's book
- * (REGISTER : SALE gives the sale accounts, not every account); an entry with no book, or a book none of
- * the rows has, leaves every row.
+ * The first combo's own help (Form Summary's Account tab) lists the accounts of the books the chosen
+ * entry covers (REGISTER : SALE gives the sale books, debit note and credit note, not every account); an
+ * entry with no book, or books none of the rows has, leaves every row.
  */
 function firstHelpOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean } | null {
   const help = def?.helps.find((candidate) => candidate.first);
@@ -66,7 +67,8 @@ function firstHelpOf(def: ReportDefinition | null, first: string): { help: HelpG
   if (!help || book === undefined || book < 0) return null;
   const bookKey = Object.keys(help.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
   if (!bookKey) return null;
-  const keep = (row: Readonly<Record<string, string>>) => Number(row[bookKey]) === book;
+  const books = registerBooks(book);
+  const keep = (row: Readonly<Record<string, string>>) => books.includes(Number(row[bookKey]));
   return help.rows.some(keep) ? { help, keep } : null;
 }
 
@@ -87,6 +89,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [ticks, setTicks] = useState<Record<string, Set<string>>>({});
+  /** The register (first combo entry) whose Account ticks the operator has changed; until then every listed account is ticked, as on the desktop. */
+  const [firstEdited, setFirstEdited] = useState<string | null>(null);
   /** A saved view's choice for the lost-focus combo, kept when that combo is refilled. */
   const viewChoice = useRef<string | null>(null);
   const [viewsOpen, setViewsOpen] = useState(false);
@@ -220,6 +224,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     const scope = firstHelpOf(def, first);
     if (!scope || scope.help.grid !== grid) return ticked;
     const allowed = new Set(scope.help.rows.filter(scope.keep).map((row) => row[scope.help.keyColumn] ?? ""));
+    if (firstEdited !== first) return allowed;
     return [...ticked].every((key) => allowed.has(key)) ? ticked : new Set([...ticked].filter((key) => allowed.has(key)));
   };
   const selectionNow = (): ReportSelection => ({
@@ -245,6 +250,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     const choice = def?.lostFocusControl ? chosen.choices?.[def.lostFocusControl] : undefined;
     viewChoice.current = (chosen.firstCombo ?? "") !== first ? choice ?? null : null;
     setFirst(chosen.firstCombo ?? "");
+    setFirstEdited(chosen.firstCombo ?? "");
     if (!keepDates) { setFrom(chosen.from ?? from); setUpto(chosen.upto ?? upto); }
     setGroups([...(chosen.groups ?? [])]);
     setTicks(Object.fromEntries(Object.entries(chosen.ticks ?? {}).map(([grid, keys]) => [grid, new Set(keys)])));
@@ -431,7 +437,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
                   )}
                   {helpShown.map((help) => (
                     <button key={help.grid} type="button" role="tab" tabIndex={-1} aria-selected={helpTab === help.grid} className={`${helpTab === help.grid ? "rp-tab-on" : ""} ${helpEnabled(help.grid) ? "rp-help-tab-live" : ""}`} onClick={() => setHelpTab(help.grid)}>
-                      {help.grid.replace("C1Help", "")} {ticks[help.grid]?.size ? `(${ticks[help.grid].size})` : ""}
+                      {help.grid.replace("C1Help", "")} {ticksOf(help.grid).size ? `(${ticksOf(help.grid).size})` : ""}
                     </button>
                   ))}
                   <span className="rp-help-tools">
@@ -469,7 +475,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
                     ticked={ticksOf(help.grid)}
                     rowKey={help.grid === "C1HelpAddon" ? addonKey : (row) => row[help.keyColumn] ?? ""}
                     filter={helpFilter(help)}
-                    onTicks={(next) => setTicks((current) => ({ ...current, [help.grid]: next }))}
+                    onTicks={(next) => { if (help.first) setFirstEdited(first); setTicks((current) => ({ ...current, [help.grid]: next })); }}
                     focusKey={helpTab === help.grid ? focusHelp : 0}
                     freezeMain
                     onTabOut={tabOutOfHelp}

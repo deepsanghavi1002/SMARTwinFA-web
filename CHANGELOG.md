@@ -3,6 +3,14 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Form Summary Account help: books of the register, all ticked)
+- Desktop for REGISTER : SALE lists 4 accounts, all ticked (SALE, SALE - Direct, DEBIT NOTE, CREDIT NOTE); the web listed 2 (book 8
+  only), unticked. `lib/report/registerBooks.ts`: the books a register covers (SALE 8 + cash sale 9 + debit note 11 + credit note 16;
+  PURCHASE 13 + 14 + 11 + 16; EXPENSE 15 + 10), as SP_STD_RPT_FORM_SUMM reads them. Test: `tests/register-books.test.mts`.
+- `features/report/ReportCombine.tsx`: the first combo's help lists those books and has every listed account ticked until the operator
+  changes a tick for that register (a saved view restores its own ticks).
+- To confirm: PURCHASE and EXPENSE lists on the desktop (the books 13/14/11/16 and 15/10 are read from the procedure's own books).
+
 ## 2026-10-09 (Form Summary: Account help live, listed by register)
 - Problem: REPORT > Register > Form Summary, REGISTER : SALE gave an Account tab that was greyed (nothing could be ticked) and listed
   every account (4457) instead of the sale accounts.
