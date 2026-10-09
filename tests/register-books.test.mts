@@ -20,6 +20,8 @@ test("account help books: Form Summary lists the register's books, every other A
   assert.equal(accountHelpBooks(5, 4, false), null);
   assert.deepEqual(accountHelpBooks(1, 15, false), [1], "every report with an Account tab lists the parties of its book");
   assert.equal(accountHelpBooks(1, 15, true), null, "a first combo help of another report is left alone");
+  assert.deepEqual(accountHelpBooks(32, 2, false), [2], "Interest Calculation: the BOOK is the account book itself");
+  assert.equal(accountHelpBooks(32, 8, false), null);
   assert.equal(partyBooks(6), null);
 });
 

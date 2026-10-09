@@ -3,6 +3,11 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Interest Calculation: Account help by the account book)
+- `lib/report/registerBooks.ts` `accountHelpBooks`: Interest Calculation (32)'s BOOK combo is the account book itself (1, 2, 3: `ac.BOOK = @int_book`), so its Account tab lists the accounts of
+  that book (the Agewise rule, SALE -> debtors, did not fit). Test in `tests/register-books.test.mts`.
+- To confirm: if the Account tab is still wrong, send the desktop and web screenshots (BOOK chosen, Account tab open).
+
 ## 2026-10-09 (Interest Calculation)
 - Ported `SP_FRT_RPT_INTEREST` (REPORT > Extra > Interest Calculation, report_key 32): `lib/report/interest.ts` (queries) and `lib/report/interestSql.ts` (rate, days, percent
   expressions, the summary's roll-up). Wired as `case 32` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/interest-sql.test.mts`.

@@ -33,6 +33,8 @@ export function partyBooks(book: number): readonly number[] | null {
  */
 export function accountHelpBooks(reportKey: number, book: number, firstComboHelp: boolean): readonly number[] | null {
   if ((reportKey === 14 || reportKey === 18) && firstComboHelp) return registerBooks(book);
+  // Interest Calculation's BOOK combo is the account book itself (1 general, 2 debtors, 3 creditors: ac.book = @int_book).
+  if (reportKey === 32) return firstComboHelp || ![1, 2, 3].includes(book) ? null : [book];
   return firstComboHelp ? null : partyBooks(book);
 }
 
