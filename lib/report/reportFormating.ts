@@ -11,6 +11,7 @@ import { checklistDaybook } from "./checklistDaybook";
 import { checklistInvoice } from "./checklistInvoice";
 import { formSummaryFormats } from "./formSummaryFormats";
 import { bookwise } from "./bookwise";
+import { dailyTransaction } from "./dailyTransaction";
 import { fundFlow } from "./fundFlow";
 import { target } from "./target";
 import { interestCalculation } from "./interest";
@@ -32,6 +33,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 4: return ledgerFormats(loader, plan);
     case 14: return formSummaryFormats(loader, plan);
     case 16: return partyStock(loader, plan);
+    case 156: return dailyTransaction(loader, plan);
     case 152: return target(loader, plan);
     case 32: return interestCalculation(loader, plan);
     case 135: return bookwise(loader, plan);
