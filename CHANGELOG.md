@@ -3,6 +3,12 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Group By: 4 Weeks)
+- `lib/report/groupBy.ts`: new period "4 Weeks" (a month in four weeks: 1st-7th, 8th-14th, 15th-21st, 22nd to the month end, labelled
+  `dd/mm/yyyy To dd/mm/yyyy`), offered after 15 Days in the Group by / Then by lists for every date column. Test in `tests/report.test.mts`.
+- To confirm: this reads "4 week month" as four weeks to a calendar month (week 4 takes the 29th-31st). If 28-day blocks or a
+  4-4-5 calendar was meant, say so.
+
 ## 2026-10-09 (Group By: date periods on every report, 15 Days)
 - `lib/report/groupBy.ts`: new period "15 Days" (1st-15th and 16th-month end, labelled `dd/mm/yyyy To dd/mm/yyyy`, as the reports'
   own 15 Days format); new `dateColumns()` finds every column a period can be grouped on: columns typed as a date, plus any
