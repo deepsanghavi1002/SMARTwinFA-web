@@ -9,7 +9,7 @@ import { num, runReportSql } from "./run";
 
 /**
  * SP_FRT_RPT_PARTY_BILL_PDF (REPORT > Extra > Party Wise Bill PDF, report 255): the bills of the first combo's book (sale, purchase, ...) in the
- * period, of the selected accounts, to be made into a PDF per party: LED_KEY, name, date, bill no, amount and Note_Nature (1 when the voucher has
+ * period, of the selected accounts, to be made into a PDF per party: LED_KEY (hidden, as SMART_LED_KEY), name, date, bill no, amount and Note_Nature (1 when the voucher has
  * inventory lines). The desktop builds it in TEMP_TABLE_PARTY_BILL_PDF_<machine>; here it comes straight from a read-only query.
  */
 export async function partyBillPdf(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
@@ -23,7 +23,6 @@ export async function partyBillPdf(loader: Loader, plan: ReportPlan): Promise<Re
   const day = (date: Date) => `'${desktopDate(date)}'::date`;
   const table = tableFromResult(await runReportSql(loader, frag(partyBillQuery({ db: call.database, book: call.fcValue, codes: codesOf(call.selectKey[4]), from: day(call.from), upto: day(call.upto), hideCaEnt }))));
   table.setKind("AMOUNT", "decimal");
-  table.setKind("LED_KEY", "int");
   table.setKind("Note_Nature", "int");
   // ORDER BY Name, the date (yyyymmdd), FULL_DOCNO.
   const sortDate = (row: Record<string, unknown>): string => String(row.SELECTED_DATE).split("/").reverse().join("");

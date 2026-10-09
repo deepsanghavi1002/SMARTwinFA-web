@@ -3,6 +3,10 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Party Wise Bill PDF - Particulars column)
+- `lib/report/partyBillPdfSql.ts` / `partyBillPdf.ts`: the voucher key is returned as the hidden `SMART_LED_KEY` (text) instead of a visible number column `LED_KEY`. The grid had taken that number as the
+  first calculation column and added an empty PARTICULARS column in front; the grid now shows DATE, NAME, DOC NO., AMOUNT, NOTE NATURE like the desktop.
+
 ## 2026-10-09 (Party Wise Bill PDF - Account help)
 - `features/report/ReportCombine.tsx`: report 255's Account tab now lists only the parties of the chosen book (SALE: debtors, PURCHASE: creditors, EXPENSE: general accounts), like Agewise Outstanding;
   255 added to the `OUTSTANDING` set (its first combo's value is the book number).
