@@ -132,6 +132,8 @@ test("group by: regroup the entries by a column or a period, with subtotals and 
   assert.equal(periodOf(cellDate("15-Feb-2027")!, "year").label, "FY 2026-27", "the financial year runs April to March");
   assert.equal(periodOf(cellDate("08-Apr-2026")!, "week").label, "05/04/2026 To 11/04/2026", "Sunday to Saturday");
   assert.equal(cellDate("31/12/2026")?.getMonth(), 11);
+  assert.equal(periodOf(cellDate("15-Apr-2026")!, "fifteen").label, "01/04/2026 To 15/04/2026", "15 days: the 1st to the 15th");
+  assert.equal(periodOf(cellDate("16-Feb-2028")!, "fifteen").label, "16/02/2028 To 29/02/2028", "15 days: the 16th to the month end");
 
   const column = (key: string, kind: "text" | "number" | "date", decimals = 0) => ({ key, caption: key.toUpperCase(), width: 90, align: "L" as const, kind, decimals, visible: true });
   const entry = (date: string, name: string, debit: string, closing: string) => ({ kind: "data" as const, level: -2, rowType: "LED", values: { date, name, debit, closing_bal: closing }, ledKey: 1, processKey: 0 });
@@ -179,4 +181,16 @@ test("business growth: ABC ranking, movers, quiet parties", async () => {
 
   const quiet = quietParties(now, "name", "debit", "date", new Date(2026, 4, 31), 25);
   assert.deepEqual(quiet.map((item) => `${item.party}:${item.days}`), ["Mid:27", "Big:26", "Small:25"], "longest quiet first; Tiny (24 days) is under the 25 asked for");
+});
+
+test("group by offers a period on every date column, typed as a date or holding dates as text", async () => {
+  const { dateColumns } = await import("../lib/report/groupBy.ts");
+  type ReportOutput = import("../lib/report/types.ts").ReportOutput;
+  const column = (key: string, kind: "text" | "number" | "date") => ({ key, caption: key.toUpperCase().replace("_", " "), width: 90, align: "L" as const, kind, decimals: 0, visible: true });
+  const entry = (values: Record<string, string>) => ({ kind: "data" as const, level: -2, rowType: "LED", values, ledKey: 1, processKey: 0 });
+  const output = {
+    columns: [column("DATE", "text"), column("CHQ_DATE", "text"), column("UPDATE_NOTE", "text"), column("name", "text"), column("TYPED", "date"), column("AMOUNT", "number")],
+    rows: [entry({ DATE: "01-Apr-26", CHQ_DATE: "", UPDATE_NOTE: "ok", name: "A", TYPED: "02-Apr-2026" }), entry({ DATE: "02-Apr-26", CHQ_DATE: "03-Apr-26", UPDATE_NOTE: "x", name: "B", TYPED: "" })],
+  } as unknown as ReportOutput;
+  assert.deepEqual(dateColumns(output).map((c) => c.key), ["DATE", "CHQ_DATE", "TYPED"], "UPDATE_NOTE says date but holds no dates; name is not a date");
 });

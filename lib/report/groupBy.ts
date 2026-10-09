@@ -12,10 +12,10 @@ import type { OutputColumn, OutputRow, ReportOutput } from "./types";
  * and DR / CR columns are left blank.
  */
 
-export type PeriodUnit = "day" | "week" | "month" | "quarter" | "year";
+export type PeriodUnit = "day" | "week" | "fifteen" | "month" | "quarter" | "year";
 export type GroupSpec = Readonly<{ kind: "column"; key: string } | { kind: "period"; key: string; unit: PeriodUnit }>;
 
-export const PERIOD_UNITS: readonly (readonly [PeriodUnit, string])[] = [["day", "Day"], ["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
+export const PERIOD_UNITS: readonly (readonly [PeriodUnit, string])[] = [["day", "Day"], ["week", "Week"], ["fifteen", "15 Days"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -33,13 +33,19 @@ export function cellDate(text: string): Date | null {
 
 const dayText = (date: Date) => `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 
-/** The period a date falls in: its label and where it sorts (its first day). A week runs Sunday to Saturday, a quarter is Jan-Mar, Apr-Jun ..., a year is the financial year (April to March). */
+/** The period a date falls in: its label and where it sorts (its first day). A week runs Sunday to Saturday, 15 Days are the 1st-15th and the 16th to month end (as the formats of the reports do), a quarter is Jan-Mar, Apr-Jun ..., a year is the financial year (April to March). */
 export function periodOf(date: Date, unit: PeriodUnit): { label: string; order: number } {
   switch (unit) {
     case "day": return { label: `${pad(date.getDate())}-${MONTHS[date.getMonth()]}-${date.getFullYear()}`, order: date.getTime() };
     case "week": {
       const start = new Date(date.getFullYear(), date.getMonth(), date.getDate() - date.getDay());
       const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+      return { label: `${dayText(start)} To ${dayText(end)}`, order: start.getTime() };
+    }
+    case "fifteen": {
+      const second = date.getDate() > 15;
+      const start = new Date(date.getFullYear(), date.getMonth(), second ? 16 : 1);
+      const end = second ? new Date(date.getFullYear(), date.getMonth() + 1, 0) : new Date(date.getFullYear(), date.getMonth(), 15);
       return { label: `${dayText(start)} To ${dayText(end)}`, order: start.getTime() };
     }
     case "month": return { label: `${MONTHS[date.getMonth()]}-${date.getFullYear()}`, order: new Date(date.getFullYear(), date.getMonth(), 1).getTime() };
@@ -52,6 +58,22 @@ export function periodOf(date: Date, unit: PeriodUnit): { label: string; order: 
       return { label: `FY ${start}-${String(start + 1).slice(-2)}`, order: new Date(start, 3, 1).getTime() };
     }
   }
+}
+
+/**
+ * The columns a report can be grouped by period on: a column typed as a date, or any other column
+ * whose name says "date" and whose filled rows read as dates (the checklist reports' DATE, CHQ_DATE ...
+ * come back as text), so every report with a date offers "DATE by Day / Week / 15 Days / Month ...".
+ */
+export function dateColumns(output: ReportOutput): OutputColumn[] {
+  const sample = output.rows.filter((row) => isEntry(row)).slice(0, 300);
+  return output.columns.filter((column) => {
+    if (!column.visible) return false;
+    if (column.kind === "date") return true;
+    if (column.kind === "number" || !/date/i.test(`${column.key} ${column.caption}`)) return false;
+    const filled = sample.map((row) => (row.values[column.key] ?? "").trim()).filter((value) => value !== "");
+    return filled.length > 0 && filled.filter((value) => cellDate(value) !== null).length >= filled.length * 0.8;
+  });
 }
 
 export function specCaption(spec: GroupSpec, columns: readonly OutputColumn[]): string {

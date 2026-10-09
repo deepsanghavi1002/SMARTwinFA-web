@@ -3,6 +3,14 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Group By: date periods on every report, 15 Days)
+- `lib/report/groupBy.ts`: new period "15 Days" (1st-15th and 16th-month end, labelled `dd/mm/yyyy To dd/mm/yyyy`, as the reports'
+  own 15 Days format); new `dateColumns()` finds every column a period can be grouped on: columns typed as a date, plus any
+  column whose name says "date" and whose rows read as dates (the checklist reports' DATE / CHQ_DATE / RECO_DATE come back as text,
+  so they had no "DATE by ..." choices).
+- `features/report/GroupByPanel.tsx`: the Group by / Then by lists now offer "<DATE column> by Day / Week / 15 Days / Month /
+  Quarter / Year" for every report that has a date column, like the Daybook. Tests added in `tests/report.test.mts`.
+
 ## 2026-10-09 (Report output grid: row count)
 - `features/report/OutputGrid.tsx` (the one grid every report uses): the entry count no longer shows in the grid's top-left
   header cell; the bottom-right info now reads `Rows : <current row>-<total rows>` (e.g. `Rows : 1-828`), and the first number
