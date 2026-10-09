@@ -3,6 +3,15 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Daily Transaction)
+- Ported `SP_FRT_RPT_DAILY_TRANSACTION` (REPORT > Extra > Daily Transaction, report_key 156): `lib/report/dailyTransaction.ts` (queries) and `lib/report/dailyTransactionSql.ts` (the summary's lines, the detail's
+  nine voucher kinds). Wired as `case 156` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/daily-transaction-sql.test.mts`.
+  - SUMMARY: SORTING_COL / SMART_NAME / DESCRIPTION / FIGURE lines: 01 sale (with credit notes), 02 purchase (with debit notes), 03 expense, 04 deposits, 05 withdrawals (bank and cash books, by book account),
+    06 inventory moved by product (sale, credit note, purchase, debit note, less, add, production FG / SFG, job in / out), 07 / 08 sale and purchase quantity by party, 09 / 10 / 11 sale, purchase and expense amount by party.
+  - Any other format: the day's posted vouchers: Payment, Receipt, Journal, then sale, purchase, credit note, debit note, expense and agency by document series (Debit / Credit columns), ordered by kind, date text, voucher no.
+- As the desktop does it: the journal's amount goes to the Debit column; the detail orders by the dd/mm/yyyy text of the date; credit notes are added to the sale, debit notes to the purchase.
+- To confirm: compare a day with the desktop in both formats.
+
 ## 2026-10-09 (Target: Group list is Sales Man only)
 - `lib/report/setup.ts`: Target (152)'s Group list shows only the Sales Man group, as the desktop does (the web listed every account addon: Bank Name, Bank Branch, Cheque Print Name ...); its procedure
   reads the sales person (`adata.KEY_SALESMAN`) only. A fixed rule for this report: the setup query that builds the list on the desktop was not available. If no group is called Sales Man
