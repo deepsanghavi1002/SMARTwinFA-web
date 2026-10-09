@@ -15,7 +15,7 @@ import type { OutputColumn, OutputRow, ReportOutput } from "./types";
 export type PeriodUnit = "day" | "week" | "fifteen" | "fourweek" | "month" | "quarter" | "year";
 export type GroupSpec = Readonly<{ kind: "column"; key: string } | { kind: "period"; key: string; unit: PeriodUnit }>;
 
-export const PERIOD_UNITS: readonly (readonly [PeriodUnit, string])[] = [["day", "Day"], ["week", "Week"], ["fifteen", "15 Days"], ["fourweek", "4 Weeks"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
+export const PERIOD_UNITS: readonly (readonly [PeriodUnit, string])[] = [["day", "Day"], ["week", "Week"], ["fifteen", "15 Days"], ["fourweek", "4 Week Month"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -33,7 +33,7 @@ export function cellDate(text: string): Date | null {
 
 const dayText = (date: Date) => `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 
-/** The period a date falls in: its label and where it sorts (its first day). A week runs Sunday to Saturday, 15 Days are the 1st-15th and the 16th to month end (as the formats of the reports do), 4 Weeks split a month into 1st-7th, 8th-14th, 15th-21st and 22nd to month end, a quarter is Jan-Mar, Apr-Jun ..., a year is the financial year (April to March). */
+/** The period a date falls in: its label and where it sorts (its first day). A week runs Sunday to Saturday, 15 Days are the 1st-15th and the 16th to month end (as the formats of the reports do), 4 Weeks are 7-day blocks from the financial year's 1 April (1-7, 8-14, 15-21, 22-28, then 29-5 ...), a quarter is Jan-Mar, Apr-Jun ..., a year is the financial year (April to March). */
 export function periodOf(date: Date, unit: PeriodUnit): { label: string; order: number } {
   switch (unit) {
     case "day": return { label: `${pad(date.getDate())}-${MONTHS[date.getMonth()]}-${date.getFullYear()}`, order: date.getTime() };
@@ -49,11 +49,15 @@ export function periodOf(date: Date, unit: PeriodUnit): { label: string; order: 
       return { label: `${dayText(start)} To ${dayText(end)}`, order: start.getTime() };
     }
     case "fourweek": {
-      // Four weeks to a month: days 1-7, 8-14, 15-21 and 22 to the month end (the last week takes the 29th-31st).
-      const day = date.getDate();
-      const startDay = day <= 7 ? 1 : day <= 14 ? 8 : day <= 21 ? 15 : 22;
-      const start = new Date(date.getFullYear(), date.getMonth(), startDay);
-      const end = startDay === 22 ? new Date(date.getFullYear(), date.getMonth() + 1, 0) : new Date(date.getFullYear(), date.getMonth(), startDay + 6);
+      // Weeks of a four-week month: 7-day blocks counted from the financial year's 1 April, so a month's weeks are 1-7, 8-14, 15-21 and
+      // 22-28, and the next month starts on the 29th (29 Apr-5 May ...). The blocks run on across calendar months.
+      const yearStart = new Date(date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1, 3, 1);
+      const days = Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(yearStart.getFullYear(), 3, 1)) / 86400000);
+      const start = new Date(yearStart.getFullYear(), 3, 1 + Math.floor(days / 7) * 7);
+      // The year's last block stops on 31 March: the next financial year counts from its own 1 April.
+      const yearEnd = new Date(yearStart.getFullYear() + 1, 2, 31);
+      const seventh = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+      const end = seventh.getTime() > yearEnd.getTime() ? yearEnd : seventh;
       return { label: `${dayText(start)} To ${dayText(end)}`, order: start.getTime() };
     }
     case "month": return { label: `${MONTHS[date.getMonth()]}-${date.getFullYear()}`, order: new Date(date.getFullYear(), date.getMonth(), 1).getTime() };
