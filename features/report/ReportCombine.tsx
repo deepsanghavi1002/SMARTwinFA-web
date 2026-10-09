@@ -440,7 +440,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
               <label key={combo.name} className="rp-field">
                 <span>{combo.caption}</span>
                 {(() => {
-                  const entries = combo.name === def.lostFocusControl && lostItems ? lostItems : combo.name === "cmb_AgainstBook" && againstItems && combo.items.length === 0 ? againstItems : combo.items;
+                  const entries = combo.name === def.lostFocusControl && lostItems ? lostItems : combo.name === "cmb_AgainstBook" && againstItems ? againstItems : combo.items;
                   return (
                     <select value={choices[combo.name] ?? ""} disabled={combo.name === "cmb_AgainstBook" && entries.length === 0} onChange={(event) => setChoices((current) => ({ ...current, [combo.name]: event.target.value }))}>
                       {entries.map((item) => <option key={itemKey(item)} value={itemKey(item)}>{item.text}</option>)}

@@ -142,9 +142,8 @@ export async function planReport(loader: Loader, reportName: string, selection: 
       // The combo Cmb_FirstCombo_Leave fills (the day book's series) holds what the first combo's entry gives.
       if (row && text(properties, "fc_lostfocus_qry") !== "" && text(properties, "lostfocus_qry_control") === name) items.set(name, (await lostFocusItems(loader, reportName, selection.firstCombo)).items);
       else {
-        const filled = row ? (await fillControl(loader, reportKey, toInt(field(row, "rep_control_key")))).items : [];
-        // The Against Book of a credit / debit note register: the sale / purchase books of the first combo.
-        items.set(name, filled.length === 0 && name === "cmb_AgainstBook" ? (await againstBookItems(loader, reportName, selection.firstCombo)).items : filled);
+        // The Against Book of a credit / debit note register is the sale or the purchase of the first combo, whatever the setup's list repeats.
+        items.set(name, name === "cmb_AgainstBook" ? (await againstBookItems(loader, reportName, selection.firstCombo)).items : row ? (await fillControl(loader, reportKey, toInt(field(row, "rep_control_key")))).items : []);
       }
     }
     return items.get(name)!;
