@@ -13,6 +13,7 @@ import { checklistDaybook } from "./checklistDaybook";
 import { checklistInvoice } from "./checklistInvoice";
 import { bookwise } from "./bookwise";
 import { fundFlow } from "./fundFlow";
+import { target } from "./target";
 import { interestCalculation } from "./interest";
 import { taxSummary } from "./taxSummary";
 import { money, num, runReportSql } from "./run";
@@ -40,6 +41,7 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 7: return accountMaster(loader, plan);
     case 14: return formSummary(loader, plan);
     case 15: return bankReconciliation(loader, plan);
+    case 152: return target(loader, plan);
     case 32: return interestCalculation(loader, plan);
     case 135: return bookwise(loader, plan);
     case 18: return taxSummary(loader, plan);

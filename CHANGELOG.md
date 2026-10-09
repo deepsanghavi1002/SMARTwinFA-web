@@ -3,6 +3,17 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Target)
+- Ported `SP_FRT_RPT_TARGET` (REPORT > Extra > Target, report_key 152): `lib/report/target.ts` (queries) and `lib/report/targetSql.ts` (months, quarter targets, shortfalls, the three summaries).
+  Wired as `case 152` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/target-sql.test.mts`.
+  - Each ticked sales person's customers month by month (Month, Month_perc, Month_Target) against the net sale of the sale book (sale and debit / credit notes before tax, the sale book's first
+    tax slab): yearly target and its four quarters, Net_Sale, Short_fall, the running shortfall (Tot_Short) and Archive (% achieved).
+  - Options: Summary Require (a row a customer), Sales With Expense Required (a row a sales person and month with salary + expense and the two %), Group Wise Required (a row a customer type
+    with its target, sale, shortfall and % achieved).
+- Needs the Sales Man group ticked (the addon group); without it the report asks for one.
+- Not done: the Group list shows every account addon on the web (Bank Name, Bank Branch, Cheque Print Name ...) but only "Sales Man" on the desktop; the setup's query for it is needed (see the
+  chat: SELECT ... FROM smart_setup.report_controlval / query_table WHERE rep_properties_id = 152).
+
 ## 2026-10-09 (Interest Calculation: Account help by the account book)
 - `lib/report/registerBooks.ts` `accountHelpBooks`: Interest Calculation (32)'s BOOK combo is the account book itself (1, 2, 3: `ac.BOOK = @int_book`), so its Account tab lists the accounts of
   that book (the Agewise rule, SALE -> debtors, did not fit). Test in `tests/register-books.test.mts`.
