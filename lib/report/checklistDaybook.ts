@@ -25,9 +25,11 @@ export async function checklistDaybook(loader: Loader, plan: ReportPlan): Promis
   if (call.book >= 0 && ![4, 5, 6].includes(call.book)) throw new ReportRefusal("Checklist Daybook is only for a cash, discount or bank book", "INTERNAL PROGRAM FAILURE");
   if (call.book >= 0 && !(call.fcValue > 0)) throw new ReportRefusal("Select the book (Daybook).", "No Selections Done!");
 
-  const columnsOf = async (table: string) => new Set((await runReportSql(loader, `select lower(column_name) as c from information_schema.columns where table_schema = $1 and table_name = $2`, [schema.toLowerCase(), table])).rows.map((row) => String(row.c)));
-  const [entryColumns, masterColumns] = await Promise.all([columnsOf("addon_aentry"), columnsOf("addon_data")]);
-  const masterTypes = new Map((await runReportSql(loader, `select lower(column_name) as c, data_type as t from information_schema.columns where table_schema = $1 and table_name = 'addon_data'`, [schema.toLowerCase()])).rows.map((row) => [String(row.c), String(row.t)]));
+  // One query at a time: runReportSql keeps a savepoint per statement on the one connection, so overlapping statements release each other's.
+  const columns = (await runReportSql(loader, `select lower(table_name) as t, lower(column_name) as c, data_type as d from information_schema.columns where table_schema = $1 and table_name in ('addon_aentry', 'addon_data')`, [schema.toLowerCase()])).rows;
+  const entryColumns = new Set(columns.filter((row) => row.t === "addon_aentry").map((row) => String(row.c)));
+  const masterColumns = new Set(columns.filter((row) => row.t === "addon_data").map((row) => String(row.c)));
+  const masterTypes = new Map(columns.filter((row) => row.t === "addon_data").map((row) => [String(row.c), String(row.d)]));
 
   const fields = async (where: string, params: unknown[]): Promise<AddonField[]> => (await runReportSql(loader, `select btrim(fiel_save) as save, btrim(fiel_type) as type from ${db}ADDON_FLD where fiel_pos <> 'D' and ${where} order by fiel_key`, params)).rows
     .map((row) => ({ save: String(row.save ?? ""), type: String(row.type ?? "") })).filter((field) => field.save !== "");

@@ -10,6 +10,7 @@ Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
   Schedule, RECEIPT, PAYMENT, entry addon fields, master addon fields, NARRATION.
 - Wired as report_key 120: added to `PORTED_REPORTS` (`lib/report/setup.ts`) and to the key switch of both
   `standardReport` and `formattedReport`.
+- Fix: the field lookups run one after the other (overlapping queries broke the savepoints: savepoint "rp2" does not exist).
 - To confirm: for "all books" the desktop looks for entry addon fields whose FIEL_INBOOK holds "  4, 5, 6," (two leading
   spaces), copied as is; if the desktop's checklist shows fewer addon columns than expected for ALL, this is the cause.
 
