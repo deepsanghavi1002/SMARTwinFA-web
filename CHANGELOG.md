@@ -3,6 +3,12 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Outstanding Clearance: Account help by the book)
+- `features/report/ReportCombine.tsx`: the Account tab of Outstanding Clearance (21) and Ageing (5, 20) reads the book from the BOOK combo's
+  value when the combo query has no `book` column, so the party books rule (SALE debtors 2, PURCHASE creditors 3, EXPENSE general 1) applies
+  to Clearance as it does to Agewise. Other reports still need the combo's own `book` column.
+- To confirm: if Clearance's list still differs from the desktop, send both screenshots (the BOOK chosen, the Account tab).
+
 ## 2026-10-09 (Account tab by the book in every report)
 - The Agewise Outstanding rule (the Account tab lists the parties of the chosen BOOK: SALE / cash sale / credit note the debtors, book 2;
   PURCHASE / cash purchase / debit note the creditors, book 3; EXPENSE the general accounts, book 1) now applies to every report with an

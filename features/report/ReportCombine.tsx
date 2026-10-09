@@ -62,10 +62,13 @@ const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? r
  * every other report lists the parties of the chosen book (EXPENSE gives the general accounts, book 1; SALE the debtors, 2; PURCHASE the creditors, 3). An entry with no book, or
  * books none of the rows has, leaves every row.
  */
+/** The outstanding reports (ageing 5 and 20, clearance 21): their BOOK combo's value is the book number when the combo gives no book column. */
+const OUTSTANDING: ReadonlySet<number> = new Set([5, 20, 21]);
+
 function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
   if (!def) return null;
   const option = def.firstCombo.options.find((candidate) => candidate.value === first);
-  const book = option?.book ?? (def.key === 5 && /^\d+$/.test(first) ? Number(first) : undefined);
+  const book = option?.book ?? (OUTSTANDING.has(def.key) && /^\d+$/.test(first) ? Number(first) : undefined);
   if (book === undefined || book < 0) return null;
   const help = def.key === 14 ? def.helps.find((candidate) => candidate.first) : def.helps.find((candidate) => candidate.grid === "C1HelpAccount" && !candidate.first);
   const books = accountHelpBooks(def.key, book, help?.first === true);
