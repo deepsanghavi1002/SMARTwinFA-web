@@ -3,6 +3,17 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Form Summary formats)
+- Ported `SP_FRT_RPT_FORM_SUMM` (REPORT > Register > Form Summary, report_key 14, with a format): `lib/report/formSummaryFormats.ts`
+  (queries) and `lib/report/formSummaryFormatsSql.ts` (summed columns, the two formats). Wired as `case 14` in `formattedReport`
+  (`lib/report/reportFormating.ts`). Test: `tests/form-summary-formats-sql.test.mts`.
+  - Details (Summarized Taxes) `SM_SUMMARY`: a row a voucher and tax line (SORTING_DATE, SELECTED_DATE, FULL_DOCNO, NAME, the summed
+    amounts, TAX_SHORT, TAX_DESC, TAX_PLACE_DESC, TAX_PLACE, SLAB_ORDER, SLAB_KEY).
+  - Summary For Period Selected `SUMMARY`: a row a tax line (TAX_PLACE, TAX_PLACE_DESC, TAX_SHORT, TAX_DESC, the summed amounts).
+  - SGST / UTGST lines carry their tax only (as the standard report), sorted by TAX_PLACE_DESC.
+- As the desktop reads it: return accounts are looked for as "16" or "11" anywhere in the ticked keys (no comma, no CHK_CRCASCOM
+  test), unlike the standard report; check against the desktop if a book with return accounts differs.
+
 ## 2026-10-09 (Group By: Half Year)
 - `lib/report/groupBy.ts`: new period "Half Year" (the financial year's halves: `Apr - Sep 2026` and `Oct 2026 - Mar 2027`, as the
   reports' own Half Year format), offered after Quarter for every date column. Test in `tests/report.test.mts`.
