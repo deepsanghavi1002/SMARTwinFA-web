@@ -3,6 +3,16 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Agewise Outstanding: Account help by the book)
+- Desktop, REPORT > Outstanding > Agewise, BOOK : EXPENSE: the Account tab lists only the general accounts (book 1), none ticked; the web
+  listed all 4,457 accounts. `lib/report/registerBooks.ts` `partyBooks` / `accountHelpBooks`: SALE (8, 9, 16) the debtors (book 2),
+  PURCHASE (13, 14, 11) the creditors (book 3), EXPENSE (15, 10) the general accounts (book 1); the Form Summary rule (the register's
+  own books, all ticked) stays for report 14 only.
+- `features/report/ReportCombine.tsx` `accountScopeOf`: replaces `firstHelpOf`; narrows the Account help of report 5 by the chosen BOOK
+  (the combo's `book`, or its value when it has none); report 14 as before; every other report unchanged. Tests in `tests/register-books.test.mts`.
+- To confirm: SALE and PURCHASE on the desktop's Agewise Outstanding (debtors 2 / creditors 3 are read from the Budget and Compare code),
+  and which other reports (Outstanding Clearance 21 ...) list parties by the book the same way: send a screenshot and it is one more line.
+
 ## 2026-10-09 (Form Summary Account help: books of the register, all ticked)
 - Desktop for REGISTER : SALE lists 4 accounts, all ticked (SALE, SALE - Direct, DEBIT NOTE, CREDIT NOTE); the web listed 2 (book 8
   only), unticked. `lib/report/registerBooks.ts`: the books a register covers (SALE 8 + cash sale 9 + debit note 11 + credit note 16;

@@ -12,3 +12,24 @@ export function registerBooks(book: number): readonly number[] {
     default: return [book];
   }
 }
+
+/**
+ * The account books an Agewise Outstanding BOOK lists parties of: sale (and its cash and credit note
+ * books) the debtors, book 2; purchase (and cash purchase, debit note) the creditors, book 3; expense
+ * the general accounts, book 1. null for any other book (every account).
+ */
+export function partyBooks(book: number): readonly number[] | null {
+  switch (book) {
+    case 8: case 9: case 16: return [2];
+    case 13: case 14: case 11: return [3];
+    case 10: case 15: return [1];
+    default: return null;
+  }
+}
+
+/** What the account help lists for a report's chosen book: null leaves every account. */
+export function accountHelpBooks(reportKey: number, book: number, firstComboHelp: boolean): readonly number[] | null {
+  if (reportKey === 14 && firstComboHelp) return registerBooks(book);
+  if (reportKey === 5) return partyBooks(book);
+  return null;
+}
