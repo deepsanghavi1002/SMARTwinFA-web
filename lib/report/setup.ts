@@ -283,6 +283,11 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
       if (!batch) items = items.filter((item) => item.text !== "Batch");
     }
     if (reportKey === 47 && session.licence === 15) items = items.filter((item) => item.text !== "AREA");
+    // Target (152) is by sales person only (its procedure reads adata.KEY_SALESMAN): the desktop lists the Sales Man group alone.
+    if (reportKey === 152 && name === "lbchk_Group") {
+      const salesMan = items.filter((item) => item.text.replace(/\s+/g, "").toLowerCase() === "salesman");
+      if (salesMan.length > 0) items = salesMan;
+    }
     helpRequests.push(...filled.helps);
     const initiallyTicked = name === "lbchk_Col_Select" && items.length > 0 && !/^-?\d+(\.\d+)?$/.test(items[0].extra[0])
       ? items.filter((item) => item.extra[0].slice(1, 2).toUpperCase() === "Y").map((item) => item.value)
