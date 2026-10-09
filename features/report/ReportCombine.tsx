@@ -174,10 +174,12 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     if (!def || def.lostFocusControl === "") return;
     let live = true;
     const name = def.lostFocusControl;
-    call<{ control: string; items: ControlItem[] }>("lostfocus", { selection: { firstCombo: first } })
+    call<{ control: string; items: ControlItem[]; warnings?: string[] }>("lostfocus", { selection: { firstCombo: first } })
       .then((reply) => {
         if (!live) return;
         setLostItems(reply.items);
+        // The list the chosen entry fills (the series, the Against Book): a failed query shows its message instead of an empty list.
+        if (reply.warnings && reply.warnings.length > 0) setMessage(`${name} : ${reply.warnings[0].slice(0, 400)}`);
         const kept = viewChoice.current;
         viewChoice.current = null;
         setChoices((current) => ({ ...current, [name]: kept && reply.items.some((item) => itemKey(item) === kept) ? kept : reply.items[0] ? itemKey(reply.items[0]) : "" }));

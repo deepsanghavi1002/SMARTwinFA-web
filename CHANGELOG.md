@@ -3,6 +3,14 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Against Book list: show why it is empty)
+- Problem: REGISTER : CREDIT NOTE / DEBIT NOTE (Form Summary, Register, Yearly Tax Summary): the Against Book combo is empty on the web (the desktop
+  fills it, e.g. SALE for a credit note).
+- `app/api/report/route.ts`, `features/report/ReportCombine.tsx`: the first-combo refill (fc_lostfocus_qry) now returns the database's warnings and the screen
+  shows the first one when the query fails, so the cause can be read from the screen.
+- To confirm: send that message (or `SELECT fc_lostfocus_qry, lostfocus_qry_control, fc_lf_qry_dispmem, fc_lf_qry_key FROM smart_setup.report_properties
+  WHERE report_key IN (3, 14, 18)`) and the Against Book list is fixed from it.
+
 ## 2026-10-09 (Yearly Tax Summary: Account help by the register)
 - `features/report/ReportCombine.tsx`: the REGISTER combo's value is read as the book number for Form Summary and Yearly Tax Summary (14, 18)
   when the combo query gives no `book` column, so the Account tab lists the register's books (SALE: 8, 9, 11, 16) all ticked, as Form Summary's.

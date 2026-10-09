@@ -84,7 +84,7 @@ export async function POST(request: Request) {
         case "generate":
           return { output: await runReport(loader, body.reportName, cleanSelection(body.selection)) };
         case "group": return { output: await runGroupedReport(loader, body.reportName, cleanSelection(body.selection), strings(body.fields).slice(0, 10)) };
-        case "lostfocus": return await lostFocusItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""));
+        case "lostfocus": { const refilled = await lostFocusItems(loader, body.reportName, String(body.selection?.firstCombo ?? "")); return { ...refilled, warnings: loader.warnings }; }
         case "log": return { log: await readEntryLog(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0)) };
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);
