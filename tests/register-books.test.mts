@@ -13,7 +13,7 @@ test("the books a register covers: its own, cash, debit / credit notes and retur
 test("account help books: Form Summary lists the register's books, every other Account tab the parties of the book", async () => {
   const { accountHelpBooks, partyBooks } = await import("../lib/report/registerBooks.ts");
   assert.deepEqual(accountHelpBooks(14, 8, true), [8, 9, 11, 16]);
-  assert.equal(accountHelpBooks(14, 8, false), null, "only Form Summary's own (first combo) help");
+  assert.deepEqual(accountHelpBooks(14, 8, false), [2], "an Account tab that is not the first combo's help lists the parties");
   assert.deepEqual(accountHelpBooks(5, 15, false), [1], "EXPENSE: the general accounts");
   assert.deepEqual(accountHelpBooks(5, 8, false), [2], "SALE: the debtors");
   assert.deepEqual(accountHelpBooks(5, 13, false), [3], "PURCHASE: the creditors");
