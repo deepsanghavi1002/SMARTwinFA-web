@@ -3,6 +3,11 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Target: Group list is Sales Man only)
+- `lib/report/setup.ts`: Target (152)'s Group list shows only the Sales Man group, as the desktop does (the web listed every account addon: Bank Name, Bank Branch, Cheque Print Name ...); its procedure
+  reads the sales person (`adata.KEY_SALESMAN`) only. A fixed rule for this report: the setup query that builds the list on the desktop was not available. If no group is called Sales Man
+  the list is left as it was.
+
 ## 2026-10-09 (Target)
 - Ported `SP_FRT_RPT_TARGET` (REPORT > Extra > Target, report_key 152): `lib/report/target.ts` (queries) and `lib/report/targetSql.ts` (months, quarter targets, shortfalls, the three summaries).
   Wired as `case 152` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/target-sql.test.mts`.
