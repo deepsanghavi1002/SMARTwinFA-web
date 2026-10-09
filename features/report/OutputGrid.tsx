@@ -296,7 +296,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     }
     return selectionTotals(cells, places) ?? "";
   }, [box?.r1, box?.r2, box?.c1, box?.c2, picked, at.row, at.col, columns, shown, output, rowByIndex]); // eslint-disable-line react-hooks/exhaustive-deps -- box is derived from these
-  const rowsText = `Rows : ${shown.length}${shown.length !== output.rows.length ? ` of ${output.rows.length}` : ""}${collapsed && !tree ? " · Summary" : ""}${tree ? " · Tree" : ""}${groupMode ? " · Group" : ""}`;
+  const rowsText = `Rows : ${shown.length === 0 ? 0 : `${at.row + 1}-${shown.length}`}${shown.length !== output.rows.length ? ` of ${output.rows.length}` : ""}${collapsed && !tree ? " · Summary" : ""}${tree ? " · Tree" : ""}${groupMode ? " · Group" : ""}`;
   /**
    * The bordered (coloured) cells' total: those of the current column when it is a number column
    * with borders in it, else every bordered number cell.
@@ -737,7 +737,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         >
           <div className="mp-grid" style={{ height: (shown.length + 1) * ROW, minWidth: totalWidth + 20 }}>
             <div className="mp-row mp-head" style={{ top: 0 }}>
-              <div className="mp-cell mp-rownum rp-count" data-tip="Entries">{output.records}</div>
+              <div className="mp-cell mp-rownum rp-count" aria-hidden="true" />
               {tree && <div className="mp-cell rp-tree" aria-hidden="true" />}
               {columns.map((column, col) => (
                 <div key={column.key} data-head={column.key} className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""}`} style={{ width: widthOf(column), textAlign: align(column) }} data-tip={`${column.caption} · ${filterable ? "▾ to filter · " : ""}right-click to hide · drag the right edge to size`}>
