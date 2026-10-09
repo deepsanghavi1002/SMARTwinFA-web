@@ -36,7 +36,10 @@ export function accountHelpBooks(reportKey: number, book: number, firstComboHelp
   return firstComboHelp ? null : partyBooks(book);
 }
 
-/** The books a credit note (16) or a debit note (11) register is against (the Against Book combo): sale and cash sale, purchase and cash purchase. */
+/**
+ * The books a credit note (16) or a debit note (11) register can be against (the Against Book combo): the sale (8) and the purchase (13),
+ * the same two for both notes. Any other register has none.
+ */
 export function againstBooksOf(book: number): readonly number[] {
-  return book === 16 ? [8, 9] : book === 11 ? [13, 14] : [];
+  return book === 16 || book === 11 ? [8, 13] : [];
 }

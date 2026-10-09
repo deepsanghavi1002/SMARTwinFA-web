@@ -3,6 +3,14 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Against Book: two entries, SALE and PURCHASE)
+- Desktop (credit / debit note): Against Book offers SALE and PURCHASE only; the web showed six (the setup's list repeats the books: SALE, PURCHASE, SALE, PURCHASE, SALE,
+  SALE - Direct) in Register, and the Against Book chosen then filtered the register on `led.ag_book` even for a plain SALE register.
+- `lib/report/setup.ts` `againstBookItems` / `lib/report/registerBooks.ts` `againstBooksOf`: a credit or debit note is against the SALE (book 8) or the PURCHASE (book 13), the first
+  entry of each book from the first combo; any other register has none (the combo is greyed, no `ag_book` filter). `lib/report/generate.ts` and `features/report/ReportCombine.tsx`
+  use this list instead of the setup's own for cmb_AgainstBook. Test in `tests/register-books.test.mts`.
+- To confirm: Register, Form Summary and Yearly Tax Summary with a credit note and a debit note: two entries, SALE first.
+
 ## 2026-10-09 (Against Book filled for credit / debit note registers)
 - REGISTER : CREDIT NOTE / DEBIT NOTE (Register, Form Summary, Yearly Tax Summary): the Against Book combo (cmb_AgainstBook) was empty, so no against book
   went to the report. `lib/report/setup.ts` `againstBookItems` (and `firstComboOptions`, the first combo's rows, shared with the report's load): a credit note (16) is

@@ -23,9 +23,9 @@ test("account help books: Form Summary lists the register's books, every other A
   assert.equal(partyBooks(6), null);
 });
 
-test("against book: a credit note is against the sale, a debit note against the purchase", async () => {
+test("against book: a credit or debit note is against the sale or the purchase, two entries", async () => {
   const { againstBooksOf } = await import("../lib/report/registerBooks.ts");
-  assert.deepEqual(againstBooksOf(16), [8, 9]);
-  assert.deepEqual(againstBooksOf(11), [13, 14]);
+  assert.deepEqual(againstBooksOf(16), [8, 13]);
+  assert.deepEqual(againstBooksOf(11), [8, 13]);
   assert.deepEqual(againstBooksOf(8), []);
 });

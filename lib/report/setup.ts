@@ -200,9 +200,9 @@ async function firstComboOptions(loader: Loader, properties: Row): Promise<{ tex
 }
 
 /**
- * The Against Book combo of the register reports (cmb_AgainstBook): a credit note (16) is against the sale (8, cash sale 9), a debit note (11)
- * against the purchase (13, cash purchase 14); any other register has none. Its entries are those registers of the first combo, the
- * value being the book number (led.ag_book).
+ * The Against Book combo of the register reports (cmb_AgainstBook): a credit note (16) or a debit note (11) is against the SALE (book 8) or the
+ * PURCHASE (book 13) register, whichever way the note goes; any other register has none. Its two entries are those registers of the first combo
+ * (the first of each book), the value being the book number (led.ag_book). It replaces the setup's own list, which repeats the books.
  */
 export async function againstBookItems(loader: Loader, reportName: string, firstValue: string): Promise<{ control: string; items: ControlItem[] }> {
   const properties = await readReportProperties(loader, reportName);
@@ -215,10 +215,12 @@ export async function againstBookItems(loader: Loader, reportName: string, first
   const bookOf = (option: { value: string; book?: number }) => option.book ?? (/^\d+$/.test(option.value) ? Number(option.value) : -1);
   const chosen = options.find((option) => option.value === firstValue.trim());
   const against = chosen ? againstBooksOf(bookOf(chosen)) : [];
-  return {
-    control: "cmb_AgainstBook",
-    items: options.filter((option) => against.includes(bookOf(option))).map((option) => ({ controlValKey, text: option.text, value: String(bookOf(option)), extra: ["", "", "", "", ""], showControls: "" })),
-  };
+  const items: ControlItem[] = [];
+  for (const book of against) {
+    const option = options.find((candidate) => bookOf(candidate) === book);
+    if (option) items.push({ controlValKey, text: option.text, value: String(book), extra: ["", "", "", "", ""], showControls: "" });
+  }
+  return { control: "cmb_AgainstBook", items };
 }
 
 /** Report_Combine's print / preview / export rights: u_roll_id characters 10, 8 and 12 through Security_read_pw. */
