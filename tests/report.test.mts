@@ -133,9 +133,10 @@ test("group by: regroup the entries by a column or a period, with subtotals and 
   assert.equal(periodOf(cellDate("08-Apr-2026")!, "week").label, "05/04/2026 To 11/04/2026", "Sunday to Saturday");
   assert.equal(cellDate("31/12/2026")?.getMonth(), 11);
   assert.equal(periodOf(cellDate("15-Apr-2026")!, "fifteen").label, "01/04/2026 To 15/04/2026", "15 days: the 1st to the 15th");
-  assert.deepEqual(["03-Apr-2026", "07-Apr-2026", "08-Apr-2026", "21-Apr-2026", "22-Apr-2026", "30-Apr-2026"].map((day) => periodOf(cellDate(day)!, "fourweek").label),
-    ["01/04/2026 To 07/04/2026", "01/04/2026 To 07/04/2026", "08/04/2026 To 14/04/2026", "15/04/2026 To 21/04/2026", "22/04/2026 To 30/04/2026", "22/04/2026 To 30/04/2026"], "4 weeks: 1-7, 8-14, 15-21, 22-month end");
-  assert.equal(periodOf(cellDate("31-Jan-2027")!, "fourweek").label, "22/01/2027 To 31/01/2027", "the last week takes the 29th-31st");
+  assert.deepEqual(["03-Apr-2026", "07-Apr-2026", "08-Apr-2026", "21-Apr-2026", "22-Apr-2026", "28-Apr-2026", "29-Apr-2026", "30-Apr-2026", "05-May-2026", "06-May-2026"].map((day) => periodOf(cellDate(day)!, "fourweek").label),
+    ["01/04/2026 To 07/04/2026", "01/04/2026 To 07/04/2026", "08/04/2026 To 14/04/2026", "15/04/2026 To 21/04/2026", "22/04/2026 To 28/04/2026", "22/04/2026 To 28/04/2026", "29/04/2026 To 05/05/2026", "29/04/2026 To 05/05/2026", "29/04/2026 To 05/05/2026", "06/05/2026 To 12/05/2026"], "4 week month: 1-7, 8-14, 15-21, 22-28, then the next month starts on the 29th");
+  assert.equal(periodOf(cellDate("15-Jan-2027")!, "fourweek").label, "13/01/2027 To 19/01/2027", "blocks count from the financial year's 1 April");
+  assert.equal(periodOf(cellDate("31-Mar-2027")!, "fourweek").label, "31/03/2027 To 31/03/2027", "the year's last block stops on 31 March");
   assert.equal(periodOf(cellDate("16-Feb-2028")!, "fifteen").label, "16/02/2028 To 29/02/2028", "15 days: the 16th to the month end");
 
   const column = (key: string, kind: "text" | "number" | "date", decimals = 0) => ({ key, caption: key.toUpperCase(), width: 90, align: "L" as const, kind, decimals, visible: true });
