@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PERIOD_UNITS, specCaption } from "../../lib/report/groupBy";
+import { dateColumns, PERIOD_UNITS, specCaption } from "../../lib/report/groupBy";
 import type { GroupSpec, PeriodUnit } from "../../lib/report/groupBy";
 import type { ReportOutput } from "../../lib/report/types";
 import { useEscapeClose } from "../grid/useEscapeClose";
@@ -9,8 +9,8 @@ import { Icon } from "../ui/Icon";
 
 /**
  * Group By (web only): up to three levels to regroup the rows on screen, outermost first. A level
- * is a text column (party, voucher type, area ...) or a period (day, week, month, quarter, year)
- * of a date column. Apply regroups the grid with subtotals; Clear goes back to the report as it was.
+ * is a text column (party, voucher type, area ...) or a period (day, week, 15 days, month, quarter, year)
+ * of a date column (any column that holds dates). Apply regroups the grid with subtotals; Clear goes back to the report as it was.
  */
 
 const LEVELS = 3;
@@ -31,7 +31,7 @@ export function GroupByPanel({ output, specs, onApply, onClose }: { output: Repo
   const [draft, setDraft] = useState<string[]>(() => Array.from({ length: LEVELS }, (_, index) => encode(specs[index])));
 
   const texts = output.columns.filter((column) => column.kind === "text" && column.key !== "HEADING_COLUMN_BY_SYSTEM");
-  const dates = output.columns.filter((column) => column.kind === "date");
+  const dates = dateColumns(output);
   const options: { value: string; label: string }[] = [
     ...texts.map((column) => ({ value: `col:${column.key}`, label: column.caption })),
     ...dates.flatMap((column) => PERIOD_UNITS.map(([unit, name]) => ({ value: `per:${column.key}:${unit}`, label: `${column.caption} by ${name}` }))),
