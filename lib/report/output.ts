@@ -262,6 +262,9 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     columns.push(base);
   }
 
+  // A column named |IGST|_TOTAL_TAX is an up-heading and a heading on the desktop; here one caption without the bars (Yearly Tax Summary).
+  for (const column of columns) column.caption = column.caption.replace(/\|/g, "").replace(/\s+/g, " ").trim();
+
   // Columns removed or hidden after the subtotals (the C# does this once the grid is built).
   const removed = new Set(["SORTING_FIELD", "SORTING_DATE", "SMART_NAME", "AC_CODE", "PROD_ID", "SMART_SORTING_NAME", "OUT_KEY", "SR_NO", "LVLHEAD", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "SMART_SELECTED_SCHDULE", "RECPSELE_DATE", "SMART_PROD_DESC", "SMAN_KEY", "COLLECTION_KEY"]);
   if (reportKey !== 7 && reportKey !== 42) removed.add("BUDGET");
