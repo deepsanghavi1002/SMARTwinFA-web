@@ -55,6 +55,21 @@ const LIST_MESSAGES: Readonly<Record<string, string>> = {
 const EMPTY_TICKS: ReadonlySet<string> = new Set();
 const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? row.FIEL_KEY ?? ""}|${row.sub_code ?? row.SUB_CODE ?? ""}`;
 
+/**
+ * The first combo's own help (Form Summary's Account tab) lists the accounts of the chosen entry's book
+ * (REGISTER : SALE gives the sale accounts, not every account); an entry with no book, or a book none of
+ * the rows has, leaves every row.
+ */
+function firstHelpOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean } | null {
+  const help = def?.helps.find((candidate) => candidate.first);
+  const book = def?.firstCombo.options.find((option) => option.value === first)?.book;
+  if (!help || book === undefined || book < 0) return null;
+  const bookKey = Object.keys(help.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
+  if (!bookKey) return null;
+  const keep = (row: Readonly<Record<string, string>>) => Number(row[bookKey]) === book;
+  return help.rows.some(keep) ? { help, keep } : null;
+}
+
 export function ReportCombine({ reportName, menuShortName, title, onClose }: { reportName: string; menuShortName: string; title: string; onClose: () => void }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
@@ -199,12 +214,20 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     });
   };
 
+  /** A grid's ticks; the first combo's help drops the ticks of accounts the chosen register no longer lists. */
+  const ticksOf = (grid: string): ReadonlySet<string> => {
+    const ticked = ticks[grid] ?? EMPTY_TICKS;
+    const scope = firstHelpOf(def, first);
+    if (!scope || scope.help.grid !== grid) return ticked;
+    const allowed = new Set(scope.help.rows.filter(scope.keep).map((row) => row[scope.help.keyColumn] ?? ""));
+    return [...ticked].every((key) => allowed.has(key)) ? ticked : new Set([...ticked].filter((key) => allowed.has(key)));
+  };
   const selectionNow = (): ReportSelection => ({
     firstCombo: first,
     from,
     upto,
     groups,
-    ticks: Object.fromEntries(Object.entries(ticks).map(([grid, set]) => [grid, [...set]])),
+    ticks: Object.fromEntries(Object.keys(ticks).map((grid) => [grid, [...ticksOf(grid)]])),
     choices,
     columns: columnsTicked,
     texts,
@@ -312,7 +335,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   if (fatal) return <div className="mp-screen"><div className="mp-combos"><b>{title}</b></div><p className="mp-fatal" role="alert">{fatal}</p></div>;
 
   const helpShown = def?.helps.filter((help) => def.helpTabs.includes(help.grid.replace("C1Help", "Tab_")) || def.helpTabs.length === 0) ?? [];
-  const helpEnabled = (grid: string) => groupOfGrid(grid).length > 0 || (grid === "C1HelpAddon" && groups.some((key) => Number(key.split("|")[1]) > 0));
+  const helpEnabled = (grid: string) => def?.helps.some((help) => help.grid === grid && help.first) === true || groupOfGrid(grid).length > 0 || (grid === "C1HelpAddon" && groups.some((key) => Number(key.split("|")[1]) > 0));
+  const helpFilter = (help: HelpGridData): ((row: Readonly<Record<string, string>>) => boolean) | undefined => (help.grid === "C1HelpAddon" ? addonFilter : help.first ? firstHelpOf(def, first)?.keep : undefined);
   const addonGroups = groupControl?.items.filter((item) => Number(item.value) > 0) ?? [];
   const addonItem = addonGroups.find((item) => item.value === addonField);
   const addonEnabled = addonItem ? groups.includes(itemKey(addonItem)) : helpEnabled("C1HelpAddon");
@@ -442,9 +466,9 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
                     help={help}
                     hidden={helpTab !== help.grid}
                     enabled={help.grid === "C1HelpAddon" ? addonEnabled : helpEnabled(help.grid)}
-                    ticked={ticks[help.grid] ?? EMPTY_TICKS}
+                    ticked={ticksOf(help.grid)}
                     rowKey={help.grid === "C1HelpAddon" ? addonKey : (row) => row[help.keyColumn] ?? ""}
-                    filter={help.grid === "C1HelpAddon" ? addonFilter : undefined}
+                    filter={helpFilter(help)}
                     onTicks={(next) => setTicks((current) => ({ ...current, [help.grid]: next }))}
                     focusKey={helpTab === help.grid ? focusHelp : 0}
                     freezeMain
