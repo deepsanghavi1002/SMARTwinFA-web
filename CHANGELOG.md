@@ -3,6 +3,12 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Party Wise Bill PDF)
+- Ported `SP_FRT_RPT_PARTY_BILL_PDF` (REPORT > Extra > Party Wise Bill PDF, report_key 255): `lib/report/partyBillPdf.ts` and `lib/report/partyBillPdfSql.ts`. Wired as `case 255` in `standardReport` and
+  `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/party-bill-pdf-sql.test.mts`.
+  - Lists the bills of the first combo's book in the period for the selected accounts (LED_KEY, name, date, bill no, amount, Note_Nature = has inventory lines), ordered by name, date, bill no.
+  - Licences 19 / 29 / 68 / 73 leave out the CA_ENT cash books unless no account is short-named CA_ENT.
+
 ## 2026-10-09 (Drop Analysis)
 - Ported `SP_FRT_RPT_DROP_ANALYSIS` (REPORT > Extra > Drop Analysis, report_key 232): `lib/report/dropAnalysis.ts` (queries + table) and `lib/report/dropAnalysisSql.ts` (the selects and the pivot). Wired as
   `case 232` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/drop-analysis-sql.test.mts`.
