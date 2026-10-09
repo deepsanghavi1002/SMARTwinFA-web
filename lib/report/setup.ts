@@ -4,6 +4,7 @@ import { readRights, SETUP_SCHEMA, SYSTEM_SCHEMA } from "../master-program/sessi
 import type { MasterSession } from "../master-program/session";
 import { blankCoalesceAsText } from "../master-program/sql";
 import { desktopDate } from "./formula";
+import { againstBooksOf } from "./registerBooks";
 import { literal, setBooksValueInString, setupSelect } from "./sqlText";
 
 export { setBooksValueInString, setupSelect };
@@ -179,6 +180,47 @@ async function loadHelp(loader: Loader, helpId: string, grid: string, frozen: nu
   };
 }
 
+/** first_combo_query's rows (|sys.tarikh1| etc. in dd/MMM/yyyy): the text, the key, and the entry's book when the query gives one. */
+async function firstComboOptions(loader: Loader, properties: Row): Promise<{ text: string; value: string; book?: number }[]> {
+  const { session } = loader;
+  let sql = setBooksValueInString(text(properties, "first_combo_query"));
+  sql = sql
+    .split("|sys.tarikh1|").join(desktopDate(session.tarikh1))
+    .split("|sys.tarikh2|").join(desktopDate(session.tarikh2))
+    .split("|sys.smart_lic|").join(String(session.licence));
+  const displayColumn = text(properties, "display_cols_list");
+  const keyColumn = text(properties, "key_col_name");
+  const options: { text: string; value: string; book?: number }[] = [];
+  if (sql === "") return options;
+  for (const row of await loader.readTable(setupSelect(sql)) ?? []) {
+    const book = field(row, "book");
+    options.push({ text: toText(field(row, displayColumn)), value: toText(field(row, keyColumn)), ...(book !== undefined && toText(book) !== "" ? { book: toInt(book) } : {}) });
+  }
+  return options;
+}
+
+/**
+ * The Against Book combo of the register reports (cmb_AgainstBook): a credit note (16) is against the sale (8, cash sale 9), a debit note (11)
+ * against the purchase (13, cash purchase 14); any other register has none. Its entries are those registers of the first combo, the
+ * value being the book number (led.ag_book).
+ */
+export async function againstBookItems(loader: Loader, reportName: string, firstValue: string): Promise<{ control: string; items: ControlItem[] }> {
+  const properties = await readReportProperties(loader, reportName);
+  const reportKey = toInt(field(properties, "report_key"));
+  const controlRow = (await loader.readTable(`SELECT rep_control_key FROM ${SETUP_SCHEMA}.report_control WHERE rep_properties_id = $1 AND control_name = 'cmb_AgainstBook'`, [reportKey]))?.[0];
+  if (!controlRow) return { control: "", items: [] };
+  const valueRow = (await loader.readTable(`SELECT rep_controlval_key FROM ${SETUP_SCHEMA}.report_controlval WHERE rep_properties_id = $1 AND rep_control_id = $2 ORDER BY control_serial LIMIT 1`, [reportKey, toInt(field(controlRow, "rep_control_key"))]))?.[0];
+  const controlValKey = valueRow ? toInt(field(valueRow, "rep_controlval_key")) : 0;
+  const options = await firstComboOptions(loader, properties);
+  const bookOf = (option: { value: string; book?: number }) => option.book ?? (/^\d+$/.test(option.value) ? Number(option.value) : -1);
+  const chosen = options.find((option) => option.value === firstValue.trim());
+  const against = chosen ? againstBooksOf(bookOf(chosen)) : [];
+  return {
+    control: "cmb_AgainstBook",
+    items: options.filter((option) => against.includes(bookOf(option))).map((option) => ({ controlValKey, text: option.text, value: String(bookOf(option)), extra: ["", "", "", "", ""], showControls: "" })),
+  };
+}
+
 /** Report_Combine's print / preview / export rights: u_roll_id characters 10, 8 and 12 through Security_read_pw. */
 async function reportRights(loader: Loader, menuShortName: string) {
   const { session } = loader;
@@ -212,19 +254,7 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
   // First combo (first_combo_query; |sys.tarikh1| etc. in dd/MMM/yyyy; FIRST_COMBO_ALL adds ALL / -1).
   const firstCombo: { visible: boolean; label: string; options: { text: string; value: string; book?: number }[] } = { visible: flag(properties, "first_combo_visible"), label: text(properties, "first_label_caption"), options: [] };
   if (firstCombo.visible) {
-    let sql = setBooksValueInString(text(properties, "first_combo_query"));
-    sql = sql
-      .split("|sys.tarikh1|").join(desktopDate(session.tarikh1))
-      .split("|sys.tarikh2|").join(desktopDate(session.tarikh2))
-      .split("|sys.smart_lic|").join(String(session.licence));
-    const displayColumn = text(properties, "display_cols_list");
-    const keyColumn = text(properties, "key_col_name");
-    if (sql !== "") {
-      for (const row of await loader.readTable(setupSelect(sql)) ?? []) {
-        const book = field(row, "book");
-        firstCombo.options.push({ text: toText(field(row, displayColumn)), value: toText(field(row, keyColumn)), ...(book !== undefined && toText(book) !== "" ? { book: toInt(book) } : {}) });
-      }
-    }
+    firstCombo.options.push(...await firstComboOptions(loader, properties));
     if (flag(properties, "first_combo_all") && !(reportKey === 121 && session.licence === 71)) firstCombo.options.unshift({ text: "ALL", value: "-1" });
   }
 

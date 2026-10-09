@@ -99,6 +99,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const [ticks, setTicks] = useState<Record<string, Set<string>>>({});
   /** The register (first combo entry) whose Account ticks the operator has changed; until then every listed account is ticked, as on the desktop. */
   const [firstEdited, setFirstEdited] = useState<string | null>(null);
+  /** The Against Book entries of a credit / debit note register (null: the setup's own list). */
+  const [againstItems, setAgainstItems] = useState<ControlItem[] | null>(null);
   /** A saved view's choice for the lost-focus combo, kept when that combo is refilled. */
   const viewChoice = useRef<string | null>(null);
   const [viewsOpen, setViewsOpen] = useState(false);
@@ -183,6 +185,20 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
         const kept = viewChoice.current;
         viewChoice.current = null;
         setChoices((current) => ({ ...current, [name]: kept && reply.items.some((item) => itemKey(item) === kept) ? kept : reply.items[0] ? itemKey(reply.items[0]) : "" }));
+      })
+      .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
+    return () => { live = false; };
+  }, [def, first, call]);
+
+  // The Against Book combo (cmb_AgainstBook) follows the register: a credit note is against the sale, a debit note against the purchase.
+  useEffect(() => {
+    if (!def || def.lostFocusControl === "cmb_AgainstBook" || !def.controls.some((candidate) => candidate.type === "C" && candidate.name === "cmb_AgainstBook")) return;
+    let live = true;
+    call<{ control: string; items: ControlItem[] }>("against", { selection: { firstCombo: first } })
+      .then((reply) => {
+        if (!live) return;
+        setAgainstItems(reply.items);
+        setChoices((current) => ({ ...current, cmb_AgainstBook: reply.items[0] ? itemKey(reply.items[0]) : "" }));
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
@@ -423,9 +439,14 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
             {combos.map((combo) => (
               <label key={combo.name} className="rp-field">
                 <span>{combo.caption}</span>
-                <select value={choices[combo.name] ?? ""} onChange={(event) => setChoices((current) => ({ ...current, [combo.name]: event.target.value }))}>
-                  {(combo.name === def.lostFocusControl && lostItems ? lostItems : combo.items).map((item) => <option key={itemKey(item)} value={itemKey(item)}>{item.text}</option>)}
-                </select>
+                {(() => {
+                  const entries = combo.name === def.lostFocusControl && lostItems ? lostItems : combo.name === "cmb_AgainstBook" && againstItems && combo.items.length === 0 ? againstItems : combo.items;
+                  return (
+                    <select value={choices[combo.name] ?? ""} disabled={combo.name === "cmb_AgainstBook" && entries.length === 0} onChange={(event) => setChoices((current) => ({ ...current, [combo.name]: event.target.value }))}>
+                      {entries.map((item) => <option key={itemKey(item)} value={itemKey(item)}>{item.text}</option>)}
+                    </select>
+                  );
+                })()}
               </label>
             ))}
             {def.runtime.filter((box) => box.visible || shownRuntime.has(box.name)).map((box) => box.type === "A" ? (

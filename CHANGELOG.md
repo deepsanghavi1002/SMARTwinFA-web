@@ -3,6 +3,16 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Against Book filled for credit / debit note registers)
+- REGISTER : CREDIT NOTE / DEBIT NOTE (Register, Form Summary, Yearly Tax Summary): the Against Book combo (cmb_AgainstBook) was empty, so no against book
+  went to the report. `lib/report/setup.ts` `againstBookItems` (and `firstComboOptions`, the first combo's rows, shared with the report's load): a credit note (16) is
+  against the sale registers (8, cash sale 9), a debit note (11) against the purchase (13, cash purchase 14), taken from the first combo's own entries, the
+  value being the book number (`led.ag_book`, `@int_against_book`). `lib/report/generate.ts` reads the same list when the report runs; `app/api/report/route.ts`
+  has an "against" action; `features/report/ReportCombine.tsx` refills the combo when the register changes (first entry chosen) and greys it when it has none.
+  `lib/report/registerBooks.ts` `againstBooksOf`; test in `tests/register-books.test.mts`.
+- To confirm: the entries the desktop offers for each note (only the first, SALE, is seen on the desktop screenshot); the Against Book is used only when the setup's own
+  list is empty.
+
 ## 2026-10-09 (Against Book list: show why it is empty)
 - Problem: REGISTER : CREDIT NOTE / DEBIT NOTE (Form Summary, Register, Yearly Tax Summary): the Against Book combo is empty on the web (the desktop
   fills it, e.g. SALE for a credit note).

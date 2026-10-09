@@ -35,3 +35,8 @@ export function accountHelpBooks(reportKey: number, book: number, firstComboHelp
   if ((reportKey === 14 || reportKey === 18) && firstComboHelp) return registerBooks(book);
   return firstComboHelp ? null : partyBooks(book);
 }
+
+/** The books a credit note (16) or a debit note (11) register is against (the Against Book combo): sale and cash sale, purchase and cash purchase. */
+export function againstBooksOf(book: number): readonly number[] {
+  return book === 16 ? [8, 9] : book === 11 ? [13, 14] : [];
+}
