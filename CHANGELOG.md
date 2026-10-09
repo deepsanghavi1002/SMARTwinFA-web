@@ -3,6 +3,17 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-09 (Interest Calculation)
+- Ported `SP_FRT_RPT_INTEREST` (REPORT > Extra > Interest Calculation, report_key 32): `lib/report/interest.ts` (queries) and `lib/report/interestSql.ts` (rate, days, percent
+  expressions, the summary's roll-up). Wired as `case 32` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/interest-sql.test.mts`.
+  - Rate: the runtime box's (12 when blank, applied to every account); with the box blank each account's own `INT_PERC` unless 0. 365 days a year, 366 when Tarikh2's year is a leap year.
+  - Detail: a line for each account's opening (the year's opening balance; from a From after the year's start, plus the entries before it) and each interest entry
+    (`int_type<>10`, book 19 or receipts) of the period: principal, days to Upto, interest received / paid, rate. TDSREQ adds TDS_RATE.
+  - Summary: each party's balance (credits plus, debits minus) by period, from each date it changed to the day before the next change and to Upto, at the one rate.
+  - Account help: the Account tab lists the parties of the chosen book as Agewise Outstanding (the BOOK combo's value is read as the book number when it has no book column).
+- As the desktop does it: from a From after the year's start every account takes its Dr / Cr from the opening balance without its sign plus the entries before From.
+- To confirm: compare Detail and Summary with the desktop for a party; if the first format of this report is a different procedure, send it.
+
 ## 2026-10-09 (Outstanding Bookwise)
 - Ported `SP_FRT_RPT_BOOKWISE` (REPORT > Outstanding > Bookwise, report_key 135): `lib/report/bookwise.ts` (query) and `lib/report/bookwiseSql.ts` (select, where, the SR_NO clean-up).
   Wired as `case 135` in `standardReport` and `formattedReport`, and in `PORTED_REPORTS`. Test: `tests/bookwise-sql.test.mts`.

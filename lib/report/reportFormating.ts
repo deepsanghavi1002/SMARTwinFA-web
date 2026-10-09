@@ -12,6 +12,7 @@ import { checklistInvoice } from "./checklistInvoice";
 import { formSummaryFormats } from "./formSummaryFormats";
 import { bookwise } from "./bookwise";
 import { fundFlow } from "./fundFlow";
+import { interestCalculation } from "./interest";
 import { taxSummary } from "./taxSummary";
 import { money, num, runReportSql } from "./run";
 
@@ -30,6 +31,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 4: return ledgerFormats(loader, plan);
     case 14: return formSummaryFormats(loader, plan);
     case 16: return partyStock(loader, plan);
+    case 32: return interestCalculation(loader, plan);
     case 135: return bookwise(loader, plan);
     case 18: return taxSummary(loader, plan);
     case 21: return outstandingClearance(loader, plan);
