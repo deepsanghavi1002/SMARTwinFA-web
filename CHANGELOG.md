@@ -8,8 +8,8 @@ Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
   (queries) and `lib/report/checklistDaybookSql.ts` (select list, joins, filter). Test: `tests/checklist-daybook-sql.test.mts`.
   Columns: DATE, full_docno, DOC_NO, [CHQ_NO, CHQ_DATE, RECO_DATE for bank / all books], name, [BOOK_NAME for all books],
   Schedule, RECEIPT, PAYMENT, entry addon fields, master addon fields, NARRATION.
-- NOT yet wired to the menu: needs the report's `report_key` (then `PORTED_REPORTS` in `lib/report/setup.ts` and the key
-  switch in `standardReport` / `formattedReport`).
+- Wired as report_key 120: added to `PORTED_REPORTS` (`lib/report/setup.ts`) and to the key switch of both
+  `standardReport` and `formattedReport`.
 - To confirm: for "all books" the desktop looks for entry addon fields whose FIEL_INBOOK holds "  4, 5, 6," (two leading
   spaces), copied as is; if the desktop's checklist shows fewer addon columns than expected for ALL, this is the cause.
 
