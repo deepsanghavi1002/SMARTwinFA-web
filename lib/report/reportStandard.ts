@@ -10,6 +10,7 @@ import {
   parseRowDate, renameColumn, replaceCI, rightAlignedKey, sortRows, tableFromFields, tableFromResult, textKey, withEntryAddon,
 } from "./library";
 import { checklistDaybook } from "./checklistDaybook";
+import { checklistInvoice } from "./checklistInvoice";
 import { fundFlow } from "./fundFlow";
 import { money, num, runReportSql } from "./run";
 
@@ -20,7 +21,7 @@ import { money, num, runReportSql } from "./run";
  * to the database. What branches share is in library.ts; Report_Combine's own work before and
  * after is in generate.ts and output.ts.
  *
- * Ported branches: 109 (fund flow, in fundFlow.ts), 120 (checklist daybook, in checklistDaybook.ts), 1 (day book), 2 (journal), 3 (register), 4 (ledger), 5 (outstanding ageing), 6 (trial balance), 22 (profit and loss), 23 (balance sheet), 24 (annexure).
+ * Ported branches: 109 (fund flow, in fundFlow.ts), 119 (checklist invoice, in checklistInvoice.ts), 120 (checklist daybook, in checklistDaybook.ts), 1 (day book), 2 (journal), 3 (register), 4 (ledger), 5 (outstanding ageing), 6 (trial balance), 22 (profit and loss), 23 (balance sheet), 24 (annexure).
  */
 export async function standardReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   switch (plan.call.reportKey) {
@@ -37,6 +38,7 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 14: return formSummary(loader, plan);
     case 15: return bankReconciliation(loader, plan);
     case 109: return fundFlow(loader, plan);
+    case 119: return checklistInvoice(loader, plan);
     case 120: return checklistDaybook(loader, plan);
     case 23: return balanceSheet(loader, plan);
     case 24: return annexure(loader, plan);
