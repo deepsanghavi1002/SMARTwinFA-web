@@ -28,7 +28,7 @@ const flag = (row: Row | undefined, name: string) => {
 };
 
 /** Reports whose output is ported (their SP_REPORT_STANDARD branch and Report_Combine's handling of it). */
-export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 14, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 135, 152, 156, 162, 211, 232, 255, 258]);
+export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 157, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 162, 211, 232, 255, 127, 129, 130, 131, 258, 284]);
 
 /** The help grid each help id fills, when report_controlval does not name one (UNKNOWN_HELP_GRID). */
 const KEY_COLUMN: Readonly<Record<string, string>> = {
@@ -181,6 +181,15 @@ async function loadHelp(loader: Loader, helpId: string, grid: string, frozen: nu
 }
 
 /** first_combo_query's rows (|sys.tarikh1| etc. in dd/MMM/yyyy): the text, the key, and the entry's book when the query gives one. */
+/**
+ * The value a first combo row is chosen by: its key column, or its caption when other rows share the key (the Price
+ * List's dates all have FAKE_KEY 1; the desktop passes the combo's text, so the caption is what tells them apart).
+ */
+export function firstComboValues(rows: readonly Row[], keyColumn: string, displayColumn: string): string[] {
+  const keys = rows.map((row) => toText(field(row, keyColumn)));
+  return keys.map((key, index) => (keys.indexOf(key) !== keys.lastIndexOf(key) ? toText(field(rows[index], displayColumn)) : key));
+}
+
 async function firstComboOptions(loader: Loader, properties: Row): Promise<{ text: string; value: string; book?: number }[]> {
   const { session } = loader;
   let sql = setBooksValueInString(text(properties, "first_combo_query"));
@@ -192,9 +201,11 @@ async function firstComboOptions(loader: Loader, properties: Row): Promise<{ tex
   const keyColumn = text(properties, "key_col_name");
   const options: { text: string; value: string; book?: number }[] = [];
   if (sql === "") return options;
-  for (const row of await loader.readTable(setupSelect(sql)) ?? []) {
+  const rows = await loader.readTable(setupSelect(sql)) ?? [];
+  const values = firstComboValues(rows, keyColumn, displayColumn);
+  for (const [index, row] of rows.entries()) {
     const book = field(row, "book");
-    options.push({ text: toText(field(row, displayColumn)), value: toText(field(row, keyColumn)), ...(book !== undefined && toText(book) !== "" ? { book: toInt(book) } : {}) });
+    options.push({ text: toText(field(row, displayColumn)), value: values[index], ...(book !== undefined && toText(book) !== "" ? { book: toInt(book) } : {}) });
   }
   return options;
 }
@@ -400,7 +411,7 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
     ported: PORTED_REPORTS.has(reportKey),
     licence: session.licence,
     unsupported,
-    lostFocusControl: text(properties, "fc_lostfocus_qry") !== "" && controls.some((control) => control.type === "C" && control.name === text(properties, "lostfocus_qry_control")) ? text(properties, "lostfocus_qry_control") : "",
+    lostFocusControl: text(properties, "fc_lostfocus_qry") !== "" && controls.some((control) => (control.type === "C" || control.type === "L") && control.name === text(properties, "lostfocus_qry_control")) ? text(properties, "lostfocus_qry_control") : "",
   };
 }
 
@@ -424,9 +435,22 @@ export async function lostFocusItems(loader: Loader, reportName: string, firstVa
   const all = flag(properties, "lf_qry_cntrl_all") ? [item("ALL", "")] : [];
   if (!/^-?\d+$/.test(firstValue.trim())) return { control, items: all };
   let sql = setBooksValueInString(query).split("|sys.firstcombovalue|").join(firstValue.trim());
+  // |sys.where.col1|, |sys.where.col2| ...: the chosen first combo row's SYS_WHERE1, SYS_WHERE2 ... (Party Wise Rate: LESS gives BOOK <= 12
+  // and BOOK = 8, the sale side's slabs; ADD BOOK >= 13 and BOOK = 13). The row's columns are read by position, as the ADD row of the
+  // setup names its first one SYS_WHERE (a UNION takes the first row's names anyway).
+  if (/\|sys\.where\.col\d+\|/i.test(sql)) {
+    const comboSql = setBooksValueInString(text(properties, "first_combo_query")).split("|sys.smart_lic|").join(String(session.licence));
+    const rows = comboSql === "" ? [] : await loader.readTable(setupSelect(comboSql)) ?? [];
+    const values = firstComboValues(rows, text(properties, "key_col_name"), text(properties, "display_cols_list"));
+    const row = rows.find((_row, index) => values[index] === firstValue.trim());
+    if (!row) return { control, items: all };
+    const cells = Object.values(row).map((cell) => toText(cell));
+    sql = sql.replace(/\|sys\.where\.col(\d+)\|/gi, (_all, index: string) => cells[Number(index) + 1] || "1 = 1");
+  }
   sql = literal(literal(sql, "|sys.tarikh1|", desktopDate(session.tarikh1)), "|sys.tarikh2|", desktopDate(session.tarikh2));
   const rows = await loader.readTable(setupSelect(sql)) ?? [];
   const display = text(properties, "fc_lf_qry_dispmem");
   const key = text(properties, "fc_lf_qry_key");
-  return { control, items: [...all, ...rows.map((row) => item(text(row, display), text(row, key)))] };
+  // HIDE_RCOLS (Party Wise Rate): the columns the item hides in the output (Rate: the slab's percentage; a slab: the rate's columns).
+  return { control, items: [...all, ...rows.map((row) => ({ ...item(text(row, display), text(row, key)), extra: [text(row, "HIDE_RCOLS"), "", "", "", ""] as ControlItem["extra"] }))] };
 }

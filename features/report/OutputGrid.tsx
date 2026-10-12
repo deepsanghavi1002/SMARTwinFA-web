@@ -28,6 +28,9 @@ import type { GroupSpec } from "../../lib/report/groupBy";
 import { BudgetPanel } from "./BudgetPanel";
 import { GrowthPanel } from "./GrowthPanel";
 import { GroupByPanel } from "./GroupByPanel";
+import { PivotPanel } from "./PivotPanel";
+import { applyPivot } from "../../lib/report/pivot";
+import type { PivotSpec } from "../../lib/report/pivot";
 import { ReportCompare } from "./ReportCompare";
 import type { CompareResult } from "./ReportCompare";
 
@@ -84,7 +87,7 @@ function hexColour(colour: string): string {
   }
 }
 
-export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onBack, onQuit, loadLog, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy }: {
+export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy }: {
   output: ReportOutput;
   fallbackTitle: string;
   companyName: string;
@@ -92,7 +95,6 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   rights: Readonly<{ print: boolean; preview: boolean; export: boolean }>;
   busy: boolean;
   onRefresh: () => void;
-  onBack: () => void;
   onQuit: () => void;
   loadLog: (ledKey: number, processKey: number) => Promise<LogTable>;
   /** Create Group: the report's entries grouped on these fields (none: the final total only). */
@@ -124,7 +126,10 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** Remove Group: the group headings and subtotal lines taken off (kept with the report it was set for). */
   const [ungroup, setUngroup] = useState<{ forBase: ReportOutput; forServed: ReportOutput } | null>(null);
   const ungrouped = ungroup !== null && ungroup.forBase === base && ungroup.forServed === served;
-  const output = useMemo(() => (ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, groupSpecs, ungrouped]);
+  /** Pivot: the rows on screen as a cross table (kept with the report it was set for). */
+  const [pivoting, setPivoting] = useState<{ forBase: ReportOutput; spec: PivotSpec } | null>(null);
+  const pivotSpec = pivoting !== null && pivoting.forBase === base ? pivoting.spec : null;
+  const output = useMemo(() => (pivotSpec ? applyPivot(served, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, groupSpecs, ungrouped, pivotSpec]);
 
   const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
@@ -143,7 +148,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [menu, setMenu] = useState<(GridMenuPlace & { key: string }) | null>(null);
   const [arranging, setArranging] = useState(false);
   /** The side panel: the chart, or the comparison with another period. */
-  const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | null>(null);
+  const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | "pivot" | null>(null);
   const charting = panel === "chart";
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
@@ -518,11 +523,10 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       }
       case "Backspace": event.preventDefault(); setTyped((text) => text.slice(0, -1)); return;
       case "Escape":
-        event.preventDefault();
-        if (drawing) { setDrawing(false); onStatus({ hotKeys: GRID_KEYS, message: "Border drawing stopped" }); }
-        else if (typed || selEnd || picked.size > 0) { setTyped(""); setSelEnd(null); setPicked(new Set()); }
-        else if (groupMode) exitGroup();
-        else onBack();
+        // What Esc can still undo here goes first; a bare Esc is left to the screen, which asks to quit.
+        if (drawing) { event.preventDefault(); setDrawing(false); onStatus({ hotKeys: GRID_KEYS, message: "Border drawing stopped" }); }
+        else if (typed || selEnd || picked.size > 0) { event.preventDefault(); setTyped(""); setSelEnd(null); setPicked(new Set()); }
+        else if (groupMode) { event.preventDefault(); exitGroup(); }
         return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -673,9 +677,11 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       const start = col;
       let width = widthOf(column);
       const value = row.values[column.key] ?? "";
-      // Any non-number column spills (the day book's "Total Entries : n" sits in the date column).
-      if (column.kind !== "number" && value !== "" && value.length * 7 > width) {
-        while (col + 1 < columns.length && (row.values[columns[col + 1].key] ?? "") === "" && value.length * 7 > width) {
+      // Any non-number column spills (the day book's "Total Entries : n" sits in the date column). A subtotal's or the total's label
+      // always runs over every empty text column that follows, so all of them end in the same place (right side), whatever the length.
+      const always = row.kind === "subtotal" || row.kind === "total";
+      if (column.kind !== "number" && value !== "" && (always || value.length * 7 > width)) {
+        while (col + 1 < columns.length && columns[col + 1].kind !== "number" && (row.values[columns[col + 1].key] ?? "") === "" && (always || value.length * 7 > width)) {
           col += 1;
           width += widthOf(columns[col]);
         }
@@ -794,6 +800,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       </div>
       {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={served} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterTo(columnKey, party) : undefined} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto) => { const result = await loadCompare(from, upto); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
@@ -813,6 +820,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               <RibbonOutputButton kind="print" output={ribbonOutput} />
               <RibbonOutputButton kind="preview" output={ribbonOutput} />
               <button type="button" data-hotkey="y" aria-keyshortcuts="Alt+Y" className={`mp-btn mp-btn-plain ${panel === "groupby" || groupSpecs.length > 0 ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "groupby" ? null : "groupby"))} title="Regroup the rows on screen by a column or a period"><Icon name="groupby" /><HotkeyLabel text="Group By" hotkey="y" /></button>
+              <button type="button" data-hotkey="i" aria-keyshortcuts="Alt+I" className={`mp-btn mp-btn-plain ${panel === "pivot" || pivotSpec !== null ? "rp-btn-on" : ""}`} onClick={() => setPanel((open) => (open === "pivot" ? null : "pivot"))} title="Turn the rows on screen into a pivot table (rows, columns and totals)"><Icon name="groupby" /><HotkeyLabel text="Pivot" hotkey="i" /></button>
             </>
           ) },
           { title: "Export", icon: "export", content: (

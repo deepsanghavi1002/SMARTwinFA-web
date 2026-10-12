@@ -1096,3 +1096,24 @@
 /* Refresh orange (like the third colour), Log purple (like the fourth); Quit stays red */
 .mp-screen .mp-ribbon .mp-ractions>button.mp-btn:nth-of-type(1){background:linear-gradient(#f29a2e,#d97806);border-color:#b86505;color:#fff;text-shadow:0 1px 0 #0003}
 .mp-screen .mp-ribbon .mp-ractions>button.mp-btn:nth-of-type(2){background:linear-gradient(#9a63d6,#7340b0);border-color:#613397;color:#fff;text-shadow:0 1px 0 #0003}
+.rp-pivot h4{margin:8px 0 4px;font-size:11px;color:#52514e;text-transform:uppercase;letter-spacing:.04em}
+.rp-pivot-zone{border:1px dashed #b7c9e2;border-radius:6px;padding:2px 8px 8px;margin-top:6px;background:#f7faff}
+.rp-pivot-over{background:#e3f0ff;border-color:#2b6cb0}
+.rp-pivot-list{max-height:210px;overflow:auto}
+.rp-pivot-chips{display:flex;flex-wrap:wrap;gap:4px;min-height:24px}
+.rp-pivot-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid #c9d8ea;border-radius:12px;background:#fff;padding:2px 8px;font-size:12px;cursor:grab}
+.rp-pivot-free{background:#f1f5fb}
+.rp-pivot-chip select{height:22px;border:1px solid #c9d8ea;border-radius:4px;font-size:11px;background:#fff}
+.rp-pivot-chip-x,.rp-pivot-chip-move,.rp-pivot-chip-add{border:0;background:transparent;cursor:pointer;color:#2b6cb0;font-size:11px;padding:0 2px}
+.rp-pivot-chip-x{color:#a01c1c;font-size:14px;line-height:1}
+.rp-pivot-chip-move:disabled{color:#b8b8b8;cursor:default}
+.rp-pivot-empty{font-size:11px;color:#8a8a86}
+.rp-pivot-warn{color:#a01c1c}
+
+/* Busy symbol: OK / Refresh (and the first load) cover the report screen with a spinner and the wait cursor. */
+.rp-screen{position:relative}
+.rp-working,.rp-working *{cursor:wait!important}
+.rp-busy{position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:12px;background:rgba(255,255,255,.55);color:#16365f;font-weight:600;font-size:14px;pointer-events:all}
+.rp-spinner{width:28px;height:28px;border:4px solid #c9d8ea;border-top-color:#1f64b8;border-radius:50%;animation:rp-spin .8s linear infinite}
+@keyframes rp-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.rp-spinner{animation-duration:2.4s}}

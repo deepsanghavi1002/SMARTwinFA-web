@@ -102,12 +102,12 @@ export function specCaption(spec: GroupSpec, columns: readonly OutputColumn[]): 
 }
 
 /** Columns that stand for a running balance (blank after regrouping). */
-const BALANCE = /^closing_?bal|^closings$|^dr_cr$|^opening_?bal/i;
+export const BALANCE = /^closing_?bal|^closings$|^dr_cr$|^opening_?bal/i;
 
-type Label = { label: string; order: number | null };
+export type Label = { label: string; order: number | null };
 
 /** Each level's label for an entry (and what it sorts by: a period's first day, else the text). */
-function labelsOf(row: OutputRow, specs: readonly GroupSpec[]): Label[] {
+export function labelsOf(row: OutputRow, specs: readonly GroupSpec[]): Label[] {
   return specs.map((spec) => {
     const text = (row.values[spec.key] ?? "").trim();
     if (spec.kind === "column") return { label: text === "" ? "(blank)" : text, order: null };
@@ -117,7 +117,7 @@ function labelsOf(row: OutputRow, specs: readonly GroupSpec[]): Label[] {
   });
 }
 
-const compareLabels = (a: Label, b: Label) => (a.order !== null && b.order !== null
+export const compareLabels = (a: Label, b: Label) => (a.order !== null && b.order !== null
   ? a.order - b.order
   : a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }));
 

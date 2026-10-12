@@ -242,7 +242,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
         return;
       }
       case "Backspace": event.preventDefault(); setTyped((text) => text.slice(0, -1)); return;
-      case "Escape": setTyped(""); setSelectionEnd(null); return;
+      case "Escape": if (typed || selectionEnd) { event.preventDefault(); event.stopPropagation(); } setTyped(""); setSelectionEnd(null); return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey) {
       event.preventDefault();

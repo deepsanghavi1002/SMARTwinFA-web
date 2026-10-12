@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { MasterProgram } from "../features/master-program/MasterProgram";
 import { SmallEntry } from "../features/small-entry/SmallEntry";
 import { ReportCombine } from "../features/report/ReportCombine";
-import { StartupGate, useStartupSelection } from "../features/startup/StartupGate";
+import { StartupGate, useStartupActions, useStartupSelection } from "../features/startup/StartupGate";
 
 /**
  * The menu is data, not application code: it is read from
@@ -33,6 +33,7 @@ export default function Home() {
  */
 function MainMenu() {
   const selection = useStartupSelection();
+  const startup = useStartupActions();
   const [menus, setMenus] = useState<MenuNode[]>([]);
   const [menuError, setMenuError] = useState("");
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -54,10 +55,48 @@ function MainMenu() {
     setSuspendHoverMenu(true);
   };
   const choose = (node: MenuNode) => {
+    // SETUP > COMPANY > SELECT: the company and accounting year selection, as after the login.
+    if (node.actionCode?.toUpperCase() === "COMPANY_SELECT" && startup) {
+      closeMenus();
+      startup.changeCompany();
+      return;
+    }
     setRunning(node);
     closeMenus();
     setSuspendHoverMenu(true);
   };
+
+  // The browser's Back button: the whole program is one page, so Back would leave it for the previous site.
+  // It closes the open program (like Esc / Home) and otherwise stays where it is.
+  const runningNow = useRef<MenuNode | null>(null);
+  useEffect(() => { runningNow.current = running; }, [running]);
+  useEffect(() => {
+    // Chrome skips a history entry the page added without a click or key press, so the page keeps two entries
+    // of its own ahead of the visitor and tops them up from a real click or key press (those are never skipped).
+    const guard = { smartwinfa: true };
+    let depth = 0;
+    const push = () => { window.history.pushState(guard, ""); depth += 1; };
+    push();
+    const onGesture = () => { if (depth < 2) push(); };
+    const onBack = () => {
+      depth = Math.max(0, depth - 1);
+      if (depth < 2) push();
+      if (runningNow.current) {
+        setRunning(null);
+        setOpenMenu(null);
+        setOpenSub(null);
+        setSuspendHoverMenu(true);
+      }
+    };
+    window.addEventListener("popstate", onBack);
+    window.addEventListener("pointerdown", onGesture, { capture: true, passive: true });
+    window.addEventListener("keydown", onGesture, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("popstate", onBack);
+      window.removeEventListener("pointerdown", onGesture, { capture: true });
+      window.removeEventListener("keydown", onGesture, { capture: true });
+    };
+  }, []);
 
   const companyGroup = selection?.companyGroup ?? "";
   useEffect(() => {

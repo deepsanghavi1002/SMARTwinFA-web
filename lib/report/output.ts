@@ -149,8 +149,12 @@ async function readStyles(loader: Loader) {
 }
 
 /** How a number cell reads with the column's N format (en-IN digit grouping). */
+const NUMBER_FORMATS = new Map<number, Intl.NumberFormat>();
 function formatNumber(value: number, decimals: number): string {
-  return value.toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  // One formatter for each number of decimals (making one for every cell took most of a large report's time).
+  let format = NUMBER_FORMATS.get(decimals);
+  if (!format) { format = new Intl.NumberFormat("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }); NUMBER_FORMATS.set(decimals, format); }
+  return format.format(value);
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -179,6 +183,9 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const { call, properties } = plan;
   const reportKey = call.reportKey;
   const hidden = [...plan.hidden];
+  // Stock report's Summary: a row a product (product, opening, added, less, closing, unit); the entry columns of the ledger format stay out.
+  const stockSummaryFormat = reportKey === 29 || (reportKey === 17 && (call.fcText.toUpperCase() === "SUMMARY" || call.fcValue === 2));
+  if (reportKey === 17 && stockSummaryFormat) hidden.push("SELECTED_DATE", "FULL_DOCNO", "NAME", "TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2", "DAYS", "PROD_KEY", "FORM_CODE", "DOC_NO1", "BUNDLE", "PACKING");
   if (reportKey === 1 && table.has("closing_bal")) cashBookTotals(plan);
   const subtotalColumns = [...plan.subtotalColumns];
   const grouping = [...plan.grouping];
@@ -268,8 +275,10 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // Columns removed or hidden after the subtotals (the C# does this once the grid is built).
   const removed = new Set(["SORTING_FIELD", "SORTING_DATE", "SMART_NAME", "AC_CODE", "PROD_ID", "SMART_SORTING_NAME", "OUT_KEY", "SR_NO", "LVLHEAD", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "SMART_SELECTED_SCHDULE", "RECPSELE_DATE", "SMART_PROD_DESC", "SMAN_KEY", "COLLECTION_KEY"]);
   if (reportKey !== 7 && reportKey !== 42) removed.add("BUDGET");
-  const alwaysHidden = new Set(["ROW_DATA_TYPE", "SMART_SELECTED_PRODUCT", "SMART_LED_KEY", "BOOK", "SMART_PROCESS_KEY", "LMASTER_ID", "LOG_CODE", "LSMALL_PKV"]);
+  if (reportKey === 5 && ["DETAIL"].includes(plan.call.filterText.toUpperCase()) && call.sortingText === "Party Wise") removed.add("NAME");
+  const alwaysHidden = new Set(["ROW_DATA_TYPE", "SMART_SELECTED_PRODUCT", "SMART_LED_KEY", "BOOK", "SMART_PROCESS_KEY", "SMART_IMAGE_ENT_KEY", "LMASTER_ID", "LOG_CODE", "LSMALL_PKV"]);
   if (reportKey === 4 && (call.checkQuery.includes("CHK_ACC_CNFRM,") || call.checkQuery.includes("CHK_TFPRINT,"))) { removed.add("DR_CR"); removed.add("CLOSING_BAL"); }
+  if (reportKey === 5 && call.checkQuery.includes("CHK_MULTICO,") === false) removed.add("CO_SHORT");
 
   // SetSubtotalCaptionColumn: the first shown text column, or a PARTICULARS column put in for the captions.
   const intColumns = columns.filter((column) => column.kind === "number").map((column) => column.name);
@@ -290,9 +299,10 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   }
 
   // Update_Subtotal: a subtotal row under each group of each level, then the final total.
-  const groupColumns = grouping.filter((name) => !(reportKey === 21 && call.formating.toUpperCase() === "SUMMARY" && name.toUpperCase() === "NAME")).filter((name) => table.has(name)).map((name) => table.name(name)!)
+  const groupColumns = grouping.filter((name) => !(reportKey === 21 && call.formating.toUpperCase() === "SUMMARY" && name.toUpperCase() === "NAME")).filter((name) => !(stockSummaryFormat && name.toUpperCase() === "SMART_SELECTED_PRODUCT")).filter((name) => table.has(name)).map((name) => table.name(name)!)
     // Form Summary subtotals the tax level only, not each tax inside it, in all three formats (the desktop's grid).
-    .slice(0, reportKey === 14 ? 1 : undefined);
+    // Marketing's Month and Summary are a row a group already: subtotals only for the groups outside the last one (one group: the final total only).
+    .slice(0, reportKey === 14 ? 1 : reportKey === 25 && formatted ? -1 : undefined);
   const sumColumns = subtotalColumns.filter((name) => !name.includes("%") && !name.includes("INTEREST") && table.has(name) && !hidden.includes(name)).map((name) => table.name(name)!);
   const formattedReport = false;
   const allowSubtotal = !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
@@ -336,6 +346,10 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     }
   } else {
     for (const row of table.rows) out.push({ kind: "data", level: -2, rowType: toText(table.get(row, "ROW_DATA_TYPE")), values: row });
+  }
+  // Stock Summary and the Stock report's Summary format: with an addon ticked only the addon subtotals are shown (the products stay out); without one, every product.
+  if (stockSummaryFormat && subtotalsWanted && groupColumns.length > 0 && !oneRowAParty) {
+    for (let at = out.length - 1; at >= 0; at -= 1) if (out[at].kind === "data") out.splice(at, 1);
   }
   // A blank line between a group's subtotal and the next addon heading (web only), so one addon's block stands apart from the next.
   for (let at = out.length - 1; at > 0; at -= 1) if (/^ADDON_[0-9]$/.test(out[at].rowType) && out[at - 1].kind === "subtotal") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });

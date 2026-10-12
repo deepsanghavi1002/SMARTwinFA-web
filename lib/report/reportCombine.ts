@@ -25,7 +25,7 @@ export async function runReport(loader: Loader, reportName: string, selection: R
   return buildOutput(loader, plan, await reportTable(loader, plan), started);
 }
 
-/** The procedure GenerateReport calls: SP_REPORT_FORMATING for a format other than the first, else SP_STD_REPORT. */
+/** The procedure GenerateReport calls: SP_REPORT_FORMATING for a format other than the first, else SP_REPORT_STANDARD. */
 function reportTable(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   return plan.call.formating !== "" ? formattedReport(loader, plan) : standardReport(loader, plan);
 }

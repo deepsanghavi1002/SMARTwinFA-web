@@ -20,10 +20,42 @@ export function setBooksValueInString(source: string): string {
  * and SPACE(n) is REPEAT(' ', n).
  */
 export function setupSelect(sql: string): string {
-  let out = quotedAliases(sql).replace(/\bspace\s*\(/gi, "repeat(' ', ");
+  let out = withAliases(quotedAliases(sql)).replace(/\bspace\s*\(/gi, "repeat(' ', ");
+  // SQL Server compares char columns without their trailing spaces (STKM_ADDON = 'PF' finds 'PF   '); PostgreSQL does not.
+  out = out.replace(/(STKM_ADDON|STKM_SHORT|STKM_ID)[ ]*=[ ]*'([^']*)'/gi, "rtrim($1) = '$2'");
   const at = out.toLowerCase().lastIndexOf("order by");
   if (at >= 0 && !out.slice(at).includes(")")) out = `${out.slice(0, at)}ORDER BY ${orderByAliases(out, out.slice(at + 8).trim())}`;
   return out;
+}
+
+/**
+ * A WITH query's column names given in quotes (WITH REC_CTE AS (SELECT FIEL_DESC AS "COLUMN_CAPTION" ...))
+ * keep their capitals in PostgreSQL, but the select after it names them bare (SELECT COLUMN_CAPTION FROM
+ * REC_CTE), which SQL Server reads case-blind and PostgreSQL as column_caption. After the WITH's
+ * brackets, outside quotes, those names are put in quotes as the WITH spells them, bare or after the WITH's name (slabs.SLAB_KEY).
+ */
+function withAliases(sql: string): string {
+  const start = /^\s*with\s+(\w+)\s+as\s*\(/i.exec(sql);
+  if (!start) return sql;
+  let depth = 1;
+  let quote = "";
+  let at = start[0].length;
+  for (; at < sql.length && depth > 0; at += 1) {
+    const char = sql[at];
+    if (quote !== "") { if (char === quote) quote = ""; } else if (char === "'" || char === '"') quote = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+  }
+  const head = sql.slice(0, at);
+  const aliases = [...new Set([...head.matchAll(/\bas\s+"([^"]+)"/gi)].map((match) => match[1]).filter((name) => name !== name.toLowerCase() && /^\w+$/.test(name)))];
+  if (aliases.length === 0) return sql;
+  // Bare (COLUMN_CAPTION) or after the WITH's own name (slabs.SLAB_KEY); another table's column (ac.NAME) is left alone.
+  const names = aliases.join("|");
+  const pattern = new RegExp(`(?<![\\w.])(?:${names})(?!\\w)|(?<=\\b${start[1]}\\.)(?:${names})(?!\\w)`, "gi");
+  const spelt = new Map(aliases.map((name) => [name.toLowerCase(), name]));
+  // Only the text outside '...' and "..." is touched.
+  const tail = sql.slice(at).split(/('(?:[^']|'')*'|"[^"]*")/).map((part, index) => (index % 2 === 1 ? part : part.replace(pattern, (name: string) => `"${spelt.get(name.toLowerCase())}"`))).join("");
+  return head + tail;
 }
 
 /**

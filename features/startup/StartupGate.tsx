@@ -1,5 +1,5 @@
 "use client";
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -48,6 +48,18 @@ export function useStartupSelection() {
   return useContext(StartupSelectionContext);
 }
 
+/** What a screen under the gate can ask of it. */
+export type StartupActions = Readonly<{
+  /** SETUP > COMPANY > SELECT: back to the company and accounting year selection, as after the login. */
+  changeCompany: () => void;
+}>;
+
+const StartupActionsContext = createContext<StartupActions | null>(null);
+
+export function useStartupActions() {
+  return useContext(StartupActionsContext);
+}
+
 const modernTheme = createTheme({
   palette: {
     mode: "light",
@@ -79,6 +91,11 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [year, setYear] = useState("");
   const [company, setCompany] = useState("");
   const [modernView, setModernView] = useState(false);
+  /** The company screen was opened from the menu (not after the login): Exit goes back to the company that was open. */
+  const [fromMenu, setFromMenu] = useState(false);
+  const openBefore = useRef<{ year: string; company: string } | null>(null);
+  /** The company to highlight when the year list refills after Exit put the year back. */
+  const restoreCompany = useRef<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -152,7 +169,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
       })
       .then((rows) => {
         setCompanies(rows);
-        setCompany((rows.find((item) => item.available) ?? rows[0])?.id ?? "");
+        const wanted = restoreCompany.current;
+        restoreCompany.current = null;
+        const back = wanted ? rows.find((item) => item.id === wanted && item.available) : undefined;
+        setCompany(back ? back.id : (rows.find((item) => item.available) ?? rows[0])?.id ?? "");
         setDataError("");
         setCompaniesLoading(false);
       })
@@ -165,6 +185,26 @@ export function StartupGate({ children }: { children: ReactNode }) {
   }, [operator, selectedYearKey]);
 
   const selectedCompany = companies.find((item) => item.id === company);
+  const changeCompany = useCallback(() => {
+    openBefore.current = { year, company };
+    setFromMenu(true);
+    setStage("company");
+  }, [year, company]);
+  const actions = useMemo<StartupActions>(() => ({ changeCompany }), [changeCompany]);
+  /** OK on the company screen. */
+  const confirmCompany = () => { openBefore.current = null; setFromMenu(false); setStage("ready"); };
+  /** Exit / close on the company screen: from the menu, back to the company that was open; after the login, back to the login. */
+  const leaveCompany = () => {
+    if (fromMenu && openBefore.current) {
+      const before = openBefore.current;
+      if (before.year !== year) { restoreCompany.current = before.company; chooseYear(before.year); } else setCompany(before.company);
+      openBefore.current = null;
+      setFromMenu(false);
+      setStage("ready");
+      return;
+    }
+    setStage("login");
+  };
   const canContinue = Boolean(selectedYear && selectedCompany?.available);
 
   const viewButton = (
@@ -185,7 +225,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       loginName: operator.loginName,
       displayName: operator.displayName,
     };
-    return <StartupSelectionContext.Provider value={selection}><div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div></StartupSelectionContext.Provider>;
+    return <StartupSelectionContext.Provider value={selection}><StartupActionsContext.Provider value={actions}><div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div></StartupActionsContext.Provider></StartupSelectionContext.Provider>;
   }
   // The typed operator is matched against the real user_master list. The
   // legacy user_pw column is a fixed-width obfuscation whose algorithm is not
@@ -426,8 +466,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
                       {dataError && <Typography variant="body2" color="error" role="alert">{dataError}</Typography>}
 
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ justifyContent: "center", pt: .5 }}>
-                        <Button variant="contained" disabled={!canContinue} onClick={() => setStage("ready")} sx={{ minWidth: 160, py: 1.1, fontWeight: 700 }}>✓ OK</Button>
-                        <Button variant="outlined" onClick={() => setStage("login")} sx={{ minWidth: 160, py: 1.1, fontWeight: 700, color: "#dc2626", borderColor: "#d1d5db", "&:hover": { borderColor: "#dc2626", backgroundColor: "#fee2e2" } }}>✕ CLOSE</Button>
+                        <Button variant="contained" disabled={!canContinue} onClick={confirmCompany} sx={{ minWidth: 160, py: 1.1, fontWeight: 700 }}>✓ OK</Button>
+                        <Button variant="outlined" onClick={leaveCompany} sx={{ minWidth: 160, py: 1.1, fontWeight: 700, color: "#dc2626", borderColor: "#d1d5db", "&:hover": { borderColor: "#dc2626", backgroundColor: "#fee2e2" } }}>✕ CLOSE</Button>
                       </Stack>
                     </Stack>
                   </CardContent>
@@ -451,12 +491,12 @@ export function StartupGate({ children }: { children: ReactNode }) {
         <button className="login-button" type="submit"><span>➜</span> Login</button>
       </form></div></div>
     </section> : <section className="company-window" aria-label="Company selection menu">
-      <div className="startup-title">Select Company <button aria-label="Close" onClick={() => setStage("login")}>×</button></div>
+      <div className="startup-title">Select Company <button aria-label="Close" onClick={leaveCompany}>×</button></div>
       <div className="company-panel"><h1>Company Selection Menu</h1>
         <label><strong>Select Accounting Year</strong><select size={3} value={year} onChange={(event) => chooseYear(event.target.value)}>{accountingYears.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></label>
         {dataError && <p className="login-error" role="alert">{dataError}</p>}
-        <div className="company-actions"><button disabled={!canContinue} onClick={() => setStage("ready")}>✓ Ok</button><button onClick={() => setStage("login")}>↩ Exit</button></div>
+        <div className="company-actions"><button disabled={!canContinue} onClick={confirmCompany}>✓ Ok</button><button onClick={leaveCompany}>↩ Exit</button></div>
       </div>
     </section>}
   </main></div>;

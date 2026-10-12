@@ -4,7 +4,7 @@ import type { ResultRow } from "./call";
 import { ResultTable } from "./call";
 import { desktopDate, sqlLen, sqlServerCompare } from "./formula";
 import type { ReportPlan } from "./generate";
-import { ReportRefusal } from "./generate";
+import { ReportRefusal } from "./refusal";
 import { budgetUse, planCash } from "./planning";
 import type { BudgetUse, CashPlanning } from "./planning";
 import { isNumberField, money, num, runReportSql } from "./run";
@@ -14,6 +14,23 @@ import { isNumberField, money, num, runReportSql } from "./run";
  * SP_REPORT_STANDARD, reportFormating.ts for SP_REPORT_FORMATING, output.ts for what
  * Report_Combine does after them). A report's own branch only holds what is particular to it.
  */
+
+// ---- Big lists ----
+
+/**
+ * array.push(...list) passes every value as an argument, and JavaScript stops at about 100,000 of them ("Maximum call stack size
+ * exceeded"): a ledger of every account has more lines than that. These loops take any length.
+ */
+export function pushAll<T>(target: T[], ...lists: readonly (readonly T[])[]): void {
+  for (const list of lists) for (let at = 0; at < list.length; at += 1) target.push(list[at]);
+}
+
+/** Math.max(...list) for a list of any length (null for an empty one). */
+export function maxOf(list: readonly number[]): number | null {
+  let best: number | null = null;
+  for (let at = 0; at < list.length; at += 1) if (best === null || list[at] > best) best = list[at];
+  return best;
+}
 
 // ---- Result tables ----
 

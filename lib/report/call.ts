@@ -95,6 +95,7 @@ export class ResultTable {
   rows: ResultRow[] = [];
   /** Columns that hold numbers (a DataTable's decimal / Int32 columns): "decimal" or "int". */
   readonly numberKinds = new Map<string, "decimal" | "int">();
+  private readonly positions = new Map<string, number>();
 
   setKind(column: string, kind: "decimal" | "int"): void {
     this.numberKinds.set(this.addColumn(column), kind);
@@ -108,7 +109,13 @@ export class ResultTable {
   /** The column's name as the table spells it, or undefined. */
   name(column: string): string | undefined {
     const lower = column.toLowerCase();
-    return this.columns.find((candidate) => candidate.toLowerCase() === lower);
+    // Where the column was last found: a direct hit while the columns are as they were; if they were added to, renamed or moved, the scan finds it again.
+    const known = this.positions.get(lower);
+    if (known !== undefined && this.columns[known]?.toLowerCase() === lower) return this.columns[known];
+    const at = this.columns.findIndex((candidate) => candidate.toLowerCase() === lower);
+    if (at < 0) return undefined;
+    this.positions.set(lower, at);
+    return this.columns[at];
   }
 
   has(column: string): boolean {

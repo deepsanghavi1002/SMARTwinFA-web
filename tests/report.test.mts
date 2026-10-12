@@ -43,6 +43,16 @@ test("date styles the ledger procedure writes", () => {
 test("setup SQL written for SQL Server reads in PostgreSQL", () => {
   assert.equal(setupSelect(`SELECT 'MAIN' AS "DISP_COL",1 AS "VALUE_COL" ORDER BY VALUE_COL`), `SELECT 'MAIN' AS "DISP_COL",1 AS "VALUE_COL" ORDER BY "VALUE_COL"`);
   assert.equal(setupSelect("select space(3) as x"), "select repeat(' ', 3) as x");
+  // ... and after the WITH's own name (Party Wise Rate's Input Columns: slabs.SLAB_KEY); another table's column is left alone.
+  assert.equal(
+    setupSelect(`with slabs as (select slab_short,1 AS "SLAB_KEY" from slab_master) select 'Rate' as "slab_short",-1 as "slab_key" union select slabs.SLAB_SHORT,slabs.SLAB_KEY from slabs, x where x.SLAB_KEY = 1`),
+    `with slabs as (select slab_short,1 AS "SLAB_KEY" from slab_master) select 'Rate' as "slab_short",-1 as "slab_key" union select slabs.SLAB_SHORT,slabs."SLAB_KEY" from slabs, x where x.SLAB_KEY = 1`,
+  );
+  // A WITH's quoted column names, named bare after it (SHOW_COLS_LIST_PRODS: the Input Columns list).
+  assert.equal(
+    setupSelect(`WITH REC_CTE AS (SELECT FIEL_DESC AS "COLUMN_CAPTION" FROM addon_fld) SELECT 1 AS "CON_VAL",'Opening Qty' AS "COLUMN_CAPTION",'1Y' AS "ORDER_COL" UNION SELECT 1 AS "CON_VAL",COLUMN_CAPTION AS "COLUMN_CAPTION",'7N' AS "ORDER_COL" FROM REC_CTE ORDER BY ORDER_COL`),
+    `WITH REC_CTE AS (SELECT FIEL_DESC AS "COLUMN_CAPTION" FROM addon_fld) SELECT 1 AS "CON_VAL",'Opening Qty' AS "COLUMN_CAPTION",'1Y' AS "ORDER_COL" UNION SELECT 1 AS "CON_VAL","COLUMN_CAPTION" AS "COLUMN_CAPTION",'7N' AS "ORDER_COL" FROM REC_CTE ORDER BY "ORDER_COL"`,
+  );
   assert.equal(literal("a = |sys.tarikh1| or b = '|sys.tarikh1|'", "|sys.tarikh1|", "01/Apr/2026"), "a = '01/Apr/2026' or b = '01/Apr/2026'");
   assert.equal(setBooksValueInString("book in (|PCbook_DRSLED|,|PCbook_JOURNAL|)"), "book in (2,19)");
   assert.equal(pgFragment("case when x then ledpost.post_amt else 0.00 end from |sys.db|ledger", { moneyColumns: ["post_amt"] }, "co"), "case when x then ledpost.post_amt::numeric else 0.00 end from co.ledger");

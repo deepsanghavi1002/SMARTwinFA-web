@@ -2,8 +2,9 @@ import { Loader } from "../master-program/load";
 import { toInt, toText } from "../master-program/legacy";
 import { SETUP_SCHEMA } from "../master-program/session";
 import type { ReportCall } from "./call";
+import { ReportRefusal } from "./refusal";
 import { convertForOperation, desktopDate, formulaValidation, isNumeric, parseSelectionDate, quotedList } from "./formula";
-import { againstBookItems, fillControl, lostFocusItems, PORTED_REPORTS, readReportProperties } from "./setup";
+import { againstBookItems, fillControl, firstComboValues, lostFocusItems, PORTED_REPORTS, readReportProperties } from "./setup";
 import { pgFragment, setBooksValueInString, setupSelect } from "./sqlText";
 
 export { pgFragment };
@@ -25,15 +26,7 @@ const flag = (row: Row | undefined | null, name: string) => {
   return value === true || ["1", "true", "y"].includes(toText(value).toLowerCase());
 };
 
-/** A selection the C# refuses: Generate shows the message (and caption) and stops. */
-export class ReportRefusal extends Error {
-  readonly caption: string;
-
-  constructor(message: string, caption = "Report generation failed") {
-    super(message);
-    this.caption = caption;
-  }
-}
+export { ReportRefusal };
 
 /** Everything GenerateReport works out besides the procedure's parameters, which Report_Combine reads again after the call. */
 export type ReportPlan = {
@@ -169,7 +162,8 @@ export async function planReport(loader: Loader, reportName: string, selection: 
       .split("|sys.smart_lic|").join(String(session.licence));
     const rows = sql === "" ? [] : await loader.readTable(setupSelect(sql)) ?? [];
     if (flag(properties, "first_combo_all")) rows.unshift({ [text(properties, "display_cols_list")]: "ALL", [text(properties, "key_col_name")]: -1 });
-    firstRow = rows.find((row) => toText(field(row, text(properties, "key_col_name"))) === firstValue) ?? null;
+    const values = firstComboValues(rows, text(properties, "key_col_name"), text(properties, "display_cols_list"));
+    firstRow = rows.find((_row, index) => values[index] === firstValue) ?? null;
     if (!firstRow) throw new ReportRefusal(`Choose a ${text(properties, "first_label_caption") || "first combo"} entry from its list`);
     firstText = toText(field(firstRow, text(properties, "display_cols_list")));
   }
@@ -480,15 +474,18 @@ export async function planReport(loader: Loader, reportName: string, selection: 
         const grid = text(row, "visible_controls_lst");
         const ticked = tickedOf(grid);
         if (ticked.length === 0) { failures += ` - Minimum One ${caption} Should Be Selected To Generate Report\n`; continue; }
-        if (text(row, "output_where") !== "") {
+        // The product help's ticks are the products' keys; a group whose where names the code (Description, Party Wise Rate's
+        // Product Code: "product.PROD_SHORT in") would compare the code with a number, which PostgreSQL refuses: the key is compared.
+        const outputWhere = grid === "C1HelpProduct" ? String(field(row, "output_where") ?? "").replace(/(\w+)\.PROD_SHORT(\s+in\s*)$/i, "$1.PROD_KEY$2") : String(field(row, "output_where") ?? "");
+        if (outputWhere.trim() !== "") {
           if (!isWhereBlank()) {
             if (otherGroup) where += call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21) ? " " : " and ";
             else if (!checkQuery.includes("CHK_MULTICO,") && reportKey !== 136 && reportKey !== 138 && reportKey !== 178) { where += " and ("; addBracket = true; }
           }
-          if (!(call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21)) && !checkQuery.includes("CHK_MULTICO,") && reportKey !== 136 && reportKey !== 138 && reportKey !== 178) where += String(field(row, "output_where"));
+          if (!(call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21)) && !checkQuery.includes("CHK_MULTICO,") && reportKey !== 136 && reportKey !== 138 && reportKey !== 178) where += outputWhere;
           if (group1Keys !== "") group1Keys += call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21) ? " " : " AND ";
-          if (!(call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21)) && reportKey !== 136 && reportKey !== 138 && reportKey !== 178) group1Keys += String(field(row, "output_where"));
-          if (grid === "C1HelpProduct") productKeys = String(field(row, "output_where"));
+          if (!(call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21)) && reportKey !== 136 && reportKey !== 138 && reportKey !== 178) group1Keys += outputWhere;
+          if (grid === "C1HelpProduct") productKeys = outputWhere;
         } else {
           throw new ReportRefusal("Internal Program Setup Failed,\nCan't Find Help Selection Source", "SMART_SETUP.CONTROL_VALUE ERROR");
         }
@@ -709,6 +706,14 @@ export async function planReport(loader: Loader, reportName: string, selection: 
   call.orderBy = orderBy.trim().replace(/^,/, "").replace(/,$/, "");
   call.checkQuery = checkQuery;
   call.book = firstBook;
+  // Party Wise Rate's Input Columns (filled by the first combo's lost-focus query): Rate (-1) or the slab its lines are read for, and the
+  // columns that choice hides (HIDE_RCOLS).
+  if (controlRow("lbox_InputCols")) {
+    const input = await chosen("lbox_InputCols");
+    call.slabsKey = input ? input.value : "-1";
+    call.slabText = input ? input.text : "Rate";
+    if (input && input.extra[0] !== "") addHidden(hidden, input.extra[0]);
+  }
   if (controlRow("lbchk_Col_Select")) {
     const picked = (await listItems("lbchk_Col_Select")).filter((item) => selection.columns.includes(item.value) || item.extra[1] === "Y");
     call.slabsKey = picked.map((item) => item.value).join(",");

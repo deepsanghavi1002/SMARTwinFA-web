@@ -59,18 +59,21 @@ const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? r
 /**
  * The account help narrowed to the chosen book. Form Summary's own (first combo) help lists the accounts of the books the
  * register covers (REGISTER : SALE gives the sale books, debit note and credit note, all ticked until changed); the Account tab of
- * every other report lists the parties of the chosen book (EXPENSE gives the general accounts, book 1; SALE the debtors, 2; PURCHASE the creditors, 3). An entry with no book, or
+ * every other report lists the parties of the chosen book (EXPENSE gives the general accounts, book 1; SALE the debtors, 2; PURCHASE the creditors, 3; Party
+ * Wise Rate's LESS the debtors, ADD the creditors). An entry with no book, or
  * books none of the rows has, leaves every row.
  */
-/** The outstanding reports (ageing 5 and 20, clearance 21, interest 32, party wise bill pdf 255) and the register reports (14, 18): the combo's value is the book number when the combo gives no book column. */
-/** Reports whose first combo (REGISTER) has its own Account help: Form Summary and Yearly Tax Summary. */
-const FORM_SUMMARY_LIKE: ReadonlySet<number> = new Set([14, 18]);
+/** The outstanding reports (ageing 5 and 20, clearance 21, interest 32, party wise bill pdf 255) and the register reports (14, 18, 127): the combo's value is the book number when the combo gives no book column. */
+/** Reports whose first combo (REGISTER) has its own Account help: Form Summary, Yearly Tax Summary and GST Form Summary. */
+const FORM_SUMMARY_LIKE: ReadonlySet<number> = new Set([14, 18, 127]);
 const OUTSTANDING: ReadonlySet<number> = new Set([5, 20, 21, 32, 255]);
+/** Party Wise Rate's side (first combo): LESS (0) is the sale side, the debtors (book 2); ADD (1) the purchase side, the creditors (book 3). */
+const PARTY_RATE_BOOK: Readonly<Record<string, number>> = { 0: 2, 1: 3 };
 
 function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
   if (!def) return null;
   const option = def.firstCombo.options.find((candidate) => candidate.value === first);
-  const book = option?.book ?? ((OUTSTANDING.has(def.key) || FORM_SUMMARY_LIKE.has(def.key)) && /^\d+$/.test(first) ? Number(first) : undefined);
+  const book = def.key === 9 ? PARTY_RATE_BOOK[first] : option?.book ?? ((OUTSTANDING.has(def.key) || FORM_SUMMARY_LIKE.has(def.key)) && /^\d+$/.test(first) ? Number(first) : undefined);
   if (book === undefined || book < 0) return null;
   const help = FORM_SUMMARY_LIKE.has(def.key) ? def.helps.find((candidate) => candidate.first) : def.helps.find((candidate) => candidate.grid === "C1HelpAccount" && !candidate.first);
   const books = accountHelpBooks(def.key, book, help?.first === true);
@@ -323,7 +326,60 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     }
   };
 
-  const leave = () => onClose();
+  /** The selection as the screen first opened it: the first combo, the dates, the groups, every help un-ticked, the options and lists at their defaults. */
+  const clearSelection = () => {
+    if (!def) return;
+    setFirst(def.firstCombo.options[0]?.value ?? "");
+    const lastDates = readLastDates();
+    setFrom(def.dates.fromLast && lastDates ? lastDates.from : def.dates.from);
+    setUpto(def.dates.uptoLast && lastDates ? lastDates.upto : def.dates.upto);
+    setGroups([]);
+    setChoices(Object.fromEntries(def.controls.filter((candidate) => candidate.type === "L" || candidate.type === "C").map((candidate) => [candidate.name, candidate.items[0] ? itemKey(candidate.items[0]) : ""])));
+    setColumnsTicked(def.controls.find((candidate) => candidate.name === "lbchk_Col_Select")?.initiallyTicked.slice() ?? []);
+    setTexts({});
+    setChecks(Object.fromEntries(def.checkboxes.map((check) => [check.name, check.value])));
+    setTicks(Object.fromEntries(def.helps.map((help) => [help.grid, new Set<string>()])));
+    setFirstEdited(null);
+    setAddonField("");
+    setHelpTab(def.checkboxes.some((check) => check.visible) ? OPTIONS_GRID : def.helps.find((help) => def.helpTabs.includes(help.grid.replace("C1Help", "Tab_")))?.grid ?? def.helps[0]?.grid ?? "");
+    setStartGroupBy([]);
+    groupByNow.current = [];
+    generatedWith.current = null;
+    setOutput(null);
+  };
+
+  // The Quit button (here and on the output grid): ask first. On the output it goes back to a clean Selection tab; on the Selection tab it closes the report.
+  const leave = async () => {
+    if (!(await messageBox.confirm("Are you sure you want to quit?", "Quit"))) return;
+    if (tab === "output") {
+      clearSelection();
+      setTab("select");
+      say("");
+    } else {
+      onClose();
+    }
+  };
+
+  // Esc on either tab asks to quit, as the Quit button does. Every control that has something of its own to close (a combo's list, a typed
+  // search, a side panel, a message box) uses the key first and marks it used (preventDefault), so the screen looks once they have all had their
+  // turn: only a bare Esc asks. Watched on the window, so it works wherever the keyboard focus is.
+  const quitting = useRef(false);
+  const onEscape = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || busy || quitting.current) return;
+    if (document.querySelector(".msgbox-backdrop, .mp-filter, .mp-menu, .mp-preview")) return;
+    quitting.current = true;
+    void leave().finally(() => { quitting.current = false; });
+  };
+  const escapeNow = useRef(onEscape);
+  useEffect(() => { escapeNow.current = onEscape; });
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if (event.key === "Escape") window.setTimeout(() => escapeNow.current(event), 0);
+    };
+    window.addEventListener("keydown", listener, true);
+    return () => window.removeEventListener("keydown", listener, true);
+  }, []);
+
 
   /** The output grid's part of the status line: its rows and the selected cells' total. */
   const [gridInfo, setGridInfo] = useState({ rows: "", totals: "" });
@@ -335,19 +391,27 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const [generatedPeriod, setGeneratedPeriod] = useState({ from: "", upto: "" });
   const loadGroup = useCallback(async (fields: readonly string[]) => {
     if (!generatedWith.current) return null;
-    const reply = await call<{ output: ReportOutput }>("group", { selection: generatedWith.current, fields });
-    if (reply.refusal) { await refuse(reply.refusal); return null; }
-    return reply.output;
+    setBusy("Generating report");
+    try {
+      const reply = await call<{ output: ReportOutput }>("group", { selection: generatedWith.current, fields });
+      if (reply.refusal) { await refuse(reply.refusal); return null; }
+      return reply.output;
+    } finally {
+      setBusy("");
+    }
   }, [call]);
   /** Compare periods: the same selection for other dates of the year. A period with nothing in it compares as zero. */
   const loadCompare = useCallback(async (from: string, upto: string): Promise<CompareResult> => {
     if (!generatedWith.current) return { output: null, error: "Generate the report first." };
+    setBusy("Comparing periods");
     try {
       const reply = await call<{ output: ReportOutput }>("generate", { selection: { ...generatedWith.current, from, upto } });
       if (reply.refusal) return /No Records/i.test(reply.refusal.caption) ? { output: null, empty: true } : { output: null, error: reply.refusal.message };
       return { output: reply.output };
     } catch (error) {
       return { output: null, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      setBusy("");
     }
   }, [call]);
   const loadLog = useCallback(async (ledKey: number, processKey: number) => (await call<{ log: LogTable }>("log", { ledKey, processKey })).log, [call]);
@@ -383,7 +447,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const combos = def?.controls.filter((candidate) => candidate.type === "C") ?? [];
 
   return (
-    <div ref={screen} className="mp-screen rp-screen" role="region" aria-label={def?.head || title} onMouseOver={(event) => { const owner = (event.target as Element).closest("[data-tip], [title]"); setTip(owner?.getAttribute("data-tip") ?? owner?.getAttribute("title") ?? ""); }} onMouseLeave={() => setTip("")} onFocus={() => setTip("")}>
+    <div ref={screen} className={`mp-screen rp-screen${busy ? " rp-working" : ""}`} aria-busy={Boolean(busy)} role="region" aria-label={def?.head || title} onMouseOver={(event) => { const owner = (event.target as Element).closest("[data-tip], [title]"); setTip(owner?.getAttribute("data-tip") ?? owner?.getAttribute("title") ?? ""); }} onMouseLeave={() => setTip("")} onFocus={() => setTip("")}>
       <div className="rp-body">
       <div className="rp-main">
       {tab === "select" && def && (
@@ -417,7 +481,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
                 ref={(element) => { listRefs.current[list.name] = element; }}
                 caption={list.caption}
                 mode="pick"
-                entries={list.items.map((item) => ({ key: itemKey(item), text: item.text }))}
+                entries={(list.name === def.lostFocusControl && lostItems ? lostItems : list.items).map((item) => ({ key: itemKey(item), text: item.text }))}
                 chosen={[choices[list.name] ?? ""]}
                 onPick={(key) => setChoices((current) => ({ ...current, [list.name]: key }))}
                 onEnter={() => say(LIST_MESSAGES[list.name] ?? "", "↑↓ : Choose")}
@@ -526,7 +590,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
             <span className="rp-spacer" />
             <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className={`mp-btn mp-btn-plain ${viewsOpen ? "rp-btn-on" : ""}`} onClick={() => setViewsOpen((open) => !open)} title="Save this selection under a name, or apply a saved one"><Icon name="views" /><HotkeyLabel text="Views" hotkey="v" /></button>
             <button type="button" data-hotkey="k" aria-keyshortcuts="Alt+K" className="mp-btn mp-btn-green rp-ok" onClick={() => void generate()} disabled={Boolean(busy)}><Icon name="ok" /><HotkeyLabel text="OK" hotkey="k" /></button>
-            <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red rp-quit" onClick={leave}><Icon name="close" /><HotkeyLabel text="Quit" hotkey="q" /></button>
+            <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red rp-quit" onClick={() => void leave()}><Icon name="close" /><HotkeyLabel text="Quit" hotkey="q" /></button>
           </div>
           {tools.popups}
           {viewsOpen && <SavedViews list={listViews} save={saveView} remove={removeView} apply={applyView} onClose={() => setViewsOpen(false)} />}
@@ -543,8 +607,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
           rights={def.rights}
           busy={Boolean(busy)}
           onRefresh={() => void generate()}
-          onBack={() => setTab("select")}
-          onQuit={leave}
+          onQuit={() => void leave()}
           loadLog={loadLog}
           loadGroup={loadGroup}
           loadCompare={loadCompare}
@@ -564,6 +627,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
       </div>
       </div>
       <ScreenStatus hotKeys={hotKeys} message={tip || message} error={!tip && messageRed} version={version} rows="" totals={tab === "output" ? gridInfo.totals : ""} />
+      {busy && <div className="rp-busy" role="status" aria-live="polite"><span className="rp-spinner" aria-hidden="true" /><span>{busy}…</span></div>}
     </div>
   );
 }

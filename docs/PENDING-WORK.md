@@ -189,9 +189,9 @@ through on screen).
   address 1); on this data some parties have many, so they repeat. Check whether the desktop does too. (2026-10-08)
 - [ ] With the Account group alone the setup builds SORTING_COL as ", || '   P'" (no group before it); the
   web puts the account's name there. (2026-10-08)
-- [ ] The setup's own query for the "Col_Select" list fails on PostgreSQL (`column_caption`): the list is empty
-  on the selection screen. (2026-10-08)
-- [ ] Addon Master (8), Product Master (10) and Party Wise Rate (9) are separate menu items: not ported. (2026-10-08)
+- [x] The setup's own query for the "Col_Select" list fails on PostgreSQL (`column_caption`): the list is empty
+  on the selection screen. (2026-10-08) Fixed 2026-10-12: `setupSelect` quotes a WITH query's column names after it.
+- [ ] Addon Master (8) is a separate menu item: not ported. (2026-10-08) Product Master (10), Price List (13), Party Wise Rate (9) ported 2026-10-12.
 
 ### Stock (17), REPORT > Inventory > Stock Reports - FIRST SLICE ONLY
 Written 2026-10-08 (`stockReport()` in `reportStandard.ts`; the procedure SP_STD_RPT_STOCK, 8,439 lines, is
