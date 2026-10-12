@@ -51,9 +51,10 @@ import type { CompareResult } from "./ReportCompare";
  *   Colour (BorderColour_Click) colours every border; 3 px outside a block, 1 px between its cells.
  * - Columns: drag a heading's right edge to size one; right-click a heading or cell to hide, show
  *   or move columns; Arrange Columns lists them all.
- * - Filters: a report with no groups and no subtotals has the ▾ column filters of the other grids.
- *   With a column filter or the search box in use, the final total (and the day book's "Total
- *   Entries") is worked out again from the rows shown.
+ * - Filters: a report with no group heading rows has the ▾ column filters of the other grids (the
+ *   Register with no group keeps its month subtotals). With a column filter or the search box in
+ *   use, the subtotals, the final total (and the day book's "Total Entries") are worked out again
+ *   from the rows shown; a subtotal whose group has no row left is not drawn.
  * - Chart (web only): summary cards and a donut of an amount column by group (ReportChart).
  * - Log (btn_Log_Click): the edit log of the voucher of the current row.
  * - Excel, PDF, Print and Preview keep the headings', subtotals' and total's colours.
@@ -183,8 +184,9 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     return starts;
   }, [output]);
 
-  // ---- Column filters (a report with no groups and no subtotals) and the search box ----
-  const filterable = output.groups.length === 0 && !output.rows.some((row) => row.kind === "subtotal");
+  // ---- Column filters (a report with no group heading rows) and the search box ----
+  // Subtotals without headings (the Register's month totals) keep the filters: each is worked out again from the rows shown.
+  const filterable = !output.rows.some((row) => row.kind === "data" && (row.rowType === "GAP" || (row.rowType !== "FT" && output.headingColours[row.rowType] !== undefined)));
   const columnFilters = useColumnFilters();
   const { filters } = columnFilters;
   const clearAllFilters = columnFilters.clearAll;
@@ -192,7 +194,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const activeFilters = filterable ? Object.keys(filters).length : 0;
   const needle = search.trim().toUpperCase();
   /** The rows a filter or the search can leave out: the entries, not the total or the day book's "Total Entries" line. */
-  const filteredKind = (row: OutputRow) => row.kind === "data" && row.rowType !== "COUNT";
+  const filteredKind = (row: OutputRow) => row.kind === "data" && row.rowType !== "COUNT" && row.rowType !== "FT";
   /** Whether a row passes the search and every column filter but `except` (the one whose list is being opened). */
   const passes = (row: OutputRow, except?: string) => {
     if (!filteredKind(row)) return true;
@@ -209,7 +211,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
 
   /**
    * The rows shown, with their index in output.rows. With a filter or a search in use the final
-   * total holds the shown entries' sums (the columns the total sums), and "Total Entries" their count.
+   * total holds the shown entries' sums (the columns the total sums), each subtotal the sums of the
+   * shown entries of its group (a group with none left is not drawn), and "Total Entries" their count.
    */
   const shown = useMemo(() => {
     const hidden = new Set<number>();
@@ -217,22 +220,41 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     const narrowed = needle !== "" || activeFilters > 0;
     const list: { row: OutputRow; index: number }[] = [];
     const sums = new Map<string, number>();
+    /** Per subtotal level, the shown entries' sums and count since that level's last subtotal. */
+    const groupSums: { sums: Map<string, number>; count: number }[] = [];
+    const groupAt = (level: number) => (groupSums[level] ??= { sums: new Map(), count: 0 });
+    let deepest = -1;
+    for (const row of output.rows) if (row.kind === "subtotal" && row.level > deepest) deepest = row.level;
+    const summed = (row: OutputRow, totals: Map<string, number>) => {
+      const values = { ...row.values };
+      for (const column of output.columns) {
+        if (column.kind !== "number" || (row.values[column.key] ?? "") === "") continue;
+        values[column.key] = (totals.get(column.key) ?? 0).toLocaleString("en-IN", { minimumFractionDigits: column.decimals, maximumFractionDigits: column.decimals });
+      }
+      return { ...row, values };
+    };
     let entries = 0;
     output.rows.forEach((row, index) => {
       if (hidden.has(index)) return;
       if (!passes(row)) return;
       if (narrowed && filteredKind(row)) {
-        for (const column of output.columns) if (column.kind === "number") sums.set(column.key, (sums.get(column.key) ?? 0) + (Number((row.values[column.key] ?? "").replace(/,/g, "")) || 0));
+        for (const column of output.columns) {
+          if (column.kind !== "number") continue;
+          const amount = Number((row.values[column.key] ?? "").replace(/,/g, "")) || 0;
+          sums.set(column.key, (sums.get(column.key) ?? 0) + amount);
+          for (let level = 0; level <= deepest; level += 1) groupAt(level).sums.set(column.key, (groupAt(level).sums.get(column.key) ?? 0) + amount);
+        }
+        for (let level = 0; level <= deepest; level += 1) groupAt(level).count += 1;
         if (row.rowType === "LED") entries += 1;
       }
       let drawn = row;
-      if (narrowed && row.kind === "total") {
-        const values = { ...row.values };
-        for (const column of output.columns) {
-          if (column.kind !== "number" || (row.values[column.key] ?? "") === "") continue;
-          values[column.key] = (sums.get(column.key) ?? 0).toLocaleString("en-IN", { minimumFractionDigits: column.decimals, maximumFractionDigits: column.decimals });
-        }
-        drawn = { ...row, values };
+      if (narrowed && row.kind === "subtotal") {
+        const group = groupAt(row.level);
+        groupSums[row.level] = { sums: new Map(), count: 0 };
+        if (group.count === 0) return;
+        drawn = summed(row, group.sums);
+      } else if (narrowed && row.kind === "total") {
+        drawn = summed(row, sums);
       } else if (narrowed && row.rowType === "COUNT") {
         drawn = { ...row, values: Object.fromEntries(Object.entries(row.values).map(([key, value]) => [key, value.startsWith("Total Entries") ? `Total Entries : ${entries}` : value])) };
       }

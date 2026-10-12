@@ -5,7 +5,7 @@
  *
  *   level 0 light purple · 1 light pink · 2 light blue · 3 light yellow (deeper levels reuse 3)
  *
- * Headings and subheadings are indented by level, subtotal captions sit to the right, the final
+ * Headings and subheadings are indented by level, subtotal captions sit to the left, the final
  * total is drawn apart (light red, double line), and the details between them carry no tint (the grid's
  * own alternate-row colour shows).
  *
@@ -59,7 +59,7 @@ export type RowLook = Readonly<{
   borderBottom?: string;
   /** Indent of a heading's text, in px (details start at the column's own edge). */
   indent: number;
-  /** A subtotal's caption is right-aligned over the columns it spans. */
+  /** The final total's caption is right-aligned over the columns it spans (a subtotal's sits on the left). */
   captionRight: boolean;
 }>;
 
@@ -76,7 +76,7 @@ export function rowLook(kind: RowKind, level: number, colours: readonly LevelCol
   if (kind === "heading") {
     return { background: colour.fill, color: colour.text, bold: true, borderTop: `2px solid ${colour.rule}`, indent: at * LEVEL_INDENT, captionRight: false };
   }
-  return { background: colour.fill, color: colour.text, bold: true, borderTop: `1px solid ${colour.rule}`, indent: 0, captionRight: true };
+  return { background: colour.fill, color: colour.text, bold: true, borderTop: `1px solid ${colour.rule}`, indent: 0, captionRight: false };
 }
 
 /**

@@ -7,7 +7,7 @@ import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { ReportRefusal } from "@/lib/report/generate";
 import { runGroupedReport, runReport } from "@/lib/report/reportCombine";
-import { loadReport, againstBookItems, lostFocusItems } from "@/lib/report/setup";
+import { loadReport, againstBookItems, formFilterItems, lostFocusItems, slabFilterItems } from "@/lib/report/setup";
 import { readEntryLog } from "@/lib/report/log";
 import type { ReportSelection } from "@/lib/report/types";
 
@@ -86,6 +86,8 @@ export async function POST(request: Request) {
         case "group": return { output: await runGroupedReport(loader, body.reportName, cleanSelection(body.selection), strings(body.fields).slice(0, 10)) };
         case "lostfocus": { const refilled = await lostFocusItems(loader, body.reportName, String(body.selection?.firstCombo ?? "")); return { ...refilled, warnings: loader.warnings }; }
         case "against": return await againstBookItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""));
+        case "slabs": return await slabFilterItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""), Math.trunc(Number(String(body.selection?.choices?.cmb_AgainstBook ?? "").split("|").pop()) || 0));
+        case "forms": return await formFilterItems(loader);
         case "log": return { log: await readEntryLog(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0)) };
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);

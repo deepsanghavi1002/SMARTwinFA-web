@@ -252,7 +252,18 @@ export async function planReport(loader: Loader, reportName: string, selection: 
   if (filterRow) {
     call.filterId = text(filterRow, "formating_sp_id");
     const controls = text(filterRow, "visible_controls_lst");
-    if (controls !== "") {
+    if ((controls === "lbchk_Slabs" || controls === "lbchk_Forms") && !controlRows.some((row) => text(row, "control_name") === controls)) {
+      // The Register's slab list or form (tax master) list, which the desktop builds in the program (setup.slabFilterItems / formFilterItems):
+      // the ticked keys, comma separated, in slabsKey (slab keys, or TAX_REC for a form) and their names in slabText.
+      const keys = (selection.choices[controls] ?? "").split(",").map((key) => key.trim()).filter((key) => /^\d+$/.test(key));
+      if (keys.length === 0) throw new ReportRefusal(`No selection done for : ${text(filterRow, "display_fixvalue")}`, "Report Generation Failed");
+      const slabRows = await loader.readTable(controls === "lbchk_Forms"
+        ? `SELECT tax_rec AS slab_key, BTRIM(tax_repohd) AS slab_short FROM ${session.companySchema}.tax_master WHERE tax_rec = ANY($1::int[])`
+        : `SELECT slab_key, BTRIM(slab_repohd) AS slab_short FROM ${session.companySchema}.slab_master WHERE slab_key = ANY($1::int[])`, [keys.map(Number)]) ?? [];
+      const shortOf = new Map(slabRows.map((row) => [String(toInt(field(row, "slab_key"))), text(row, "slab_short")]));
+      call.slabsKey = keys.join(",");
+      call.slabText = keys.map((key) => shortOf.get(key) ?? key).join(",");
+    } else if (controls !== "") {
       // The filter's own control (a slab combo or list) is a control of the report; one the setup lacks stops the desktop too.
       if (!controlRows.some((row) => text(row, "control_name") === controls)) throw new ReportRefusal("Control Missing To Process\nCheck Database", "Internal Program Error");
       const value = selection.choices[controls] ?? "";

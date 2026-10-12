@@ -6,7 +6,7 @@ import { dateStyle112, dateStyle6, desktopDate, sqlServerCompare } from "./formu
 import type { ReportPlan } from "./generate";
 import { pgFragment, ReportRefusal } from "./generate";
 import { cashBookColumns, dayBefore, ddMmYyyy, dropColumn, tableFromFields, formatPeriod, maxOf, pushAll, groupOrderTail, insertFirst, MONTH_NAMES, requireWhere, sortRows, tableFromResult, textKey, unknownFormat, withEntryAddon } from "./library";
-import { registerSlabBook, registerSlabs, challanFrom, orderPendingFrom, orderPendingWhere, pendingChallanFrom, stockVoucher, invalidGst, gstrTaxMismatch, documentUpload, gstFormSummary, gstr3b, gstr1, gstr2, bookwise, checklistDaybook, checklistInvoice, dailyTransaction, fundFlow, interestCalculation, target, taxSummary, tdsReport, topReports, dropAnalysis, partyBillPdf, physicalStock, cashBookFrom, cashBookOpening, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
+import { registerSlabBook, registerSlabs, challanFrom, orderPendingFrom, orderPendingWhere, pendingChallanFrom, stockVoucher, invalidGst, gstrTaxMismatch, documentUpload, gstFormSummary, gstr3b, gstr1, gstr2, bookwise, checklistDaybook, checklistInvoice, dailyTransaction, fundFlow, interestCalculation, target, taxSummary, tdsReport, topReports, dropAnalysis, salesAnalysis, partySummary, partyBillPdf, physicalStock, cashBookFrom, cashBookOpening, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
 import { money, num, runReportSql, runReportSqlHashed } from "./run";
 
 /**
@@ -27,6 +27,8 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 211: return topReports(loader, plan);
     case 112: return physicalStock(loader, plan);
     case 232: return dropAnalysis(loader, plan);
+    case 143: return salesAnalysis(loader, plan);
+    case 30: return partySummary(loader, plan);
     case 255: return partyBillPdf(loader, plan);
     case 284: return documentUpload(loader, plan);
     case 126: return invalidGst(loader, plan);
@@ -210,7 +212,7 @@ async function registerFormats(loader: Loader, plan: ReportPlan): Promise<Result
   const filter = call.filterId.toUpperCase();
   if (call.prodAddonRelate === "P" && format !== "ITEM_DETAIL") throw new ReportRefusal(`${format} PRODUCT ADDON NOT ALLOWED......`, "INTERNAL PROGRAM FAILURE");
   if ((filter === "IFORM" || filter === "EFORM") && format !== "MASTER_DETAIL") throw new ReportRefusal(`${filter === "IFORM" ? "Include Form" : "Exclude Form"} Only Possible For Master Details In Format Box`, "INTERNAL PROGRAM FAILURE");
-  if (filter !== "NONE") throw new ReportRefusal(`${filter === "ISLAB" ? "Include Slab" : filter === "ESLAB" ? "Exclude Slab" : call.filterText} with ${format} is not available in the web version of the register yet.`, "Not ported yet");
+  if (filter !== "NONE" && filter !== "IFORM" && filter !== "EFORM") throw new ReportRefusal(`${filter === "ISLAB" ? "Include Slab" : filter === "ESLAB" ? "Exclude Slab" : call.filterText} with ${format} is not available in the web version of the register yet.`, "Not ported yet");
   requireWhere(call.where);
   if (format === "MONTHLY") return registerMonthly(loader, plan);
   if (format === "ITEM_DETAIL") return registerItems(loader, plan);
@@ -387,7 +389,10 @@ async function registerItems(loader: Loader, plan: ReportPlan): Promise<ResultTa
   return table;
 }
 
-/** Master Detail: a row for each voucher with every tax master's taxable value and tax. */
+/**
+ * Master Detail: a row for each voucher with every tax master's taxable value and tax. Include Form: only the vouchers that carry one of
+ * the ticked taxes (TAX_MASTER, call.slabsKey), with those taxes' columns; Exclude Form: the vouchers that carry none of them, with the others'.
+ */
 async function registerMasters(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { call } = plan;
   const db = call.database;
@@ -402,7 +407,11 @@ async function registerMasters(loader: Loader, plan: ReportPlan): Promise<Result
   const taxSql = before2017
     ? `SELECT TAX_REPOHD AS short, TAX_REC AS id, OPT_DESC AS type, TAX_PERC AS perc FROM ${db}TAX_MASTER taxmst left join ${db}IDOPT_MASTER idopt on CAST(idopt.IDOPT_KEY AS TEXT)=taxmst.TAX_TYPE where TAX_POS <> 'D' and TAX_DIV=${vat}`
     : `SELECT DISTINCT TAX_REPOHD AS short, TAX_REC AS id, OPT_DESC AS type, TAX_PERC AS perc FROM ${db}LEDGER_EXT ledext left join ${db}TAX_MASTER taxmst on ledext.TAX_ID=taxmst.TAX_REC left join ${db}IDOPT_MASTER idopt on CAST(idopt.IDOPT_KEY AS TEXT)=taxmst.TAX_TYPE left join ${db}LEDGER led on led.LED_KEY=ledext.LED_ID where TAX_POS <> 'D' and TAX_DIV=${gst} and led.DOC_POS='A' and led.doc_posting='P' and led.doc_date between '${desktopDate(call.from)}' and '${desktopDate(call.upto)}' and led.book_code=${Number(call.fcValue)} order by TAX_PERC`;
-  const taxes: TaxMaster[] = (await runReportSql(loader, frag(taxSql))).rows.map((row) => ({ short: toText(row.short), key: Number(row.id), type: toText(row.type), percent: num(row.perc) }));
+  const formFilter = call.filterId.toUpperCase();
+  const formKeys = formFilter === "IFORM" || formFilter === "EFORM" ? call.slabsKey.split(",").map((key) => Number(key.trim())).filter((key) => Number.isInteger(key) && key > 0) : [];
+  const taxes: TaxMaster[] = (await runReportSql(loader, frag(taxSql))).rows.map((row) => ({ short: toText(row.short), key: Number(row.id), type: toText(row.type), percent: num(row.perc) }))
+    .filter((tax) => formFilter === "IFORM" ? formKeys.includes(tax.key) : formFilter === "EFORM" ? !formKeys.includes(tax.key) : true);
+  const formWhere = formKeys.length === 0 ? "" : ` and led.LED_KEY ${formFilter === "EFORM" ? "not in" : "in"} (select ledext.led_id from ${db}LEDGER_EXT ledext where ledext.tax_id in (${formKeys.join(",")}) and ledext.led_id is not null)`;
   const slabs = (await runReportSql(loader, frag(`SELECT ltrim(rtrim(SLAB_REPOHD)) AS short, SLAB_KEY AS id, SLAB_MASTER AS master FROM ${db}SLAB_MASTER WHERE ${slabWhere} and SLAB_ACTIVE <> 'N' and SLAB_KEY in (SELECT SLAB_ID from ${db}LEDGER_EXT ledext left join ${db}LEDGER led on led.led_key=ledext.led_id where led.doc_pos='A' and led.doc_date between '${desktopDate(call.from)}' and '${desktopDate(call.upto)}' and led.book_code=${Number(call.fcValue)} and ledext.il_id is null) ORDER BY SLAB_ORDER`))).rows;
   const aggregates: string[] = [];
   const columns: string[] = [];
@@ -427,7 +436,7 @@ async function registerMasters(loader: Loader, plan: ReportPlan): Promise<Result
     + ` SELECT LED.LED_KEY,to_char(${dateField},'DD-Mon-YY') AS selected_date,led.full_docno AS full_docno,AC.NAME AS name,COALESCE(accExp.name,'') AS "EXP_NAME",COALESCE(addr1.LST_NO,'') AS "VAT_NO",COALESCE(addr1.GST_NO,'') AS "GST_NO",LED.AMOUNT,case when led.rev_charge='N' then 'No' else 'Yes' end AS "REV_CHARGE"${columns.length > 0 ? `,${columns.join(",")}` : ""}`
     + ` FROM ${db}LEDGER led LEFT JOIN ${db}ACCOUNT ac ON led.code = ac.code LEFT JOIN ${db}ADDON_DATA adata ON led.code = adata.code LEFT JOIN ${db}ADDRESS addr1 ON addr1.code = ac.code AND addr1.address_id = 1`
     + ` LEFT JOIN ${db}IDOPT_MASTER idopt ON CAST(idopt.idopt_key AS TEXT) = CAST(addr1.p_reg AS TEXT) LEFT JOIN LedgerAgg la ON la.LED_ID = led.LED_KEY LEFT JOIN ${db}ACCOUNT accExp ON accExp.Code = led.post_bkcode`
-    + `${call.where}`;
+    + `${call.where}${formWhere}`;
   const csOrder = call.orderBy.trim();
   const tail = call.orderBy.toUpperCase().includes("AC.NAME")
     ? `EXTRACT(YEAR FROM ${dateField}),EXTRACT(MONTH FROM ${dateField}),to_char(${dateField},'DD/MM/YYYY')`

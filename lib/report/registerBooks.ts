@@ -49,3 +49,13 @@ export function accountHelpBooks(reportKey: number, book: number, firstComboHelp
 export function againstBooksOf(book: number): readonly number[] {
   return book === 16 || book === 11 ? [8, 13] : [];
 }
+
+/** The slab book of the voucher book: a sale return (16) or purchase return (11) reads the slabs of the book it is against. */
+export function registerSlabBook(book: number, against: number): number {
+  if (book === 16 && against === 8) return 8;
+  if (book === 16 && against === 13) return 13;
+  if (book === 11 && against === 13) return 13;
+  if (book === 11 && against === 8) return 8;
+  if (book === 10 || book === 15) return 15;
+  return book;
+}

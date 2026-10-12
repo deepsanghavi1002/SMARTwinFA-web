@@ -14,7 +14,7 @@ test("headings indent by level, details do not, subtotal captions sit right", ()
   assert.ok(rowLook("heading", 2).indent > rowLook("heading", 1).indent);
   assert.equal(rowLook("detail", 2).indent, 0);
   assert.equal(rowLook("detail", 2).background, undefined);
-  assert.equal(rowLook("subtotal", 1).captionRight, true);
+  assert.equal(rowLook("subtotal", 1).captionRight, false);
   assert.match(rowLook("total", -1).borderTop, /double/);
 });
 

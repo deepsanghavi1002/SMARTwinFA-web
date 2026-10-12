@@ -37,10 +37,8 @@ Everything is in `lib/report/` (one program: `reportCombine.ts` → `reportStand
 - [ ] Journal with Show Narration in rows, and with a format, not tested. (2026-10-07)
 
 ### Register (3)
-- [ ] Include Slab / Exclude Slab: code is written, but this setup has no `lbchk_Slabs` control, so
-  the desktop also stops ("Control Missing To Process"). Needs the control added to
-  `smart_setup.report_control` first. (2026-10-07)
-- [ ] Include Form / Exclude Form: refused as on the desktop (control missing). (2026-10-07)
+- [x] Include Slab / Exclude Slab: the slab list is built by the web (`slabFilterItems`), as the desktop builds it. (2026-10-12)
+- [x] Include Form / Exclude Form: the form list is the tax masters (`formFilterItems`); with Master Detail only, as the desktop. (2026-10-12)
 - [ ] Slab / Form filters combined with the formats (Month, Daily, Item Detail …). (2026-10-07)
 - [ ] Item Detail with an addon group ticked (heading addon columns). (2026-10-07)
 - [ ] Item Detail variants for licences 2, 14, 25 and 44. (2026-10-07)

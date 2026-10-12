@@ -4,7 +4,7 @@ import { readRights, SETUP_SCHEMA, SYSTEM_SCHEMA } from "../master-program/sessi
 import type { MasterSession } from "../master-program/session";
 import { blankCoalesceAsText } from "../master-program/sql";
 import { desktopDate } from "./formula";
-import { againstBooksOf } from "./registerBooks";
+import { againstBooksOf, registerSlabBook } from "./registerBooks";
 import { literal, setBooksValueInString, setupSelect } from "./sqlText";
 
 export { setBooksValueInString, setupSelect };
@@ -28,7 +28,7 @@ const flag = (row: Row | undefined, name: string) => {
 };
 
 /** Reports whose output is ported (their SP_REPORT_STANDARD branch and Report_Combine's handling of it). */
-export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 157, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 162, 211, 232, 255, 127, 129, 130, 131, 258, 284]);
+export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 157, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 162, 211, 232, 255, 143, 30, 127, 129, 130, 131, 258, 284]);
 
 /** The help grid each help id fills, when report_controlval does not name one (UNKNOWN_HELP_GRID). */
 const KEY_COLUMN: Readonly<Record<string, string>> = {
@@ -208,6 +208,32 @@ async function firstComboOptions(loader: Loader, properties: Row): Promise<{ tex
     options.push({ text: toText(field(row, displayColumn)), value: values[index], ...(book !== undefined && toText(book) !== "" ? { book: toInt(book) } : {}) });
   }
   return options;
+}
+
+/**
+ * The Register's Include Slab / Exclude Slab list (lbchk_Slabs): the desktop builds it in the program, not in report_control. The
+ * slabs of the chosen register's book (a return's: the book it is against) for the year, in slab order; the value is the slab key.
+ */
+export async function slabFilterItems(loader: Loader, reportName: string, firstValue: string, againstBook: number): Promise<{ control: string; items: ControlItem[] }> {
+  const { session } = loader;
+  const properties = await readReportProperties(loader, reportName);
+  const options = await firstComboOptions(loader, properties);
+  const chosen = options.find((option) => option.value === firstValue.trim());
+  const book = chosen ? chosen.book ?? (/^\d+$/.test(chosen.value) ? Number(chosen.value) : -1) : -1;
+  if (book < 0) return { control: "lbchk_Slabs", items: [] };
+  const rows = await loader.readTable(
+    `SELECT BTRIM(slab_repohd) AS slab_short, slab_key FROM ${session.companySchema}.slab_master
+      WHERE book = $1 AND slab_fromdt::date = $2::date AND slab_uptodt::date = $3::date AND COALESCE(slab_active, 'Y') <> 'N'
+      ORDER BY slab_order`,
+    [registerSlabBook(book, againstBook), desktopDate(session.tarikh1), desktopDate(session.tarikh2)],
+  ) ?? [];
+  return { control: "lbchk_Slabs", items: rows.map((row) => ({ controlValKey: 0, text: text(row, "slab_short"), value: String(toInt(field(row, "slab_key"))), extra: ["", "", "", "", ""], showControls: "" })) };
+}
+
+/** The Register's Include Form / Exclude Form list (lbchk_Forms, built by the desktop program too): the tax masters (NONEC, CGST 9% ...), value TAX_REC. */
+export async function formFilterItems(loader: Loader): Promise<{ control: string; items: ControlItem[] }> {
+  const rows = await loader.readTable(`SELECT BTRIM(tax_desc) AS tax_desc, tax_rec FROM ${loader.session.companySchema}.tax_master WHERE COALESCE(tax_pos, 'A') <> 'D' ORDER BY tax_rec`) ?? [];
+  return { control: "lbchk_Forms", items: rows.map((row) => ({ controlValKey: 0, text: text(row, "tax_desc"), value: String(toInt(field(row, "tax_rec"))), extra: ["", "", "", "", ""], showControls: "" })) };
 }
 
 /**

@@ -10,8 +10,10 @@ import {
   parseRowDate, renameColumn, replaceCI, rightAlignedKey, sortRows, tableFromFields, tableFromResult, textKey, withEntryAddon,
 } from "./library";
 import { decimalRound, money, num, runReportSql, runReportSqlHashed } from "./run";
+import { registerSlabBook } from "./registerBooks";
+export { registerSlabBook };
 import { MONTH_NAMES, ddMmYyyy, pushAll } from "./library";
-import { SETUP_SCHEMA } from "../master-program/session";
+import { SETUP_SCHEMA, SYSTEM_SCHEMA } from "../master-program/session";
 
 /**
  * SP_REPORT_STANDARD: the standard (unformatted) output of every report, one branch per report
@@ -47,6 +49,8 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 211: return topReports(loader, plan);
     case 112: return physicalStock(loader, plan);
     case 232: return dropAnalysis(loader, plan);
+    case 143: return salesAnalysis(loader, plan);
+    case 30: return partySummary(loader, plan);
     case 255: return partyBillPdf(loader, plan);
     case 284: return documentUpload(loader, plan);
     case 126: return invalidGst(loader, plan);
@@ -109,16 +113,6 @@ export const cashBookFrom = (plan: ReportPlan): string => withEntryAddon(plan.ca
 //  - Include Form / Exclude Form: the procedure refuses them for this report; so does the web.
 
 export type RegisterSlab = { short: string; key: number; master: boolean; mathop: string; order: number };
-
-/** The slab book of the voucher book: a sale return (16) or purchase return (11) reads the slabs of the book it is against. */
-export function registerSlabBook(book: number, against: number): number {
-  if (book === 16 && against === 8) return 8;
-  if (book === 16 && against === 13) return 13;
-  if (book === 11 && against === 13) return 13;
-  if (book === 11 && against === 8) return 8;
-  if (book === 10 || book === 15) return 15;
-  return book;
-}
 
 /** The slabs the period's vouchers carry (cursor TMP_SLAB), in slab order. */
 export async function registerSlabs(loader: Loader, plan: ReportPlan, inReport = true): Promise<RegisterSlab[]> {
@@ -385,6 +379,7 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   }
   const summary = call.filterText === "Summary";
   const monthly = call.filterText === "Monthly";
+  const licence21 = loader.session.licence === 21;
   if (call.filterText !== "Detail" && !summary && !monthly) throw unsupported(`The ${call.filterText} filter`);
   const sorting = call.sortingText;
   const partyWise = sorting !== "Date Wise";
@@ -562,8 +557,11 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   if (summary) {
     const result = new ResultTable();
     const mobile = checks("CHK_MOBILE");
-    for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "NAME", ...(mobile ? ["MOBILE_NO"] : []), "INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", "CDays", "Days", ...AGEING_BUCKETS.map((bucket) => bucket[0]), "SORTING_COL", "LAST_" + (sale ? "RECD" : "PAY") + "_DATE", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_DATE", "LAST_INV_AMT"]) result.addColumn(name);
-    for (const name of ["INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_AMT", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) result.setKind(name, "decimal");
+    for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "NAME", ...(mobile ? ["MOBILE_NO"] : []), "INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", ...(licence21 ? ["TOTAL_ABOVE_90"] : []), "CDays", "Days", ...AGEING_BUCKETS.map((bucket) => bucket[0]), "SORTING_COL", "LAST_" + (sale ? "RECD" : "PAY") + "_DATE", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_DATE", "LAST_INV_AMT"]) result.addColumn(name);
+    for (const name of ["INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", ...(licence21 ? ["TOTAL_ABOVE_90"] : []), "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_AMT", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) result.setKind(name, "decimal");
+    // Licence 21: TOTAL_ABOVE_90, the party's pending on its bills more than 90 days old (every credit days row of the party).
+    const above90 = new Map<number, number>();
+    if (licence21) for (const row of out) if (toText(row[col("ROW_DATA_TYPE")]) === "LED" && num(row[col("Days")]) > 90) { const code = Number(row[col("SMART_AC_CODE")]); above90.set(code, money((above90.get(code) ?? 0) + num(row[col("PENDING")]))); }
     for (const name of ["CDays", "Days"]) result.setKind(name, "int");
     // The party's oldest age, over all its rows.
     const oldest = new Map<number, number>();
@@ -575,7 +573,7 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       const key = `${code}|${num(row[col("CDays")])}`;
       let sum = grouped.get(key);
       if (!sum) {
-        sum = { ROW_DATA_TYPE: "LED", SMART_NAME: row[col("SMART_NAME")], NAME: row[col("SMART_NAME")], ...(mobile ? { MOBILE_NO: row[col("MOBILE_NO")] } : {}), INVOICE_AMT: 0, CLEAR_AMOUNT: 0, PENDING: 0, CDays: num(row[col("CDays")]), Days: oldest.get(code) ?? 0, SORTING_COL: toText(row[col("SMART_NAME")]), _code: code };
+        sum = { ROW_DATA_TYPE: "LED", SMART_NAME: row[col("SMART_NAME")], NAME: row[col("SMART_NAME")], ...(mobile ? { MOBILE_NO: row[col("MOBILE_NO")] } : {}), INVOICE_AMT: 0, CLEAR_AMOUNT: 0, PENDING: 0, ...(licence21 ? { TOTAL_ABOVE_90: above90.get(code) ?? 0 } : {}), CDays: num(row[col("CDays")]), Days: oldest.get(code) ?? 0, SORTING_COL: toText(row[col("SMART_NAME")]), _code: code };
         for (const [name] of AGEING_BUCKETS) sum[name] = 0;
         grouped.set(key, sum);
       }
@@ -638,6 +636,20 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   for (const name of ["INVOICE_AMT", "Clear_Amount", "PENDING", "MONTH_TOTAL", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) if (table.has(name)) table.setKind(name, "decimal");
   for (const name of ["CDays", "Days"]) if (table.has(name)) table.setKind(name, "int");
   table.rows = out;
+  // Licence 21: NET_AMOUNT, each bill's amount before tax: the register's master slab total (S_LASTOT) less its own amount (SLAB_AMT), found by the bill's number.
+  if (licence21) {
+    table.addColumn("NET_AMOUNT");
+    table.setKind("NET_AMOUNT", "decimal");
+    const slabKey = (await runReportSql(loader, `SELECT slab_key FROM ${db}SLAB_MASTER WHERE book = ${book} AND slab_master = 'Y' AND slab_active = 'Y' AND slab_link = 0 ORDER BY slab_key DESC LIMIT 1`)).rows[0]?.slab_key;
+    const numbers = [...new Set(out.filter((row) => toText(row[col("ROW_DATA_TYPE")]) === "LED").map((row) => toText(row[col("FULL_DOCNO")])).filter((text) => text !== ""))];
+    const nets = new Map<string, number>();
+    if (slabKey !== undefined && slabKey !== null && numbers.length > 0) {
+      const found = await runReportSql(loader, `SELECT DISTINCT ON (led.full_docno) led.full_docno AS full_docno, (coalesce(ledext.S_LASTOT::numeric,0) - coalesce(ledext.SLAB_AMT::numeric,0)) AS net FROM ${db}LEDGER led JOIN ${db}LEDGER_EXT ledext ON ledext.led_id = led.led_key`
+        + ` WHERE led.full_docno = ANY($1::text[]) AND ledext.il_id IS NULL AND ledext.slab_id = ${Number(slabKey)} AND led.doc_pos <> 'D' ORDER BY led.full_docno, led.led_key DESC`, [numbers]);
+      for (const row of found.rows) nets.set(toText(row.full_docno), num(row.net));
+    }
+    for (const row of out) if (toText(row[col("ROW_DATA_TYPE")]) === "LED") row.NET_AMOUNT = nets.has(toText(row[col("FULL_DOCNO")])) ? money(nets.get(toText(row[col("FULL_DOCNO")]))!) : null;
+  }
   // Due date of each bill: its date plus the credit days.
   if (checks("CHK_PRINTDUEDATE")) {
     for (const row of table.rows) {
@@ -3509,6 +3521,309 @@ export async function dropAnalysis(loader: Loader, plan: ReportPlan): Promise<Re
 }
 
 const toIso = (date: Date): string => desktopDate(date).replace(/^(\d+)\/(\w+)\/(\d+)$/, (_all, d, m, y) => `${y}-${String(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(m) + 1).padStart(2, "0")}-${d}`);
+
+// ======================================================================================
+// 30: PARTY SUMMARY (ANALYSIS REP. > Party All Transaction; SP_REPORT_STANDARD branch 30, REPORT_PARTY_SUMMARY)
+// ======================================================================================
+//
+// One line per party ticked with all it did in the period: the opening (the year's opening, plus what posted before From), the
+// SALE (or PURCHASE) and its quantity, the returns against the book (credit / debit notes, ag_book) and their quantity, receipts and
+// payments (book 4), bank deposits and withdrawals (book 6), given / received (book 5), debit / credit journal (book 19), and the
+// closing worked out from them. With SALE, a sale book that also takes creditors (BS_ACHELP " 2, 3,") adds the party's PURCHASE and
+// DEBIT_NOTE. The party addon groups ticked (the first four of the order) come first and sort the lines; a party with nothing (the
+// opening and every amount 0) is left out. Licences 19, 29, 68 and 73 without a "CA_ENT" account read only the vouchers of live
+// books (book_code of an active account) and show no opening and no quantities, as the procedure. Licence 2 counts FACTOR.
+
+export async function partySummary(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const { session } = loader;
+  const db = call.database;
+  const licence = session.licence;
+  const sale = call.fcValue === 8;
+  if (!sale && call.fcValue !== 13) throw new ReportRefusal("Select SALE or PURCHASE", "Report Generation Failed");
+  let hideBook = true;
+  if ([19, 29, 68, 73].includes(licence)) hideBook = num((await runReportSql(loader, `SELECT count(*) AS n FROM ${db}ACCOUNT WHERE a_pos <> 'D' AND position('CA_ENT' in a_short) > 0`)).rows[0]?.n) > 0;
+  const liveBooks = !hideBook && [19, 29, 68, 73].includes(licence);
+  const drCrBook = num((await runReportSql(loader, `SELECT count(*) AS n FROM ${db}BOOK_PROPERTIES WHERE stkm_pos <> 'D' AND book_key = ${sale ? 8 : 13} AND position(' 2, 3,' in bs_achelp) > 0`)).rows[0]?.n) > 0;
+  const typeKey = num((await runReportSql(loader, `SELECT BOOK_KEY FROM ${db}BOOK_PROPERTIES WHERE STKM_POS = 'A' AND STKM_ID = 'NR' ORDER BY STKMODULE LIMIT 1`)).rows[0]?.book_key);
+  const fromIso = toIso(call.from);
+  const uptoIso = toIso(call.upto);
+
+  // The party addon groups: the first four pieces of the order (adata.txt_AREA ...); their heading is the field's name.
+  const pieces = call.orderBy.split(",").map((piece) => piece.trim()).filter((piece) => piece !== "").slice(0, 4);
+  const addons = [0, 1, 2, 3].map((at) => pieces[at] ?? "").map((text) => (/^[a-z]+\.txt_[A-Za-z0-9_]+$/i.test(text) ? text : ""));
+  const heads = addons.map((text) => text.replace(/^[a-z]+\.txt_/i, ""));
+
+  // The period's amounts and quantities of each party, in one pass each; a column with no voucher stays NULL, as a SUM of nothing.
+  const amount = "l.amount::numeric";
+  const live = liveBooks ? ` and l.book_code in (select code from ${db}ACCOUNT where a_pos='A')` : "";
+  const sums: [string, string][] = [];
+  if (sale) {
+    sums.push(["SALE", `l.book=8`]);
+    if (!liveBooks && drCrBook) sums.push(["DEBIT_NOTE", `l.ag_book=13`]);
+    sums.push(["SALE_RETURN", `l.ag_book=8`]);
+    if (!liveBooks && drCrBook) sums.push(["PURCHASE", `l.book=13`]);
+  } else {
+    sums.push(["PURCHASE", `l.book=13`]);
+    sums.push(["PURCH_RETURN", `l.ag_book=13`]);
+  }
+  for (const [name, condition] of [["RECEIPT_AMT", "l.book=4 and l.ac_dbcode=2"], ["PAYMENT_AMT", "l.book=4 and l.ac_dbcode=1"], ["DEPOSIT", "l.book=6 and l.ac_dbcode=2"], ["WITHDRAWAL", "l.book=6 and l.ac_dbcode=1"],
+    ["GIVEN_AMT", "l.book=5 and l.ac_dbcode=2"], ["RECEIVED_AMT", "l.book=5 and l.ac_dbcode=1"], ["DEBIT_AMT", "l.book=19 and l.ac_dbcode=1"], ["CREDIT_AMT", "l.book=19 and l.ac_dbcode=2"]] as const) sums.push([name, condition]);
+  // A note against the book counts its own book (credit note 16, debit note 11) and takes the other way off.
+  const signed = (name: string) => (name === "SALE_RETURN" ? `case when l.book=16 then ${amount} else -${amount} end`
+    : name === "DEBIT_NOTE" || name === "PURCH_RETURN" ? `case when l.book=11 then ${amount} else -${amount} end` : amount);
+  const amountSql = `SELECT l.code,${sums.map(([name, condition]) => `sum(case when ${condition} then ${signed(name)} end) AS "${name}"`).join(",")}`
+    + ` FROM ${db}LEDGER l WHERE l.doc_pos<>'D' and l.doc_date::date between '${fromIso}' and '${uptoIso}'${live} GROUP BY l.code`;
+
+  const figure = licence === 2 ? "p.factor::numeric" : "p.quantity::numeric";
+  const quantities: [string, string, string][] = liveBooks ? [] : sale
+    ? [["SALE_QTY", "l.book=8", figure], ...(drCrBook ? [["DNOTE_QTY", `l.ag_book=13 and p."TYPE"<>${typeKey}`, `case when l.book=11 then ${figure} else -${figure} end`] as [string, string, string]] : []),
+      ["SALE_RET_QTY", `l.ag_book=8 and p."TYPE"<>${typeKey}`, `case when l.book=16 then ${figure} else -${figure} end`], ...(drCrBook ? [["PURCH_QTY", "l.book=13", figure] as [string, string, string]] : [])]
+    : [["PURCH_QTY", "l.book=13", figure], ["PURCH_RET_QTY", `l.ag_book=13 and p."TYPE"<>${typeKey}`, `case when l.book=11 then ${figure} else -${figure} end`]];
+  const quantitySql = quantities.length === 0 ? "" : `SELECT l.code,${quantities.map(([name, condition, value]) => `sum(case when ${condition} then ${value} end) AS "${name}"`).join(",")}`
+    + ` FROM ${db}LEDGER l JOIN ${db}PROD_LEDGER p ON p.led_id=l.led_key WHERE l.doc_pos<>'D' and p.il_pos<>'D' and l.doc_date::date between '${fromIso}' and '${uptoIso}' GROUP BY l.code`;
+
+  // The opening: the year's (a purchase party's the other way round) plus what posted before From.
+  const midYear = call.from.getTime() !== call.tarikh1.getTime();
+  const yearOpening = sale ? "acbal.opening::numeric" : "case when acbal.opening::numeric<0 then abs(acbal.opening::numeric) else acbal.opening::numeric*-1 end";
+  const opening = liveBooks ? "0" : midYear
+    ? `${yearOpening}+coalesce((SELECT sum(case when lp.post_dbcode=${sale ? 1 : 2} then lp.post_amt::numeric else lp.post_amt::numeric*-1 end) FROM ${db}LEDGER_POST lp WHERE lp.post_date::date < '${fromIso}' and lp.post_code=ac.code),0)`
+    : yearOpening;
+
+  // The columns in the procedure's order.
+  const order = sale
+    ? ["SALE", "SALE_QTY", "DEBIT_NOTE", "DNOTE_QTY", "SALE_RETURN", "SALE_RET_QTY", "PURCHASE", "PURCH_QTY"]
+    : ["PURCHASE", "PURCH_QTY", "PURCH_RETURN", "PURCH_RET_QTY"];
+  const present = new Set([...sums.map(([name]) => name), ...quantities.map(([name]) => name)]);
+  const book = order.filter((name) => present.has(name));
+  const moves = ["RECEIPT_AMT", "PAYMENT_AMT", "DEPOSIT", "WITHDRAWAL", "GIVEN_AMT", "RECEIVED_AMT", "DEBIT_AMT", "CREDIT_AMT"];
+  const valueOf = (name: string) => (quantities.some(([q]) => q === name) ? `q."${name}"` : `a."${name}"`);
+  const addonSelect = addons.map((text, at) => `${text === "" ? "''" : text} AS "SMART_SELECTED_ADDON${at + 1}"`).join(",");
+  const headSelect = addons.map((text, at) => (text === "" ? "" : `,${text} AS "${heads[at]}"`)).join("");
+  const where = call.where.split("|sys.yearid|").join(call.yearId);
+  const sql = `WITH a AS (${amountSql})${quantitySql !== "" ? `, q AS (${quantitySql})` : ""}`
+    + ` SELECT ac.name AS "SMART_NAME",${addonSelect},ac.name AS "NAME",ac.code AS "AC_CODE",${opening} AS "OPENING",${[...book, ...moves].map((name) => `${valueOf(name)} AS "${name}"`).join(",")},`
+    + `0.00::numeric AS "CLOSING_AMT",ac.name AS "SORTING_COL"${headSelect}`
+    // The setup's FROM ends in its own brackets: the joins to the sums go after it, the WHERE is the setup's (both read as PostgreSQL).
+    + ` ${pgFragment(call.from_, plan, session.companySchema).replace(/\s*$/, "")} LEFT JOIN a ON a.code=ac.code${quantitySql !== "" ? " LEFT JOIN q ON q.code=ac.code" : ""}`;
+  const table = tableFromResult(await runReportSql(loader, `${sql}${pgFragment(where, plan, session.companySchema)}`));
+
+  // NULL amounts to 0 (the quantities stay as they are), the closing, and the sorting key of the addon groups.
+  const zeroed = ["OPENING", ...book.filter((name) => !quantities.some(([q]) => q === name)), ...moves];
+  const cell = (row: ResultRow, name: string) => num(table.get(row, name));
+  for (const row of table.rows) {
+    for (const name of zeroed) if (table.get(row, name) === null || table.get(row, name) === undefined) table.set(row, name, 0);
+    const v = (name: string) => cell(row, name);
+    let closing = sale
+      ? v("OPENING") + v("SALE") + (drCrBook && !liveBooks ? v("DEBIT_NOTE") : 0) + v("PAYMENT_AMT") + v("WITHDRAWAL") + v("DEBIT_AMT") + v("RECEIVED_AMT")
+        - v("SALE_RETURN") - (drCrBook && !liveBooks ? v("PURCHASE") : 0) - v("RECEIPT_AMT") - v("DEPOSIT") - v("CREDIT_AMT") - v("GIVEN_AMT")
+      : v("OPENING") + v("PURCHASE") - v("PAYMENT_AMT") - v("WITHDRAWAL") - v("DEBIT_AMT") - v("RECEIVED_AMT") + v("PURCH_RETURN") + v("RECEIPT_AMT") + v("DEPOSIT") + v("CREDIT_AMT") + v("GIVEN_AMT");
+    closing = money(closing);
+    if (!sale && closing > 0) closing = -closing;
+    table.set(row, "CLOSING_AMT", closing);
+    const name = toText(table.get(row, "SMART_NAME"));
+    const addon = (at: number) => toText(table.get(row, `SMART_SELECTED_ADDON${at}`));
+    let sorting = name;
+    if (addons[0] !== "") sorting = `${addon(1)} ${name}`;
+    if (addons[1] !== "") sorting = addons[0] !== "" ? `${addon(1)} ${addon(2)} ${name}` : `${addon(2)} ${name}`;
+    if (addons[2] !== "") sorting = addons[0] !== "" && addons[1] !== "" ? `${addon(1)} ${addon(2)} ${addon(3)} ${name}` : `${addon(3)} ${name}`;
+    if (addons[3] !== "") sorting = addons[0] !== "" && addons[1] !== "" && addons[2] !== "" ? `${sorting} ${addon(4)} ${name}` : `${addon(4)} ${name}`;
+    table.set(row, "SORTING_COL", sorting);
+  }
+
+  // A party with nothing is left out; the lines in the order of the sorting key.
+  const shown = sale ? ["OPENING", "SALE", "SALE_RETURN"] : ["OPENING", "PURCHASE", "PURCH_RETURN"];
+  table.rows = table.rows.filter((row) => [...shown, ...moves].some((name) => cell(row, name) !== 0));
+  sortRows(table, [(row) => textKey(table.get(row, "SORTING_COL"))]);
+  for (const name of ["OPENING", ...book, ...moves, "CLOSING_AMT"]) if (table.has(name)) table.setKind(name, "decimal");
+  return table;
+}
+
+// ======================================================================================
+// 143: SALES ANALYSIS (SP_FRT_RPT_SALES_ANALYSIS, ANALYSIS REP. > Sales Analysis)
+// ======================================================================================
+//
+// One line per inventory product: its sale quantity month by month (SALE_Apr, SALE_May ... from the From month to the Upto month), the
+// period's SALE, the closing stock (Clsg_Stk), and the master addon groups ticked. A sale is a sale or credit note line (book 8 / 16) net
+// of what was set against another entry (QUANTITY - AG_QTY, to a whole number); a return line counts against it.
+//  - Purchase Required (CHK_PURCHASE): PURCH_<Mon> before each month's sale, and a PURCHASE total (book 13 / 11).
+//  - Daily Sale Require (CHK_DAILY): a column per day and month instead (Apr_1, May_1 ... Mar_1, Apr_2 ...), in the desktop's order;
+//    it takes no Previous Sale and leaves every product in (the desktop's delete there never matches).
+//  - Previous Sale Column Require (CHK_PRVSALE): PSALE, the sale of every earlier year of the company (its other year databases).
+//  - Zero Closing Stock Required (CHK_ZEROSTOCK): keeps the products with no sale, no closing stock and nothing in the months.
+// STK_FOR_DAY (licences 7, 51 and 68): the days the closing stock lasts at the period's rate of sale (365 with no sale).
+// As the desktop, each month after the first counts from the From date's day of that month (From 15/Apr: May from 15/May).
+// The licence branches are the procedure's (2 VINAYAK: TRN_QTY3; 7 / 22 laminates: brand / design / finish / status and the challan
+// modules; 19 AKSHAT, 25, 51 HITANSHI, 61 DREAMHOUSE, 68 AYRA, 74 EVA, and the product child / parent setup). Not ported: licence 28 (PRITHVI).
+
+type SalesColumn = { name: string; sql: string };
+
+/** DATEADD(m, 1, date): the same day next month, or that month's last day. */
+function addMonth(date: Date): Date {
+  const next = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  const last = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  return new Date(next.getFullYear(), next.getMonth(), Math.min(date.getDate(), last));
+}
+
+const SALES_KEYS = /^\(\s*-?\d+(\s*,\s*-?\d+)*\s*\)$/;
+
+export async function salesAnalysis(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const { session } = loader;
+  const db = call.database;
+  const licence = session.licence;
+  if (licence === 28) throw new ReportRefusal("The Sales Analysis of licence 28 is not available in the web version yet.", "Not ported yet");
+  const daily = call.checkQuery.includes("CHK_DAILY,");
+  const checks = daily ? call.checkQuery.replace("CHK_PRVSALE,", "") : call.checkQuery;
+  const has = (name: string) => checks.includes(`${name},`);
+  const purchase = has("CHK_PURCHASE");
+  const vinayak = licence === 2;
+  const laminate = licence === 7 || licence === 22;
+  // MOON_LAM, JAIN_LAM and SUN_LAM read the books, except in their 2019 year, which reads the challan modules as the other laminates do.
+  const laminateBooks = laminate && /MOON_LAM|JAIN_LAM|SUN_LAM/i.test(db) && desktopDate(call.tarikh1) !== "01/Apr/2019";
+  const setup = (await runReportSql(loader, `SELECT position('PROD_CHILD_PARENT,' in coalesce(item_para,'')) > 0 AS pcp FROM ${db}SETUP LIMIT 1`)).rows[0];
+  const childParent = setup?.pcp === true;
+  let hideBook = true;
+  if ([19, 29, 68, 73].includes(licence)) hideBook = num((await runReportSql(loader, `SELECT count(*) AS n FROM ${db}ACCOUNT WHERE a_pos <> 'D' AND position('CA_ENT' in a_short) > 0`)).rows[0]?.n) > 0;
+  const bookFilter = !hideBook && [19, 29, 68, 73].includes(licence) ? ` and (pl.book_code in (select code from ${db}ACCOUNT where a_pos='A') or pl.book_code is null)` : "";
+
+  // The movement of a line, and the conditions of a sale and a purchase line.
+  const quantity = vinayak ? "round(pl.trn_qty3::numeric,2)" : "round((pl.quantity-coalesce(pl.ag_qty,0))::numeric,0)";
+  const saleSigned = `case when pl.stock_nat='L' then ${quantity} else -${quantity} end`;
+  const purchaseSigned = `case when pl.stock_nat='A' then ${quantity} else -${quantity} end`;
+  const line = ` and pl.inventory='Y' and pl.quantity-coalesce(pl.ag_qty,0)>0${bookFilter}`;
+  const challanOut = "(pl.trn_module='CHLN-OUT' or pl.trn_module='IND-OUT' or pl.trn_module='ORD-IN')";
+  const saleLine = laminate ? (laminateBooks ? "pl.book in (8,16)" : challanOut)
+    : licence === 19 ? `(${challanOut.slice(1, -1)} or pl.book in (8,16))`
+    : licence === 25 ? "((coalesce(pl.code,0)>0 and pl.book in (8,16)) or left(pl.full_docno,4)='Less')"
+    : "coalesce(pl.code,0)>0 and pl.book in (8,16)";
+  const saleTotalLine = laminate || licence === 19 ? saleLine
+    : licence === 25 ? "((pl.process_id is null and pl.book in (8,16)) or left(pl.full_docno,4)='Less')"
+    : "pl.process_id is null and pl.book in (8,16)";
+  const purchaseLine = laminate ? (laminateBooks ? "pl.book in (13,11)" : "pl.trn_module='CHLN-IN'")
+    : licence === 19 ? "(pl.trn_module='CHLN-IN' or pl.book in (13,11))"
+    : "coalesce(pl.code,0)>0 and pl.book in (13,11)";
+  const sum = (name: string, where: string, signed: string): SalesColumn => ({ name, sql: `coalesce(sum(case when ${where} then ${signed} end),0) AS "${name}"` });
+
+  // The columns of the period: the months (or the days), then the totals.
+  const from = call.from;
+  const upto = call.upto;
+  const fromIso = toIso(from);
+  const uptoIso = toIso(upto);
+  const MONTH_NAMES_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const periodColumns: SalesColumn[] = [];
+  if (!daily) {
+    for (let at = new Date(from.getFullYear(), from.getMonth(), from.getDate()); at <= upto; at = addMonth(at)) {
+      const month = MONTH_NAMES_SHORT[at.getMonth()];
+      const window = `extract(month from pl.il_date)=${at.getMonth() + 1} and pl.il_date::date between '${toIso(at)}' and '${uptoIso}'${line}`;
+      if (purchase) periodColumns.push(sum(`PURCH_${month}`, `${window} and ${purchaseLine}`, purchaseSigned));
+      periodColumns.push(sum(`SALE_${month}`, `${window} and ${saleLine}`, saleSigned));
+    }
+  } else {
+    for (let day = 1; day <= 31; day += 1) {
+      for (let at = new Date(from.getFullYear(), from.getMonth(), from.getDate()); at <= upto; at = addMonth(at)) {
+        periodColumns.push(sum(`${MONTH_NAMES_SHORT[at.getMonth()]}_${day}`, `extract(month from pl.il_date)=${at.getMonth() + 1} and extract(day from pl.il_date)=${day}${line} and ${saleLine}`, saleSigned));
+      }
+    }
+  }
+  const period = `pl.il_date::date between '${fromIso}' and '${uptoIso}'${line}`;
+  const totalColumns: SalesColumn[] = [];
+  if (!daily && purchase) totalColumns.push(sum("PURCHASE", `${period} and ${purchaseLine}`, purchaseSigned));
+  totalColumns.push(sum("SALE", `${period} and ${saleTotalLine}`, saleSigned));
+
+  // The ticked addon groups (their keys) and products.
+  const productKeys = SALES_KEYS.test(call.selectKey[4].trim()) ? call.selectKey[4].trim() : "";
+  let addonCount = 0;
+  while (addonCount < 4 && SALES_KEYS.test(call.selectKey[addonCount].trim()) && call.addon[addonCount].trim() !== "") addonCount += 1;
+  const asAdata = (text: string) => text.replace(/\b[a-z]+\.txt_/gi, "adata.txt_");
+  const addonText = Array.from({ length: addonCount }, (_, at) => asAdata(call.addon[at]).trim());
+  const addonSelect = addonCount === 0 ? "" : `,${[...call.headingAddon.slice(0, addonCount), ...call.selectedAddon.slice(0, addonCount)].map((text) => asAdata(text).trim()).join(",")}`;
+  const addonWhere = addonText.map((text, at) => ` and ${text.replace("adata.txt_", "adata.key_")} in ${call.selectKey[at].trim()}`).join("");
+
+  // The product's own columns, the closing stock and the licence's columns.
+  const lead = laminate
+    ? `prodmas.prod_key AS "prod_key",adata.TXT_PRODBRAN AS "BRAND",prodmas.DESC_1 AS "DESIGN",adata.TXT_PRODFINISH AS "FINISH",adata.TXT_PRODSTAT AS "STATUS",0 AS "PSALE"`
+    : `prodmas.prod_key AS "prod_key",prodmas.prod_desc AS "Description",0 AS "PSALE"`;
+  const parentStock = `coalesce((select sum(pb.clsg_pcs::numeric) from ${db}PROD_BALANCE pb where pb.prec_flag='RP' and pb.prod_id in (select p1.prod_key from ${db}PRODUCT_MASTER p1 where p1.txprod_id=prodmas.txprod_id)),0)`;
+  let stock: string;
+  if (vinayak) stock = `round(prodbal.clsg_qty3::numeric,2) AS "Clsg_Stk",0 AS "STK_FOR_DAY"`;
+  else if (licence === 51 && !purchase) stock = `trunc(${parentStock}) AS "Clsg_Stk",prodmas.min_qty AS "Min_Qty",coalesce((select sum(p2.quantity-p2.ag_qty) from ${db}PROD_LEDGER p2 where p2.prod_id=prodmas.prod_key and p2.il_pos<>'D' and p2.trn_module='ORD-IN'),0) AS "PEND_ORD",0 AS "ORD_SUG",0 AS "STK_FOR_DAY"`;
+  else if (licence === 74 && !purchase) stock = `trunc(prodbal.clsg_pcs::numeric) AS "Clsg_Stk",prodmas.min_qty AS "Min_Qty",0 AS "ORD_SUG",0 AS "STK_FOR_DAY"`;
+  else if (licence === 61 && !purchase) stock = `round(prodbal.clsg_pcs::numeric,0) AS "Clsg_Stk",prodmas.min_qty AS "Min_Qty",0 AS "MIN_ORD_SUG",prodmas.max_qty AS "Max_Qty",0 AS "MAX_ORD_SUG",0 AS "STK_FOR_DAY"`;
+  else if (licence === 68 && !purchase) stock = `round(prodbal.clsg_pcs::numeric,0) AS "Clsg_Stk",prodmas.min_qty AS "Min_Qty",0 AS "MIN_ORD_SUG",0 AS "STK_FOR_DAY"`;
+  else if (childParent && !purchase) stock = `trunc(${parentStock}) AS "Clsg_Stk",0 AS "STK_FOR_DAY"`;
+  else stock = `round(prodbal.clsg_pcs::numeric,0) AS "Clsg_Stk",0 AS "STK_FOR_DAY"`;
+
+  const movement = [...periodColumns, ...totalColumns];
+  const sql = `WITH moved AS (SELECT pl.prod_id,${movement.map((column) => column.sql).join(",")} FROM ${db}PROD_LEDGER pl WHERE pl.il_pos='A'${productKeys !== "" ? ` and pl.prod_id in ${productKeys}` : ""} GROUP BY pl.prod_id)`
+    + ` SELECT ${lead},${movement.map((column) => `coalesce(moved."${column.name}",0) AS "${column.name}"`).join(",")},${stock}${addonSelect}`
+    + ` FROM ${db}PRODUCT_MASTER prodmas LEFT JOIN ${db}PROD_BALANCE prodbal ON prodmas.prod_key=prodbal.prod_id LEFT JOIN ${db}ADDON_DATA adata ON adata.prod_id=prodmas.prod_key AND adata.prod_id>0`
+    + ` LEFT JOIN moved ON moved.prod_id=prodmas.prod_key`
+    + ` WHERE prodmas.prod_pos<>'D' AND prodbal.prec_flag='RP' AND prodmas.last_date IS NULL AND prodmas.inventory='Y'${productKeys !== "" ? ` AND prodmas.prod_key in ${productKeys}` : ""}${addonWhere}`;
+  const table = tableFromResult(await runReportSql(loader, sql));
+  const cell = (row: ResultRow, name: string) => num(table.get(row, name));
+
+  // The products with nothing: no sale, no closing stock, nothing in a month (or a purchase).
+  if (!daily) {
+    if (!has("CHK_ZEROSTOCK")) {
+      table.rows = table.rows.filter((row) => !((!purchase || cell(row, "PURCHASE") === 0) && cell(row, "SALE") === 0 && cell(row, "Clsg_Stk") === 0 && periodColumns.every((column) => cell(row, column.name) === 0)));
+    }
+    const days = Math.round((Date.UTC(upto.getFullYear(), upto.getMonth(), upto.getDate()) - Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())) / 86400000) + 1;
+    for (const row of table.rows) {
+      const closing = cell(row, "Clsg_Stk");
+      const sale = cell(row, "SALE");
+      if (closing > 0 && sale > 0) table.set(row, "STK_FOR_DAY", decimalRound(closing / (decimalRound(sale, 6) / days), 0));
+      else if (closing > 0 && sale === 0) table.set(row, "STK_FOR_DAY", 365);
+    }
+  }
+
+  // PSALE: the sale of the company's earlier years (each year's database, by the company's name), CAST(... AS INT) a line.
+  if (has("CHK_PRVSALE")) {
+    const years = (await runReportSql(loader, `SELECT n.c_tarikh1::date AS y1, n.c_tarikh2::date AS y2, lower(btrim(c.co_dataname)) AS schema_name FROM ${SYSTEM_SCHEMA}.CNAME n LEFT JOIN ${SYSTEM_SCHEMA}.COMPANY c ON c.co_key=n.c_id`
+      + ` WHERE n.c_tarikh2::date <= $1::date - 1 AND btrim(c.name) = $2 ORDER BY c.co_short`, [toIso(call.tarikh1), session.companyName.trim()])).rows;
+    const previous = new Map<number, number>();
+    const lineQuantity = vinayak ? "round(trn_qty3::numeric,2)" : "trunc((quantity-coalesce(ag_qty,0))::numeric)";
+    for (const year of years) {
+      const schema = toText(year.schema_name);
+      if (!/^[a-z0-9_]+$/.test(schema)) continue;
+      const exists = (await runReportSql(loader, "SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'prod_ledger'", [schema])).rows.length > 0;
+      if (!exists) continue;
+      const sold = await runReportSql(loader, `SELECT prod_id, sum(case when stock_nat='L' then ${lineQuantity} else -${lineQuantity} end) AS qty FROM ${schema}.PROD_LEDGER`
+        + ` WHERE il_date::date >= $1::date AND il_date::date <= $2::date AND il_pos='A' AND inventory='Y' AND quantity-coalesce(ag_qty,0)>0 AND coalesce(code,0)>0`
+        + `${licence === 7 ? " and (trn_module='CHLN-OUT' or trn_module='IND-OUT' or trn_module='ORD-IN')" : " AND book IN (8,16)"} GROUP BY prod_id`, [year.y1, year.y2]);
+      for (const row of sold.rows) previous.set(num(row.prod_id), (previous.get(num(row.prod_id)) ?? 0) + num(row.qty));
+    }
+    for (const row of table.rows) table.set(row, "PSALE", previous.get(cell(row, "prod_key")) ?? 0);
+  }
+
+  // The licences' order suggestions.
+  const minimum = (row: ResultRow) => cell(row, "Min_Qty");
+  if (licence === 51 && !purchase) for (const row of table.rows) if (minimum(row) > 0) table.set(row, "ORD_SUG", minimum(row) - (cell(row, "Clsg_Stk") + Math.max(cell(row, "PEND_ORD"), 0)));
+  if (licence === 74 && !purchase) for (const row of table.rows) if (minimum(row) > 0) table.set(row, "ORD_SUG", minimum(row) - cell(row, "Clsg_Stk"));
+  if ((licence === 61 || licence === 68) && !purchase) {
+    for (const row of table.rows) {
+      if (minimum(row) > 0) table.set(row, "MIN_ORD_SUG", minimum(row) - cell(row, "Clsg_Stk"));
+      if (licence === 61 && cell(row, "Max_Qty") > 0) table.set(row, "MAX_ORD_SUG", cell(row, "Max_Qty") - cell(row, "Clsg_Stk"));
+    }
+  }
+
+  // The order: the addon groups, then the product (laminates: brand and design).
+  const addonColumns = call.selectedAddon.slice(0, addonCount).map((_, at) => `SMART_SELECTED_ADDON${at + 1}`);
+  sortRows(table, [
+    ...addonColumns.map((column) => (row: ResultRow) => textKey(table.get(row, column))),
+    ...(laminate ? [...(addonCount === 0 ? [(row: ResultRow) => textKey(table.get(row, "BRAND"))] : []), (row: ResultRow) => textKey(table.get(row, "DESIGN"))] : [(row: ResultRow) => textKey(table.get(row, "Description"))]),
+  ]);
+
+  dropColumn(table, "prod_key");
+  if (!((licence === 7 || licence === 51 || licence === 68) && !daily)) dropColumn(table, "STK_FOR_DAY");
+  // The desktop's column types: numeric(18,0) / (18,2) columns are decimals (the grid totals them), CAST(... AS int) ones are whole numbers.
+  for (const column of [...movement.map((entry) => entry.name), "STK_FOR_DAY", "MIN_ORD_SUG", "MAX_ORD_SUG"]) if (table.has(column)) table.setKind(column, "decimal");
+  if (table.has("Clsg_Stk")) table.setKind("Clsg_Stk", (licence === 51 || licence === 74 || childParent) && !purchase && !vinayak ? "int" : "decimal");
+  if (table.has("ORD_SUG")) table.setKind("ORD_SUG", "decimal");
+  if (table.has("PSALE")) table.setKind("PSALE", vinayak ? "decimal" : "int");
+  return table;
+}
+
 
 /**
  * SP_FRT_RPT_PARTY_BILL_PDF's SQL, apart from the database (so it can be tested on its own). PostgreSQL; the SQL Server original is quoted where

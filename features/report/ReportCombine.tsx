@@ -104,6 +104,9 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const [firstEdited, setFirstEdited] = useState<string | null>(null);
   /** The Against Book entries of a credit / debit note register (null: the setup's own list). */
   const [againstItems, setAgainstItems] = useState<ControlItem[] | null>(null);
+  /** The Register's Include / Exclude Slab list (lbchk_Slabs, built by the program) and its ticked slab keys. */
+  const [slabItems, setSlabItems] = useState<ControlItem[] | null>(null);
+  const [slabsTicked, setSlabsTicked] = useState<string[]>([]);
   /** A saved view's choice for the lost-focus combo, kept when that combo is refilled. */
   const viewChoice = useRef<string | null>(null);
   const [viewsOpen, setViewsOpen] = useState(false);
@@ -219,6 +222,28 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const chosenItem = (name: string) => control(name)?.items.find((item) => itemKey(item) === choices[name]);
   // Runtime boxes a chosen filter or sort shows (HideOrShowMe with visible_controls_lst).
   const shownRuntime = new Set([chosenItem("lbox_Filter")?.showControls ?? "", chosenItem("lBox_Sorting")?.showControls ?? ""].flatMap((list) => list.split(",")).map((name) => name.trim()).filter(Boolean));
+  /** The filter's own list the program builds (Include / Exclude Slab: lbchk_Slabs; Include / Exclude Form: lbchk_Forms), "" when none. */
+  const filterList = (chosenItem("lbox_Filter")?.showControls ?? "").split(",").map((name) => name.trim()).find((name) => (name === "lbchk_Slabs" || name === "lbchk_Forms") && !def?.controls.some((candidate) => candidate.name === name)) ?? "";
+  const slabListShown = filterList !== "";
+  const againstChoice = choices.cmb_AgainstBook ?? "";
+
+  // Include / Exclude Slab: the slabs of the chosen register's book (a return's: the book it is against); Include / Exclude Form: the tax
+  // masters. Ticks no longer listed drop, and all of them when the list changes between slabs and forms (their keys are different numbers).
+  const filterListOf = useRef("");
+  useEffect(() => {
+    if (!slabListShown) return;
+    let live = true;
+    const switched = filterListOf.current !== filterList;
+    filterListOf.current = filterList;
+    call<{ control: string; items: ControlItem[] }>(filterList === "lbchk_Forms" ? "forms" : "slabs", { selection: { firstCombo: first, choices: { cmb_AgainstBook: againstChoice } } })
+      .then((reply) => {
+        if (!live) return;
+        setSlabItems(reply.items);
+        setSlabsTicked((current) => (switched ? [] : current.filter((key) => reply.items.some((item) => item.value === key))));
+      })
+      .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
+    return () => { live = false; };
+  }, [slabListShown, filterList, first, againstChoice, call]);
   const groupOfGrid = (grid: string) => groupControl?.items.filter((item) => item.showControls === grid && groups.includes(itemKey(item))) ?? [];
 
   /** Ticking a group shows its help tab (MoveFocus); an addon group shows its own subs in the addon grid. */
@@ -262,7 +287,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     upto,
     groups,
     ticks: Object.fromEntries(Object.keys(ticks).map((grid) => [grid, [...ticksOf(grid)]])),
-    choices,
+    choices: slabListShown ? { ...choices, [filterList]: slabsTicked.join(",") } : choices,
     columns: columnsTicked,
     texts,
     checks,
@@ -490,6 +515,16 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
           </div>
 
           <div className="rp-mid">
+            {slabListShown && (
+              <ReportList
+                caption={filterList === "lbchk_Forms" ? "Forms" : "Slabs"}
+                mode="tick"
+                entries={(slabItems ?? []).map((item) => ({ key: item.value, text: item.text }))}
+                chosen={slabsTicked}
+                onTick={(key, on) => setSlabsTicked((current) => (on ? [...current.filter((value) => value !== key), key] : current.filter((value) => value !== key)))}
+                onEnter={() => say(filterList === "lbchk_Forms" ? "Tick the forms (taxes) to include or exclude" : "Tick the slabs to include or exclude", "Space : Tick / ↑↓ : Move")}
+              />
+            )}
             {tickLists.map((list) => (
               <ReportList
                 key={list.name}
