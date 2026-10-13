@@ -1,5 +1,6 @@
 "use client";
 
+import { activeScope, activeById, useWindowCloser } from "../ui/activeWindow";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
@@ -390,7 +391,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     setTyped("");
     setSelectionEnd(null);
     // A combo cell (a list column) opens its list under the cell, as the master's do.
-    setComboAt(column.options ? comboPlace(document.querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`), column.options.map((option) => option.text)) : null);
+    setComboAt(column.options ? comboPlace(activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`), column.options.map((option) => option.text)) : null);
     if (column.options) setEditText(value);
     setEditing(true);
   }, [columns, cursor, records, shownRows, isEditable, controls, toggleTick]);
@@ -630,7 +631,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       if (columns[cursor.col + step] && cursor.col + step >= frozen && cursor.col >= frozen) { layout.shiftColumn(column.key, step); setCursor({ row: cursor.row, col: cursor.col + step }); }
       return;
     }
-    if (ctrl && event.key.toLowerCase() === "f") { event.preventDefault(); document.getElementById("se-find")?.focus(); return; }
+    if (ctrl && event.key.toLowerCase() === "f") { event.preventDefault(); activeById("se-find")?.focus(); return; }
     if (ctrl && event.key.toLowerCase() === "z") { event.preventDefault(); if (column) restoreCell(cursor.row, column); return; }
     if (ctrl && event.key.toLowerCase() === "c") { event.preventDefault(); await copyCell(); return; }
     if (ctrl && event.key.toLowerCase() === "v") { event.preventDefault(); await pasteCell(); return; }
@@ -642,7 +643,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       return;
     }
     if (event.key === "F3") { event.preventDefault(); findNext(); return; }
-    if (event.key === "F5") { event.preventDefault(); document.getElementById("mp-save")?.focus(); return; }
+    if (event.key === "F5") { event.preventDefault(); activeById("mp-save")?.focus(); return; }
     if ((event.key === "F4" || (event.altKey && event.key === "ArrowDown")) && comboHere) { event.preventDefault(); openCombo(); return; }
     if (event.key === "Delete" && def?.canDelete) { event.preventDefault(); await deleteSelected("selection"); return; }
     // Type to find, as the master's grid: letters search the current column, Backspace takes one back, Esc clears.
@@ -751,6 +752,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const leave = async () => {
     if (await confirmLeave(ask)) onClose();
   };
+  // The window's × (main menu tabs) asks the same.
+  useWindowCloser(() => { void leave(); });
 
   const clearGrid = useCallback(() => {
     setSetoffs({});

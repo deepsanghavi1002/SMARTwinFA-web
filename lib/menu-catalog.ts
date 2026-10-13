@@ -22,6 +22,9 @@ function setupSchema() {
 export type MenuNode = Readonly<{
   id: number;
   label: string;
+  /** The Alt / menu letter MenuText marks with "&" ("&GP Report": G), and where it is in the label; null / -1 when it marks none. */
+  accessKey: string | null;
+  accessIndex: number;
   shortcut: string | null;
   actionCode: string | null;
   programName: string | null;
@@ -50,6 +53,16 @@ type MenuRow = {
 /** MenuText carries the keyboard accelerator as "&": "S&PECIAL" is "SPECIAL". */
 function label(row: MenuRow) {
   return (row.menutext ?? "").replace(/&/g, "").trim();
+}
+
+/** The letter after the first "&" of MenuText and its place in the label (the text without "&", trimmed). */
+function access(row: MenuRow): { accessKey: string | null; accessIndex: number } {
+  const text = row.menutext ?? "";
+  const at = text.search(/&[A-Za-z0-9]/);
+  if (at < 0) return { accessKey: null, accessIndex: -1 };
+  const before = text.slice(0, at).replace(/&/g, "");
+  const lead = before.length - before.trimStart().length;
+  return { accessKey: text.charAt(at + 1).toUpperCase(), accessIndex: before.length - lead };
 }
 
 /**
@@ -92,6 +105,7 @@ export async function readMenuCatalog(companyGroup: string | null): Promise<Menu
       (childrenOf.get(parent) ?? []).map((row) => ({
         id: row.menuid,
         label: label(row),
+        ...access(row),
         shortcut: row.shortcutkey?.trim() || null,
         actionCode: row.actioncode?.trim() || null,
         programName: row.menuprogname?.trim() || null,

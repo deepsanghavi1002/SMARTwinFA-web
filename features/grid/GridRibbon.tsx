@@ -1,5 +1,6 @@
 "use client";
 
+import { useWindowActive } from "../ui/activeWindow";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { HotkeyLabel } from "../ui/hotkeys";
@@ -71,10 +72,11 @@ export function GridRibbon({ source, tabs, actions, info }: {
     try { window.localStorage.setItem(`${REMEMBER}:${source}`, tabs[at].title); } catch { /* the choice is only a convenience */ }
   };
 
-  // Alt + the letter of a button on another tab: open that tab, then press the button.
+  // Alt + the letter of a button on another tab: open that tab, then press the button (only in the window in front).
+  const windowActive = useWindowActive();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!event.altKey || event.ctrlKey || event.metaKey || !root.current) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || !root.current || !windowActive.current) return;
       const match = /^Key([A-Z])$/.exec(event.code);
       if (!match) return;
       const letter = match[1].toLowerCase();

@@ -1,4 +1,7 @@
 import type { StartupSelection } from "../startup/StartupGate";
+import type { ReportOutput } from "../../lib/report/types";
+import { unpackOutput } from "../../lib/report/wire";
+import type { PackedOutput } from "../../lib/report/wire";
 
 /** A selection the desktop refuses (its message box): message and caption. */
 export type Refusal = Readonly<{ message: string; caption: string }>;
@@ -17,8 +20,10 @@ export async function reportCall<T>(selection: StartupSelection, reportName: str
       ...payload,
     }),
   });
-  const body = await response.json() as T & { error?: string; refusal?: Refusal };
+  const body = await response.json() as T & { error?: string; refusal?: Refusal; output?: ReportOutput | PackedOutput };
   if (!response.ok || body.error) throw new Error(body.error || `Report request ${action} failed`);
+  // A report's rows come packed (lib/report/wire.ts): back to the rows the screens use.
+  if (body.output) body.output = unpackOutput(body.output);
   return body;
 }
 

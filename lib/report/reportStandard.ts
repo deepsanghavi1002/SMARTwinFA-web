@@ -11,6 +11,8 @@ import {
 } from "./library";
 import { decimalRound, money, num, runReportSql, runReportSqlHashed } from "./run";
 import { registerSlabBook } from "./registerBooks";
+import { matchGp, gpOpeningValue, summariseGp } from "./gp";
+import type { GpProduct, GpSale, GpStock } from "./gp";
 export { registerSlabBook };
 import { MONTH_NAMES, ddMmYyyy, pushAll } from "./library";
 import { SETUP_SCHEMA, SYSTEM_SCHEMA } from "../master-program/session";
@@ -42,6 +44,8 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 20: return orderPending(loader, plan);
     case 12: return orderRegister(loader, plan);
     case 25: return marketingAnalysis(loader, plan);
+    case 27: return gpReport(loader, plan);
+    case 35: return nonFunction(loader, plan);
     case 10: return productMaster(loader, plan);
     case 13: return priceList(loader, plan);
     case 14: return formSummary(loader, plan);
@@ -191,19 +195,21 @@ async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> 
     where += ` and led.LED_KEY not in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0 and led_id=led.led_key)`;
   }
 
-  // OUTER APPLY: the expense account's name, and the product lines' quantity, factor and MRP value.
+  // OUTER APPLY: the expense account's name, and the product lines' quantity, factor and MRP value. The product lines' sums are worked
+  // out once for every voucher (GROUP BY LED_ID) and joined, not once a voucher: PROD_LEDGER has no index on LED_ID, so a per-voucher
+  // sub-query read the whole table each time (Quantity: 14 s, with Show Default Slabs 62 s on 831 vouchers). A voucher with no line gets NULL, as before.
   let apply = ` LEFT JOIN LATERAL (SELECT acc.name AS exp_name FROM ${db}ACCOUNT acc WHERE acc.Code=led.post_bkcode) ALIAS1 ON TRUE`;
-  if (call.checkQuery.includes("CHK_QUANTITY,")) apply += ` LEFT JOIN LATERAL (SELECT SUM(Quantity) AS qty FROM ${db}prod_ledger WHERE LED_ID=led.led_key AND IL_POS='A') ALIAS4 ON TRUE`;
+  if (call.checkQuery.includes("CHK_QUANTITY,")) apply += ` LEFT JOIN (SELECT LED_ID AS alias4_led, SUM(Quantity) AS qty FROM ${db}prod_ledger WHERE IL_POS='A' AND LED_ID IS NOT NULL GROUP BY LED_ID) ALIAS4 ON ALIAS4.alias4_led=led.led_key`;
   if (call.checkQuery.includes("CHK_FACTOR,")) {
-    apply += ` LEFT JOIN LATERAL (SELECT SUM(CASE WHEN PRODUCT.REP2_UOM=PRODUCT.PCS_UOM THEN prodled.TRN_PCS-prodled.ag_qty`
+    apply += ` LEFT JOIN (SELECT prodled.LED_ID AS alias5_led, SUM(CASE WHEN PRODUCT.REP2_UOM=PRODUCT.PCS_UOM THEN prodled.TRN_PCS-prodled.ag_qty`
       + ` WHEN PRODUCT.REP2_UOM=PRODUCT.QTY1_UOM THEN prodled.TRN_QTY1-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_qty1)::numeric,4)`
       + ` WHEN PRODUCT.REP2_UOM=PRODUCT.QTY2_UOM THEN prodled.TRN_QTY2-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_qty2)::numeric,4)`
       + ` WHEN PRODUCT.REP2_UOM=PRODUCT.qty3_uom THEN prodled.TRN_QTY3-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_qty3)::numeric,4)`
       + ` WHEN PRODUCT.REP2_UOM=PRODUCT.PACK_UOM THEN prodled.TRN_PACK-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_pack)::numeric,4)`
       + ` WHEN PRODUCT.REP2_UOM=PRODUCT.WEIGHT_UOM THEN prodled.TRN_WEIGHT-round((prodled.AG_QTY/NULLIF(prodled.QUANTITY,0)*prodled.trn_weight)::numeric,4)`
-      + ` ELSE CAST(factor AS NUMERIC(20,2)) END) AS factor FROM ${db}prod_ledger prodled LEFT JOIN ${db}product_master PRODUCT ON PRODUCT.prod_key=prodled.prod_id WHERE LED_ID=led.led_key AND IL_POS='A' AND PRODUCT.PROD_POS='A') ALIAS5 ON TRUE`;
+      + ` ELSE CAST(factor AS NUMERIC(20,2)) END) AS factor FROM ${db}prod_ledger prodled LEFT JOIN ${db}product_master PRODUCT ON PRODUCT.prod_key=prodled.prod_id WHERE prodled.LED_ID IS NOT NULL AND IL_POS='A' AND PRODUCT.PROD_POS='A' GROUP BY prodled.LED_ID) ALIAS5 ON ALIAS5.alias5_led=led.led_key`;
   }
-  if (call.checkQuery.includes("CHK_MRPVAL,")) apply += ` LEFT JOIN LATERAL (SELECT round(SUM(master_rate*quantity),2) AS mrp_value FROM ${db}prod_ledger WHERE LED_ID=led.led_key AND IL_POS='A') ALIAS6 ON TRUE`;
+  if (call.checkQuery.includes("CHK_MRPVAL,")) apply += ` LEFT JOIN (SELECT LED_ID AS alias6_led, round(SUM(master_rate*quantity),2) AS mrp_value FROM ${db}prod_ledger WHERE IL_POS='A' AND LED_ID IS NOT NULL GROUP BY LED_ID) ALIAS6 ON ALIAS6.alias6_led=led.led_key`;
 
   const end = call.queryEnd.trim() !== "" ? `,${call.queryEnd}` : "";
   const order = call.orderBy.trim();
@@ -7387,5 +7393,190 @@ async function marketingAnalysis(loader: Loader, plan: ReportPlan): Promise<Resu
     table.rows.push(row);
     previous = row;
   }
+  return table;
+}
+
+// ======================================================================================
+// 27: GP REPORT (ANALYSIS REP. > GP Report, REPORT_PROFIT_REPORT; SP_REPORT_STANDARD branch 27)
+// ======================================================================================
+//
+// The gross profit of each sale line, matched first in first out against the product's stock: the opening at From first
+// (PURCH_NO "OPENING"), then the stock-in lines of the period (any book, STOCK_NAT 'A'). A sale line takes from as many
+// stock lines as its quantity needs; each piece is a row: the sale (date, voucher, party, the quantity matched, rate, value)
+// against the stock line (date, voucher, its whole quantity, rate, the matched quantity's value), the profit and the profit
+// percentage on the cost. Once a product's stock is used up its remaining sales are left out. Detail lists the rows in
+// product and stock date order; Summary a row a product, sale rate and purchase rate.
+//
+// Options: Slab Add-Less Include (CHK_SLABADDLESS): where the year's product-wise slabs of the sale (8) or purchase (13) book
+// start at the year's first day, a line's value is less those slabs and its rate the value over the quantity.
+// When From is not the year's first day the opening is the year's plus the stock's movement before From, valued at the
+// purchases (book 13) before Upto, latest first, and what they do not cover at the year's opening rate.
+//
+// The matching itself is in gp.ts. As the procedure: only the products with a balance row (PROD_BALANCE, 'RP') for the year come in; the cursors take the sales,
+// stock lines and purchases in the order of their dd-Mon-yy text (not of the date), and a stock line's PURCH_QTY is its whole
+// quantity. Licence 2 counts TRN_QTY1 and the year's OPEN_QTY1; licence 5 names the product by its group (TXT_PRODGROUP) and
+// values an opening at From = year start at TOLL_PERC plus 18%. The desktop builds TEMP_TABLE_PROFIT_<machine> with an INSERT a
+// row; here the rows are made in memory from read-only queries.
+
+async function gpReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const round2 = (value: number): number => decimalRound(value, 2);
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  const day = (date: Date) => `'${desktopDate(date)}'`;
+  const licence = call.licence;
+  const qty = (alias: string) => (licence === 2 ? `coalesce(${alias}.trn_qty1::numeric,0)` : `(${alias}.quantity::numeric-${alias}.ag_qty::numeric)`);
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const fromYearStart = sameDay(call.from, call.tarikh1);
+
+  // The ticked products (@var_select_key5) and addon subs (@var_select_key1-4 on @var_addon1-4, read by key).
+  const keyFilters = (productColumn: string) => [
+    call.selectKey[4] !== "" ? ` and ${productColumn} in ${call.selectKey[4]}` : "",
+    ...[0, 1, 2, 3].map((slot) => (call.selectKey[slot] !== "" && call.addon[slot] !== "" ? ` and ${call.addon[slot].replace(" adata.txt_", " adata.key_")} in ${call.selectKey[slot]}` : "")),
+  ].join("");
+
+  // Slab Add-Less: the book's product-wise slabs from the year's first day, taken off each line's value.
+  const slabLess = async (book: number, alias: string): Promise<string> => {
+    if (!call.checkQuery.includes("CHK_SLABADDLESS,")) return "";
+    const slabs = (await runReportSql(loader, `SELECT slab_key FROM ${db}SLAB_MASTER WHERE slab_pos = 'P' AND slab_fromdt = ${day(call.tarikh1)} AND slab_active = 'Y' AND slab_master = 'N' AND book = ${book} ORDER BY slab_order`)).rows;
+    return slabs.map((slab) => `-coalesce((select sum(le.slab_amt::numeric) from ${db}LEDGER_EXT le where le.il_id = ${alias}.il_key and le.slab_id = ${Math.trunc(num(slab.slab_key))}),0)`).join("");
+  };
+  const saleSlabs = await slabLess(8, "tcp1");
+  const stockSlabs = await slabLess(13, "proled");
+
+  // TEMP_TABLE_PROD_OPENING: the products with their opening (at From) and opening rate.
+  const desc = licence === 5 ? "adata.txt_prodgroup" : "prodmas.prod_desc";
+  const yearOpening = licence === 2 ? "prodbal.open_qty1" : "prodbal.open_pcs";
+  const movedBefore = `coalesce((select sum(case when prodled.stock_nat='A' then ${qty("prodled")} else ${qty("prodled")}*-1 end) from ${db}PROD_LEDGER prodled where prodled.prod_id=prodmas.prod_key and prodled.inventory='Y' and prodled.il_pos='A' and prodled.process_id is null and prodled.il_date < ${day(call.from)}),0)`;
+  const openingRate = licence === 5 && fromYearStart ? "round(prodmas.toll_perc::numeric+(prodmas.toll_perc::numeric*.18),2)" : "prodbal.open_rate::numeric";
+  const openingRows = (await runReportSql(loader, frag(`SELECT prodmas.prod_key AS "PROD_KEY",${desc} AS "PROD_DESC",coalesce(${yearOpening}::numeric,0)${fromYearStart ? "" : `+${movedBefore}`} AS "PROD_OPENING",coalesce(${openingRate},0) AS "PROD_RATE"`
+    + ` FROM ${db}PRODUCT_MASTER prodmas left join ${db}PROD_BALANCE prodbal on prodbal.prod_id=prodmas.prod_key left join ${db}ADDON_DATA adata on adata.prod_id=prodmas.prod_key`
+    + ` WHERE prodmas.inventory = 'Y' and prodbal.year_id = '${call.yearId}' and prodbal.prec_flag = 'RP'${keyFilters("prodmas.prod_key")}`
+    + ` GROUP BY prodmas.prod_key,${desc},${yearOpening},prodbal.open_rate${licence === 5 ? ",prodmas.toll_perc" : ""} ORDER BY prodmas.prod_key`))).rows;
+  const products: GpProduct[] = openingRows.map((row) => ({ key: Number(row.PROD_KEY), desc: toText(row.PROD_DESC), opening: round2(num(row.PROD_OPENING)), rate: round2(num(row.PROD_RATE)) }));
+
+  // From after the year's start: the opening valued at the purchases before Upto (TEMP_TABLE_PRODBET_OPENING).
+  if (!fromYearStart && products.length > 0) {
+    const bought = (await runReportSql(loader, frag(`SELECT prodled.prod_id AS "PROD_KEY",prodled.il_date AS "IL_DATE",coalesce(${qty("prodled")},0) AS "QTY",prodled.il_value::numeric AS "VALUE"`
+      + ` FROM ${db}PROD_LEDGER prodled left join ${db}PRODUCT_MASTER prodmas on prodmas.prod_key=prodled.prod_id left join ${db}ADDON_DATA adata on adata.prod_id=prodmas.prod_key`
+      + ` WHERE prodmas.inventory = 'Y' and prodled.inventory = 'Y' and prodled.il_pos = 'A' and prodled.stock_nat = 'A' and prodled.book = 13 and prodled.process_id is null and prodled.il_date < ${day(call.upto)}${keyFilters("prodmas.prod_key")}`
+      + ` ORDER BY prodled.prod_id,prodled.il_date desc,prodled.il_key desc`))).rows;
+    const boughtOf = new Map<number, { date: Date; qty: number; value: number }[]>();
+    for (const row of bought) boughtOf.set(Number(row.PROD_KEY), [...(boughtOf.get(Number(row.PROD_KEY)) ?? []), { date: new Date(row.IL_DATE as string), qty: num(row.QTY), value: num(row.VALUE) }]);
+    for (const product of products) product.rate = round2(gpOpeningValue(product.opening, product.rate, boughtOf.get(product.key) ?? []).rate);
+  }
+
+  // A line's rate: with Slab Add-Less its value (less the slabs) over its quantity.
+  const lineRate = (row: Readonly<Record<string, unknown>>, slabs: string) => {
+    const value = round2(num(row.VALUE));
+    const lineQty = round2(num(row.QTY));
+    return slabs !== "" && value > 0 && lineQty !== 0 ? round2(value / lineQty) : round2(num(row.RATE));
+  };
+
+  // TEMP_TABLE_PROD_PURCHASE: the stock-in lines of the period.
+  const stockRows = (await runReportSql(loader, frag(`SELECT proled.prod_id AS "PROD_ID",proled.il_date AS "IL_DATE",proled.full_docno AS "NO",${qty("proled")} AS "QTY",proled.rate::numeric AS "RATE",proled.il_value::numeric${stockSlabs} AS "VALUE"`
+    + ` FROM ${db}PROD_LEDGER proled left join ${db}ADDON_DATA adata on adata.prod_id=proled.prod_id`
+    + ` WHERE proled.stock_nat = 'A' and proled.inventory = 'Y' and proled.il_pos = 'A' and proled.quantity::numeric-proled.ag_qty::numeric > 0 and proled.code > 0 and proled.process_id is null`
+    + ` and proled.il_date between ${day(call.from)} and ${day(call.upto)} and proled.rate::numeric > 1${keyFilters("proled.prod_id")} ORDER BY proled.prod_id,proled.il_date,proled.il_key`))).rows;
+  const stock: GpStock[] = stockRows.map((row) => ({ product: Number(row.PROD_ID), date: new Date(row.IL_DATE as string), no: toText(row.NO), qty: round2(num(row.QTY)), rate: lineRate(row, stockSlabs) }));
+
+  // TEMP_TABLE_PROD_SALE: the sale lines of the period, of the ticked products / addons (@var_union_select_list).
+  const saleRows = (await runReportSql(loader, frag(`SELECT ac.name AS "NAME",ac.code AS "CODE",tcp1.prod_id AS "PROD_ID",tcp1.il_date AS "IL_DATE",tcp1.full_docno AS "NO",${qty("tcp1")} AS "QTY",tcp1.rate::numeric AS "RATE",tcp1.il_value::numeric${saleSlabs} AS "VALUE"`
+    + ` FROM ${db}PROD_LEDGER tcp1 left join ${db}ACCOUNT ac on ac.code=tcp1.code left join ${db}ADDON_DATA adata on adata.prod_id=tcp1.prod_id`
+    + ` WHERE tcp1.stock_nat = 'L' and tcp1.inventory = 'Y' and tcp1.il_pos = 'A' and ac.a_pos <> 'D' and tcp1.quantity::numeric-tcp1.ag_qty::numeric > 0 and tcp1.process_id is null`
+    + ` and tcp1.il_date between ${day(call.from)} and ${day(call.upto)} and tcp1.rate::numeric > 1${call.unionQuery.trim() !== "" ? ` and ${call.unionQuery}` : ""}`
+    + `${call.selectKey[4] !== "" ? ` and tcp1.prod_id in ${call.selectKey[4]}` : ""} ORDER BY tcp1.prod_id,tcp1.il_date,tcp1.il_key`))).rows;
+  const sales: GpSale[] = saleRows.map((row) => ({ product: Number(row.PROD_ID), code: num(row.CODE), name: toText(row.NAME), date: new Date(row.IL_DATE as string), no: toText(row.NO), qty: round2(num(row.QTY)), rate: lineRate(row, saleSlabs) }));
+
+  const matched = matchGp(products, stock, sales, call.from);
+  const table = new ResultTable();
+  if (call.sortingText.trim().toLowerCase() === "detail") {
+    for (const column of ["PROD_ID", "CODE", "NAME", "DESCRIPTION", "SALE_DATE", "SALE_NO", "SALE_QTY", "SALE_RATE", "SALE_VALUE", "PURCH_DATE", "PURCH_NO", "PURCH_QTY", "PURCH_RATE", "PURCH_VALUE", "PROFIT_PERC", "PROFIT_AMOUNT", "SMART_SELECTED_PRODUCT", "SMART_NAME"]) table.addColumn(column);
+    table.setKind("PROD_ID", "int");
+    table.setKind("CODE", "int");
+    for (const column of ["SALE_QTY", "SALE_RATE", "SALE_VALUE", "PURCH_QTY", "PURCH_RATE", "PURCH_VALUE", "PROFIT_PERC", "PROFIT_AMOUNT"]) table.setKind(column, "decimal");
+    // order by sorting_col (the product, then the stock line's date); the sorting key itself is no column of the output.
+    table.rows = matched.map((row, index) => ({ row, index, key: row.SORTING_COL.toUpperCase() }))
+      .sort((a, b) => (a.key === b.key ? a.index - b.index : a.key < b.key ? -1 : 1))
+      .map(({ row }) => { const line: Record<string, unknown> = { ...row }; delete line.SORTING_COL; return line; });
+    return table;
+  }
+  for (const column of ["NAME", "SALE_RATE", "SALE_QTY", "SALE_VALUE", "PURCH_RATE", "PURCH_VALUE", "PROFIT_AMT", "PROFIT_PERC"]) table.addColumn(column);
+  for (const column of ["SALE_RATE", "SALE_QTY", "SALE_VALUE", "PURCH_RATE", "PURCH_VALUE", "PROFIT_AMT", "PROFIT_PERC"]) table.setKind(column, "decimal");
+  table.rows = summariseGp(matched);
+  return table;
+}
+
+// ======================================================================================
+// 35: FUNCTIONAL PARTY PRODUCT (ANALYSIS REP. > Functional Party Product, REPORT_NON_FUNCTION; report 35)
+// ======================================================================================
+//
+// Which parties (first combo ACCOUNT) or products (PRODUCT) did something in the period and which did not. The parties are the
+// debtors (Sorting Sale, book 2) or the creditors (Purchase, book 3); a party "functioned" when it has a voucher of the year in
+// the dates (licence 7: a process entry), a product when it has a stock line of the year in the dates. Formats:
+//  - Functional: the ones that functioned, with their closing (the account's closing; the product's closing pieces, licence 2
+//    CLSG_QTY3).
+//  - None Functional: the ones that did not and have no opening (a product: no closing pieces, unless With Closing Require).
+//  - Only Opening Within Period: the ones that did not but have an opening (OPENING).
+// A party shows its mobile number (address 1). The ticked addon groups (the where) narrow the list, come as columns and set the
+// order, then the name. The desktop builds TEMP_TABLE_NON_FUNCTION1_<machine> (the ones that functioned) and reads the rest
+// against it; here that list is a sub-query of the one read-only query.
+
+export async function nonFunction(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  const order = call.orderBy.replace(/\s+/g, "");
+  if (order.toLowerCase() === "product.prod_desc,ac.name" || order.toLowerCase() === "ac.name,product.prod_desc") {
+    throw new ReportRefusal("ACCOUNT AND PRODUCT BOTH ARE NOT ALLOWED PLEASE SELECT ANY ONE", "ERROR_DETAILS");
+  }
+  const format = call.formating.toUpperCase();
+  const from = `'${desktopDate(call.from)}'`;
+  const upto = `'${desktopDate(call.upto)}'`;
+  const year = `'${call.yearId}'`;
+  // The ticked addon groups: their columns (@var_heading_addon1-4) and order (@var_addon1-4).
+  const headings = call.headingAddon.filter((heading) => heading.trim() !== "").map((heading) => `,${heading.trim()}`).join("");
+  const addonOrder = call.addon.filter((addon) => addon.trim() !== "").map((addon) => `${addon.trim()},`).join("");
+  // @var_CS_Where: " where <addon keys>", or nothing when no group narrows it.
+  const where = call.where.trim().toLowerCase() === "where" ? "" : call.where;
+  const and = (condition: string) => `${where === "" ? " where " : `${where} and `}${condition}`;
+
+  let sql: string;
+  if (call.fcValue === 1) {
+    const book = call.sortingText.trim() === "Sale" ? 2 : 3;
+    const moved = call.licence === 7
+      ? `select led.code from ${db}process led where led.year_id=${year} and led.p_date >= ${from} and led.p_date <= ${upto} and led.il_pos='A'`
+      : `select led.code from ${db}ledger led where led.year_id=${year} and led.doc_date >= ${from} and led.doc_date <= ${upto} and led.doc_pos<>'D'`;
+    // TEMP_TABLE_NON_FUNCTION1: the book's parties that functioned.
+    const functioned = `select ac.code from ${db}account ac left join ${db}addon_data adata on adata.code=ac.code left join ${db}address addr on addr.code=ac.code and addr.address_id=1`
+      + `${and(`ac.a_pos<>'D' and ac.code in (${moved}) and ac.book=${book}`)}`;
+    const party = `from ${db}account ac left join ${db}ac_balance acbal on acbal.code=ac.code left join ${db}addon_data adata on adata.code=ac.code left join ${db}address addr on addr.code=ac.code and addr.address_id=1`;
+    if (format === "OPENING") {
+      sql = `select ac.name as "NAME",acbal.opening::numeric as "OPENING",addr.mobile_no as "MOBILE_NO"${headings} ${party}`
+        + `${and(`ac.a_pos<>'D' and ac.book=${book} and acbal.year_id=${year} and acbal.opening::numeric<>0 and ac.code not in (${functioned})`)}`;
+    } else {
+      const which = format === "FUNCTION" ? `ac.code in (${functioned})` : `coalesce(acbal.opening::numeric,0)=0 and ac.code not in (${functioned})`;
+      sql = `select ac.name as "NAME",acbal.closing::numeric as "CLS_BAL",addr.mobile_no as "MOBILE_NO"${headings} ${party}${and(`ac.a_pos<>'D' and ac.book=${book} and ${which}`)}`;
+    }
+    sql += ` order by ${addonOrder}ac.name`;
+  } else {
+    // TEMP_TABLE_NON_FUNCTION1: the products that functioned.
+    const functioned = `select product.prod_key from ${db}product_master product left join ${db}addon_data adata on adata.prod_id=product.prod_key`
+      + `${and(`product.prod_key in (select prodled.prod_id from ${db}prod_ledger prodled where prodled.year_id=${year} and prodled.il_date >= ${from} and prodled.il_date <= ${upto} and prodled.il_pos='A') and product.prod_pos<>'D'`)}`;
+    const goods = `from ${db}product_master product left join ${db}prod_balance prodbal on prodbal.prod_id=product.prod_key left join ${db}addon_data adata on adata.prod_id=product.prod_key`;
+    if (format === "OPENING") {
+      sql = `select product.prod_desc as "prod_desc",prodbal.open_pcs::numeric as "OPENING"${headings} ${goods}`
+        + `${and(`product.prod_pos<>'D' and prodbal.year_id=${year} and prodbal.prec_flag='RP' and prodbal.open_pcs::numeric<>0 and product.prod_key not in (${functioned})`)}`;
+    } else {
+      const closing = call.licence === 2 ? "prodbal.clsg_qty3" : "prodbal.clsg_pcs";
+      const which = format === "FUNCTION" ? `product.prod_key in (${functioned})`
+        : call.checkQuery.includes("CHK_CLOSING,") ? `product.prod_key not in (${functioned})`
+        : `prodbal.clsg_pcs::numeric=0 and product.prod_key not in (${functioned})`;
+      sql = `select product.prod_desc as "prod_desc",${closing}::numeric as "CLS_BAL"${headings} ${goods}${and(`product.prod_pos<>'D' and prodbal.prec_flag='RP' and ${which}`)}`;
+    }
+    sql += ` order by ${addonOrder}product.prod_desc`;
+  }
+  const table = tableFromResult(await runReportSql(loader, frag(sql)));
+  for (const column of ["OPENING", "CLS_BAL"]) if (table.has(column)) table.setKind(column, "decimal");
   return table;
 }

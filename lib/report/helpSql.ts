@@ -1,0 +1,22 @@
+/**
+ * Help queries (smart_setup.help_table) written for SQL Server look a product's row up in another table once per product: the
+ * product's first ADDON_DATA row, its latest MRP in PRICELIST. Neither table has an index on PROD_ID here, so each lookup reads the
+ * whole table, once for each of the 17,839 products (the Product help of the stock and analysis reports: 30 s to open). The same rows
+ * are found here by grouping each table once and joining it.
+ */
+
+const ADDON_FIRST = /adata\.aon_key\s+in\s*\(\s*select\s+a\.aon_key\s+from\s+(\S*?)addon_data\s+a\s+where\s+a\.prod_id\s*=\s*product\.prod_key\s+limit\s+1\s*\)/gi;
+const LATEST_MRP = /\(\s*select\s+pl_mrp\s+from\s+(\S*?)pricelist\s+where\s+prod_id\s*=\s*product\.prod_key\s+and\s+pl_pos\s*<>\s*'D'\s+and\s+pl_mrp\s*>\s*0\s+order\s+by\s+pl_wefrom\s+desc\s+limit\s+1\s*\)/i;
+const PRODUCT_TABLE = /(\S*?product_master\s+product)(?=\s)/i;
+
+export function fastHelpSql(sql: string): string {
+  // "The first addon row of the product" (no order: SQL Server's TOP 1 gives the first stored, in practice the lowest key).
+  let out = sql.replace(ADDON_FIRST, (_all, db: string) => `adata.aon_key in (select min(a.aon_key) from ${db}addon_data a where a.prod_id is not null group by a.prod_id)`);
+  // The latest MRP above 0: one row per product from PRICELIST, joined beside PRODUCT_MASTER.
+  const mrp = LATEST_MRP.exec(out);
+  if (mrp && PRODUCT_TABLE.test(out)) {
+    const db = mrp[1];
+    out = out.replace(LATEST_MRP, "help_mrp.pl_mrp").replace(PRODUCT_TABLE, (table) => `${table} left join (select distinct on (prod_id) prod_id, pl_mrp from ${db}pricelist where pl_pos<>'D' and pl_mrp > 0 order by prod_id, pl_wefrom desc) help_mrp on help_mrp.prod_id=product.prod_key`);
+  }
+  return out;
+}

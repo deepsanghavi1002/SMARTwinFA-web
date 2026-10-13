@@ -6,8 +6,13 @@ import { dateStyle112, dateStyle6, desktopDate, sqlServerCompare } from "./formu
 import type { ReportPlan } from "./generate";
 import { pgFragment, ReportRefusal } from "./generate";
 import { cashBookColumns, dayBefore, ddMmYyyy, dropColumn, tableFromFields, formatPeriod, maxOf, pushAll, groupOrderTail, insertFirst, MONTH_NAMES, requireWhere, sortRows, tableFromResult, textKey, unknownFormat, withEntryAddon } from "./library";
-import { registerSlabBook, registerSlabs, challanFrom, orderPendingFrom, orderPendingWhere, pendingChallanFrom, stockVoucher, invalidGst, gstrTaxMismatch, documentUpload, gstFormSummary, gstr3b, gstr1, gstr2, bookwise, checklistDaybook, checklistInvoice, dailyTransaction, fundFlow, interestCalculation, target, taxSummary, tdsReport, topReports, dropAnalysis, salesAnalysis, partySummary, partyBillPdf, physicalStock, cashBookFrom, cashBookOpening, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
+import { registerSlabBook, registerSlabs, challanFrom, orderPendingFrom, orderPendingWhere, pendingChallanFrom, stockVoucher, invalidGst, gstrTaxMismatch, documentUpload, gstFormSummary, gstr3b, gstr1, gstr2, bookwise, checklistDaybook, checklistInvoice, dailyTransaction, fundFlow, interestCalculation, target, taxSummary, tdsReport, topReports, dropAnalysis, salesAnalysis, partySummary, nonFunction, partyBillPdf, physicalStock, cashBookFrom, cashBookOpening, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
 import { money, num, runReportSql, runReportSqlHashed } from "./run";
+import { salesExpenseTable } from "./salesExpense";
+import type { SalesExpenseAmount } from "./salesExpense";
+import { multiYearAccounts } from "./multiYear";
+import type { YearData } from "./multiYear";
+import { SYSTEM_SCHEMA } from "../master-program/session";
 
 /**
  * SP_REPORT_FORMATING: a report's formats (Month, Daily, Weekly, 15 Days, Quarter, Half Year,
@@ -29,6 +34,9 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 232: return dropAnalysis(loader, plan);
     case 143: return salesAnalysis(loader, plan);
     case 30: return partySummary(loader, plan);
+    case 35: return nonFunction(loader, plan);
+    case 280: return salesExpense(loader, plan);
+    case 103: return multiYearAccountBalance(loader, plan);
     case 255: return partyBillPdf(loader, plan);
     case 284: return documentUpload(loader, plan);
     case 126: return invalidGst(loader, plan);
@@ -228,7 +236,10 @@ async function registerPeriods(loader: Loader, plan: ReportPlan): Promise<Result
   const format = call.formating;
   const { from } = registerFormatFrom(plan);
   const slabs = await registerSlabs(loader, plan, false);
-  const apply = slabs.map((slab) => ` LEFT JOIN LATERAL (SELECT SUM(SLAB_AMT::numeric) AS "${slab.short.toUpperCase()}_AMOUNT" FROM ${db}LEDGER_EXT WHERE LED_ID=LED.LED_KEY AND SLAB_ID=${slab.key} AND (IL_ID IS NULL)) ALIAS${slab.key} ON TRUE`).join("");
+  // Each voucher's slab amounts, read in one grouped pass over LEDGER_EXT and joined (a sub-query a voucher and slab read the
+  // whole table each time: LEDGER_EXT has no index on LED_ID). A voucher without the slab gets NULL, as before.
+  const apply = slabs.length === 0 ? "" : ` LEFT JOIN (SELECT LED_ID AS slab_led,${slabs.map((slab) => `SUM(CASE WHEN SLAB_ID=${slab.key} THEN SLAB_AMT::numeric END) AS "${slab.short.toUpperCase()}_AMOUNT"`).join(",")}`
+    + ` FROM ${db}LEDGER_EXT WHERE IL_ID IS NULL AND SLAB_ID IN (${slabs.map((slab) => slab.key).join(",")}) GROUP BY LED_ID) SLAB_SUMS ON SLAB_SUMS.slab_led=LED.LED_KEY`;
   const slabColumns = slabs.map((slab) => `,coalesce(SUM("${slab.short.toUpperCase()}_AMOUNT"),0.00) AS "${slab.short}"`).join("");
   const csGroup = call.groupBy.trim();
   const csOrder = call.orderBy.trim();
@@ -247,12 +258,12 @@ async function registerPeriods(loader: Loader, plan: ReportPlan): Promise<Result
   } else {
     throw unknownFormat(format);
   }
-  const quantity = format === "DAILY" && call.checkQuery.includes("CHK_QUANTITY,")
-    ? `,sum(coalesce((select sum(quantity) from ${db}PROD_LEDGER where led_id=LED.LED_KEY and il_pos<>'D' and inventory='Y'),0)) as "Quantity"`
-    : "";
+  const dailyQuantity = format === "DAILY" && call.checkQuery.includes("CHK_QUANTITY,");
+  const quantity = dailyQuantity ? `,sum(coalesce(DAY_QTY.qty,0)) as "Quantity"` : "";
+  const quantityJoin = dailyQuantity ? ` LEFT JOIN (SELECT led_id AS qty_led, sum(quantity) AS qty FROM ${db}PROD_LEDGER WHERE il_pos<>'D' AND inventory='Y' AND led_id IS NOT NULL GROUP BY led_id) DAY_QTY ON DAY_QTY.qty_led=LED.LED_KEY` : "";
   const body = `${lead}${label},sum(LED.AMOUNT) as "AMOUNT"${quantity}${slabColumns}`;
   const select = selectStart !== "" ? `SELECT ${body},${selectStart}` : `SELECT ${body}`;
-  return tableFromResult(await runReportSql(loader, frag(`${select}${from}${apply}${call.where}${groupOrderTail([csGroup, periodGroup], [csOrder, periodOrder])}`)));
+  return tableFromResult(await runReportSql(loader, frag(`${select}${from}${apply}${quantityJoin}${call.where}${groupOrderTail([csGroup, periodGroup], [csOrder, periodOrder])}`)));
 }
 
 /** Month: a row a month (and party). */
@@ -317,39 +328,55 @@ async function registerItems(loader: Loader, plan: ReportPlan): Promise<ResultTa
   // The item slabs (slab_pos P): a % and an amount column each, blank on the voucher's line.
   const itemSlabs = await slabRows(`SELECT ltrim(SLAB_REPOHD) AS short, SLAB_KEY AS id FROM ${db}SLAB_MASTER WHERE ${slabWhere} AND slab_pos='P' AND SLAB_ACTIVE='Y' ORDER BY SLAB_ORDER`);
   const blankItemSlabs = itemSlabs.map((slab) => `CAST('' AS TEXT) AS "${toText(slab.short)}_%",0.0000::numeric AS "${toText(slab.short)}"`).join(",");
-  const itemSlabValues = itemSlabs.map((slab) => `(select LEDEXT.SLAB_PERC from ${db}LEDGER_EXT LEDEXT left join ${db}TAX_MASTER taxmst on taxmst.tax_rec=ledext.tax_id where LEDEXT.il_id=prod_ledger.IL_KEY and LEDEXT.SLAB_ID = ${slab.id} limit 1) AS "${toText(slab.short)}_%",(select LEDEXT.SLAB_AMT::numeric from ${db}LEDGER_EXT LEDEXT where LEDEXT.il_id=prod_ledger.IL_KEY and LEDEXT.SLAB_ID = ${slab.id} limit 1) AS "${toText(slab.short)}"`).join(",");
+  // The procedure looks each slab up per item line (two subqueries a slab and line; LEDGER_EXT has no index on IL_ID, so a year's sale
+  // ran past the time limit). Here the period's item lines' slab rows are grouped by line once and joined (lxi): the same values.
+  const itemSlabIds = itemSlabs.map((slab) => Math.trunc(num(slab.id)));
+  const itemSlabValues = itemSlabs.map((slab, index) => `lxi.p${itemSlabIds[index]} AS "${toText(slab.short)}_%",lxi.a${itemSlabIds[index]} AS "${toText(slab.short)}"`).join(",");
+  const itemSlabJoin = itemSlabIds.length === 0 ? "" : ` left join (SELECT LEDEXT.il_id, ${itemSlabIds.map((id) => `min(case when LEDEXT.SLAB_ID = ${id} then LEDEXT.SLAB_PERC end) AS p${id}, min(case when LEDEXT.SLAB_ID = ${id} then LEDEXT.SLAB_AMT::numeric end) AS a${id}`).join(", ")}`
+    + ` FROM ${db}LEDGER_EXT LEDEXT WHERE LEDEXT.SLAB_ID IN (${itemSlabIds.join(",")}) AND LEDEXT.il_id IN (SELECT il_key FROM ${db}PROD_LEDGER WHERE IL_DATE >= '${desktopDate(call.from)}' AND IL_DATE <= '${desktopDate(call.upto)}') GROUP BY LEDEXT.il_id) lxi on lxi.il_id = prod_ledger.IL_KEY`;
 
   // Show Default Slabs: the bill's slabs on the voucher's line (a % for a slab that asks for it, NET_AMOUNT and the tax's name at the first tax).
   let billValues = "";
   let billBlanks = "";
+  let billJoin = "";
   if (printSlabs) {
     const bill = await slabRows(`SELECT ltrim(SLAB_REPOHD) AS short, SLAB_KEY AS id, SLAB_MASTER AS master, SLAB_PREQ AS perc FROM ${db}SLAB_MASTER WHERE ${slabWhere} AND SLAB_INREP='Y' AND SLAB_ACTIVE<>'N' ORDER BY SLAB_ORDER`);
     const values: string[] = [];
     const blanks: string[] = [];
     let tax = 0;
-    const amountOf = (id: unknown) => `(select LEDEXT.SLAB_AMT::numeric from ${db}LEDGER_EXT LEDEXT where LED.LED_KEY=LEDEXT.LED_ID and LEDEXT.IL_ID is null and LEDEXT.SLAB_ID = ${id} limit 1)`;
-    const taxName = (id: unknown) => `(SELECT taxmst.tax_repohd FROM ${db}LEDGER_EXT ledext left join ${db}TAX_MASTER taxmst on taxmst.tax_rec=ledext.tax_id WHERE IL_ID IS NULL AND LED_ID=LED.LED_KEY AND SLAB_ID = ${id} limit 1)`;
+    // The bill's slab rows (no item line) grouped by voucher once and joined (lxb), as the item slabs: the procedure's subquery per
+    // slab and voucher reads all of LEDGER_EXT each time (no index on LED_ID).
+    const parts: string[] = [];
+    const ids: number[] = [];
+    const amountOf = (id: number) => { parts.push(`min(case when LEDEXT.SLAB_ID = ${id} then LEDEXT.SLAB_AMT::numeric end) AS a${id}`); return `lxb.a${id}`; };
+    const taxName = (id: number) => { parts.push(`min(case when LEDEXT.SLAB_ID = ${id} then taxmst.tax_repohd end) AS t${id}`); return `lxb.t${id}`; };
     for (const slab of bill) {
       const short = toText(slab.short);
+      const id = Math.trunc(num(slab.id));
+      ids.push(id);
       if (toText(slab.perc) === "Y") {
         blanks.push(`0.0000::numeric AS "${short}1_%"`);
-        values.push(`(select LEDEXT.SLAB_PERC from ${db}LEDGER_EXT LEDEXT where LED.LED_KEY=LEDEXT.LED_ID and LEDEXT.IL_ID is null and LEDEXT.SLAB_ID = ${slab.id} limit 1) AS "${short}1_%"`);
+        parts.push(`min(case when LEDEXT.SLAB_ID = ${id} then LEDEXT.SLAB_PERC end) AS p${id}`);
+        values.push(`lxb.p${id} AS "${short}1_%"`);
       }
       if (toText(slab.master) === "Y") {
         if (tax === 0) {
           blanks.push(`0.0000::numeric AS "NET_AMOUNT"`, `CAST('' AS TEXT) AS "TAX_DESCRIPTION"`);
-          values.push(`(select LEDEXT.S_LASTOT::numeric - LEDEXT.SLAB_AMT::numeric from ${db}LEDGER_EXT LEDEXT where LED.LED_KEY=LEDEXT.LED_ID and LEDEXT.IL_ID is null and LEDEXT.SLAB_ID = ${slab.id} limit 1) AS "NET_AMOUNT"`, `${taxName(slab.id)} AS "TAX_DESCRIPTION"`);
+          parts.push(`min(case when LEDEXT.SLAB_ID = ${id} then LEDEXT.S_LASTOT::numeric - LEDEXT.SLAB_AMT::numeric end) AS n${id}`);
+          values.push(`lxb.n${id} AS "NET_AMOUNT"`, `${taxName(id)} AS "TAX_DESCRIPTION"`);
         } else {
           blanks.push(`CAST('' AS TEXT) AS "TAX_DESCRIPTION1"`);
-          values.push(`${taxName(slab.id)} AS "TAX_DESCRIPTION1"`);
+          values.push(`${taxName(id)} AS "TAX_DESCRIPTION1"`);
         }
         tax = 1;
       }
       blanks.push(`0.0000::numeric AS "${short}1"`);
-      values.push(`${amountOf(slab.id)} AS "${short}1"`);
+      values.push(`${amountOf(id)} AS "${short}1"`);
     }
     billValues = values.join(",");
     billBlanks = blanks.join(",");
+    if (ids.length > 0) billJoin = ` left join (SELECT LEDEXT.LED_ID, ${[...new Set(parts)].join(", ")} FROM ${db}LEDGER_EXT LEDEXT left join ${db}TAX_MASTER taxmst on taxmst.tax_rec=LEDEXT.tax_id`
+      + ` WHERE LEDEXT.IL_ID is null AND LEDEXT.SLAB_ID IN (${[...new Set(ids)].join(",")}) GROUP BY LEDEXT.LED_ID) lxb on lxb.LED_ID = LED.LED_KEY`;
   }
 
   const dateField = call.dateField;
@@ -360,7 +387,7 @@ async function registerItems(loader: Loader, plan: ReportPlan): Promise<ResultTa
   const header = `SELECT led.LED_KEY AS "SMART_LED_KEY",LED.BOOK AS "BOOK",LED.DOC_NO AS "DOC_NO",'' AS "DOC_NO1",LED.FULL_DOCNO AS "FULL_DOCNO",${mrp ? `AC.NAME || ' - ' || coalesce(AC.A_SHORT,'')` : "AC.NAME"} AS "NAME",addr.gst_no AS "GST_NO",to_char(${dateField},'DD-Mon-YY') AS "SELECTED_DATE",AC.CREDIT_DAYS AS "CRDAY",LED.AMOUNT AS "AMOUNT",'' AS "HSN_CODE",0.0000::numeric AS "QUANTITY",0.0000::numeric AS "FACTOR",0.00::numeric AS "RATE",0.0000::numeric AS "VALUE"${mrpHeader}`
     + `${join(["", billValues, blankItemSlabs]) !== "" ? `,${join([billValues, blankItemSlabs])}` : ""}`
     + `,${datePart}||led.DOC_NO::text||ac.code::text||LED.FULL_DOCNO||'  000' AS "SORTING_FIELD",AC.NAME AS "SMART_SORTING_NAME",${datePart} AS "SORTING_DATE"`;
-  const headerSql = `${header}${from}${call.where}${withProduct ? " and prodled.il_pos='A'" : ""} ORDER BY led.doc_date`;
+  const headerSql = `${header}${from}${billJoin}${call.where}${withProduct ? " and prodled.il_pos='A'" : ""} ORDER BY led.doc_date`;
   const headers = await runReportSql(loader, frag(headerSql));
 
   // A line for each item of the vouchers.
@@ -372,8 +399,11 @@ async function registerItems(loader: Loader, plan: ReportPlan): Promise<ResultTa
   let itemFrom = ` FROM ${db}PROD_LEDGER prod_ledger left join ${db}LEDGER led on led.led_key=prod_ledger.led_id and led.code=prod_ledger.code left join ${db}ACCOUNT AC on AC.CODE=PROD_LEDGER.CODE left join ${db}ADDON_DATA adata on adata.CODE=PROD_LEDGER.CODE left join ${db}PRODUCT_MASTER PRODUCT on product.prod_key=PROD_LEDGER.prod_id left join ${db}ADDRESS ADDR on addr.code=ac.code`;
   if (withProduct) itemFrom += ` left join ${db}ADDON_DATA padata on padata.prod_id=PROD_LEDGER.prod_id`;
   if (call.orderBy.toLowerCase().includes("aentry")) itemFrom += ` left join ${db}ADDON_AENTRY aentry on aentry.aona_ledid=led.led_key`;
+  itemFrom += itemSlabJoin;
   const itemSql = `${item}${itemFrom}${call.where} and PROD_LEDGER.BOOK =${call.book} and il_pos = 'A' and coalesce(prod_ledger.process_id,0)=0 and addr.address_id=1 and IL_DATE >= '${desktopDate(call.from)}' and IL_DATE <= '${desktopDate(call.upto)}' order by il_serial`;
-  const items = await runReportSql(loader, frag(itemSql));
+  // Hash joins: the planner takes the year's item lines for a few hundred (the book, date and process conditions together) and loops over
+  // the grouped slabs and ADDON_DATA once per line (past the 2 minute limit for a year's sale; hashed: 0.2 s).
+  const items = await runReportSqlHashed(loader, frag(itemSql));
 
   const table = tableFromFields(headers.fields);
   for (const name of ["QUANTITY", "FACTOR", "RATE", "VALUE", "MRP_RATE", "MRP_VALUE", "AMOUNT"]) if (table.has(name)) table.setKind(name, "decimal");
@@ -2388,3 +2418,97 @@ async function marketingFormats(loader: Loader, plan: ReportPlan): Promise<Resul
   return table;
 }
 
+
+// ======================================================================================
+// 280: SALES V/S EXPENSE (SP_FRT_RPT_SALES_EXPENSE_REP; ANALYSIS REP. > Sales V/S Expense)
+// ======================================================================================
+//
+// The month's sales against the month's expenses, a column a month (April ... in the year's order, only the months with
+// something), then Total and AVG_PER_MONTH (the total over the months shown):
+//  - SALES: one line, the sale book (8), its debit (11) and credit (16) notes against the sale; with a GST master slab of the
+//    sale book its taxable value (S_LASTOT less the slab's amount), without one the voucher amount (leaving out the
+//    vouchers of the parties named like a company of the system).
+//  - EXPENSE: a line an expense account (balance sheet code 02 to 04, posting accounts), what was posted to it; the lines with a
+//    total of 0 or less are left out. Ordered by the balance sheet head, then the name.
+//  - TOTAL EXP %: the expenses as a percentage of the sales, each month, the total and the average.
+// Percentage Column Require (CHK_MONTHLYPERC): no % line; instead each month has its percentage of the month's sales beside it
+// (<Month>_Perc), and the sales line shows 100.
+//
+// The desktop pivots TEMP_TABLE_SALES_EXPENSE_<machine>; here the pivot is made in memory from two read-only queries. Without a
+// slab the desktop's select names ac.code without grouping on it, which SQL Server refuses; here the line is the one SALES line.
+// With more than one GST master slab of the sale book the desktop takes the last it reads; here the last in slab order.
+
+async function salesExpense(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const period = `'${desktopDate(call.from)}' and '${desktopDate(call.upto)}'`;
+  const slabs = (await runReportSql(loader, `SELECT slab_key FROM ${db}SLAB_MASTER WHERE slab_active = 'Y' AND slab_master = 'Y' AND slab_link = 0 AND book = 8 ORDER BY slab_order, slab_key`)).rows;
+  const slab = Math.trunc(num(slabs.at(-1)?.slab_key));
+  const saleBooks = `led.DOC_POS='A' and led.DOC_POSTING='P' and led.BOOK in (8,11,16) and (led.ag_book=8 or coalesce(led.ag_book,0)=0) and led.doc_date between ${period}`;
+  const saleSql = slab !== 0
+    ? `select extract(month from led.doc_date)::int as "MONTH",sum(case when led.ac_dbcode=1 then coalesce(ledext.s_lastot::numeric-ledext.slab_amt::numeric,0) else coalesce(ledext.s_lastot::numeric-ledext.slab_amt::numeric,0)*-1 end) as "AMOUNT"`
+      + ` from ${db}LEDGER led left join ${db}ACCOUNT ac on ac.code=led.code left join ${db}LEDGER_EXT ledext on ledext.led_id=led.led_key and ledext.il_id is null and ledext.slab_id=${slab}`
+      + ` where ${saleBooks} group by extract(month from led.doc_date)`
+    : `select extract(month from led.doc_date)::int as "MONTH",sum(case when led.ac_dbcode=1 then led.amount::numeric else led.amount::numeric*-1 end) as "AMOUNT"`
+      + ` from ${db}LEDGER led left join ${db}ACCOUNT ac on ac.code=led.code`
+      + ` where ${saleBooks} and ac.name not in (select name from ${SYSTEM_SCHEMA}.company where name is not null) group by extract(month from led.doc_date)`;
+  const expenseSql = `select ac.code as "CODE",ac.name as "NAME",bs.bs_desc as "HEAD",extract(month from led.doc_date)::int as "MONTH",sum(case when ledpost.post_dbcode=1 then ledpost.post_amt::numeric else ledpost.post_amt::numeric*-1 end) as "AMOUNT"`
+    + ` from ${db}LEDGER_POST ledpost left join ${db}ACCOUNT ac on ac.code=ledpost.post_code left join ${db}BALSHEET bs on bs.bs_key=ac.bs_id left join ${db}LEDGER led on ledpost.led_id=led.led_key`
+    + ` where led.DOC_POS='A' and led.DOC_POSTING='P' and ac.a_pos<>'D' and coalesce(left(led.doc_no1,3),'')<>'END' and ac.a_posting<>'N'`
+    + ` and ac.bs_id in (select bs1.bs_key from ${db}BALSHEET bs1 where left(bs1.bs_code,2) ~ '^[0-9]+$' and left(bs1.bs_code,2)::int between 2 and 4) and led.doc_date between ${period}`
+    + ` group by extract(month from led.doc_date),ac.name,bs.bs_desc,ac.code`;
+  const amounts: SalesExpenseAmount[] = [
+    ...(await runReportSql(loader, saleSql)).rows.map((row) => ({ code: 0, particular: "SALES", side: "SALES" as const, head: "SALES", month: num(row.MONTH) - 1, amount: num(row.AMOUNT) })),
+    ...(await runReportSql(loader, expenseSql)).rows.map((row) => ({ code: num(row.CODE), particular: toText(row.NAME), side: "EXPENSE" as const, head: toText(row.HEAD), month: num(row.MONTH) - 1, amount: num(row.AMOUNT) })),
+  ];
+  if (amounts.length === 0) return new ResultTable();
+  return salesExpenseTable(amounts, call.checkQuery.includes("CHK_MONTHLYPERC"));
+}
+
+// ======================================================================================
+// 103: MULTI YEAR ACCOUNT BALANCE (SP_FRT_RPT_MULTI_YEAR_ACCOUNT_SUMMARY_REP; ANALYSIS REP. > Multi Year > Account Balance)
+// ======================================================================================
+//
+// The company's years whose dates meet From .. Upto (SMART_SYSTEM.CNAME, the companies of the same billing name, or name, and group;
+// licences 7 and 8 by the name), oldest first, at most ten, each read from its own database. The rows and columns are made in
+// multiYear.ts. A year whose database is not on this server is left out (the desktop's query fails on it).
+
+async function multiYearAccountBalance(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const company = (await runReportSql(loader, `SELECT btrim(coalesce(name,'')) AS name, btrim(coalesce(bill_name,'')) AS bill_name, btrim(coalesce(co_group,'')) AS co_group FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $1`, [call.companyKey])).rows[0];
+  if (!company) return new ResultTable();
+  const billName = call.licence !== 7 && call.licence !== 8 ? toText(company.bill_name) : "";
+  const byBill = billName !== "";
+  const years = (await runReportSql(loader, `SELECT n.c_tarikh1::date AS y1, n.c_tarikh2::date AS y2, lower(btrim(c.co_dataname)) AS schema_name`
+    + ` FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id`
+    + ` WHERE n.c_tarikh2::date >= $1::date AND n.c_tarikh1::date <= $2::date AND btrim(${byBill ? "c.bill_name" : "c.name"}) = $3 AND btrim(c.co_group) = $4 ORDER BY n.c_tarikh1`,
+  [desktopDate(call.from), desktopDate(call.upto), byBill ? billName : toText(company.name), toText(company.co_group)])).rows.slice(0, 10);
+
+  const data: YearData[] = [];
+  for (const year of years) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','ac_balance','ledger','ledger_post')", [schema])).rows[0];
+    if (num(exists?.n) < 4) continue;
+    const from = year.y1 as Date;
+    const upto = year.y2 as Date;
+    const period = [desktopDate(from), desktopDate(upto)];
+    const accounts = (await runReportSql(loader, `SELECT ac.code, btrim(coalesce(ac.name,'')) AS name, coalesce(ac.book,0) AS book, ac.a_pos, coalesce(ac.ac_opensty,'') AS opensty,`
+      + ` bal.opening FROM ${schema}.account ac LEFT JOIN (SELECT acbal.code, sum(acbal.opening::numeric) AS opening FROM ${schema}.ac_balance acbal GROUP BY acbal.code) bal ON bal.code = ac.code`
+      + ` ORDER BY ac.code`)).rows;
+    const posted = `FROM ${schema}.ledger led JOIN ${schema}.ledger_post ledpost ON ledpost.led_id = led.led_key WHERE led.doc_pos <> 'D' AND led.doc_posting = 'P' AND ledpost.post_date BETWEEN $1 AND $2`;
+    const sums = "sum(CASE WHEN ledpost.post_dbcode = 1 THEN ledpost.post_amt::numeric ELSE 0 END) AS dr, sum(CASE WHEN ledpost.post_dbcode = 2 THEN ledpost.post_amt::numeric ELSE 0 END) AS cr";
+    const posts = (await runReportSql(loader, `SELECT ledpost.post_code AS code, ${sums} ${posted} GROUP BY ledpost.post_code`, period)).rows;
+    // Sundry Debtors / Creditors: what each live debtor / creditor had posted on its own vouchers (the voucher's party is the account).
+    const sides = (await runReportSql(loader, `SELECT ac1.book, ${sums} ${posted.replace("WHERE", `JOIN ${schema}.account ac1 ON ac1.code = led.code WHERE ac1.a_pos = 'A' AND ac1.book IN (2,3) AND ledpost.post_code = ac1.code AND`)} GROUP BY ac1.book`, period)).rows;
+    const side = (book: number) => { const row = sides.find((candidate) => num(candidate.book) === book); return { dr: num(row?.dr), cr: num(row?.cr) }; };
+    data.push({
+      label: `${from.getFullYear()}_${upto.getFullYear()}`,
+      accounts: accounts.map((row) => ({ code: num(row.code), name: toText(row.name), book: num(row.book), live: toText(row.a_pos) === "A", openSty: toText(row.opensty).trim(), opening: row.opening === null ? null : num(row.opening) })),
+      posts: new Map(posts.map((row) => [num(row.code), { dr: num(row.dr), cr: num(row.cr) }])),
+      debtors: side(2),
+      creditors: side(3),
+    });
+  }
+  return multiYearAccounts(data, call.fcValue, call.formating.toUpperCase() === "DRCR");
+}

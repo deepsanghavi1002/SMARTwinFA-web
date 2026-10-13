@@ -1,5 +1,6 @@
 "use client";
 
+import { activeScope } from "../ui/activeWindow";
 import { useCallback, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatDesktopDate, parseDesktopDate } from "../../lib/master-program/legacy";
@@ -26,7 +27,7 @@ type CalendarState = { initial: string; left: number; top: number; set: (value: 
 
 /** Puts the keyboard back in the open editor once a tool closes. */
 const refocusEditor = () => {
-  const focus = () => document.querySelector<HTMLInputElement>(".mp-editor")?.focus();
+  const focus = () => activeScope().querySelector<HTMLInputElement>(".mp-editor")?.focus();
   focus();
   setTimeout(focus, 0);
 };
@@ -50,7 +51,7 @@ export function useEditorTools(yearStart: Date | null) {
   /** `anchor`: the box the calendar opens under (else the focused editor, else the first one). */
   const openCalendar = (value: string, set: (value: string) => void, required = false, anchor?: Element | null) => {
     const active = document.activeElement?.closest(".mp-editor-wrap, .mp-editor");
-    const box = (anchor ?? active ?? document.querySelector(".mp-editor"))?.getBoundingClientRect();
+    const box = (anchor ?? active ?? activeScope().querySelector(".mp-editor"))?.getBoundingClientRect();
     const width = 236;
     const height = 290;
     const left = box ? Math.min(Math.max(4, box.left), window.innerWidth - width - 4) : (window.innerWidth - width) / 2;
@@ -133,8 +134,8 @@ export function useEditorTools(yearStart: Date | null) {
             initial={calc.initial}
             caretAtEnd={calc.caretAtEnd}
             rules={calc.rules}
-            onClose={() => { setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
-            onUse={(value) => { calc.set(value); setCalc(null); document.querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
+            onClose={() => { setCalc(null); activeScope().querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
+            onUse={(value) => { calc.set(value); setCalc(null); activeScope().querySelector<HTMLInputElement>(".mp-editor")?.focus(); }}
           />
         </div>
       )}

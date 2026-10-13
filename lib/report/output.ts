@@ -189,6 +189,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   if (reportKey === 1 && table.has("closing_bal")) cashBookTotals(plan);
   const subtotalColumns = [...plan.subtotalColumns];
   const grouping = [...plan.grouping];
+  // Sales V/S Expense subtotals on the side (SALES / EXPENSE / EXP %), then the balance sheet head inside it (the desktop's grid).
+  if (reportKey === 280) for (const column of ["SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2"]) if (!grouping.includes(column)) grouping.push(column);
   const formatted = call.formating !== "";
 
   // After SP_REPORT_FORMATING the particulars (NAME) go just after the date, or first when there is no date.

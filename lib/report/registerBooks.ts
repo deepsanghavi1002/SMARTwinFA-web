@@ -36,7 +36,7 @@ export function accountHelpBooks(reportKey: number, book: number, firstComboHelp
   // GST Form Summary's REGISTER combo gives its own filter (FILTER_ACC_BOOKS): the book with the debit note (11) and credit note (16) for sale and purchase.
   if (reportKey === 127 && firstComboHelp) return book === 8 ? [8, 11, 16] : book === 13 ? [13, 11, 16] : [book];
   // Interest Calculation's BOOK combo is the account book itself (1 general, 2 debtors, 3 creditors: ac.book = @int_book).
-  if (reportKey === 32) return firstComboHelp || ![1, 2, 3].includes(book) ? null : [book];
+  if (reportKey === 32 || reportKey === 42) return firstComboHelp || ![1, 2, 3].includes(book) ? null : [book];
   // Party Wise Rate's side gives the account book itself (LESS: debtors 2, ADD: creditors 3).
   if (reportKey === 9) return firstComboHelp || ![2, 3].includes(book) ? null : [book];
   return firstComboHelp ? null : partyBooks(book);

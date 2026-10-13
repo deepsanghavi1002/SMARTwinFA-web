@@ -1,3 +1,4 @@
+import { activeScope } from "../ui/activeWindow";
 import type { GridComboPlace } from "./GridCombo";
 
 /**
@@ -23,7 +24,7 @@ let measure: CanvasRenderingContext2D | null = null;
 export function longestText(texts: readonly string[]): number {
   measure ??= document.createElement("canvas").getContext("2d");
   if (!measure) return Math.max(0, ...texts.map((text) => text.length)) * 7;
-  const cell = document.querySelector(".mp-grid .mp-cell");
+  const cell = activeScope().querySelector(".mp-grid .mp-cell");
   measure.font = `700 ${cell ? getComputedStyle(cell).fontSize : "11px"} ${cell ? getComputedStyle(cell).fontFamily : "sans-serif"}`;
   return Math.ceil(Math.max(0, ...texts.map((text) => measure!.measureText(text).width)));
 }

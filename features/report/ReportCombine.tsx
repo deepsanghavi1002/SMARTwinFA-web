@@ -1,5 +1,6 @@
 "use client";
 
+import { activeScope, useWindowActive } from "../ui/activeWindow";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
@@ -60,7 +61,7 @@ const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? r
  * The account help narrowed to the chosen book. Form Summary's own (first combo) help lists the accounts of the books the
  * register covers (REGISTER : SALE gives the sale books, debit note and credit note, all ticked until changed); the Account tab of
  * every other report lists the parties of the chosen book (EXPENSE gives the general accounts, book 1; SALE the debtors, 2; PURCHASE the creditors, 3; Party
- * Wise Rate's LESS the debtors, ADD the creditors). An entry with no book, or
+ * Wise Rate's LESS the debtors, ADD the creditors; Budget's DEBTORS the debtors, CREDITORS the creditors). An entry with no book, or
  * books none of the rows has, leaves every row.
  */
 /** The outstanding reports (ageing 5 and 20, clearance 21, interest 32, party wise bill pdf 255) and the register reports (14, 18, 127): the combo's value is the book number when the combo gives no book column. */
@@ -69,11 +70,13 @@ const FORM_SUMMARY_LIKE: ReadonlySet<number> = new Set([14, 18, 127]);
 const OUTSTANDING: ReadonlySet<number> = new Set([5, 20, 21, 32, 255]);
 /** Party Wise Rate's side (first combo): LESS (0) is the sale side, the debtors (book 2); ADD (1) the purchase side, the creditors (book 3). */
 const PARTY_RATE_BOOK: Readonly<Record<string, number>> = { 0: 2, 1: 3 };
+/** Reports whose first combo's value is the account book itself (Budget: DEBTORS 2, CREDITORS 3), whatever book column its rows carry. */
+const ACCOUNT_BOOK_COMBO: ReadonlySet<number> = new Set([42]);
 
 function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
   if (!def) return null;
   const option = def.firstCombo.options.find((candidate) => candidate.value === first);
-  const book = def.key === 9 ? PARTY_RATE_BOOK[first] : option?.book ?? ((OUTSTANDING.has(def.key) || FORM_SUMMARY_LIKE.has(def.key)) && /^\d+$/.test(first) ? Number(first) : undefined);
+  const book = def.key === 9 ? PARTY_RATE_BOOK[first] : ACCOUNT_BOOK_COMBO.has(def.key) ? (/^\d+$/.test(first) ? Number(first) : undefined) : option?.book ?? ((OUTSTANDING.has(def.key) || FORM_SUMMARY_LIKE.has(def.key)) && /^\d+$/.test(first) ? Number(first) : undefined);
   if (book === undefined || book < 0) return null;
   const help = FORM_SUMMARY_LIKE.has(def.key) ? def.helps.find((candidate) => candidate.first) : def.helps.find((candidate) => candidate.grid === "C1HelpAccount" && !candidate.first);
   const books = accountHelpBooks(def.key, book, help?.first === true);
@@ -391,19 +394,21 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const quitting = useRef(false);
   const onEscape = (event: KeyboardEvent) => {
     if (event.defaultPrevented || busy || quitting.current) return;
-    if (document.querySelector(".msgbox-backdrop, .mp-filter, .mp-menu, .mp-preview")) return;
+    if (document.querySelector(".msgbox-backdrop") || activeScope().querySelector(".mp-filter, .mp-menu, .mp-preview")) return;
     quitting.current = true;
     void leave().finally(() => { quitting.current = false; });
   };
+  const windowActive = useWindowActive();
   const escapeNow = useRef(onEscape);
   useEffect(() => { escapeNow.current = onEscape; });
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if (event.key === "Escape") window.setTimeout(() => escapeNow.current(event), 0);
+      // A window behind (another program open in front of it) does not answer.
+      if (event.key === "Escape" && windowActive.current) window.setTimeout(() => escapeNow.current(event), 0);
     };
     window.addEventListener("keydown", listener, true);
     return () => window.removeEventListener("keydown", listener, true);
-  }, []);
+  }, [windowActive]);
 
 
   /** The output grid's part of the status line: its rows and the selected cells' total. */

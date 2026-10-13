@@ -1,5 +1,6 @@
 "use client";
 
+import { activeById } from "../ui/activeWindow";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PAGE_CSS, previewPages, printDocument } from "../../lib/export/pages";
 import type { PdfOptions, PrintStyle } from "../../lib/export/pdf";
@@ -74,7 +75,7 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
     const handled = () => { event.preventDefault(); event.stopPropagation(); };
     if (event.key === "Escape") { handled(); onClose(); return; }
     if (ctrl && event.key.toLowerCase() === "p") { handled(); print(); return; }
-    if (ctrl && event.key.toLowerCase() === "f") { handled(); document.getElementById("pv-search")?.focus(); return; }
+    if (ctrl && event.key.toLowerCase() === "f") { handled(); activeById("pv-search")?.focus(); return; }
     if (event.key === "F3") { handled(); showHit(hit + (event.shiftKey ? -1 : 1)); return; }
     if (event.target instanceof HTMLSelectElement || event.target instanceof HTMLInputElement) return;
     if (event.key === "PageDown") { handled(); goTo(current + 1); return; }

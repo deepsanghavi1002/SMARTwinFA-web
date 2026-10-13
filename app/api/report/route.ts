@@ -9,7 +9,8 @@ import { ReportRefusal } from "@/lib/report/generate";
 import { runGroupedReport, runReport } from "@/lib/report/reportCombine";
 import { loadReport, againstBookItems, formFilterItems, lostFocusItems, slabFilterItems } from "@/lib/report/setup";
 import { readEntryLog } from "@/lib/report/log";
-import type { ReportSelection } from "@/lib/report/types";
+import type { ReportOutput, ReportSelection } from "@/lib/report/types";
+import { packedOutputStream } from "@/lib/report/wire";
 
 /**
  * The generic report screen's server (the desktop's Report_Combine). Only a report named by a
@@ -93,6 +94,8 @@ export async function POST(request: Request) {
         default: throw new Error(`Unknown action ${body.action}`);
       }
     }, { readOnlyWork: true, timeoutMs: 120000 });
+    // A report's rows go packed and in pieces (a year's checklist can be hundreds of thousands of rows).
+    if ("output" in result && result.output) return new Response(packedOutputStream(result.output as ReportOutput), { headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
     return Response.json(result, { headers });
   } catch (error) {
     if (error instanceof ReportRefusal) return Response.json({ refusal: { message: error.message, caption: error.caption } }, { headers });

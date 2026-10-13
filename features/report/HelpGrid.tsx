@@ -112,6 +112,17 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
   }, []);
 
   const kindOf = (column: HelpColumn) => kindOfFieldType(column.type);
+  /** Text columns whose every filled cell is a number (the product help's stock, quantities, rates come typed T): shown on the right, as the number columns. */
+  const numericText = useMemo(() => new Set(shownColumns.filter((column) => kindOfFieldType(column.type) === "text").filter((column) => {
+    let filled = 0;
+    for (const row of help.rows) {
+      const value = (row[column.key] ?? "").trim();
+      if (value === "") continue;
+      if (!/^-?[\d,]*\.?\d+$/.test(value)) return false;
+      filled += 1;
+    }
+    return filled > 0;
+  }).map((column) => column.key)), [help.rows, shownColumns]);
   /** A cell as shown: numbers with Indian grouping and the column's decimals, as the desktop's format string. */
   const shown = (column: HelpColumn, value: string) => {
     if (kindOf(column) !== "number" || value.trim() === "") return value;
@@ -274,7 +285,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
   const last = Math.min(rows.length, first + Math.ceil(height / ROW) + 10);
   const tickCount = baseRows.reduce((count, row) => count + (ticked.has(rowKey(row)) ? 1 : 0), 0);
   const align = (value: string) => (value === "R" ? "right" : value === "C" ? "center" : "left");
-  const cellAlign = (column: HelpColumn) => (kindOf(column) === "number" && column.align === "L" ? "right" : align(column.align));
+  const cellAlign = (column: HelpColumn) => ((kindOf(column) === "number" || numericText.has(column.key)) && column.align === "L" ? "right" : align(column.align));
   const low = selectionEnd === null ? at : Math.min(at, selectionEnd);
   const high = selectionEnd === null ? at : Math.max(at, selectionEnd);
   const totalColumn = columns[atCol];
@@ -317,7 +328,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
           <div className="mp-row mp-head" style={{ top: 0 }}>
             <div className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`} style={freezeMain ? { position: "sticky", left: 0 } : undefined}><span className="mp-head-label">Tick</span></div>
             {columns.map((column, index) => (
-              <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${index === atCol ? "rp-head-on" : ""}`} style={{ width: layout.widthOf(column), textAlign: align(column.align), ...frozenStyle(index) }} title={`${caption(column)} · click to sort · ▾ to filter`}>
+              <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${index === atCol ? "rp-head-on" : ""}`} style={{ width: layout.widthOf(column), textAlign: cellAlign(column), ...frozenStyle(index) }} title={`${caption(column)} · click to sort · ▾ to filter`}>
                 <button type="button" tabIndex={-1} className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                   {caption(column)}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                 </button>

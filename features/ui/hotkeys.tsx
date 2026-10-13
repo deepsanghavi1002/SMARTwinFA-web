@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import type { RefObject } from "react";
 import { isMessageBoxOpen } from "./MessageBox";
+import { useWindowActive } from "./activeWindow";
 
 /**
  * Alt+letter for a screen's buttons, as the desktop's &Save captions give.
@@ -14,9 +15,11 @@ import { isMessageBoxOpen } from "./MessageBox";
  * data-own-alt-keys="c" and keeps it (a number editor's Alt+C calculator).
  */
 export function useAltHotkeys(scope: RefObject<HTMLElement | null>) {
+  const windowActive = useWindowActive();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!event.altKey || event.ctrlKey || event.metaKey || isMessageBoxOpen()) return;
+      // A window behind (another program open in front of it) does not answer.
+      if (!event.altKey || event.ctrlKey || event.metaKey || isMessageBoxOpen() || !windowActive.current) return;
       // event.code, so the letter is the same whatever Shift or the keyboard layout does to event.key.
       const match = /^Key([A-Z])$/.exec(event.code);
       if (!match || !scope.current) return;
@@ -38,7 +41,7 @@ export function useAltHotkeys(scope: RefObject<HTMLElement | null>) {
     // Capture, so the shortcut wins over the grid's own key handling and the browser's Alt menus.
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [scope]);
+  }, [scope, windowActive]);
 }
 
 /** A caption with its Alt letter underlined (the first match, either case). */

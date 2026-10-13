@@ -1,5 +1,6 @@
 "use client";
 
+import { activeScope, activeById, useWindowActive, useWindowCloser } from "../ui/activeWindow";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
@@ -740,7 +741,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     setEditText(initial !== undefined ? initial : zeroAsBlank(column.setup, Boolean(column.options?.length), value));
     if (initial !== undefined) followHelp(column.key, initial);
     if (column.options) {
-      const box = document.querySelector(`.mp-grid [data-cell="${at.row}:${CSS.escape(at.key)}"]`)?.getBoundingClientRect();
+      const box = activeScope().querySelector(`.mp-grid [data-cell="${at.row}:${CSS.escape(at.key)}"]`)?.getBoundingClientRect();
       const rows = Math.min(10, Math.max(2, column.options.length));
       const height = rows * 22 + 62;
       if (box) {
@@ -765,7 +766,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     measure.current ??= document.createElement("canvas").getContext("2d");
     const context = measure.current;
     if (!context) return Math.max(0, ...texts.map((text) => text.length)) * 7;
-    const cell = document.querySelector(".mp-grid .mp-cell");
+    const cell = activeScope().querySelector(".mp-grid .mp-cell");
     context.font = `700 ${cell ? getComputedStyle(cell).fontSize : "11px"} ${cell ? getComputedStyle(cell).fontFamily : "sans-serif"}`;
     return Math.ceil(Math.max(0, ...texts.map((text) => context.measureText(text).width)));
   };
@@ -1365,11 +1366,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       case "F2": event.preventDefault(); await startEdit(); return;
       case "F3": event.preventDefault(); findNext(); return;
       case "F4": event.preventDefault(); if (isComboCell(cursor.row, column)) { setComboStart(""); await startEdit(); } else restoreToAdd(); return;
-      case "F5": event.preventDefault(); document.getElementById("mp-save")?.focus(); return;
+      case "F5": event.preventDefault(); activeById("mp-save")?.focus(); return;
       case "Delete": event.preventDefault(); await deleteSelected("key"); return;
     }
     if (event.altKey && event.key === "ArrowDown" && isComboCell(cursor.row, column)) { event.preventDefault(); setComboStart(""); await startEdit(); return; }
-    if (ctrl && event.key.toLowerCase() === "f") { event.preventDefault(); document.getElementById("mp-find")?.focus(); return; }
+    if (ctrl && event.key.toLowerCase() === "f") { event.preventDefault(); activeById("mp-find")?.focus(); return; }
     if (ctrl && event.key.toLowerCase() === "a") {
       event.preventDefault();
       const text = gridText(grids.columns.map((candidate) => candidate.caption), records.map((record) => grids.columns.map((candidate) => cellOf(record, candidate.key))));
@@ -1578,7 +1579,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     setAddText(initial !== undefined ? initial : zeroAsBlank(row.setup, Boolean(row.options?.length), row.fieldInput));
     if (row.options) {
       // The same list as the Update grid's combo: under the cell (above it when there is no room below).
-      const box = document.querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.getBoundingClientRect();
+      const box = activeScope().querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.getBoundingClientRect();
       const rows = Math.min(10, Math.max(2, row.options.length));
       const height = rows * 22 + 62;
       if (box) {
@@ -1694,7 +1695,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (!addOld.current.has(at) && (next.fieldInput !== candidate.fieldInput || next.fieldComboValue !== candidate.fieldComboValue)) addOld.current.set(at, { fieldInput: candidate.fieldInput, fieldComboValue: candidate.fieldComboValue });
     }
     setAddRows(nextRows);
-    if (row.setup.field_add_order === grids.lastAddRow) document.getElementById("mp-save")?.focus();
+    if (row.setup.field_add_order === grids.lastAddRow) activeById("mp-save")?.focus();
     return true;
   };
 
@@ -1765,7 +1766,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (addRows[at].visible && (!skipClosed || addOpen(addRows[at]))) { target = at; break; }
     }
     // Past the last open field, the Save button is next.
-    if (target === from) { if (skipClosed && step === 1) document.getElementById("mp-save")?.focus(); return; }
+    if (target === from) { if (skipClosed && step === 1) activeById("mp-save")?.focus(); return; }
     void addMoveTo(target).then((landed) => { if (edit && landed !== undefined) { addEditOnArrive.current = landed; nudgeRender(); } });
   });
   useEffect(() => {
@@ -1818,7 +1819,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   });
   // The New (Add) grid's current row is always shown whole: scrolled into view as the cursor reaches it.
   useEffect(() => {
-    document.querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.closest("tr")?.scrollIntoView({ block: "nearest" });
+    activeScope().querySelector(`.mp-add-grid [data-add-cell="${addCursor}"]`)?.closest("tr")?.scrollIntoView({ block: "nearest" });
   }, [addCursor]);
 
   // ---- New grid: Copy / Paste / Restore Old Value (the Update grid's menu, for one field at a time)
@@ -1914,12 +1915,17 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const leave = async () => {
     if (await confirmLeave(ask)) onClose();
   };
+  // The window's × (main menu tabs) asks the same.
+  useWindowCloser(() => { void leave(); });
 
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
+  const windowActive = useWindowActive();
   const escapeState = useRef({ editing, addEditing, leave, licence, close: onClose, busyElsewhere: false });
   useEffect(() => { escapeState.current = { editing, addEditing, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || tools.open || output.open || logTable !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // A window behind (another program open in front of it) does not answer.
+      if (!windowActive.current) return;
       const state = escapeState.current;
       // An Esc something else already used (closing an editor, a list, a message) is not a request to leave:
       // by the time it gets here that editor has closed, so its state alone cannot tell.
@@ -1928,7 +1934,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [windowActive]);
 
   // ======================================================================================
 
@@ -1959,7 +1965,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const helpWindow = (focusRow: number, onFocusRow: (row: number) => void, searchKey: string, note: { text: string; warn: boolean } | null) => {
     if (!shownHelp || shownHelp.columns.length === 0) return null;
     const backToGrid = () => {
-      const editor = document.querySelector<HTMLElement>(".mp-editor");
+      const editor = activeScope().querySelector<HTMLElement>(".mp-editor");
       (editor ?? (tab === "add" ? addFocus.current : gridFocus.current))?.focus({ preventScroll: true });
     };
     return (
