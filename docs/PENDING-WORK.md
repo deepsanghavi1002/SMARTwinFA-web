@@ -6,7 +6,7 @@ ticking, so the history stays.
 
 Format of an item: `- [ ] what is left — why / where (date noted)`
 
-Last updated: 2026-10-08
+Last updated: 2026-10-12
 
 ---
 
@@ -333,6 +333,42 @@ All 31 active small entries for licence 21 now save (see `PORTED_ENTRIES` in
   in `features/grid/`; check each on every small entry. (2026-10-01)
 - [ ] Everything since 2026-10-02 (save audit, payments, last four entries) is uncommitted until
   Pranav tests. (2026-10-05)
+
+---
+
+## Entry (Comman_Entry: Transaction > Invoice)
+
+The desktop's `Entry.cs` (42,000 lines) on the web: `lib/entry/` (`invoice.ts`, `values.ts`,
+`types.ts`), `app/api/entry/route.ts`, `features/entry/Entry.tsx`. Setup: entry_properties 1
+(INVOICE), entry_control, control_event, entry_grid_body, query_condition.
+Done 2026-10-12 (screen set-up, read-only): the form laid out at the desktop's coordinates;
+Register list; choosing it sets the screen for the book (header boxes per field_enable_book,
+series, default date and number from book_number + query_condition, product grid columns with
+item-wise slab and product addon columns and InputCol_Property_Change's hiding, slab grid with
+tax lists and the CGST/IGST/VAT renaming, book rights "Book-<book>"); party help (HELP_ENT_ACCOUNT),
+the party's address lines, addon fields and pending bills (Outstanding tab); Find / Edit list
+(INVOICE_PREVIEW); E-Way Bill tab boxes. Not changed in the database: the PostgreSQL dialect gaps
+are rewritten in code (`entryDialect`: GetNumbers, tax_type, TO_CHAR of money; pgFragment's money casts).
+
+- [ ] Product rows: product help (HELP_PRODUCT), Product_Selection, UOM / rate / factor / value
+  arithmetic, item-wise slab and addon cells, stock checks, totals boxes under the grid. (2026-10-12)
+- [ ] Slab arithmetic: Slab_RunTotal, percent / amount editing, round off, TCS, final amount. (2026-10-12)
+- [ ] Save (Save_Entry, Save_MultipleLoop_forGrid, Save_CodePost, Save_ProductPost, outclear,
+  log_entry), the cancel-invoice-number save, Delete. (2026-10-12)
+- [ ] Restore_Entry: opening an entry from Find / Edit to view or edit it; Zoom from reports. (2026-10-12)
+- [ ] Header validation on leaving each box: duplicate number (control_event "(duplichk)"),
+  number between dates (sys.between_no), date range / lock dates, party lock (INV_LOCK, credit limit). (2026-10-12)
+- [ ] Debit / credit note against a book (Returns panel, cmb_Ag_Book) and link registers
+  (c1dg_LinkEntry: orders, challans, job work): the screen warns and stops short. (2026-10-12)
+- [ ] Multiple-addon product grid (batch / godown, c1Prod_AddonLink), product filter (PGFILT),
+  last-rate help (c1help_PrdLastRate), Sq.ft rate box. (2026-10-12)
+- [ ] Expense purchase grid (cmb_Ac_Exp_Name, c1dg_ExpPurchase) and reverse charge entry. (2026-10-12)
+- [ ] Outstanding tab set-off editing (Fill_Display_OutstandingScreen, narration from bills). (2026-10-12)
+- [ ] Print, Range print, document print setup, Upload Document, E-Invoice / E-Way Bill
+  generation, Log viewer, narration macros (Shift+F1..F10), Ctrl+R repeat narration. (2026-10-12)
+- [ ] Voucher (entry 2, VOUCHER): same form, voucher style; only Invoice opens on the web. (2026-10-12)
+- [ ] Licence-specific branches (21, 14, 51, 82, 45, 6 ...) beyond the column hiding already ported. (2026-10-12)
+- [x] The whole entry screen is uncommitted until Pranav tests. (2026-10-12; committed to main 2026-10-13)
 
 ---
 

@@ -150,6 +150,8 @@ type SecurityRow = { u_module: string; u_roll_id: string; u_pass_1: string; u_pa
 export type MenuRights = Readonly<{
   /** False when the operator has no security rows at all: the desktop then allows everything. */
   restricted: boolean;
+  /** Position 0: entries allowed at all (the entry form reads it for "Book-<book name>"). */
+  entry: boolean;
   add: boolean;
   edit: boolean;
   delete: boolean;
@@ -188,6 +190,7 @@ export async function readRights(client: Client, session: MasterSession, moduleN
   const password = (value: string | null | undefined) => (toText(value) === "" ? "" : securityRead(toText(value), 0));
   return {
     restricted: all.length > 0,
+    entry: flag(0),
     add: flag(2),
     edit: flag(4),
     delete: flag(6),

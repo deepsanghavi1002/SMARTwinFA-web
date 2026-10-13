@@ -66,7 +66,7 @@ export type ReportPlan = {
 };
 
 /** Columns of type money in the company schema; PostgreSQL will not mix them with numeric in a CASE. */
-async function moneyColumnNames(loader: Loader): Promise<string[]> {
+export async function moneyColumnNames(loader: Loader): Promise<string[]> {
   const rows = await loader.readTable(
     "SELECT DISTINCT column_name FROM information_schema.columns WHERE table_schema = $1 AND data_type = 'money'",
     [loader.session.companySchema],

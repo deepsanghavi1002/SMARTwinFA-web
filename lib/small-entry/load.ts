@@ -163,7 +163,7 @@ export function entryNature(entryId: number, controls: readonly EntryControl[], 
 // ---------------------------------------------------------------------------------------
 // Form load: first combo and header controls
 
-async function queryOptions(loader: Loader, sql: string): Promise<EntryOption[]> {
+export async function queryOptions(loader: Loader, sql: string): Promise<EntryOption[]> {
   const rows = await loader.readTable(sql);
   return (rows ?? []).map((row) => {
     const values = Object.values(row);
@@ -171,13 +171,18 @@ async function queryOptions(loader: Loader, sql: string): Promise<EntryOption[]>
   });
 }
 
-/** Small_Entry_Control_Properties: a list control's entries. */
-async function controlOptions(loader: Loader, row: Row, context: SysContext): Promise<EntryOption[]> {
+/**
+ * Small_Entry_Control_Properties (and the entry form's Entry_Control_Properties): a list
+ * control's entries. The placeholders are filled from a small entry's SysContext, or by the
+ * entry form's own replacement.
+ */
+export async function controlOptions(loader: Loader, row: Row, context: SysContext | ((sql: string) => string)): Promise<EntryOption[]> {
+  const fill = typeof context === "function" ? context : (sql: string) => replaceEntryValues(sql, context);
   switch (text(row, "combo_value").toUpperCase()) {
     case "F": {
       const fixed = (await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.combo_fixvalue WHERE BTRIM(combo_prog_id) = $1 ORDER BY combo_itemvalue, cfv_key`, [text(row, "combo_fixvalueid")])) ?? [];
       const query = text(fixed[0], "combo_query");
-      if (query !== "") return queryOptions(loader, replaceEntryValues(query, context));
+      if (query !== "") return queryOptions(loader, fill(query));
       return fixed.map((option) => ({ text: text(option, "combo_desc"), value: toText(displayValue(field(option, "combo_itemvalue"))) }));
     }
     case "X": {
@@ -187,11 +192,11 @@ async function controlOptions(loader: Loader, row: Row, context: SysContext): Pr
       if (text(row, "combo_fixwhere") !== "") query += ` where ${text(row, "combo_fixwhere")}`;
       if (text(row, "combo_fixorder") !== "") query += ` order by ${text(row, "combo_fixorder")}`;
       query = query.replace(/\|sys\.pk_addon_fld\|/gi, String(toInt(field(row, "pk_addon_fld"))));
-      return queryOptions(loader, replaceEntryValues(query, context));
+      return queryOptions(loader, fill(query));
     }
     case "Q": {
       const query = text((await loader.readTable(`SELECT query_string FROM ${SETUP_SCHEMA}.query_table WHERE BTRIM(query_prog_id) = $1`, [text(row, "combo_query")]))?.[0], "query_string");
-      return query === "" ? [] : queryOptions(loader, replaceEntryValues(query, context));
+      return query === "" ? [] : queryOptions(loader, fill(query));
     }
     case "L":
       return text(row, "combo_list").split("|").filter((item) => item !== "").map((item) => ({ text: item, value: item }));
@@ -301,7 +306,7 @@ async function addonBodyRows(loader: Loader, entryId: number): Promise<Row[]> {
  * Addon_RecordAdd_in_Grid: one column per addon field. `onlyDisplay` (the product master's
  * addons) shows them read-only.
  */
-function addonColumns(fields: readonly Row[], bodyRows: readonly Row[], addonFor: string, onlyDisplay: boolean) {
+export function addonColumns(fields: readonly Row[], bodyRows: readonly Row[], addonFor: string, onlyDisplay: boolean) {
   const select: string[] = [];
   const body: { row: Row; column: string; addon: boolean; saveAddon?: boolean }[] = [];
   let comboSerial = 0;

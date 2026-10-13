@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MasterProgram } from "../features/master-program/MasterProgram";
 import { SmallEntry } from "../features/small-entry/SmallEntry";
+import { Entry } from "../features/entry/Entry";
 import { ReportCombine } from "../features/report/ReportCombine";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
@@ -46,7 +47,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "report" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pending";
 
 /**
  * Which screen a menu row maps to. Every MASTER row runs the one generic master screen for the program_top program its
@@ -59,6 +60,7 @@ function screenOf(node: MenuNode | null): Screen {
   const code = node.actionCode?.toUpperCase();
   if (code === "MASTER" && node.actionMenu) return "master";
   if (code === "SMALL_ENTRY" && node.actionMenu) return "small-entry";
+  if (code === "ENTRY" && node.actionMenu?.toUpperCase() === "INVOICE") return "entry";
   if (code === "REPORT" && node.actionMenu) return "report";
   return "pending";
 }
@@ -454,6 +456,7 @@ function MainMenu() {
     switch (screenOf(node)) {
       case "master": return <MasterProgram programName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "small-entry": return <SmallEntry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       default: return <NotBuiltYet node={node} />;
     }
@@ -511,7 +514,7 @@ function MainMenu() {
         </div>
       </section>
 
-      <section className={`work-area ${screen === "master" || screen === "small-entry" || screen === "report" ? "workflow-open" : ""}`}>
+      <section className={`work-area ${screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" ? "workflow-open" : ""}`}>
         {/* The open windows' tabs, as the desktop's MDI tab strip: a click brings one to the front, × closes it (asking first where
             its screen would), and "N Open" lists them all. */}
         {windows.length > 0 && (

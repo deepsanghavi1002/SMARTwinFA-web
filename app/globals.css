@@ -1155,3 +1155,66 @@
 .window-tab-btn:focus-visible{outline:2px solid #ffb400;outline-offset:-2px}
 .window-tab-min .window-tab-name{font-style:italic;font-weight:600;opacity:.7}
 .window-list-menu .window-list-close-all{border-top:1px solid #e4e2dd;color:#a3281c}
+
+/* Entry screen (Comman_Entry: Transaction > Invoice). The form keeps the desktop's coordinates:
+   header boxes at entry_control's label/control left and top, the tab control at top 117,
+   pages of 1021 x 394, the foot (final amount, narration) at top 533. */
+.mp-screen.ent-screen{grid-template-rows:minmax(0,1fr) auto auto;background:#bcd7f5}
+.ent-scroll{grid-row:1;overflow:auto;padding:4px 6px}
+.ent-form{position:relative;width:1024px;height:592px;margin:0 auto;background:linear-gradient(#dfeafa,#cfdff4);border:1px solid #7fa6d6;border-radius:4px;font-size:12px}
+.ent-head,.ent-foot{position:absolute;inset:0;pointer-events:none}
+.ent-head>*,.ent-foot>*{pointer-events:auto}
+.ent-label{position:absolute;display:flex;align-items:center;justify-content:flex-start;font-weight:700;font-size:12px;color:#16365f;white-space:nowrap;overflow:hidden;line-height:1}
+.ent-label[style*="text-align: right"]{justify-content:flex-end;padding-right:4px}
+.ent-compulsory{color:#8a1010}
+.ent-box{position:absolute;display:flex;height:22px}
+.ent-box>*{flex:1;min-width:0}
+.ent-box .mp-control,.ent-box input,.ent-box select{width:100%;height:22px;box-sizing:border-box;font:inherit;font-size:12px;border:1px solid #8fb0d8;border-radius:3px;background:#fff;padding:0 4px}
+.ent-box .mp-editor-wrap{display:flex;width:100%}
+.ent-box .mp-editor-wrap .mp-editor{flex:1;min-width:0}
+.ent-box-TB:has(textarea){height:auto}
+.ent-narration{height:52px!important;resize:none;padding:2px 4px!important;background:#f3f0ff!important}
+.ent-register .mp-control,.ent-register input{background:#fff3f8}
+.ent-side{position:absolute;width:55px;height:20px;display:flex;align-items:center;justify-content:center;font-weight:700;text-decoration:underline;background:#fff0f5;border:1px solid #d8b4c8;border-radius:3px;color:#5b1a3a}
+.ent-balance{position:absolute;width:223px;height:22px;display:flex;align-items:center;padding:0 6px;font-family:"Courier New",monospace;background:#e8e8fa;border:1px solid #b8b8e0}
+.ent-day{position:absolute;width:30px;height:20px;display:flex;align-items:center;justify-content:center;font-weight:700;background:#e8e8fa;border-radius:3px;font-size:11px}
+.ent-address{position:absolute;margin:0;padding:2px 4px;list-style:none;overflow:auto;background:#ececfb;border:1px solid #b8b8e0;border-radius:3px;font-family:"Courier New",monospace;font-size:11px;white-space:pre;line-height:15px}
+.ent-tabs{position:absolute;left:0;width:1023px;height:413px}
+.ent-tab-strip{display:flex;gap:2px;height:18px;padding-left:2px}
+.ent-tab-strip button{height:18px;padding:0 12px;border:1px solid #7fa6d6;border-bottom:0;border-radius:4px 4px 0 0;background:#d6e4f5;font:inherit;font-size:11px;font-weight:700;color:#16365f;cursor:pointer}
+.ent-tab-strip .ent-tab-on{background:#b0c4de;color:#0b2647}
+.ent-page{position:relative;margin-left:1px;width:1021px;height:394px;background:#b0c4de;border:1px solid #7fa6d6}
+.ent-grid{position:absolute;overflow:auto;background:#f5fffa;border:1px solid #8fb0d8}
+.ent-grid table{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}
+.ent-grid th{position:sticky;top:0;z-index:2;height:20px;padding:0 4px;background:linear-gradient(#5d8fd0,#3c6fb3);color:#fff;font-weight:700;border-right:1px solid #9cb9e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ent-grid th.ent-head-readonly{background:repeating-linear-gradient(135deg,#557fb8 0 6px,#4a74ad 6px 12px)}
+.ent-grid td{height:20px;padding:0 4px;border-right:1px solid #dbe6f2;border-bottom:1px solid #e3ecf6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#f5fffa}
+.ent-grid tr.ent-alt td{background:#eef7f2}
+.ent-grid td.ent-open{background:#fff}
+.ent-grid tr.ent-alt td.ent-open{background:#fbfdff}
+.ent-grid .ent-frozen{position:sticky;z-index:1}
+.ent-grid th.ent-frozen{z-index:3}
+.ent-grid td.ent-frozen{background:#fff0f5}
+.ent-grid .ent-empty{color:#59708f;font-style:italic;text-align:center;background:transparent}
+.ent-cell-select,.ent-cell-input{width:100%;height:19px;border:0;background:transparent;font:inherit;font-size:12px;padding:0}
+.ent-note{position:absolute;padding:8px;background:#fffbe6;border:1px solid #e0c96b;border-radius:3px}
+.ent-eway{position:absolute;inset:0}
+.ent-final{position:absolute;height:23px;display:flex;align-items:center;justify-content:flex-end;padding:0 6px;box-sizing:border-box;background:#f0f8ff;border:1px solid #8fb0d8;border-radius:3px;color:#c00;font-family:Tahoma,sans-serif;font-size:13px}
+.ent-final-label{background:#87cefa;border-radius:3px;padding:0 4px;height:24px}
+.ent-help{position:absolute;z-index:20;height:296px;display:flex;flex-direction:column;background:#fff;border:1px solid #3c6fb3;border-radius:4px;box-shadow:0 6px 18px #0004}
+.ent-help-scroll{flex:1;overflow:auto}
+.ent-help table{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}
+.ent-help th{position:sticky;top:0;height:20px;padding:0 4px;background:linear-gradient(#5d8fd0,#3c6fb3);color:#fff;white-space:nowrap;overflow:hidden}
+.ent-help td{height:19px;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid #eef2f8;cursor:default}
+.ent-help tr.ent-alt td{background:#f6f9fd}
+.ent-help tr.ent-help-current td{background:#ffc0cb;color:#000}
+.ent-help-foot{padding:3px 6px;font-size:11px;color:#16365f;background:#e6eef9;border-top:1px solid #c9d8ea}
+.ent-status{grid-row:2;display:flex;flex-wrap:wrap;gap:10px;align-items:center;min-height:20px;padding:2px 8px;font-size:11px;color:#16365f;background:#d6e4f5;border-top:1px solid #9cb9e0}
+.ent-warning{color:#8a1010;max-width:640px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ent-toolbar{grid-row:3;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:4px 8px;background:#b0c4de;border-top:1px solid #7fa6d6}
+.ent-toolbar .mp-btn-red{margin-left:auto}
+.ent-box .search-combo{width:100%;min-width:0}
+.ent-box .search-combo input{width:100%;min-width:0;height:22px;font-size:12px}
+.ent-box .se-date .mp-editor{height:22px;border:1px solid #8fb0d8;border-radius:3px;padding:0 3px;font-size:12px;min-width:0}
+.ent-box .se-date button{flex:0 0 auto}
+.ent-register-label{height:24px}
