@@ -7,6 +7,7 @@ import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilte
 import { filterHolds, sortedDistinct } from "../grid/filter";
 import type { FilterKind } from "../grid/filter";
 import { useColumnLayout } from "../grid/useColumnLayout";
+import { FoundText } from "../grid/FoundText";
 import { helpCell } from "./format";
 
 type Column = HelpList["columns"][number];
@@ -28,6 +29,8 @@ export function FindList({ preview, style, onOpen }: { preview: HelpList | null;
   const [search, setSearch] = useState("");
   const [current, setCurrent] = useState({ row: 0, column: 0 });
   const typed = useRef({ text: "", at: 0 });
+  /** What typing in the list has found so far: marked on the cell it landed on, as the master grid's type-to-find. */
+  const [found, setFound] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
   const grid = useRef<HTMLDivElement>(null);
 
@@ -54,8 +57,9 @@ export function FindList({ preview, style, onOpen }: { preview: HelpList | null;
     if ((event.target as HTMLElement).closest("input, .mp-filter")) return;
     const last = rows.length - 1;
     const move = (row: number) => { event.preventDefault(); setCurrent((at) => ({ ...at, row: Math.max(0, Math.min(last, row)) })); };
+    if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "ArrowRight", "ArrowLeft"].includes(event.key)) { typed.current.text = ""; setFound(""); }
     switch (event.key) {
-      case "ArrowDown": move(currentRow + 1); typed.current.text = ""; return;
+      case "ArrowDown": move(currentRow + 1); return;
       case "ArrowUp": move(currentRow - 1); return;
       case "PageDown": move(currentRow + 15); return;
       case "PageUp": move(currentRow - 15); return;
@@ -72,8 +76,8 @@ export function FindList({ preview, style, onOpen }: { preview: HelpList | null;
     typed.current = { text, at: now };
     const column = columns[current.column];
     if (!column) return;
-    const found = rows.findIndex((row) => shownOf(column, row).trim().toUpperCase().startsWith(text));
-    if (found >= 0) setCurrent((at) => ({ ...at, row: found }));
+    const hit = rows.findIndex((row) => shownOf(column, row).trim().toUpperCase().startsWith(text));
+    if (hit >= 0) { setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
 
@@ -90,7 +94,7 @@ export function FindList({ preview, style, onOpen }: { preview: HelpList | null;
                   <span className="ent-th-text">{column.caption}</span>
                   <FilterButton caption={column.caption} skipTab onOpen={() => filters.open(column.key, valuesOf(column))} />
                   {layout.resizeHandle(column)}
-                  <FilterPopup state={filters} columnKey={column.key} caption={column.caption} kind={kindOf(column)} values={filters.openFilter === column.key ? valuesOf(column) : []} area={grid} />
+                  <FilterPopup state={filters} columnKey={column.key} caption={column.caption} kind={kindOf(column)} values={filters.openFilter === column.key ? valuesOf(column) : []} area={grid} floating />
                 </th>
               ))}
             </tr>
@@ -99,7 +103,7 @@ export function FindList({ preview, style, onOpen }: { preview: HelpList | null;
             {rows.map((row, index) => (
               <tr key={`${row.unique_key ?? ""}-${index}`} data-row={index} className={index === currentRow ? "ent-find-current" : index % 2 ? "ent-alt" : ""} onMouseDown={() => setCurrent((at) => ({ ...at, row: index }))} onDoubleClick={() => onOpen(row)}>
                 {columns.map((column, at) => (
-                  <td key={column.key} className={index === currentRow && at === current.column ? "ent-find-cell" : ""} style={{ textAlign: column.align === "R" ? "right" : "left" }} onMouseDown={() => setCurrent({ row: index, column: at })}>{shownOf(column, row)}</td>
+                  <td key={column.key} className={index === currentRow && at === current.column ? "ent-find-cell" : ""} style={{ textAlign: column.align === "R" ? "right" : "left" }} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: index, column: at }); }}>{index === currentRow && at === current.column && found ? <FoundText text={shownOf(column, row)} typed={found} /> : shownOf(column, row)}</td>
                 ))}
               </tr>
             ))}

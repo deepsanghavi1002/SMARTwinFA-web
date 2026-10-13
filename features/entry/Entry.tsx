@@ -70,6 +70,8 @@ const PARTY_RIGHT = 8;
 /** Gap between the slab and addon grids: two scroll bars. */
 const SIDE_GAP = 34;
 const HELP_ROWS = 12;
+/** The product help shows 9 entries at a time, so it stays on the screen under the product grid. */
+const PRODUCT_HELP_ROWS = 9;
 /** A slab %: up to three places, never below nought; a slab amount: two places, a round-off or add / less may be negative. */
 const PERCENT_RULES = { decimals: 3, positiveOnly: true, rangeFrom: 0, rangeUpto: 0 };
 const AMOUNT_RULES = { decimals: 2, positiveOnly: false, rangeFrom: 0, rangeUpto: 0 };
@@ -785,7 +787,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
               dragHandle={helpKind === "account" ? accountDrag.handle : productDrag.handle}
               onResetPosition={helpKind === "account" ? accountDrag.reset : productDrag.reset}
               formatCell={helpCell}
-              shown={HELP_ROWS}
+              shown={helpKind === "product" ? PRODUCT_HELP_ROWS : HELP_ROWS}
             />
             </div>
           )}

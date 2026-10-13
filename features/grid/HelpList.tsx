@@ -61,6 +61,8 @@ export function HelpList({
   const [scrollTop, setScrollTop] = useState(0);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const typed = useRef({ text: "", at: 0 });
+  /** What typing in the list has found so far: marked on the entry it landed on, as the master grid's type-to-find. */
+  const [found, setFound] = useState("");
   /** The horizontal scroll bar's height, so it does not hide the last entry. */
   const [bar, setBar] = useState(0);
   /** The vertical scroll bar's width, added so the columns fit without a sideways scroll. */
@@ -100,6 +102,7 @@ export function HelpList({
     // The list sits inside the grid, whose own keys would otherwise move the grid as well.
     event.stopPropagation();
     const from = focusRow < 0 ? 0 : focusRow;
+    if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Escape"].includes(event.key)) { typed.current.text = ""; setFound(""); }
     switch (event.key) {
       case "ArrowDown": event.preventDefault(); move(focusRow < 0 ? 0 : from + 1); return;
       case "ArrowUp": event.preventDefault(); move(from - 1); return;
@@ -109,15 +112,15 @@ export function HelpList({
       case "End": event.preventDefault(); move(help.rows.length - 1); return;
       case "Escape": event.preventDefault(); event.stopPropagation(); typed.current.text = ""; onEscape?.(); return;
       case "Enter": if (onChoose && focusRow >= 0) { event.preventDefault(); onChoose(focusRow); } return;
-      case "Backspace": event.preventDefault(); typed.current.text = typed.current.text.slice(0, -1); return;
+      case "Backspace": event.preventDefault(); typed.current.text = typed.current.text.slice(0, -1); setFound(typed.current.text); return;
     }
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
     const now = Date.now();
     const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
     typed.current = { text, at: now };
-    const found = help.rows.findIndex((row) => (row[searchColumn] ?? "").trim().toUpperCase().startsWith(text));
-    if (found >= 0) move(found);
+    const hit = help.rows.findIndex((row) => (row[searchColumn] ?? "").trim().toUpperCase().startsWith(text));
+    if (hit >= 0) { move(hit); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
 
@@ -170,11 +173,11 @@ export function HelpList({
             {help.rows.slice(first, last).map((row, offset) => {
               const index = first + offset;
               return (
-                <tr key={index} id={`mp-help-row-${index}`} role="option" aria-selected={index === focusRow} className={index === focusRow ? "mp-current-row" : ""} onMouseDown={() => onFocusRow(index)} onDoubleClick={onChoose ? () => onChoose(index) : undefined}>
+                <tr key={index} id={`mp-help-row-${index}`} role="option" aria-selected={index === focusRow} className={index === focusRow ? "mp-current-row" : ""} onMouseDown={() => { typed.current.text = ""; setFound(""); onFocusRow(index); }} onDoubleClick={onChoose ? () => onChoose(index) : undefined}>
                   {help.columns.map((column) => {
                     const text = formatCell(row[column.key] ?? "", column.format);
                     const main = column.key === searchColumn;
-                    return <td key={column.key} title={text} className={freezeSearch && main ? "mp-help-frozen" : undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(freezeSearch && main ? { left: frozenLeft } : {}) }}>{main && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
+                    return <td key={column.key} title={text} className={freezeSearch && main ? "mp-help-frozen" : undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(freezeSearch && main ? { left: frozenLeft } : {}) }}>{main && index === focusRow && found ? <FoundText text={text} typed={found} /> : main && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
                   })}
                 </tr>
               );

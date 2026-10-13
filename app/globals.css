@@ -1271,3 +1271,5 @@
 .mp-help thead th.mp-help-filtered{background:#ffcf5c}
 .mp-help thead th.mp-help-filtered .mp-filter-button{color:#b03000;font-weight:700}
 .mp-help .mp-filter{z-index:60;font-size:11px;color:#10233d}
+/* Find / Edit: the letters typed to find, marked on the cell found (as the master grid). */
+.ent-find td mark.mp-found{padding:0;border-radius:2px;background:#ffe27a;color:#1b1b1b;font-weight:700}
