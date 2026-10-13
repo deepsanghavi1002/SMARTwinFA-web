@@ -60,6 +60,33 @@ export function useStartupActions() {
   return useContext(StartupActionsContext);
 }
 
+export type ViewModeContextValue = {
+  modernView: boolean;
+  setModernView: React.Dispatch<React.SetStateAction<boolean>>;
+};
+
+const ViewModeContext = createContext<ViewModeContextValue | null>(null);
+
+export function useViewMode() {
+  return useContext(ViewModeContext);
+}
+
+export function ViewSwitchButton({ className = "" }: { className?: string }) {
+  const mode = useViewMode();
+  if (!mode) return null;
+  return (
+    <button
+      className={`view-switch ${mode.modernView ? "modern-active" : "legacy-active"} ${className}`.trim()}
+      type="button"
+      onClick={() => mode.setModernView((current) => !current)}
+      aria-label={mode.modernView ? "Switch to legacy view" : "Switch to modern view"}
+    >
+      <span>Legacy</span>
+      <span>Modern</span>
+    </button>
+  );
+}
+
 const modernTheme = createTheme({
   palette: {
     mode: "light",
@@ -213,6 +240,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
       <span>Modern</span>
     </button>
   );
+  const viewModeValue = useMemo(() => ({ modernView, setModernView }), [modernView]);
+
   if (stage === "ready" && operator && selectedYear && selectedCompany) {
     const selection: StartupSelection = {
       companyId: selectedCompany.id,
@@ -225,7 +254,17 @@ export function StartupGate({ children }: { children: ReactNode }) {
       loginName: operator.loginName,
       displayName: operator.displayName,
     };
-    return <StartupSelectionContext.Provider value={selection}><StartupActionsContext.Provider value={actions}><div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}{children}</div></StartupActionsContext.Provider></StartupSelectionContext.Provider>;
+    return (
+      <ViewModeContext.Provider value={viewModeValue}>
+        <StartupSelectionContext.Provider value={selection}>
+          <StartupActionsContext.Provider value={actions}>
+            <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>
+              {children}
+            </div>
+          </StartupActionsContext.Provider>
+        </StartupSelectionContext.Provider>
+      </ViewModeContext.Provider>
+    );
   }
   // The typed operator is matched against the real user_master list. The
   // legacy user_pw column is a fixed-width obfuscation whose algorithm is not
@@ -480,24 +519,31 @@ export function StartupGate({ children }: { children: ReactNode }) {
     );
   }
 
-  return <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>{viewButton}<main className="startup-desktop">
-    {stage === "login" ? <section className="login-window" aria-label="User login screen">
-      <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
-      <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-brand"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><div className="developer-credit"><span>Developed By</span><strong>PRANAV COMPUTERS</strong></div></div><form onSubmit={(event) => { event.preventDefault(); login(); }}>
-        <label>Today&apos;s Date:<input value={new Date().toLocaleDateString("en-GB")} readOnly /></label>
-        <label>User Name:<input value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} /></label>
-        <label>Password:<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-        <p className="login-error" role="alert">{error}</p>
-        <button className="login-button" type="submit"><span>➜</span> Login</button>
-      </form></div></div>
-    </section> : <section className="company-window" aria-label="Company selection menu">
-      <div className="startup-title">Select Company <button aria-label="Close" onClick={leaveCompany}>×</button></div>
-      <div className="company-panel"><h1>Company Selection Menu</h1>
-        <label><strong>Select Accounting Year</strong><select size={3} value={year} onChange={(event) => chooseYear(event.target.value)}>{accountingYears.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-        <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></label>
-        {dataError && <p className="login-error" role="alert">{dataError}</p>}
-        <div className="company-actions"><button disabled={!canContinue} onClick={confirmCompany}>✓ Ok</button><button onClick={leaveCompany}>↩ Exit</button></div>
+  return (
+    <ViewModeContext.Provider value={viewModeValue}>
+      <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>
+        {viewButton}
+        <main className="startup-desktop">
+          {stage === "login" ? <section className="login-window" aria-label="User login screen">
+            <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
+            <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-brand"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><div className="developer-credit"><span>Developed By</span><strong>PRANAV COMPUTERS</strong></div></div><form onSubmit={(event) => { event.preventDefault(); login(); }}>
+              <label>Today&apos;s Date:<input value={new Date().toLocaleDateString("en-GB")} readOnly /></label>
+              <label>User Name:<input value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} /></label>
+              <label>Password:<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+              <p className="login-error" role="alert">{error}</p>
+              <button className="login-button" type="submit"><span>➜</span> Login</button>
+            </form></div></div>
+          </section> : <section className="company-window" aria-label="Company selection menu">
+            <div className="startup-title">Select Company <button aria-label="Close" onClick={leaveCompany}>×</button></div>
+            <div className="company-panel"><h1>Company Selection Menu</h1>
+              <label><strong>Select Accounting Year</strong><select size={3} value={year} onChange={(event) => chooseYear(event.target.value)}>{accountingYears.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+              <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></label>
+              {dataError && <p className="login-error" role="alert">{dataError}</p>}
+              <div className="company-actions"><button disabled={!canContinue} onClick={confirmCompany}>✓ Ok</button><button onClick={leaveCompany}>↩ Exit</button></div>
+            </div>
+          </section>}
+        </main>
       </div>
-    </section>}
-  </main></div>;
+    </ViewModeContext.Provider>
+  );
 }

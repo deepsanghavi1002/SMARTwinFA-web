@@ -224,7 +224,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // The count in the grid's corner.
   const records = table.has("ROW_DATA_TYPE") ? table.rows.filter((row) => table.get(row, "ROW_DATA_TYPE") === "LED").length
     : table.has("led_key") ? table.rows.filter((row) => num(table.get(row, "led_key")) > 0).length
-    : table.rows.length;
+      : table.rows.length;
 
   // Negative only: rows with a CR balance, and every row that is not a ledger line.
   if (plan.negativesOnly) {
@@ -321,7 +321,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       // The journal's SP builds no heading rows (the ledger's and day book's do): a heading for each group that starts here, outermost first.
-      if ((reportKey === 2 || reportKey === 3) && table.name("NAME")) {
+      if ((reportKey === 2 || (reportKey === 3 && plan.call.checkQuery.includes("CHK_GRPASHD,"))) && table.name("NAME")) {
         const headingTypes: Record<string, string> = { SMART_NAME: "AC", SMART_SELECTED_BOOK: "BOOK", SMART_SELECTED_SCHDULE: "SCHEDULE", SMART_SELECTED_ADDON1: "ADDON_1", SMART_SELECTED_ADDON2: "ADDON_2", SMART_SELECTED_ADDON3: "ADDON_3", SMART_SELECTED_ADDON4: "ADDON_4" };
         const previous = rows[index - 1];
         const changed = groupColumns.findIndex((_, level) => previous === undefined || key(previous, level) !== key(row, level));
@@ -366,7 +366,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   if ((reportKey === 1 || reportKey === 3) && !formatted && table.has("selected_date")) {
     const count = table.has("ROW_DATA_TYPE") ? table.rows.filter((row) => table.get(row, "ROW_DATA_TYPE") === "LED").length
       : table.has("led_key") ? table.rows.filter((row) => num(table.get(row, "led_key")) > 0).length
-      : table.rows.length;
+        : table.rows.length;
     out.push({ kind: "data", level: -2, rowType: "COUNT", values: { [table.name("selected_date")!]: `Total Entries : ${count}` } });
   }
 

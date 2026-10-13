@@ -251,7 +251,13 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
 
   /** Ticking a group shows its help tab (MoveFocus); an addon group shows its own subs in the addon grid. */
   const tickGroup = (item: ControlItem, on: boolean) => {
-    setGroups((current) => (on ? [...current.filter((key) => key !== itemKey(item)), itemKey(item)] : current.filter((key) => key !== itemKey(item))));
+    setGroups((current) => {
+      const next = on ? [...current.filter((key) => key !== itemKey(item)), itemKey(item)] : current.filter((key) => key !== itemKey(item));
+      if (next.length === 0 && checks.CHK_GRPASHD) {
+        setCheck("CHK_GRPASHD", false);
+      }
+      return next;
+    });
     if (on && item.showControls) {
       setHelpTab(item.showControls);
       if (Number(item.value) > 0) setAddonField(item.value);
@@ -466,6 +472,12 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const addonGroups = groupControl?.items.filter((item) => Number(item.value) > 0) ?? [];
   const addonItem = addonGroups.find((item) => item.value === addonField);
   const addonEnabled = addonItem ? groups.includes(itemKey(addonItem)) : helpEnabled("C1HelpAddon");
+  const isCheckEnabled = (name: string) => {
+    const check = def?.checkboxes.find((c) => c.name === name);
+    if (!check) return false;
+    if (check.name === "CHK_GRPASHD") return groups.length > 0;
+    return check.enabled;
+  };
   const optionTicks = new Set(Object.entries(checks).filter(([, on]) => on).map(([name]) => name));
   const pickLists = def?.controls.filter((candidate) => candidate.name !== "lbchk_Group" && candidate.type === "L") ?? [];
   const tickLists = def?.controls.filter((candidate) => candidate.name !== "lbchk_Group" && candidate.type === "K") ?? [];
@@ -592,8 +604,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
                     enabled
                     ticked={optionTicks}
                     rowKey={(row) => row.name ?? ""}
-                    rowDisabled={(row) => !(def.checkboxes.find((check) => check.name === row.name)?.enabled ?? false)}
-                    onTicks={(next) => { for (const check of def.checkboxes) if (check.visible && check.enabled && next.has(check.name) !== (checks[check.name] ?? false)) setCheck(check.name, next.has(check.name)); }}
+                    rowDisabled={(row) => !isCheckEnabled(row.name ?? "")}
+                    onTicks={(next) => { for (const check of def.checkboxes) if (check.visible && isCheckEnabled(check.name) && next.has(check.name) !== (checks[check.name] ?? false)) setCheck(check.name, next.has(check.name)); }}
                     focusKey={0}
                     onTabOut={tabOutOfHelp}
                     findSlot={findSlot}

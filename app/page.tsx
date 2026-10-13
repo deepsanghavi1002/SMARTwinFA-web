@@ -7,7 +7,7 @@ import { Entry } from "../features/entry/Entry";
 import { ReportCombine } from "../features/report/ReportCombine";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
-import { StartupGate, useStartupActions, useStartupSelection } from "../features/startup/StartupGate";
+import { StartupGate, useStartupActions, useStartupSelection, ViewSwitchButton } from "../features/startup/StartupGate";
 
 /**
  * The menu is data, not application code: it is read from
@@ -49,6 +49,21 @@ const MAX_WINDOWS = 10;
 
 type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pending";
 
+export interface WindowInstance extends MenuNode {
+  menuId: number;
+}
+
+function getNextWindowLabel(windows: WindowInstance[], baseLabel: string): string {
+  if (!windows.some((w) => w.label === baseLabel)) {
+    return baseLabel;
+  }
+  let index = 2;
+  while (windows.some((w) => w.label === `${baseLabel} (${index})`)) {
+    index++;
+  }
+  return `${baseLabel} (${index})`;
+}
+
 /**
  * Which screen a menu row maps to. Every MASTER row runs the one generic master screen for the program_top program its
  * ActionMenu names, as Main_Menu_New opens Master_ProgramGrid, every SMALL_ENTRY row the one Small_Entry screen, and every
@@ -86,7 +101,8 @@ function MainMenu() {
    * dispatches on and two menus can carry the same label ("Master" under Addon and under Product). A window behind keeps its
    * selection, grid and scroll; opening a row that is already open brings its window to the front.
    */
-  const [windows, setWindows] = useState<MenuNode[]>([]);
+  const [windows, setWindows] = useState<WindowInstance[]>([]);
+  const nextWindowId = useRef(1);
   const [activeId, setActiveId] = useState<number | null>(null);
   /** The windows by when they were last in front, newest last: closing one brings back the one used before it. */
   const recent = useRef<number[]>([]);
@@ -107,6 +123,22 @@ function MainMenu() {
   }, [activeId]);
   const running = windows.find((node) => node.id === activeId) ?? null;
   const activeItem = running?.label ?? "Home";
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeId !== null && tabsRef.current) {
+      const activeEl = tabsRef.current.querySelector(".window-tab-on") as HTMLElement | null;
+      if (activeEl) {
+        const container = tabsRef.current;
+        const left = activeEl.offsetLeft;
+        const right = left + activeEl.offsetWidth;
+        if (left < container.scrollLeft) {
+          container.scrollTo({ left, behavior: "smooth" });
+        } else if (right > container.scrollLeft + container.clientWidth) {
+          container.scrollTo({ left: right - container.clientWidth, behavior: "smooth" });
+        }
+      }
+    }
+  }, [activeId]);
   const [suspendHoverMenu, setSuspendHoverMenu] = useState(false);
   const menuBar = useRef<HTMLDivElement>(null);
   /** The menus are being used from the keyboard: their letters are underlined. */
@@ -166,13 +198,37 @@ function MainMenu() {
     }
     closeMenus();
     setSuspendHoverMenu(true);
-    if (windows.some((open) => open.id === node.id)) { bringToFront(node.id); return; }
+
+    // If an instance of this menu is minimized, restore it to front:
+    const minWin = windows.find((open) => open.menuId === node.id && minimized.has(open.id));
+    if (minWin) {
+      bringToFront(minWin.id);
+      return;
+    }
+
+    // If an instance of this menu is already open, but NOT currently active in front, switch to it:
+    const anyActiveForThisMenu = windows.some((open) => open.menuId === node.id && open.id === activeId);
+    const backgroundWin = windows.find((open) => open.menuId === node.id && open.id !== activeId);
+    if (!anyActiveForThisMenu && backgroundWin) {
+      bringToFront(backgroundWin.id);
+      return;
+    }
+
+    // Otherwise (this menu is already active in front, or not open at all), open a new window instance:
     if (windows.length >= MAX_WINDOWS) {
       void messageBox.alert(`${MAX_WINDOWS} windows are open already.\nClose one (× on its tab) to open ${node.label}.`, "Too Many Windows", "warning");
       return;
     }
-    setWindows((list) => [...list, node]);
-    bringToFront(node.id);
+    const winId = nextWindowId.current++;
+    const label = getNextWindowLabel(windows, node.label);
+    const newWindow: WindowInstance = {
+      ...node,
+      id: winId,
+      menuId: node.id,
+      label,
+    };
+    setWindows((list) => [...list, newWindow]);
+    bringToFront(winId);
   };
 
   // Another company, year or operator: the windows were of the one before, so they all close (while rendering, as React
@@ -187,7 +243,7 @@ function MainMenu() {
   }
 
   // Ctrl+Tab / Ctrl+F6 (with Shift: back): the next / previous open window, as the desktop's MDI windows; a minimized one comes back.
-  const windowsNow = useRef<MenuNode[]>([]);
+  const windowsNow = useRef<WindowInstance[]>([]);
   useEffect(() => { windowsNow.current = windows; }, [windows]);
   const activeIdNow = useRef<number | null>(null);
   useEffect(() => { activeIdNow.current = activeId; }, [activeId]);
@@ -258,9 +314,9 @@ function MainMenu() {
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
-      const target = event.target as Element;
-      if (!target.closest(".window-list")) setWindowListOpen(false);
-      if (!menuBar.current?.contains(target) && !target.closest(".mobile-dropdown")) {
+      const target = event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement;
+      if (!target?.closest(".window-list")) setWindowListOpen(false);
+      if (!menuBar.current?.contains(target ?? null) && !target?.closest(".mobile-dropdown")) {
         closeMenus();
         setSuspendHoverMenu(false);
       }
@@ -480,7 +536,52 @@ function MainMenu() {
 
   return (
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "master" || screen === "small-entry" || screen === "report" ? "master-open" : ""}`}>
-      <header className="title-bar"><button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button><div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div></header>
+      <header className="title-bar">
+        <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
+        {windows.length > 0 && (
+          <>
+            <div
+              ref={tabsRef}
+              className="window-tabs"
+              role="tablist"
+              aria-label="Open windows"
+              onWheel={(event) => {
+                if (event.deltaY !== 0) {
+                  event.currentTarget.scrollLeft += event.deltaY;
+                }
+              }}
+            >
+              {windows.map((node) => {
+                const on = node.id === activeId;
+                const small = minimized.has(node.id);
+                return (
+                  <div key={node.id} className={`window-tab ${on ? "window-tab-on" : ""} ${small ? "window-tab-min" : ""}`} role="presentation">
+                    <button type="button" role="tab" aria-selected={on} className="window-tab-name" title={small ? `${node.label} (minimized)` : node.label} onClick={() => bringToFront(node.id)}>{node.label}</button>
+                    {/* As the desktop's tab: an open window offers Minimize, a minimized one Restore / Maximize. */}
+                    {small
+                      ? <button type="button" className="window-tab-btn" aria-label={`Restore / Maximize ${node.label}`} title={`Restore / Maximize ${node.label}`} onClick={() => bringToFront(node.id)}>□</button>
+                      : <button type="button" className="window-tab-btn" aria-label={`Minimize ${node.label}`} title={`Minimize ${node.label}`} onClick={() => minimizeWindow(node.id)}>─</button>}
+                    <button type="button" className="window-tab-x" aria-label={`Close ${node.label}`} title={`Close ${node.label}`} onClick={() => requestClose(node.id)}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="window-list" onKeyDown={(event) => { if (event.key === "Escape") setWindowListOpen(false); }}>
+              <button type="button" className="window-list-button" aria-haspopup="menu" aria-expanded={windowListOpen} title="Open windows (Ctrl+F6: next)" onClick={() => setWindowListOpen((open) => !open)}>{windows.length} Open ▾</button>
+              {windowListOpen && (
+                <div className="window-list-menu" role="menu">
+                  {windows.map((node) => (
+                    <button key={node.id} type="button" role="menuitemradio" aria-checked={node.id === activeId} title={node.label} onClick={() => { bringToFront(node.id); setWindowListOpen(false); }}>{node.label}{minimized.has(node.id) ? " (minimized)" : ""}</button>
+                  ))}
+                  <button type="button" role="menuitem" className="window-list-close-all" onClick={() => { void closeAllWindows(); setWindowListOpen(false); }}>✕ Close All Open Windows</button>
+                  {activeId !== null && <button type="button" role="menuitem" className="window-list-home" onClick={() => { goHome(); setWindowListOpen(false); }}>Home</button>}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+        <div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div>
+      </header>
 
       <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""} ${keyboardMenus ? "menu-keys" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)} onKeyDown={menuKeys}>
         {/* Sidebar heading; the classic view hides it. */}
@@ -507,47 +608,17 @@ function MainMenu() {
         <strong>▤ {selection?.companyName ?? "…"}</strong>
         <span>▦ Year: {selection?.yearLabel ?? "…"}</span>
         <span>♙ User: {selection?.loginName ?? "…"}</span>
-        <span className="running">{activeItem === "Home" ? "" : activeItem}</span>
+        <span className="running" title={activeItem === "Home" ? "" : activeItem}>
+          <span>{activeItem === "Home" ? "" : activeItem}</span>
+        </span>
         <div className="context-tools">
+          <ViewSwitchButton />
           <button type="button">▤ Layout</button>
           <button type="button">⚙ Color</button>
         </div>
       </section>
 
       <section className={`work-area ${screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" ? "workflow-open" : ""}`}>
-        {/* The open windows' tabs, as the desktop's MDI tab strip: a click brings one to the front, × closes it (asking first where
-            its screen would), and "N Open" lists them all. */}
-        {windows.length > 0 && (
-          <div className="window-tabs" role="tablist" aria-label="Open windows">
-            {windows.map((node) => {
-              const on = node.id === activeId;
-              const small = minimized.has(node.id);
-              return (
-                <div key={node.id} className={`window-tab ${on ? "window-tab-on" : ""} ${small ? "window-tab-min" : ""}`} role="presentation">
-                  <button type="button" role="tab" aria-selected={on} className="window-tab-name" title={small ? `${node.label} (minimized)` : node.label} onClick={() => bringToFront(node.id)}>{node.label}</button>
-                  {/* As the desktop's tab: an open window offers Minimize, a minimized one Restore / Maximize. */}
-                  {small
-                    ? <button type="button" className="window-tab-btn" aria-label={`Restore / Maximize ${node.label}`} title={`Restore / Maximize ${node.label}`} onClick={() => bringToFront(node.id)}>□</button>
-                    : <button type="button" className="window-tab-btn" aria-label={`Minimize ${node.label}`} title={`Minimize ${node.label}`} onClick={() => minimizeWindow(node.id)}>─</button>}
-                  <button type="button" className="window-tab-x" aria-label={`Close ${node.label}`} title={`Close ${node.label}`} onClick={() => requestClose(node.id)}>×</button>
-                </div>
-              );
-            })}
-            <span className="window-tabs-fill" />
-            <div className="window-list">
-              <button type="button" className="window-list-button" aria-haspopup="menu" aria-expanded={windowListOpen} title="Open windows (Ctrl+Tab / Ctrl+F6: next)" onClick={() => setWindowListOpen((open) => !open)}>{windows.length} Open ▾</button>
-              {windowListOpen && (
-                <div className="window-list-menu" role="menu">
-                  {windows.map((node) => (
-                    <button key={node.id} type="button" role="menuitemradio" aria-checked={node.id === activeId} onClick={() => { bringToFront(node.id); setWindowListOpen(false); }}>{node.label}{minimized.has(node.id) ? " (minimized)" : ""}</button>
-                  ))}
-                  <button type="button" role="menuitem" className="window-list-close-all" onClick={() => { void closeAllWindows(); }}>✕ Close All Open Windows</button>
-                  {activeId !== null && <button type="button" role="menuitem" className="window-list-home" onClick={() => { goHome(); setWindowListOpen(false); }}>Home</button>}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
         <div className="window-stack">
           {windows.map((node) => {
             const on = node.id === activeId;

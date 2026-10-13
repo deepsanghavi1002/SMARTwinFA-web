@@ -569,8 +569,10 @@ html .modern-view .work-area{background:#e8f2fb}
 html .modern-view .context-strip{
   border-bottom:0;color:#fff;background:#1a4fa5
 }
-html .modern-view .context-strip>*{border-right:1px solid #ffffff2e}
-html .modern-view .context-strip strong{color:#fff}
+html .modern-view .context-strip>*{border-right:1px solid #ffffff2e;min-width:0}
+html .modern-view .context-strip strong{color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html .modern-view .context-strip .running{justify-content:flex-end;color:#cfe0f7;min-width:0;overflow:hidden;flex:1 1 0}
+html .modern-view .context-strip .running>span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%}
 html .modern-view .context-tools button{color:#fff}
 @media(min-width:781px){
   html .modern-view .context-strip{
@@ -628,3 +630,97 @@ html .modern-view .status-strip{border-top:1px solid #cfdded;color:#41576b;backg
   html .modern-view .dropdown>.menu-branch>button:hover,
   html .modern-view .submenu>button:hover{color:#0b2f66;background:#eef4fc}
 }
+
+html .modern-view .title-bar{
+  position:relative;
+  z-index:50;
+  overflow:visible;
+}
+html .modern-view .title-bar .title-home{
+  flex:0 0 auto;
+  flex-shrink:0;
+}
+html .modern-view .title-bar .window-tabs{
+  margin-right:0;
+  flex:1 1 0;
+  min-width:0;
+  max-width:none;
+}
+html .modern-view .title-bar .window-tab{
+  flex:0 0 auto;
+  height:27px;
+  border-color:#d5e3ea;
+  border-radius:6px 6px 0 0;
+  background:#edf4f8;
+  color:#466578;
+}
+html .modern-view .title-bar .window-tab:hover:not(.window-tab-on){
+  background:#f6fafd;
+  color:#153d5a;
+}
+html .modern-view .title-bar .window-tab-on{
+  height:29px;
+  background:#ffffff;
+  color:#143e5c;
+  border-color:#a8c6db;
+  border-bottom-color:#ffffff;
+  box-shadow:0 -1px 4px #12334e12;
+}
+html .modern-view .title-bar .window-list{
+  margin-left:auto;
+  margin-right:8px;
+  flex:0 0 auto;
+  flex-shrink:0;
+}
+html .modern-view .title-bar .window-list-button{
+  height:24px;
+  font-size:11px;
+  border-color:#cadbe6;
+  border-radius:6px;
+  background:#f2f7fa;
+  color:#163f5b;
+}
+html .modern-view .title-bar .window-list-button:hover{
+  background:#e4eef5;
+}
+html .modern-view .title-bar .window-list-menu{
+  top:calc(100% + 4px);
+  min-width:max-content;
+  max-width:min(540px,90vw);
+  border:1px solid #cadbe6;
+  border-radius:8px;
+  background:#ffffff;
+  box-shadow:0 12px 32px rgba(18,51,78,0.16);
+}
+html .modern-view .title-bar .window-list-menu button{
+  min-height:28px;
+  height:auto;
+  padding:5px 12px;
+  white-space:nowrap;
+  color:#163f5b;
+}
+html .modern-view .title-bar .window-list-menu button:hover,
+html .modern-view .title-bar .window-list-menu button:focus{
+  background:#f0f6fa;
+  color:#0c2d44;
+}
+html .modern-view .context-tools .view-switch{
+  position:static!important;
+  top:auto!important;
+  right:auto!important;
+  z-index:1!important;
+  display:inline-flex!important;
+  min-width:118px;
+  height:20px;
+  padding:1px 2px;
+  border:1px solid #7cb1c4;
+  border-radius:4px;
+  background:rgba(255,255,255,0.22);
+  box-shadow:none;
+}
+html .modern-view .context-tools .view-switch span{
+  min-width:54px;
+  height:16px;
+  font-size:10px;
+}
+
