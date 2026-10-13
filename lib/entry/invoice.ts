@@ -1,6 +1,6 @@
 import { displayValue, Loader } from "../master-program/load";
 import { formatDesktopDate, parseDesktopDate, toDecimal, toInt, toText } from "../master-program/legacy";
-import { readRights, SETUP_SCHEMA } from "../master-program/session";
+import { GST_START_DATE, readRights, SETUP_SCHEMA } from "../master-program/session";
 import { blankCoalesceAsText, replaceSessionValues } from "../master-program/sql";
 import { publicSetup, toSetup } from "../master-rules";
 import { properHeading } from "../master-program/heading";
@@ -31,13 +31,13 @@ function para(setup: Readonly<Record<string, unknown>>, column: string, token: s
   return toText(setup[column]).toUpperCase().includes(token);
 }
 
-async function entryProperties(loader: Loader, entryName: string): Promise<Row> {
+export async function entryProperties(loader: Loader, entryName: string): Promise<Row> {
   const rows = await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.entry_properties WHERE BTRIM(entry_name) = $1`, [entryName]);
   if (!rows) throw new Error(`Entry ${entryName} is not in smart_setup.entry_properties`);
   return rows[0];
 }
 
-async function controlEvents(loader: Loader, entryId: number): Promise<Row[]> {
+export async function controlEvents(loader: Loader, entryId: number): Promise<Row[]> {
   return (await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.control_event WHERE entry_properties_id = $1 ORDER BY control_query_sr, control_event_key`, [entryId])) ?? [];
 }
 
@@ -492,6 +492,9 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
   const controls = await headerControls(loader, entryId, book, replace);
   const series = seriesOptions[0]?.text ?? "";
   const defaults = series === "" ? { date: clampToYear(loader, new Date()), number: "" } : await seriesDefaults(loader, entryName, book, series);
+  const taxPercs = Object.fromEntries(((await loader.readTable(`SELECT tax_rec, tax_perc FROM |sys.db|tax_master WHERE tax_pos <> 'D'`)) ?? []).map((row) => [toText(displayValue(field(row, "tax_rec"))), toDecimal(field(row, "tax_perc"))]));
+  const uomQuery = text((await loader.readTable(`SELECT query_string FROM ${SETUP_SCHEMA}.query_table WHERE BTRIM(query_prog_id) = 'PROD_UOM_LIST_SRT'`))?.[0], "query_string");
+  const uoms = uomQuery !== "" ? await queryOptions(loader, replace(uomQuery)) : [];
   return {
     bookCode: book.values.bookCode,
     bookKey: book.values.bookKey,
@@ -512,6 +515,10 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     grids,
     partyBooks: book.values.acHelp,
     defaults,
+    taxPercs,
+    uoms,
+    decimals: { qty: toInt(setup.i_decqty), factor: toInt(setup.i_decfact), rate: toInt(setup.i_decrate), value: toInt(setup.decamount) || 2 },
+    stockNat: book.stockNat === "A" ? "A" : "L",
     warnings,
     asksTaxGroup: asks && !chosenGroup,
   };
@@ -536,6 +543,8 @@ async function slabGrid(loader: Loader, book: BookContext, rows: Row[], group: B
     if (keep) { serial += 1; row.slab_order = serial; } else removed.add(index);
   }
   const kept = work.filter((_row, index) => !removed.has(index));
+  // slab_link names the grid row (1-based) whose running total a linked row works on: its place among the kept rows.
+  const keptIndex = (original: number) => (removed.has(original) ? -1 : original - [...removed].filter((gone) => gone < original).length);
   const itemBody = (await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.entry_grid_body WHERE BTRIM(database_name) = 'ledger_ext' AND LEFT(BTRIM(field_name), 6) = '_slab_' ORDER BY entry_grid_body_key`)) ?? [];
   const bookKey = book.values.bookKey;
   const out: SlabRow[] = [];
@@ -582,7 +591,7 @@ async function slabGrid(loader: Loader, book: BookContext, rows: Row[], group: B
       amountEditable = true;
     }
     out.push({
-      key: toInt(field(row, "slab_id") ?? field(row, "slab_key")),
+      key: toInt(field(row, "slab_key") ?? field(row, "slab_id")), // slab_master.* carries its own slab_id: the key is slab_key
       order: toInt(field(row, "slab_order")),
       sign: text(row, "slab_mathoper"),
       desc: master ? `* ${text(row, "slab_desc")}` : text(row, "slab_desc"),
@@ -595,6 +604,9 @@ async function slabGrid(loader: Loader, book: BookContext, rows: Row[], group: B
       percEditable,
       amountEditable,
       ...(options ? { options } : {}),
+      calc,
+      roundPlaces: toInt(field(row, "slab_round")),
+      link: toInt(field(row, "slab_link")) > 0 ? keptIndex(toInt(field(row, "slab_link")) - 1) : -1,
     });
   }
   return out;
@@ -651,7 +663,7 @@ export async function seriesDefaults(loader: Loader, entryName: string, book: Bo
 // ---------------------------------------------------------------------------------------
 // Refresh_HelpGrid("A"): the party help
 
-async function helpColumns(loader: Loader, helpName: string, helpFor: string, keys: readonly string[]) {
+export async function helpColumns(loader: Loader, helpName: string, helpFor: string, keys: readonly string[]) {
   const properties = (await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.help_properties WHERE help_for = $1 AND help_name = $2 ORDER BY help_colkey`, [helpFor, helpName])) ?? [];
   return properties.flatMap((property: Row) => {
     const key = keys.find((candidate) => candidate.toLowerCase() === text(property, "col_field").toLowerCase());
@@ -704,7 +716,7 @@ async function firstRowValues(loader: Loader, sql: string): Promise<string[]> {
   }
 }
 
-export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number): Promise<PartyDetails> {
+export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = ""): Promise<PartyDetails> {
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
   const book = await bookContext(loader, entryName, firstCombo, { acCode: code });
@@ -742,7 +754,22 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
   const outEvent = eventFilling(await controlEvents(loader, entryId), "c1dg_outclear");
   const outRows = outEvent ? (await loader.readTable(replaceEntryTokens(`Select ${toText(field(outEvent, "fill_control_query"))}`, book.values))) ?? [] : [];
   const outstanding = outRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
-  return { code, name: text(account, "name"), address, addon, creditDays: toText(displayValue(field(account, "credit_days"))), outstanding };
+  const { stateCode, taxGroup } = await partyTaxGroup(loader, code, docDate);
+  return { code, name: text(account, "name"), address, addon, creditDays: toText(displayValue(field(account, "credit_days"))), stateCode, taxGroup, outstanding };
+}
+
+/**
+ * Tbx_PartyName_Leave's GST slab setting: before GST (or a company without GST) VAT; a party in
+ * the company's state CGST + SGST / UTGST, any other IGST.
+ */
+export async function partyTaxGroup(loader: Loader, code: number, docDate = ""): Promise<{ stateCode: string; taxGroup: "G" | "I" | "V" }> {
+  const { session } = loader;
+  const state = (await loader.readTable(`SELECT o.opt_short FROM |sys.db|address a LEFT JOIN |sys.db|idopt_master o ON o.idopt_key = a.state_id WHERE a.code = $1 AND a.address_id = 1`, [code]))?.[0];
+  const stateCode = text(state, "opt_short").trim();
+  const date = parseDesktopDate(docDate);
+  if (!session.coGstReq || (date && date < GST_START_DATE)) return { stateCode, taxGroup: "V" };
+  const same = stateCode !== "" && stateCode.replace(/^0+/, "") === session.coStateCode.trim().replace(/^0+/, "");
+  return { stateCode, taxGroup: same ? "G" : "I" };
 }
 
 // ---------------------------------------------------------------------------------------

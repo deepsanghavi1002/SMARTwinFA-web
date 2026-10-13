@@ -25,6 +25,8 @@ export type MasterSession = Readonly<{
   /** Smartwinfa_License, derived from CO_GROUP exactly as Setup_CompanySelect does. */
   licence: number;
   coStateName: string;
+  /** Co_State_Code: the company's GST state code, compared with the party's to choose CGST or IGST. */
+  coStateCode: string;
   coGstReq: boolean;
   businessNature: string;
   yearKey: number;
@@ -79,7 +81,7 @@ export async function readSession(client: Client, request: SessionRequest): Prom
 
   const company = (await client.query(
     `SELECT c.co_key, BTRIM(c.name) AS name, LOWER(BTRIM(COALESCE(c.co_dataname, ''))) AS schema_name,
-            BTRIM(COALESCE(c.co_group, '')) AS co_group, BTRIM(COALESCE(c.state_name, '')) AS state_name,
+            BTRIM(COALESCE(c.co_group, '')) AS co_group, BTRIM(COALESCE(c.state_name, '')) AS state_name, BTRIM(COALESCE(c.state_code::text, '')) AS state_code,
             BTRIM(COALESCE(c.gst_req, '')) AS gst_req, BTRIM(COALESCE(c.business_nat, '')) AS business_nat,
             LOWER(BTRIM(COALESCE(c.co_from_dataname, ''))) AS from_schema_name
        FROM ${SYSTEM_SCHEMA}.company c
@@ -119,6 +121,7 @@ export async function readSession(client: Client, request: SessionRequest): Prom
     companyGroup: company.co_group,
     licence: companyLicence(company.co_group || null),
     coStateName: company.state_name,
+    coStateCode: company.state_code,
     coGstReq: company.gst_req.toUpperCase().includes("Y"),
     businessNature: company.business_nat,
     yearKey: year.year_key,

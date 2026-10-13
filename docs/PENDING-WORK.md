@@ -350,12 +350,15 @@ the party's address lines, addon fields and pending bills (Outstanding tab); Fin
 (INVOICE_PREVIEW); E-Way Bill tab boxes. Not changed in the database: the PostgreSQL dialect gaps
 are rewritten in code (`entryDialect`: GetNumbers, tax_type, TO_CHAR of money; pgFragment's money casts).
 
-- [ ] Product rows: product help (HELP_PRODUCT), Product_Selection, UOM / rate / factor / value
-  arithmetic, item-wise slab and addon cells, stock checks, totals boxes under the grid. (2026-10-12)
-- [ ] Slab arithmetic: Slab_RunTotal, percent / amount editing, round off, TCS, final amount. (2026-10-12)
+- [x] Product rows: product help (HELP_PRODUCT), Product_Selection, UOM / rate / factor / value
+  arithmetic, item-wise slab cells, totals line under the grid. (2026-10-12; done 2026-10-13: lib/entry/calc.ts, lib/entry/products.ts, features/entry/lines.ts + ProductGrid.tsx)
+- [ ] Product rows still open: stock checks (negative stock, PROD_LOCK / PROD_WARN), I_DUPLICHK duplicate product, the party-rate events that need the addon names (input_rate 2-7, 9: |sys.prate_addon_nm|), slab % defaults from party_rate / pricelist (pr_slabperc, PL_SLABPERC), MRP-inclusive rate (RATE_WITH_TAX), the licence-specific product helps (46, 59, 51, 28, 68, 75, 45, 9, 89), stock_3 (bundle copy), the +/- column of stock-both books, product image, product message. (2026-10-13)
+- [x] Slab arithmetic: Slab_RunTotal, percent / amount editing, round off, TCS, final amount. (2026-10-12; done 2026-10-13, checked against DSAL/26-27/827 = 1,918.00)
+- [ ] Slab still open: the tax-mismatch question (product tax vs chosen), CGST / SGST % must match, rate-inclusive tax (REVERSE), TCS compulsory (TCS_COMPULSORY), stop-auto round-off after a typed round-off (bl_stop_SlabAuto). (2026-10-13)
 - [ ] Save (Save_Entry, Save_MultipleLoop_forGrid, Save_CodePost, Save_ProductPost, outclear,
   log_entry), the cancel-invoice-number save, Delete. (2026-10-12)
-- [ ] Restore_Entry: opening an entry from Find / Edit to view or edit it; Zoom from reports. (2026-10-12)
+- [x] Restore_Entry: opening an account-book entry from Find / Edit (RESTINV_01 ledger, 02 product rows, 03 slab with item-wise amounts, 04 addons; tax group from the party state). (2026-10-12; done 2026-10-13)
+- [ ] Restore still open: stock registers (RESTINV_01_PROCESS: orders, challans), cancelled invoice numbers, F4 copy entry, link entries, outstanding set-offs (RESTINV_05), expense grid (RESTINV_06), Zoom from reports. (2026-10-13)
 - [ ] Header validation on leaving each box: duplicate number (control_event "(duplichk)"),
   number between dates (sys.between_no), date range / lock dates, party lock (INV_LOCK, credit limit). (2026-10-12)
 - [ ] Debit / credit note against a book (Returns panel, cmb_Ag_Book) and link registers
@@ -368,6 +371,9 @@ are rewritten in code (`entryDialect`: GetNumbers, tax_type, TO_CHAR of money; p
   generation, Log viewer, narration macros (Shift+F1..F10), Ctrl+R repeat narration. (2026-10-12)
 - [ ] Voucher (entry 2, VOUCHER): same form, voucher style; only Invoice opens on the web. (2026-10-12)
 - [ ] Licence-specific branches (21, 14, 51, 82, 45, 6 ...) beyond the column hiding already ported. (2026-10-12)
+- [x] Pranav 2026-10-13 list: register locked until Cancel; Save on series + date + number, Delete / Print / Range / Upload / E-Invoice / Log on an opened entry; header line Date / Number / Entry Date and Chln Dt / Chln No / Entry No, party and address on the right; book balance beside Series (hidden here by HIDEBAL, as the desktop); Find / Edit with column filter, type-to-search, search box, opens the entry; column resize on every entry grid; account and product help in the shared HelpList (now features/grid/HelpList.tsx); slab Particulars +30%; slab and addon grids half the width each with a two-scrollbar gap; disabled slab cells grey; product grid. (2026-10-13)
+- [x] Pranav 2026-10-13 list (2): helps show on the field focus, ↓ goes into them, starts-with filter with the typed letters marked, main column frozen and in capitals (others Proper Case), help name (ACCOUNT HELP / PRODUCT HELP) in the first line; product, slab and addon cells use the master controls (calculator / calendar without the clear button, the master combo, features/entry/EntryCell.tsx); Enter moves cell to cell and row to row in the product, slab and addon grids; credit days whole positive numbers. (2026-10-13)
+- [x] Pranav 2026-10-13 list (3): every help has column filters (▾) and heading-click sorting (features/grid/useHelpView.tsx, HelpList onHeadingClick / headingTools); F5 in the product help ends the products (blank qty row off, zero total warning except licences 6, 9, 19, 25, 27, 29, 68, then the slab grid); credit days 0 to 365, 366 when the year has a 29 February. (2026-10-13)
 - [x] The whole entry screen is uncommitted until Pranav tests. (2026-10-12; committed to main 2026-10-13)
 
 ---

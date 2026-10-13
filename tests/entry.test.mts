@@ -11,7 +11,7 @@ register(`data:text/javascript,${encodeURIComponent(resolveTs)}`, import.meta.ur
 const { acHelpBooks, entryDialect, replaceEntryTokens, slabBook } = await import("../lib/entry/values.ts");
 
 const session = {
-  companySchema: "demo27", fromSchema: "demo27", companyKey: 1, companyName: "DEMO", companyGroup: "", licence: 21, coStateName: "", coGstReq: true, businessNature: "",
+  companySchema: "demo27", fromSchema: "demo27", companyKey: 1, companyName: "DEMO", companyGroup: "", licence: 21, coStateName: "", coStateCode: "27", coGstReq: true, businessNature: "",
   yearKey: 1, yearId: "0104202631032027", tarikh1: new Date(2026, 3, 1), tarikh2: new Date(2027, 2, 31), userNo: 1, userType: "AD", loginName: "ADMIN",
   setup: {}, companyWiseRights: false,
   flags: { imageReq: false, barcodeEntry: false, barcodeReport: false, productAccountPosting: false, productChildParent: false, partyAccode: false, colMrpActive: true, productCode: false, logFileSpecial: false },

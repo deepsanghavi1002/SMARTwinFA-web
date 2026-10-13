@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { FoundText } from "./FoundText";
 
 /**
  * The help list beside a field (the desktop's help grid). It scrolls under a coloured heading
@@ -9,8 +10,8 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as 
  * has been typed; the arrow keys and PageUp / PageDown move; each column can be made wider or
  * narrower by dragging the right edge of its heading (double-click the edge to put it back).
  */
-export type HelpColumn = { key: string; caption: string; width: number; align: string; format: string };
-export type HelpData = { columns: HelpColumn[]; rows: Record<string, string>[]; total: string };
+export type HelpColumn = Readonly<{ key: string; caption: string; width: number; align: string; format: string }>;
+export type HelpData = Readonly<{ columns: readonly HelpColumn[]; rows: readonly Readonly<Record<string, string>>[]; total: string }>;
 
 const ROW = 20;
 /** Entries the list shows at once unless the screen asks for another number. */
@@ -21,12 +22,15 @@ const MIN_WIDTH = 30;
 const TYPE_PAUSE_MS = 1200;
 
 export function HelpList({
-  help, focusRow, onFocusRow, searchKey, note, onClose, onEscape, style, dragHandle, onResetPosition, formatCell, shown = SHOWN,
+  help, focusRow, onFocusRow, onChoose, searchKey, note, onClose, onEscape, style, dragHandle, onResetPosition, formatCell, shown = SHOWN, title, highlight = "", freezeSearch = false,
+  onHeadingClick, sortMark, headingTools, filteredColumn, onKey,
 }: {
   help: HelpData;
   /** The entry to highlight and bring into view; -1 for none. */
   focusRow: number;
   onFocusRow: (row: number) => void;
+  /** Enter in the list, or a double-click on an entry: take it (the entry screen's helps). */
+  onChoose?: (row: number) => void;
   /** The column typed characters search; the first column when blank or unknown. */
   searchKey: string;
   note?: { text: string; warn: boolean } | null;
@@ -39,6 +43,19 @@ export function HelpList({
   formatCell: (value: string, format: string) => string;
   /** How many entries the list shows at once. */
   shown?: number;
+  /** The help's name in its first line (ACCOUNT HELP, PRODUCT HELP). */
+  title?: string;
+  /** The text typed in the field the help belongs to: marked where the search column starts with it. */
+  highlight?: string;
+  /** The search column stays put when the list scrolls sideways (the entry's helps). */
+  freezeSearch?: boolean;
+  /** Sorting and filters (useHelpView): a heading click, its ▲ / ▼, its ▾ filter, and whether a column is filtered. */
+  onHeadingClick?: (column: HelpColumn) => void;
+  sortMark?: (column: HelpColumn) => string;
+  headingTools?: (column: HelpColumn) => ReactNode;
+  filteredColumn?: (column: HelpColumn) => boolean;
+  /** A key the screen takes before the list does (F5 ends the products); true when it took it. */
+  onKey?: (event: ReactKeyboardEvent<HTMLDivElement>) => boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -63,6 +80,8 @@ export function HelpList({
   const widthOf = (column: HelpColumn) => widths[column.key] ?? Math.max(MIN_WIDTH, column.width || 90);
   const tableWidth = help.columns.reduce((sum, column) => sum + widthOf(column), 0);
   const searchColumn = help.columns.find((column) => column.key.toLowerCase() === searchKey.toLowerCase())?.key ?? help.columns[0]?.key ?? "";
+  /** Where the frozen search column sits: after the columns before it. */
+  const frozenLeft = help.columns.slice(0, Math.max(0, help.columns.findIndex((column) => column.key === searchColumn))).reduce((sum, column) => sum + widthOf(column), 0);
 
   // Bring the highlighted entry into view, a few rows down from the top when it has to move.
   useEffect(() => {
@@ -76,7 +95,8 @@ export function HelpList({
   const move = (row: number) => onFocusRow(Math.min(help.rows.length - 1, Math.max(0, row)));
 
   const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if ((event.target as Element).closest(".mp-drag-handle") || event.key === "Tab") return;
+    if ((event.target as Element).closest(".mp-drag-handle, .mp-filter") || event.key === "Tab") return;
+    if (onKey?.(event)) { event.stopPropagation(); return; }
     // The list sits inside the grid, whose own keys would otherwise move the grid as well.
     event.stopPropagation();
     const from = focusRow < 0 ? 0 : focusRow;
@@ -88,6 +108,7 @@ export function HelpList({
       case "Home": event.preventDefault(); move(0); return;
       case "End": event.preventDefault(); move(help.rows.length - 1); return;
       case "Escape": event.preventDefault(); event.stopPropagation(); typed.current.text = ""; onEscape?.(); return;
+      case "Enter": if (onChoose && focusRow >= 0) { event.preventDefault(); onChoose(focusRow); } return;
       case "Backspace": event.preventDefault(); typed.current.text = typed.current.text.slice(0, -1); return;
     }
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
@@ -118,7 +139,7 @@ export function HelpList({
   return (
     <div className="mp-help" style={style} tabIndex={0} role="listbox" aria-label={`Help: ${help.total}`} aria-activedescendant={focusRow >= 0 ? `mp-help-row-${focusRow}` : undefined} onKeyDown={keys}>
       <div className="mp-help-title mp-drag-handle" {...dragHandle} onDoubleClick={onResetPosition} title="Drag to move · double-click to put back">
-        <span>{help.total}</span>
+        <span>{title ? <b className="mp-help-name">{title}</b> : null}{help.total}</span>
         <span className="mp-help-tip">type to search · drag a heading edge to resize</span>
         {onClose && <button type="button" onClick={onClose} aria-label="Close help">×</button>}
       </div>
@@ -129,10 +150,16 @@ export function HelpList({
           <thead>
             <tr>
               {help.columns.map((column) => (
-                <th key={column.key} title={column.caption}>
+                <th key={column.key} title={onHeadingClick ? `${column.caption} · click to sort` : column.caption}
+                  className={[freezeSearch && column.key === searchColumn ? "mp-help-frozen" : "", onHeadingClick ? "mp-help-sortable" : "", filteredColumn?.(column) ? "mp-help-filtered" : ""].filter(Boolean).join(" ") || undefined}
+                  style={freezeSearch && column.key === searchColumn ? { left: frozenLeft } : undefined}
+                  onClick={onHeadingClick ? () => onHeadingClick(column) : undefined}>
                   {column.caption}
+                  {sortMark?.(column) ? <span className="mp-help-sort">{sortMark(column)}</span> : null}
+                  {headingTools ? <span className="mp-help-tools" role="presentation" onClick={(event) => event.stopPropagation()}>{headingTools(column)}</span> : null}
                   <span className="mp-resize" role="presentation" title="Drag to resize · double-click to put back"
                     onMouseDown={(event) => startResize(column, event)}
+                    onClick={(event) => event.stopPropagation()}
                     onDoubleClick={() => setWidths((current) => { const copy = { ...current }; delete copy[column.key]; return copy; })} />
                 </th>
               ))}
@@ -143,10 +170,11 @@ export function HelpList({
             {help.rows.slice(first, last).map((row, offset) => {
               const index = first + offset;
               return (
-                <tr key={index} id={`mp-help-row-${index}`} role="option" aria-selected={index === focusRow} className={index === focusRow ? "mp-current-row" : ""} onMouseDown={() => onFocusRow(index)}>
+                <tr key={index} id={`mp-help-row-${index}`} role="option" aria-selected={index === focusRow} className={index === focusRow ? "mp-current-row" : ""} onMouseDown={() => onFocusRow(index)} onDoubleClick={onChoose ? () => onChoose(index) : undefined}>
                   {help.columns.map((column) => {
                     const text = formatCell(row[column.key] ?? "", column.format);
-                    return <td key={column.key} title={text} style={{ textAlign: column.align === "R" ? "right" : "left" }}>{text}</td>;
+                    const main = column.key === searchColumn;
+                    return <td key={column.key} title={text} className={freezeSearch && main ? "mp-help-frozen" : undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(freezeSearch && main ? { left: frozenLeft } : {}) }}>{main && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
                   })}
                 </tr>
               );

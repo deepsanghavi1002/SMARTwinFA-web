@@ -72,7 +72,7 @@ test("keeps the latest migrated application surface wired into the root route", 
 
   assert.match(page, /<StartupGate>/);
   // Every MASTER menu row opens the one generic master for its ActionMenu program.
-  assert.match(page, /actionCode\?\.toUpperCase\(\) === "MASTER" && running\.actionMenu/);
+  assert.match(page, /code === "MASTER" && node\.actionMenu/);
   assert.match(page, /<MasterProgram /);
   assert.match(page, /home-splash/);
   assert.match(startup, /stage.*"login".*"company".*"ready"/s);

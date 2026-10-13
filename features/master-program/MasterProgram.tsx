@@ -22,7 +22,7 @@ import { LogViewer } from "../grid/LogViewer";
 import { FoundText } from "../grid/FoundText";
 import { printVertical } from "../grid/printVertical";
 import type { LogTable } from "../grid/LogViewer";
-import { HelpList } from "./HelpList";
+import { HelpList } from "../grid/HelpList";
 import { cleanMainValue, duplicateKey, isMainField } from "../../lib/master-program/main-field";
 import { GridCombo } from "../grid/GridCombo";
 import { GridMultiPick } from "./GridMultiPick";

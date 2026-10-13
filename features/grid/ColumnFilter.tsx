@@ -69,11 +69,25 @@ export function FilterButton({ caption, onOpen, skipTab = false }: { caption: st
  * A column's filter list, opened under its heading from the heading's left edge; where the
  * grid has no room for it on the right (the last columns), it moves left until it shows whole.
  */
-export function FilterPopup({ state, columnKey, caption, kind, values, area }: { state: ColumnFilters; columnKey: string; caption: string; kind: FilterKind; values: readonly string[]; area: RefObject<HTMLElement | null> }) {
+export function FilterPopup({ state, columnKey, caption, kind, values, area, floating = false }: {
+  state: ColumnFilters; columnKey: string; caption: string; kind: FilterKind; values: readonly string[]; area: RefObject<HTMLElement | null>;
+  /** Over the page under the heading (a help list, whose scroll area would cut the list off). */
+  floating?: boolean;
+}) {
   const { draft, setDraft, search, setSearch, anchor, apply, clear, setOpenFilter } = state;
   if (!draft || draft.key !== columnKey || state.openFilter !== columnKey) return null;
   const place = (element: HTMLDivElement | null) => {
     if (!element) return;
+    if (floating) {
+      const heading = (element.closest("th") ?? element.parentElement)?.getBoundingClientRect();
+      if (!heading) return;
+      element.style.position = "fixed";
+      element.style.width = `${Math.max(290, Math.round(heading.width))}px`;
+      element.style.top = `${Math.round(heading.bottom)}px`;
+      const width = element.getBoundingClientRect().width;
+      element.style.left = `${Math.round(Math.max(4, Math.min(heading.left, window.innerWidth - width - 4)))}px`;
+      return;
+    }
     element.style.left = "0px";
     const box = element.getBoundingClientRect();
     const areaElement = area.current;

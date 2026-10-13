@@ -1,4 +1,5 @@
 import type { EntryColumn, EntryOption } from "../small-entry/types";
+import type { ProductUnits } from "./calc";
 
 /**
  * The desktop's Entry form (Comman_Entry, Entry.cs) on the web: the screen behind the
@@ -73,6 +74,11 @@ export type SlabRow = Readonly<{
   percEditable: boolean;
   amountEditable: boolean;
   options?: readonly EntryOption[];
+  /** slab_calc: A worked out, M typed, B rounded when roundPlaces is 0. */
+  calc: string;
+  roundPlaces: number;
+  /** slab_link: the row (index in this list) whose running total a linked row (UTGST) works on; -1 for none. */
+  link: number;
 }>;
 
 /** Choosing a register (Cmb_FirstCombo_Leave): everything the screen shows for that book. */
@@ -108,7 +114,50 @@ export type BookScreen = Readonly<{
   partyBooks: string;
   /** Defaults for the first series: date and number. */
   defaults: SeriesDefaults;
+  /** tax_master's tax_perc by tax_rec, for the tax lists of the slab and the item-wise columns. */
+  taxPercs: Readonly<Record<string, number>>;
+  /** The UOM list (PROD_UOM_LIST_SRT): short name and key. */
+  uoms: readonly EntryOption[];
+  /** Decimals of quantity, factor, rate and value (i_decqty, i_decfact, i_decrate, decamount). */
+  decimals: Readonly<{ qty: number; factor: number; rate: number; value: number }>;
+  /** str_Stock_nat: A stock comes in (purchase), L goes out (sale). */
+  stockNat: string;
   warnings: readonly string[];
+}>;
+
+/** A product chosen from the help (Product_Selection): what fills the product row. */
+export type ProductChoice = Readonly<{
+  key: number;
+  short: string;
+  desc: string;
+  stock1: string;
+  stock2: string;
+  /** Q.UOM and R.UOM shorts (issue units for a sale, receipt units for a purchase). */
+  qtyUom: string;
+  rateUom: string;
+  /** Packing: pieces in a pack (base_pack). */
+  packing: string;
+  mrp: string;
+  rate: string;
+  /** The product's tax (vat_code) and its % (for the item-wise tax default). */
+  taxRec: number;
+  taxPerc: number;
+  units: ProductUnits;
+}>;
+
+/** An entry opened from Find / Edit (Restore_Entry). */
+export type RestoredEntry = Readonly<{
+  uniqueKey: number;
+  /** Header and foot control values by control name. */
+  values: Readonly<Record<string, string>>;
+  partyCode: number;
+  taxGroup: "G" | "I" | "V";
+  /** Product rows: cells by product grid column, and the product. */
+  lines: readonly Readonly<{ cells: Readonly<Record<string, string>>; product: ProductChoice }>[];
+  /** Slab rows not item-wise: % (or tax) and amount, by slab key. */
+  slab: Readonly<Record<number, Readonly<{ perc: string; amount: string }>>>;
+  /** Account addon values by addon key. */
+  addon: Readonly<Record<number, string>>;
 }>;
 
 /** A column of the side grids, as Setting_GridCol shows it. */
@@ -131,6 +180,9 @@ export type PartyDetails = Readonly<{
   address: readonly string[];
   addon: readonly Readonly<{ key: number; label: string; value: string; options?: readonly EntryOption[] }>[];
   creditDays: string;
+  /** The party's GST state code (address 1), and the tax group it gives: same state as the company CGST, else IGST. */
+  stateCode: string;
+  taxGroup: "G" | "I" | "V";
   /** The party's pending bills (c1dg_OutClear's query), shown on the Outstanding tab. */
   outstanding: readonly Readonly<Record<string, string>>[];
 }>;

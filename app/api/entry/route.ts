@@ -6,6 +6,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { bookContext, entryPreview, loadBook, loadInvoice, partyDetails, partyHelp, seriesDefaults } from "@/lib/entry/invoice";
+import { productChoice, productHelp, restoreEntry } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
 
 /**
@@ -70,7 +71,20 @@ export async function POST(request: Request) {
         case "party": {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
-          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code), warnings: loader.warnings };
+          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20)), warnings: loader.warnings };
+        }
+        case "product-help":
+          return { help: await productHelp(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
+        case "product": {
+          const prodKey = Number(body.prodKey);
+          if (!Number.isInteger(prodKey) || prodKey <= 0) throw new Error("Choose a product from the help list");
+          const acCode = Number.isInteger(Number(body.acCode)) ? Number(body.acCode) : 0;
+          return { product: await productChoice(loader, body.entryName, chosenRegister(def, body.firstCombo), prodKey, acCode, String(body.date ?? "").slice(0, 20)), warnings: loader.warnings };
+        }
+        case "restore": {
+          const uniqueKey = Number(body.uniqueKey);
+          if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Choose an entry from the Find / Edit list");
+          return { entry: await restoreEntry(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
         }
         case "preview":
           return { preview: await entryPreview(loader, body.entryName, chosenRegister(def, body.firstCombo), String(body.series ?? "").slice(0, 40)), warnings: loader.warnings };
