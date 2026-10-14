@@ -258,7 +258,11 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
         base.caption = text(settings, "outputcol_caption").toUpperCase();
         const type = text(settings, "outputcol_type").toUpperCase();
         if (type === "D") { base.kind = "date"; base.dateTyped = true; }
-        else if (type === "N" || type === "C") { base.kind = "number"; base.decimals = toInt(field(settings, "outputcol_decimal")); }
+        else if (type === "N" || type === "C") {
+          // A text column the setup calls numeric (Form Summary's CODE: the tax master's TAX_SHORT, "I18", "C9", "NONEI") stays text when it holds any value that is not a number.
+          const words = kind === "text" && table.rows.some((row) => { const cell = cellString(row[name]).trim(); return cell !== "" && !Number.isFinite(Number(cell.replace(/,/g, ""))); });
+          if (!words) { base.kind = "number"; base.decimals = toInt(field(settings, "outputcol_decimal")); }
+        }
         // With a format the date column sizes to its text (a week reads "dd/mm/yyyy To dd/mm/yyyy").
         base.width = formatted && name.toLowerCase() === "selected_date"
           ? Math.max(60, ...table.rows.slice(0, 500).map((row) => cellString(row[name]).length * 7))
