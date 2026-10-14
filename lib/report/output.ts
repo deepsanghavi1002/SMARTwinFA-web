@@ -190,7 +190,18 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const subtotalColumns = [...plan.subtotalColumns];
   const grouping = [...plan.grouping];
   // Sales V/S Expense subtotals on the side (SALES / EXPENSE / EXP %), then the balance sheet head inside it (the desktop's grid).
-  if (reportKey === 280) for (const column of ["SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2"]) if (!grouping.includes(column)) grouping.push(column);
+  if (reportKey === 280 || reportKey === 281) for (const column of ["SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2"]) if (!grouping.includes(column)) grouping.push(column);
+  // The multi year balance sheet subtotals on its side (LIABILITY / ASSET), the Difference row apart.
+  if (reportKey === 138 && !grouping.includes("BAL_SIDE")) grouping.push("BAL_SIDE");
+  // The multi year party product addon sale subtotals on the party (NAME), a row for each of its addon combinations under it.
+  if (reportKey === 176 && !grouping.includes("NAME")) grouping.push("NAME");
+  // The multi year top reports, a row a party / item of each year (Year As a Column not ticked): a subtotal for each YEAR_NAME.
+  // The multi year sales v/s receipt subtotals on the side (SALE / RECEIPT), the percentages added up as the desktop's grid does.
+  if (reportKey === 279 && !grouping.includes("SMART_SELECTED_ADDON1")) grouping.push("SMART_SELECTED_ADDON1");
+  // Addon Details subtotals on the account (SMART_NAME) inside any addon groups.
+  if (reportKey === 264 && !grouping.includes("SMART_NAME")) grouping.push("SMART_NAME");
+  const multiYearTop = reportKey === 267 && !call.checkQuery.includes("CHK_YEARCOL,");
+  if (multiYearTop && !grouping.includes("YEAR_NAME")) grouping.push("YEAR_NAME");
   const formatted = call.formating !== "";
 
   // After SP_REPORT_FORMATING the particulars (NAME) go just after the date, or first when there is no date.
@@ -262,7 +273,9 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       if (!subtotalColumns.includes(name) && !name.toUpperCase().includes("CLOSING") && !name.toUpperCase().includes("RATE")) subtotalColumns.push(name);
       base.decimals = 2;
       base.align = "R";
-      base.width = 100;
+      // Wide enough for the column's subtotal (its largest possible figure is the sum of the figures), as bold as it is drawn.
+      const widest = formatNumber(table.rows.reduce((sum, row) => sum + Math.abs(num(row[name])), 0), 2).length;
+      base.width = Math.max(100, widest * 9 + 14, name.length * 8 + 14);
       base.caption = name.toUpperCase().includes("DR_CR") ? name.toUpperCase().replace("DR_CR", "##").replace(/_/g, " ") : name.toUpperCase().replace(/_/g, " ");
     } else {
       base.caption = name.toUpperCase().includes("DR_CR") ? name.toUpperCase().replace("DR_CR", "##").replace(/_/g, " ") : name.toUpperCase().replace(/_/g, " ");

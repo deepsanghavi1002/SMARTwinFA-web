@@ -74,6 +74,7 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 119: return checklistInvoice(loader, plan);
     case 120: return checklistDaybook(loader, plan);
     case 23: return balanceSheet(loader, plan);
+    case 138: return multiYearBalanceSheet(loader, plan);
     case 24: return annexure(loader, plan);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey} is not available in the web version yet.`, "Not ported yet");
   }
@@ -2078,22 +2079,18 @@ async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable
 // side when the account's amount runs the other way. The liability heads (code 09..) and the asset
 // heads (08..) are then put side by side, row against row.
 //
-// Not ported: the multi company (136) and multi year (138) balance sheets, which the same
+// Not ported: the multi company (136) balance sheet, which the same
 // procedure serves.
 
 type HeadLine = { heading: string; code: string; code1: string; opening: number; closing: number };
 
-async function balanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
-  const { session } = loader;
+/** The balance sheet's heads for one database and period: the liability heads (09..) and the asset heads (08..) with an opening or closing. */
+async function balanceHeads(loader: Loader, plan: ReportPlan, db: string, startText: string, uptoText: string, yearId: string): Promise<{ liabilities: HeadLine[]; assets: HeadLine[] }> {
   const { call } = plan;
-  const db = call.database;
-  const frag = (sql: string) => pgFragment(sql, plan, session.companySchema);
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
   const rowsOf = async (sql: string) => (await runReportSql(loader, frag(sql))).rows;
-  const check = (name: string) => call.checkQuery.includes(`${name},`);
   const licence = call.licence;
-  const reverse = check("CHK_BSREVERSE");
-  const startText = desktopDate(call.tarikh1);
-  const uptoText = desktopDate(call.upto);
+  const reverse = call.checkQuery.includes("CHK_BSREVERSE,");
   const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
 
   // bitHideBook: licences 19, 29, 68 and 73 hide entries booked against an account whose short name says CA_ENT.
@@ -2110,7 +2107,7 @@ async function balanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTab
     + ` coalesce(acbal.opening::numeric,0) + coalesce(ld.debit_total,0) - coalesce(lc.credit_total,0) AS "closing", bs2.bs_level AS "level", bs2.bs_code AS "code",`
     + ` CASE WHEN bs2.rev_bsrec > 0 THEN rev_bs.bs_level END AS "level1", CASE WHEN bs2.rev_bsrec > 0 THEN rev_bs.bs_code END AS "code1", CASE WHEN bs2.rev_bsrec > 0 THEN rev_bs.bs_desc END AS "rev_heading", bs2.bs_desc AS "heading"`
     + ` FROM ${db}account ac1 LEFT JOIN ${db}balsheet bs2 ON bs2.bs_key = ac1.bs_id AND bs2.bs_pos <> 'D'`
-    + ` LEFT JOIN ${db}AC_BALANCE acbal ON acbal.code = ac1.code AND acbal.year_id = '${call.yearId}' AND acbal.a_recflag = 'AC'`
+    + ` LEFT JOIN ${db}AC_BALANCE acbal ON acbal.code = ac1.code AND acbal.year_id = '${yearId}' AND acbal.a_recflag = 'AC'`
     + ` LEFT JOIN (SELECT POST_CODE, SUM(CASE WHEN POST_DBCODE = 1 THEN POST_AMT::numeric ELSE 0 END) debit_total FROM ${db}LEDGER_POST WHERE POST_DATE BETWEEN '${startText}' AND '${uptoText}'${hide} GROUP BY POST_CODE) ld ON ld.POST_CODE = ac1.code`
     + ` LEFT JOIN (SELECT POST_CODE, SUM(CASE WHEN POST_DBCODE = 2 THEN POST_AMT::numeric ELSE 0 END) credit_total FROM ${db}LEDGER_POST WHERE POST_DATE BETWEEN '${startText}' AND '${uptoText}'${hide} GROUP BY POST_CODE) lc ON lc.POST_CODE = ac1.code`
     + ` LEFT JOIN ${db}balsheet rev_bs ON rev_bs.bs_key = bs2.rev_bsrec`
@@ -2125,7 +2122,7 @@ async function balanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTab
   // What the profit transfer and the closing stock left in OS_BILLDIFF goes into the closings.
   const billDiff = await rowsOf(`SELECT ac.code AS "code", ac.name AS "name", ac.bs_id AS "bs_id", left(bs.bs_code,6) AS "c6", ac.ac_opensty AS "style", acbal.os_billdiff::numeric AS "diff"`
     + ` FROM ${db}account ac inner join ${db}ac_balance acbal on acbal.code=ac.code left join ${db}balsheet bs on bs.bs_key=ac.bs_id`
-    + ` where ac.a_pos<>'D' and acbal.year_id='${call.yearId}'`);
+    + ` where ac.a_pos<>'D' and acbal.year_id='${yearId}'`);
   for (const line of lines) {
     for (const row of billDiff) {
       if (toText(row.name) !== line.name) continue;
@@ -2173,6 +2170,23 @@ async function balanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTab
   const side = (prefix: string) => heads.filter((head) => head.code.startsWith(prefix) && (head.opening !== 0 || head.closing !== 0)).sort((a, b) => sqlServerCompare(a.code, b.code));
   const liabilities = side("09");
   const assets = side("08");
+  return { liabilities, assets };
+}
+
+async function balanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { session } = loader;
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, session.companySchema);
+  const rowsOf = async (sql: string) => (await runReportSql(loader, frag(sql))).rows;
+  const check = (name: string) => call.checkQuery.includes(`${name},`);
+  const licence = call.licence;
+  const reverse = check("CHK_BSREVERSE");
+  const startText = desktopDate(call.tarikh1);
+  const uptoText = desktopDate(call.upto);
+  const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
+
+  const { liabilities, assets } = await balanceHeads(loader, plan, db, startText, uptoText, call.yearId);
   const table = new ResultTable();
   table.setKind("Sr_No", "decimal");
   table.setKind("OPENING", "decimal");
@@ -7578,5 +7592,78 @@ export async function nonFunction(loader: Loader, plan: ReportPlan): Promise<Res
   }
   const table = tableFromResult(await runReportSql(loader, frag(sql)));
   for (const column of ["OPENING", "CLS_BAL"]) if (table.has(column)) table.setKind(column, "decimal");
+  return table;
+}
+
+// ======================================================================================
+// 138: MULTI YEAR BALANCE SHEET (the same branch of SP_REPORT_STANDARD as 23)
+// ======================================================================================
+//
+// The company's years that meet From .. Upto (SMART_SYSTEM.CNAME, the companies of the same name, oldest first), each balance sheet worked out
+// on its own database for the year's own dates (as report 23: the heads' closing from the opening and the postings, reversing heads, the
+// profit transfer and closing stock in OS_BILLDIFF). A row a head, the liability heads (' LIABILITY' + name) before the asset heads
+// ('ASSET' + name), a column a year (2025_2026) and TOTAL; a year whose sides do not balance adds a "Difference" row, last.
+//  - Put right: the procedure numbers the rows of all the years together (ORDER BY co_short, bs_code) and sets a liability row against the
+//    asset row of the same number, so an asset's amount can land in another year's column; here each year is its own.
+//  - The procedure's filler rows (a side with fewer heads than the other shows "LIABILITY" / "ASSET" with 0.00) are not made.
+//  - The difference of a year with more liabilities than assets is the amount with its sign, as the procedure writes it.
+
+async function multiYearBalanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const company = (await runReportSql(loader, `SELECT name FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $1`, [call.companyKey])).rows[0];
+  const years = company === undefined ? [] : (await runReportSql(loader, `SELECT n.c_tarikh1::date AS y1, n.c_tarikh2::date AS y2, lower(btrim(c.co_dataname)) AS schema_name`
+    + ` FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id WHERE n.c_tarikh2::date >= $1::date AND n.c_tarikh1::date <= $2::date AND c.name = $3 ORDER BY n.c_tarikh1`,
+  [desktopDate(call.from), desktopDate(call.upto), company.name])).rows;
+
+  type Bucket = { side: string; name: string; values: Map<string, number> };
+  const buckets = new Map<string, Bucket>();
+  const labels: string[] = [];
+  const put = (side: string, name: string, label: string, amount: number) => {
+    const key = `${side}\u0000${name}`;
+    const bucket = buckets.get(key) ?? { side, name, values: new Map<string, number>() };
+    bucket.values.set(label, (bucket.values.get(label) ?? 0) + amount);
+    buckets.set(key, bucket);
+  };
+  const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
+  const two = (value: number) => String(value).padStart(2, "0");
+  const dayId = (date: Date) => `${two(date.getDate())}${two(date.getMonth() + 1)}${date.getFullYear()}`;
+  for (const year of years) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','ac_balance','balsheet','ledger_post')", [schema])).rows[0];
+    if (num(exists?.n) < 4) continue;
+    const y1 = year.y1 as Date;
+    const y2 = year.y2 as Date;
+    const label = `${y1.getFullYear()}_${y2.getFullYear()}`;
+    labels.push(label);
+    const { liabilities, assets } = await balanceHeads(loader, plan, `${schema}.`, desktopDate(y1), desktopDate(y2), `${dayId(y1)}${dayId(y2)}`);
+    for (const head of liabilities) put("LIABILITY", head.heading, label, head.closing);
+    for (const head of assets) put("ASSET", head.heading, label, head.closing);
+    const total = r2(liabilities.reduce((sum, head) => sum + head.closing, 0) - assets.reduce((sum, head) => sum + head.closing, 0));
+    if (total > 0) put("ASSET", "Difference", label, total);
+    else if (total < 0) put("LIABILITY", "Difference", label, total);
+  }
+
+  const table = new ResultTable();
+  table.addColumn("BAL_SIDE");
+  table.addColumn("SORTING_COL");
+  table.addColumn("NAME");
+  for (const label of labels) table.setKind(label, "decimal");
+  table.setKind("TOTAL", "decimal");
+  const ordered = [...buckets.values()]
+    .filter((bucket) => bucket.name !== "")
+    .map((bucket, index) => ({ bucket, index, sorting: bucket.name === "Difference" ? "z" : bucket.side === "LIABILITY" ? ` LIABILITY${bucket.name}` : `ASSET${bucket.name}` }))
+    .sort((a, b) => (a.sorting.toUpperCase() === b.sorting.toUpperCase() ? (a.bucket.side === b.bucket.side ? a.index - b.index : a.bucket.side < b.bucket.side ? -1 : 1) : a.sorting.toUpperCase() < b.sorting.toUpperCase() ? -1 : 1));
+  for (const { bucket, sorting } of ordered) {
+    const row: ResultRow = { BAL_SIDE: bucket.name === "Difference" ? "" : bucket.side, SORTING_COL: sorting, NAME: bucket.name };
+    let total = 0;
+    for (const label of labels) {
+      const value = bucket.values.get(label);
+      row[label] = value === undefined ? null : r2(value);
+      total += value === undefined ? 0 : r2(value);
+    }
+    row.TOTAL = r2(total);
+    table.rows.push(row);
+  }
   return table;
 }

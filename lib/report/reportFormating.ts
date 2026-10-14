@@ -11,6 +11,10 @@ import { money, num, runReportSql, runReportSqlHashed } from "./run";
 import { salesExpenseTable } from "./salesExpense";
 import type { SalesExpenseAmount } from "./salesExpense";
 import { multiYearAccounts } from "./multiYear";
+import { multiYearStock as multiYearStockTable } from "./multiYearStock";
+import type { StockYear } from "./multiYearStock";
+import { multiYearExpense as multiYearExpenseTable } from "./multiYearExpense";
+import type { ExpenseYear } from "./multiYearExpense";
 import type { YearData } from "./multiYear";
 import { SYSTEM_SCHEMA } from "../master-program/session";
 
@@ -37,6 +41,18 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 35: return nonFunction(loader, plan);
     case 280: return salesExpense(loader, plan);
     case 103: return multiYearAccountBalance(loader, plan);
+    case 104: return multiYearStock(loader, plan);
+    case 105: return multiYearLedger(loader, plan);
+    case 106: return multiYearExpense(loader, plan);
+    case 125: return multiYearStockLedger(loader, plan);
+    case 133: return multiYearPartyStock(loader, plan);
+    case 176: return multiYearPartyProductAddonSale(loader, plan);
+    case 267: return multiYearTopReports(loader, plan);
+    case 279: return multiYearSalesReceipt(loader, plan);
+    case 281: return multiYearSalesExpense(loader, plan);
+    case 264: return addonDetails(loader, plan);
+    case 151: return finishProductStock(loader, plan);
+    case 163: return finishProductCosting(loader, plan);
     case 255: return partyBillPdf(loader, plan);
     case 284: return documentUpload(loader, plan);
     case 126: return invalidGst(loader, plan);
@@ -2473,16 +2489,21 @@ async function salesExpense(loader: Loader, plan: ReportPlan): Promise<ResultTab
 // licences 7 and 8 by the name), oldest first, at most ten, each read from its own database. The rows and columns are made in
 // multiYear.ts. A year whose database is not on this server is left out (the desktop's query fails on it).
 
-async function multiYearAccountBalance(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+async function companyYears(loader: Loader, plan: ReportPlan): Promise<ResultRow[]> {
   const { call } = plan;
   const company = (await runReportSql(loader, `SELECT btrim(coalesce(name,'')) AS name, btrim(coalesce(bill_name,'')) AS bill_name, btrim(coalesce(co_group,'')) AS co_group FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $1`, [call.companyKey])).rows[0];
-  if (!company) return new ResultTable();
+  if (!company) return [];
   const billName = call.licence !== 7 && call.licence !== 8 ? toText(company.bill_name) : "";
   const byBill = billName !== "";
-  const years = (await runReportSql(loader, `SELECT n.c_tarikh1::date AS y1, n.c_tarikh2::date AS y2, lower(btrim(c.co_dataname)) AS schema_name`
+  return (await runReportSql(loader, `SELECT n.c_tarikh1::date AS y1, n.c_tarikh2::date AS y2, lower(btrim(c.co_dataname)) AS schema_name`
     + ` FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id`
     + ` WHERE n.c_tarikh2::date >= $1::date AND n.c_tarikh1::date <= $2::date AND btrim(${byBill ? "c.bill_name" : "c.name"}) = $3 AND btrim(c.co_group) = $4 ORDER BY n.c_tarikh1`,
   [desktopDate(call.from), desktopDate(call.upto), byBill ? billName : toText(company.name), toText(company.co_group)])).rows.slice(0, 10);
+}
+
+async function multiYearAccountBalance(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const years = await companyYears(loader, plan);
 
   const data: YearData[] = [];
   for (const year of years) {
@@ -2511,4 +2532,1261 @@ async function multiYearAccountBalance(loader: Loader, plan: ReportPlan): Promis
     });
   }
   return multiYearAccounts(data, call.fcValue, call.formating.toUpperCase() === "DRCR");
+}
+
+// ======================================================================================
+// 104: MULTI YEAR STOCK SUMMARY (SP_FRT_RPT_MULTI_YEAR_STOCK_SUMMARY_REP; ANALYSIS REP. > Multi Year > Inventory)
+// ======================================================================================
+//
+// The same years as 103, each read from its own database. The desktop's procedure asks every product's opening and movement with a
+// sub-query of its own (and PROD_BALANCE / PROD_LEDGER have no index on PROD_ID); here a year is four grouped reads (products, opening,
+// movement) matched in memory, the rows and columns made in multiYearStock.ts.
+
+async function multiYearStock(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const combo = call.fcValue;
+  const monthWise = call.checkQuery.includes("CHK_MONTHWISE,");
+  const years = await companyYears(loader, plan);
+  const quantity = call.licence === 2 ? "trn_qty3" : "(quantity - ag_qty)";
+  const month = (date: Date) => date.getMonth() + 1;
+
+  const data: StockYear[] = [];
+  for (const year of years) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('product_master','prod_balance','prod_ledger')", [schema])).rows[0];
+    if (num(exists?.n) < 3) continue;
+    const y1 = year.y1 as Date;
+    const y2 = year.y2 as Date;
+    // Only STOCK (and Month Wise) works on the year's own dates; the others on From / Upto's day and month, in the year they fall in.
+    let from = y1;
+    let upto = y2;
+    if (combo !== 1 && !monthWise) {
+      const inYear = (date: Date) => new Date(month(date) <= 3 ? y2.getFullYear() : y1.getFullYear(), date.getMonth(), date.getDate());
+      from = inYear(call.from);
+      upto = inYear(call.upto);
+    }
+    const period = [desktopDate(from), desktopDate(upto)];
+    const products = (await runReportSql(loader, `SELECT prod_key, prod_short, prod_desc, prod_pos, inventory FROM ${schema}.product_master`)).rows
+      .map((row) => ({ key: num(row.prod_key), code: toText(row.prod_short), desc: toText(row.prod_desc), pos: toText(row.prod_pos), inventory: toText(row.inventory) }));
+    const opening = new Map<number, number>();
+    const movement = new Map<number, { add: number; less: number; net: number }>();
+    const byProduct = new Map<number, Map<number, number>>();
+    if (combo === 1) {
+      for (const row of (await runReportSql(loader, `SELECT prod_id, sum(open_pcs) AS v FROM ${schema}.prod_balance WHERE prec_flag = 'RP' GROUP BY prod_id`)).rows) opening.set(num(row.prod_id), num(row.v));
+      const moved = await runReportSql(loader, `SELECT prod_id, sum(CASE WHEN stock_nat = 'A' THEN ${quantity} ELSE 0 END) AS add_q, sum(CASE WHEN stock_nat = 'L' THEN ${quantity} ELSE 0 END) AS less_q,`
+        + ` sum(CASE WHEN stock_nat = 'A' THEN quantity - ag_qty ELSE -(quantity - ag_qty) END) AS net_q FROM ${schema}.prod_ledger`
+        + ` WHERE il_pos = 'A' AND inventory = 'Y' AND il_date BETWEEN $1 AND $2 GROUP BY prod_id`, period);
+      for (const row of moved.rows) movement.set(num(row.prod_id), { add: num(row.add_q), less: num(row.less_q), net: num(row.net_q) });
+    } else {
+      const natured: Record<number, string> = { 2: "CASE WHEN stock_nat = 'L' THEN QTY ELSE 0 END", 3: "CASE WHEN stock_nat = 'A' THEN QTY ELSE 0 END" };
+      const wheres: Record<number, string> = { 2: "book = 8 AND process_id IS NULL", 3: "book = 13 AND process_id IS NULL", 4: "book = 16 AND process_id IS NULL", 5: "book = 11 AND process_id IS NULL", 6: "trn_stkmid = 'SA' AND led_id IS NULL", 7: "trn_stkmid = 'SL' AND led_id IS NULL" };
+      if (!wheres[combo]) throw new ReportRefusal(`Multi Year Stock Summary does not know the choice ${combo}.`, "INTERNAL PROGRAM FAILURE");
+      const value = (natured[combo] ?? "QTY").replace(/QTY/g, quantity);
+      const rows = (await runReportSql(loader, `SELECT prod_id, ${monthWise ? "m, sum(v) AS v, grouping(m) AS g" : "sum(v) AS v, 1 AS g"}`
+        + ` FROM (SELECT prod_id, extract(month FROM il_date)::int AS m, ${value} AS v FROM ${schema}.prod_ledger WHERE il_pos = 'A' AND ${wheres[combo]} AND il_date BETWEEN $1 AND $2) q`
+        + ` GROUP BY ${monthWise ? "GROUPING SETS ((prod_id, m), (prod_id))" : "prod_id"}`, period)).rows;
+      for (const row of rows) {
+        const id = num(row.prod_id);
+        const months = byProduct.get(id) ?? new Map<number, number>();
+        months.set(num(row.g) === 1 ? 0 : num(row.m), num(row.v));
+        byProduct.set(id, months);
+      }
+    }
+    data.push({ from, upto, products, opening, movement, quantity: byProduct });
+  }
+  return multiYearStockTable(data, combo, monthWise);
+}
+
+// ======================================================================================
+// 105: MULTI YEAR LEDGER (SP_FRT_RPT_MULTI_YEAR_ACCOUNT_LEDGER_REP; ANALYSIS REP. > Multi Year > Ledger)
+// ======================================================================================
+//
+// One account (the Account group's single pick) through the company's years that meet From .. Upto: in each year's database the account of
+// the same name and book, its postings between From and Upto (not the year's dates), one ledger line each; then the account's heading, the
+// opening (the first year's) and the closing row, in the SORTING_COL order. The running balance is the output layer's (closing_bal).
+//  - UNION in the procedure drops identical rows: the same here, over the lines of all the years.
+//  - The opening is the first year's AC_BALANCE opening plus its postings before From. The procedure shows only abs(opening) in Credit
+//    when the total is negative; here the credit is the total itself.
+
+async function multiYearLedger(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const key = call.selectKey[4];
+  if (key.includes(",")) throw new ReportRefusal("Multiple Account Selection Not Allowed", "INTERNAL PROGRAM FAILURE");
+  if (key === "") throw new ReportRefusal("Select an account (Account group)", "INTERNAL PROGRAM FAILURE");
+  const db = call.database;
+  const picked = (await runReportSql(loader, `SELECT btrim(name) AS name, coalesce(book,0) AS book FROM ${db}ACCOUNT WHERE a_pos <> 'D' AND code IN ${key} ORDER BY (a_pos = 'A') DESC, code`)).rows[0];
+  if (!picked) return new ResultTable();
+  const name = toText(picked.name);
+  const book = num(picked.book);
+  const narration = call.checkQuery.includes("CHK_NARRATION,");
+  const columns = ["SORTING_COL", "ROW_DATA_TYPE", "SMART_NAME", "selected_date", "FULL_DOCNO", "NAME", "Debit", "Credit", "closing_bal", "DR_CR", "doc_no1", ...(narration ? ["NARRATION"] : [])];
+  const table = new ResultTable();
+  for (const column of columns) table.addColumn(column);
+  for (const column of ["Debit", "Credit", "closing_bal"]) table.setKind(column, "decimal");
+
+  const found: { schema: string; code: number }[] = [];
+  for (const year of await companyYears(loader, plan)) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','ac_balance','ledger','ledger_post')", [schema])).rows[0];
+    if (num(exists?.n) < 4) continue;
+    const account = (await runReportSql(loader, `SELECT code FROM ${schema}.account WHERE btrim(name) = $1 AND a_pos <> 'D' AND coalesce(book,0) = $2 ORDER BY code DESC LIMIT 1`, [name, book])).rows[0];
+    found.push({ schema, code: num(account?.code) });
+  }
+  if (found.length === 0) return table;
+
+  // Licences 19, 29, 68 and 73 leave out the vouchers of the CA_ENT books when the first year has none of them.
+  const hideBooks = [19, 29, 68, 73].includes(call.licence)
+    && num((await runReportSql(loader, `SELECT count(*)::int AS n FROM ${found[0].schema}.account WHERE a_pos <> 'D' AND strpos(a_short, 'CA_ENT') > 0`)).rows[0]?.n) === 0;
+  const rows: ResultRow[] = [];
+  for (const { schema, code } of found) {
+    if (code === 0) continue;
+    const lines = await runReportSql(loader, `SELECT btrim(ac.name) || '   P' || to_char(led.doc_date, 'YYYYMMDD') || led.doc_no || led.led_key::text || 'LED' AS "SORTING_COL", 'LED' AS "ROW_DATA_TYPE", btrim(ac.name) AS "SMART_NAME",`
+      + ` to_char(led.doc_date, 'DD/MM/YYYY') AS "selected_date", led.full_docno AS "FULL_DOCNO",`
+      + ` CASE WHEN led.book <> 19 THEN (SELECT acn.name FROM ${schema}.account acn WHERE acn.code = led.book_code AND acn.a_pos = 'A' LIMIT 1) ELSE 'JOURNAL' END AS "NAME",`
+      + ` CASE WHEN ledpost.post_dbcode = 1 THEN ledpost.post_amt::numeric ELSE 0.00 END AS "Debit", CASE WHEN ledpost.post_dbcode = 2 THEN ledpost.post_amt::numeric ELSE 0.00 END AS "Credit",`
+      + ` 0.00 AS "closing_bal", '' AS "DR_CR", btrim(led.doc_no1) AS "doc_no1"${narration ? ", btrim(led.narration) AS \"NARRATION\"" : ""}`
+      + ` FROM ${schema}.ledger_post ledpost LEFT JOIN ${schema}.ledger led ON ledpost.led_id = led.led_key JOIN ${schema}.account ac ON ac.code = ledpost.post_code AND ac.a_pos = 'A'`
+      + ` WHERE led.doc_pos <> 'D' AND led.doc_posting = 'P' AND ledpost.post_date BETWEEN $1 AND $2 AND ledpost.post_code = $3`
+      + (hideBooks ? "" : ` AND led.book_code IN (SELECT code FROM ${schema}.account WHERE a_short <> 'CA_ENT')`), [desktopDate(call.from), desktopDate(call.upto), code]);
+    rows.push(...lines.rows);
+  }
+
+  // The first year's account: heading, opening and closing.
+  const first = found[0];
+  const open = (await runReportSql(loader, `SELECT btrim(ac.name) AS name, acbal.opening::numeric AS opening, coalesce((SELECT sum(CASE WHEN post_dbcode = 1 THEN post_amt::numeric ELSE 0.00 END) - sum(CASE WHEN post_dbcode = 2 THEN post_amt::numeric ELSE 0.00 END)`
+    + ` FROM ${first.schema}.ledger_post WHERE post_date < $1 AND post_code = ac.code), 0) AS before FROM ${first.schema}.account ac LEFT JOIN ${first.schema}.ac_balance acbal ON acbal.code = ac.code WHERE ac.a_pos <> 'D' AND ac.code = $2`, [desktopDate(call.from), first.code])).rows;
+  const blank = (values: ResultRow): ResultRow => { const row: ResultRow = {}; for (const column of columns) row[column] = ""; return Object.assign(row, { Debit: 0, Credit: 0, closing_bal: 0 }, values); };
+  const seen = new Set<string>();
+  const unique = (row: ResultRow) => { const text = JSON.stringify(columns.map((column) => row[column])); if (seen.has(text)) return false; seen.add(text); return true; };
+  const all: ResultRow[] = rows.filter(unique);
+  for (const row of open) {
+    const total = row.opening === null ? null : num(row.opening) + num(row.before);
+    const label = toText(row.name);
+    for (const candidate of [
+      blank({ SORTING_COL: `${label}   O`, ROW_DATA_TYPE: "OPENINGS", SMART_NAME: label, selected_date: ddMmYyyy(call.from), NAME: " Opening Balance B/d", Debit: total !== null && total > 0 ? total : 0, Credit: total !== null && total < 0 ? Math.abs(total) : 0, closing_bal: total ?? 0, DR_CR: total !== null && total < 0 ? "Cr" : "Dr" }),
+      blank({ SORTING_COL: `${label}   H`, ROW_DATA_TYPE: "AC", SMART_NAME: label, NAME: label }),
+      blank({ SORTING_COL: `${label}zzz`, ROW_DATA_TYPE: "CLOSING", SMART_NAME: label, selected_date: ddMmYyyy(call.upto), NAME: "Closing Balance B/d" }),
+    ]) if (unique(candidate)) all.push(candidate);
+  }
+  // ORDER BY sorting_col: a voucher without a number (a null) last.
+  table.rows = all
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const x = a.row.SORTING_COL as string | null;
+      const y = b.row.SORTING_COL as string | null;
+      if (x === y) return a.index - b.index;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return x < y ? -1 : 1;
+    })
+    .map(({ row }) => row);
+  return table;
+}
+
+// ======================================================================================
+// 106: MULTI YEAR EXPENSE SUMMARY (SP_FRT_RPT_MULTI_YEAR_EXPENSE_SUMMARY_REP; ANALYSIS REP. > Multi Year > Expense)
+// ======================================================================================
+//
+// The same years as 103, each read from its own database, always on From / Upto's day and month in the year. The procedure asks every
+// account's debits with a sub-query of its own per column; here a year is two reads (the book 1 accounts with their balance sheet head, the
+// postings grouped by account and month) matched in memory, the rows made in multiYearExpense.ts. With three or more years the procedure also
+// asks each earlier account's balance sheet head to be the same one; here the name and book are enough.
+
+async function multiYearExpense(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const monthWise = call.checkQuery.includes("CHK_MONTHWISE,");
+  const data: ExpenseYear[] = [];
+  for (const year of await companyYears(loader, plan)) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','balsheet','ledger','ledger_post')", [schema])).rows[0];
+    if (num(exists?.n) < 4) continue;
+    const y1 = year.y1 as Date;
+    const y2 = year.y2 as Date;
+    const inYear = (date: Date) => new Date(date.getMonth() <= 2 ? y2.getFullYear() : y1.getFullYear(), date.getMonth(), date.getDate());
+    const from = inYear(call.from);
+    const upto = inYear(call.upto);
+    const period = [desktopDate(from), desktopDate(upto)];
+    const accounts = (await runReportSql(loader, `SELECT ac.code, btrim(ac.name) AS name, ac.a_pos, bal.bs_desc, left(bal.bs_code::text, 2) = '02' AS expense FROM ${schema}.account ac LEFT JOIN ${schema}.balsheet bal ON bal.bs_key = ac.bs_id WHERE ac.book = 1 ORDER BY ac.code`)).rows
+      .map((row) => ({ code: num(row.code), name: toText(row.name), live: toText(row.a_pos) === "A", head: toText(row.bs_desc), expense: row.expense === true }));
+    const sums = "sum(CASE WHEN ledpost.post_dbcode = 1 THEN ledpost.post_amt::numeric ELSE 0 END) AS dr, sum(CASE WHEN ledpost.post_dbcode = 2 THEN ledpost.post_amt::numeric ELSE 0 END) AS cr";
+    const posted = (await runReportSql(loader, `SELECT ledpost.post_code AS code, ${monthWise ? "extract(month FROM ledpost.post_date)::int AS m, grouping(extract(month FROM ledpost.post_date)::int) AS g," : "1 AS g,"} ${sums}`
+      + ` FROM ${schema}.ledger led JOIN ${schema}.ledger_post ledpost ON ledpost.led_id = led.led_key JOIN ${schema}.account ac ON ac.code = ledpost.post_code AND ac.book = 1`
+      + ` WHERE led.doc_pos <> 'D' AND led.doc_posting = 'P' AND ledpost.post_date BETWEEN $1 AND $2`
+      + ` GROUP BY ${monthWise ? "GROUPING SETS ((ledpost.post_code, extract(month FROM ledpost.post_date)::int), (ledpost.post_code))" : "ledpost.post_code"}`, period)).rows;
+    const debit = new Map<number, Map<number, number>>();
+    const credit = new Map<number, number>();
+    for (const row of posted) {
+      const code = num(row.code);
+      const months = debit.get(code) ?? new Map<number, number>();
+      months.set(num(row.g) === 1 ? 0 : num(row.m), num(row.dr));
+      debit.set(code, months);
+      if (num(row.g) === 1) credit.set(code, num(row.cr));
+    }
+    data.push({ from, upto, accounts, debit, credit });
+  }
+  return multiYearExpenseTable(data, monthWise);
+}
+
+// ======================================================================================
+// 125: MULTI YEAR STOCK LEDGER (SP_FRT_RPT_MULTI_YEAR_STOCK_LEDGER_REP; ANALYSIS REP. > Multi Year > Stock Ledger)
+// ======================================================================================
+//
+// One product (the Product group's single pick) through the company's years meeting From .. Upto: in each year's database the product of the
+// same short code, its stock lines between From and Upto (not the year's dates) in the product's first report unit, then the product's heading
+// and the first year's opening, the lines in date order with the running CLSG_QTY (what the procedure's UPDATE sums over OCOL1). As the
+// single-year stock ledger (reportStandard.ts) takes its lines. The procedure looks up each line's tax name with a sub-query that reads all of
+// LEDGER_EXT; here the tax names of the lines' vouchers are read once.
+//  - the opening is the first year's, as the procedure (a From after the year's start leaves out what moved before it).
+
+async function multiYearStockLedger(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const key = call.selectKey[4];
+  if (key.includes(",")) throw new ReportRefusal("Multiple Product Selection Not Allowed", "INTERNAL PROGRAM FAILURE");
+  if (key === "") throw new ReportRefusal("Select a product (Product group)", "INTERNAL PROGRAM FAILURE");
+  const db = call.database;
+  const factor = call.checkQuery.includes("CHK_FACTCOL,");
+  const bundles = call.licence === 2;
+  const short = toText((await runReportSql(loader, `SELECT prod_short FROM ${db}PRODUCT_MASTER WHERE prod_pos = 'A' AND prod_key IN ${key} ORDER BY prod_key DESC LIMIT 1`)).rows[0]?.prod_short);
+  const columns = ["SORTING_COL", "ROW_DATA_TYPE", "SELECTED_DATE", "FULL_DOCNO", "NAME", "PROD_SHORT", "SELECTED_PRODUCT", "ADD_QTY", "LESS_QTY", "CLSG_QTY", "UOM1", "STOCK_NAT",
+    ...(factor ? ["ADD_FACT", "LESS_FACT", "BAL_FACT"] : []), "Rate", ...(factor ? ["UOM2"] : []), "TAX", "DOC_NO1", ...(bundles ? ["ADD_BUNDLE", "LESS_BUNDLE", "BAL_BUNDLE", "PACKING"] : [])];
+  const table = new ResultTable();
+  for (const column of columns) table.addColumn(column);
+  for (const column of ["ADD_QTY", "LESS_QTY", "CLSG_QTY", "Rate", ...(factor ? ["ADD_FACT", "LESS_FACT", "BAL_FACT"] : []), ...(bundles ? ["ADD_BUNDLE", "LESS_BUNDLE", "BAL_BUNDLE", "PACKING"] : [])]) table.setKind(column, "decimal");
+  if (short === "") return table;
+
+  const years: { schema: string; code: number }[] = [];
+  for (const year of await companyYears(loader, plan)) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('product_master','prod_ledger','prod_balance','prod_uom','level_master','account')", [schema])).rows[0];
+    if (num(exists?.n) < 6) continue;
+    const product = (await runReportSql(loader, `SELECT prod_key FROM ${schema}.product_master WHERE prod_short = $1 AND prod_pos <> 'D' ORDER BY prod_key DESC LIMIT 1`, [short])).rows[0];
+    years.push({ schema, code: num(product?.prod_key) });
+  }
+  if (years.length === 0) return table;
+  const first = years[0];
+  const typeKey = num((await runReportSql(loader, `SELECT book_key FROM ${first.schema}.book_properties WHERE stkm_pos = 'A' AND stkm_id = 'NR' ORDER BY stkmodule LIMIT 1`)).rows[0]?.book_key);
+  const hideBooks = [19, 29, 68, 73].includes(call.licence)
+    && num((await runReportSql(loader, `SELECT count(*)::int AS n FROM ${first.schema}.account WHERE a_pos <> 'D' AND strpos(a_short, 'CA_ENT') > 0`)).rows[0]?.n) === 0;
+
+  const description = (p: string) => `case when level.div_maxlvl = level.stock_level then ${p}.prod_desc when level.stock_level = 1 then ${p}.desc_1 when level.stock_level = 2 then ${p}.desc_1 || ' ' || ${p}.desc_2`
+    + ` when level.stock_level = 3 then ${p}.desc_1 || ' ' || ${p}.desc_2 || ' ' || ${p}.desc_3 when level.stock_level = 4 then ${p}.desc_1 || ' ' || ${p}.desc_2 || ' ' || ${p}.desc_3 || ' ' || ${p}.desc_4 else ' ' end`;
+  const unit = (side: "rep1_uom" | "rep2_uom", pick: (column: string) => string, other: string) => `case ${["pcs", "qty1", "qty2", "qty3", "pack", "weight"].map((name) => `when p.${side} = p.${name}_uom then ${pick(name === "pcs" ? "trn_pcs" : name === "pack" ? "trn_pack" : name === "weight" ? "trn_weight" : `trn_${name}`)}`).join(" ")} else ${other} end`;
+  const moved = (nature: "A" | "L", whole: string) => `case pl.stock_nat when '${nature}' then ${unit("rep1_uom", (column) => `case when pl.trn_module = '${whole}' then pl.${column} else pl.${column} - pl.ag_qty end`, "case when pl.trn_module = '" + whole + "' then pl.trn_pcs else pl.trn_pcs - pl.ag_qty end")} else 0.00 end`;
+  const openingUnit = (side: "rep1_uom" | "rep2_uom") => `case ${[["pcs", "open_pcs"], ["qty1", "open_qty1"], ["qty2", "open_qty2"], ["qty3", "open_qty3"], ["pack", "open_pack"], ["weight", "open_weight"]].map(([name, column]) => `when p.${side} = p.${name}_uom then pb.${column}`).join(" ")} else pb.open_pcs end`;
+
+  type Line = { date: Date; year: number; nature: string; key: number; row: ResultRow };
+  const lines: Line[] = [];
+  for (const [index, { schema, code }] of years.entries()) {
+    if (code === 0) continue;
+    const fetched = await runReportSql(loader, `SELECT pl.il_key, pl.il_date, to_char(pl.il_date, 'DD/MM/YYYY') AS d, pl.full_docno, ac.name AS ac_name, p.prod_short, ${description("p")} AS selected_product,`
+      + ` ${moved("A", "JOB-IN")} AS add_qty, ${moved("L", "JOB-OUT")} AS less_qty, (SELECT u.uom_short FROM ${schema}.prod_uom u WHERE u.uom_key = p.rep1_uom) AS uom1, pl.stock_nat,`
+      + ` case pl.stock_nat when 'A' then pl.factor - round((pl.ag_qty / pl.quantity * pl.trn_qty1)::numeric, 4) else 0.00 end AS add_fact, case pl.stock_nat when 'L' then pl.factor - round((pl.ag_qty / pl.quantity * pl.trn_qty1)::numeric, 4) else 0.00 end AS less_fact,`
+      + ` coalesce(pl.rate, 0) AS rate, (SELECT u.uom_short FROM ${schema}.prod_uom u WHERE u.uom_key = p.rep2_uom) AS uom2, pl.doc_no1, pl.led_id,`
+      + ` case pl.stock_nat when 'A' then pl.bundle - coalesce(pl.ag_pack, 0) else 0.00 end AS add_bundle, case pl.stock_nat when 'L' then pl.bundle - coalesce(pl.ag_pack, 0) else 0.00 end AS less_bundle, pl.pack_qty`
+      + ` FROM ${schema}.prod_ledger pl JOIN ${schema}.product_master p ON pl.prod_id = p.prod_key LEFT JOIN ${schema}.account ac ON pl.code = ac.code LEFT JOIN ${schema}.level_master level ON p.prod_group = level.prod_group`
+      + ` WHERE p.inventory = 'Y' AND p.prod_pos <> 'D' AND pl.inventory = 'Y' AND pl.il_pos = 'A' AND (pl.quantity - pl.ag_qty > 0 OR pl.trn_module = 'JOB-OUT' OR pl.trn_module = 'JOB-IN')`
+      + ` AND pl.il_date BETWEEN $1 AND $2 AND p.prod_key = $3 AND pl."TYPE" <> $4`
+      + (hideBooks ? "" : ` AND pl.book_code IN (SELECT code FROM ${schema}.account WHERE a_pos = 'A')`), [desktopDate(call.from), desktopDate(call.upto), code, typeKey]);
+    for (const row of fetched.rows) {
+      lines.push({ date: row.il_date as Date, year: index, nature: toText(row.stock_nat), key: num(row.il_key), row: { ...row, schema } });
+    }
+  }
+  // The tax name of a line's voucher: the lowest tax of its LEDGER_EXT lines (the procedure's TOP 1).
+  const taxOf = new Map<string, string>();
+  for (const { schema } of years) {
+    const ids = [...new Set(lines.filter((line) => line.row.schema === schema && line.row.led_id !== null).map((line) => num(line.row.led_id)))];
+    if (ids.length === 0) continue;
+    const taxes = new Map((await runReportSql(loader, `SELECT tax_rec, tax_repohd FROM ${schema}.tax_master`)).rows.map((row) => [num(row.tax_rec), toText(row.tax_repohd)] as const));
+    const best = new Map<number, number>();
+    for (const row of (await runReportSql(loader, `SELECT led_id, tax_id FROM ${schema}.ledger_ext WHERE led_id = ANY($1::int[]) AND tax_id IS NOT NULL`, [ids])).rows) {
+      const led = num(row.led_id);
+      const tax = num(row.tax_id);
+      if (taxes.has(tax) && (!best.has(led) || tax < best.get(led)!)) best.set(led, tax);
+    }
+    for (const [led, tax] of best) taxOf.set(`${schema}:${led}`, taxes.get(tax)!);
+  }
+
+  const money2 = (value: number) => Math.round(value * 10000) / 10000;
+  const blank = (values: ResultRow): ResultRow => {
+    const row: ResultRow = {};
+    for (const column of columns) row[column] = ["ADD_QTY", "LESS_QTY", "CLSG_QTY", "Rate", "ADD_FACT", "LESS_FACT", "BAL_FACT", "ADD_BUNDLE", "LESS_BUNDLE", "BAL_BUNDLE", "PACKING"].includes(column) ? 0 : "";
+    return Object.assign(row, values);
+  };
+  const out: ResultRow[] = [];
+  // The first year's heading and opening (only a product with an opening gets one).
+  if (first.code !== 0) {
+    const head = (await runReportSql(loader, `SELECT p.prod_short, ${description("p")} AS selected_product, ${openingUnit("rep1_uom")} AS add_qty, ${openingUnit("rep2_uom")} AS add_fact,`
+      + ` (SELECT u.uom_short FROM ${first.schema}.prod_uom u WHERE u.uom_key = p.rep1_uom) AS uom1, (SELECT u.uom_short FROM ${first.schema}.prod_uom u WHERE u.uom_key = p.rep2_uom) AS uom2, pb.open_pcs,`
+      + ` coalesce((SELECT sum(open_pack) FROM ${first.schema}.prod_balance WHERE prec_flag = 'PK' AND prod_id = p.prod_key), 0.00) AS bundles`
+      + ` FROM ${first.schema}.product_master p LEFT JOIN ${first.schema}.prod_balance pb ON pb.prod_id = p.prod_key LEFT JOIN ${first.schema}.level_master level ON p.prod_group = level.prod_group`
+      + ` WHERE p.prod_pos <> 'D' AND p.inventory = 'Y' AND pb.prec_flag = 'RP' AND p.prod_key = $1`, [first.code])).rows;
+    for (const row of head) {
+      const name = toText(row.prod_short);
+      const common = { PROD_SHORT: name, SELECTED_PRODUCT: toText(row.selected_product) };
+      out.push(blank({ ...common, SORTING_COL: `${name}   H`, ROW_DATA_TYPE: "AC", NAME: name }));
+      if (num(row.open_pcs) !== 0) out.push(blank({ ...common, SORTING_COL: `${name}   O`, ROW_DATA_TYPE: "OPENINGS", SELECTED_DATE: ddMmYyyy(call.from), NAME: "Opening", ADD_QTY: num(row.add_qty), UOM1: toText(row.uom1), ADD_FACT: num(row.add_fact), UOM2: toText(row.uom2), ADD_BUNDLE: num(row.bundles) }));
+    }
+  }
+  lines.sort((a, b) => a.date.getTime() - b.date.getTime() || a.year - b.year || (a.nature < b.nature ? -1 : a.nature > b.nature ? 1 : 0) || a.key - b.key);
+  lines.forEach((line, index) => {
+    const { row } = line;
+    const name = toText(row.prod_short);
+    out.push(blank({
+      SORTING_COL: `${name}   P${toText(row.d).split("/").reverse().join("")}LED ${String(index + 1).padStart(10, "0")}`, ROW_DATA_TYPE: "LED", SELECTED_DATE: toText(row.d), FULL_DOCNO: row.full_docno, NAME: row.ac_name, PROD_SHORT: name,
+      SELECTED_PRODUCT: toText(row.selected_product), ADD_QTY: num(row.add_qty), LESS_QTY: num(row.less_qty), UOM1: toText(row.uom1), STOCK_NAT: row.stock_nat, ADD_FACT: num(row.add_fact), LESS_FACT: num(row.less_fact),
+      Rate: num(row.rate), UOM2: toText(row.uom2), TAX: taxOf.get(`${toText(row.schema)}:${num(row.led_id)}`) ?? null, DOC_NO1: row.doc_no1, ADD_BUNDLE: num(row.add_bundle), LESS_BUNDLE: num(row.less_bundle), PACKING: num(row.pack_qty),
+    }));
+  });
+  // The running CLSG_QTY (and the factor / bundle balances): the sum of the product's rows up to the row (the heading excepted).
+  let balance = 0;
+  let balanceFact = 0;
+  let balanceBundle = 0;
+  for (const row of out) {
+    if (row.ROW_DATA_TYPE === "AC") continue;
+    balance = money2(balance + num(row.ADD_QTY) - num(row.LESS_QTY));
+    balanceFact = money2(balanceFact + num(row.ADD_FACT) - num(row.LESS_FACT));
+    balanceBundle = money2(balanceBundle + num(row.ADD_BUNDLE) - num(row.LESS_BUNDLE));
+    row.CLSG_QTY = balance;
+    if (factor) row.BAL_FACT = balanceFact;
+    if (bundles) row.BAL_BUNDLE = balanceBundle;
+  }
+  table.rows = out;
+  return table;
+}
+
+// ======================================================================================
+// 133: MULTI YEAR PARTY STOCK (SP_FRT_RPT_MULTI_YEAR_PARTY_STOCK_REP; ANALYSIS REP. > Multi Year > Party Wise Stock)
+// ======================================================================================
+//
+// One party (the Account group's single pick) through the company's years meeting From .. Upto: in each year's database the account of the
+// same name, its stock lines between From and Upto (not the year's dates), one row each (quantity in or out, rate, unit, purchase / sale value),
+// in SORTING_COL order. The first combo is SALE (8: a debtor, its sale, purchase and credit note lines) or PURCHASE (13: a creditor, its
+// purchase, debit note and sale lines). As the procedure there is no heading, opening or total row; identical rows are dropped as its UNION does.
+// MRP_RATE shows when the setup's entry_para does not have X_MRP.
+
+async function multiYearPartyStock(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const key = call.selectKey[4];
+  if (key.includes(",")) throw new ReportRefusal("Multiple Account Selection Not Allowed", "INTERNAL PROGRAM FAILURE");
+  if (key === "") throw new ReportRefusal("Select an account (Account group)", "INTERNAL PROGRAM FAILURE");
+  const db = call.database;
+  const name = toText((await runReportSql(loader, `SELECT btrim(name) AS name FROM ${db}ACCOUNT WHERE a_pos = 'A' AND code IN ${key} ORDER BY code DESC LIMIT 1`)).rows[0]?.name);
+  const sale = call.fcValue === 8;
+  const columns = ["SORTING_COL", "ROW_DATA_TYPE", "SMART_NAME", "selected_date", "FULL_DOCNO", "DOC_NO1", "NAME", "PROD_DESC", "ADD_QTY", "LESS_QTY"];
+  const table = new ResultTable();
+  const years: { schema: string; code: number }[] = [];
+  for (const year of await companyYears(loader, plan)) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','prod_ledger','product_master','prod_uom','setup')", [schema])).rows[0];
+    if (num(exists?.n) < 5) continue;
+    const account = name === "" ? undefined : (await runReportSql(loader, `SELECT code FROM ${schema}.account WHERE btrim(name) = $1 AND a_pos <> 'D' ORDER BY code DESC LIMIT 1`, [name])).rows[0];
+    years.push({ schema, code: num(account?.code) });
+  }
+  const mrp = years.length > 0 && ((await runReportSql(loader, `SELECT position('X_MRP,' in entry_para) AS at FROM ${years[0].schema}.setup`)).rows[0]?.at ?? 0) === 0;
+  columns.push(...(mrp ? ["MRP_RATE"] : []), "RATE", "UOM_SHORT", "PURCH_VALUE", "SALE_VALUE");
+  for (const column of columns) table.addColumn(column);
+  for (const column of ["ADD_QTY", "LESS_QTY", "MRP_RATE", "RATE", "PURCH_VALUE", "SALE_VALUE"]) if (columns.includes(column)) table.setKind(column, "decimal");
+  if (years.length === 0) return table;
+
+  const hideBooks = [19, 29, 68, 73].includes(call.licence)
+    && num((await runReportSql(loader, `SELECT count(*)::int AS n FROM ${years[0].schema}.account WHERE a_pos <> 'D' AND strpos(a_short, 'CA_ENT') > 0`)).rows[0]?.n) === 0;
+  const seen = new Set<string>();
+  const rows: ResultRow[] = [];
+  for (const { schema, code } of years) {
+    if (code === 0) continue;
+    const lines = await runReportSql(loader, `SELECT ac.name || '   P' || to_char(prodled.il_date, 'YYYYMMDD') || prodled.full_docno || prodled.il_key::text || 'LED' AS "SORTING_COL", 'LED' AS "ROW_DATA_TYPE", ac.name AS "SMART_NAME",`
+      + ` to_char(prodled.il_date, 'DD/MM/YYYY') AS "selected_date", prodled.full_docno AS "FULL_DOCNO", prodled.doc_no1 AS "DOC_NO1", ac.name AS "NAME", prodmas.prod_desc AS "PROD_DESC",`
+      + ` CASE WHEN prodled.stock_nat = 'A' THEN prodled.quantity ELSE 0.00 END AS "ADD_QTY", CASE WHEN prodled.stock_nat = 'L' THEN prodled.quantity ELSE 0.00 END AS "LESS_QTY",`
+      + (mrp ? ` prodled.master_rate::numeric AS "MRP_RATE",` : "") + ` prodled.rate::numeric AS "RATE", prduom.uom_short AS "UOM_SHORT",`
+      + ` CASE WHEN prodled.stock_nat = 'A' THEN prodled.il_value::numeric ELSE 0.00 END AS "PURCH_VALUE", CASE WHEN prodled.stock_nat = 'L' THEN prodled.il_value::numeric ELSE 0.00 END AS "SALE_VALUE"`
+      + ` FROM ${schema}.prod_ledger prodled LEFT JOIN ${schema}.account ac ON ac.code = prodled.code LEFT JOIN ${schema}.product_master prodmas ON prodmas.prod_key = prodled.prod_id LEFT JOIN ${schema}.prod_uom prduom ON prduom.uom_key = prodled.rateuom_id`
+      + ` WHERE prodled.il_pos <> 'D' AND ac.a_pos = 'A' AND prodled.quantity - prodled.ag_qty > 0 AND prodled.inventory = 'Y' AND prodled.il_date BETWEEN $1 AND $2 AND prodled.code = $3`
+      + (sale ? " AND ac.book = 2 AND prodled.book IN (8, 13, 16)" : " AND ac.book = 3 AND prodled.book IN (13, 11, 8)")
+      + (hideBooks ? "" : ` AND prodled.book_code IN (SELECT code FROM ${schema}.account WHERE a_pos = 'A')`), [desktopDate(call.from), desktopDate(call.upto), code]);
+    for (const row of lines.rows) {
+      const text = JSON.stringify(columns.map((column) => row[column]));
+      if (!seen.has(text)) { seen.add(text); rows.push(row); }
+    }
+  }
+  table.rows = rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const x = a.row.SORTING_COL as string | null;
+      const y = b.row.SORTING_COL as string | null;
+      if (x === y) return a.index - b.index;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return x < y ? -1 : 1;
+    })
+    .map(({ row }) => row);
+  return table;
+}
+
+// ======================================================================================
+// 176: MULTI YEAR PARTY PRODUCT ADDON SALE (SP_FRT_RPT_MULTI_YEAR_PARTY_PRODADDON_SALE; ANALYSIS REP. > Multi Year > Party Product Addon Sale)
+// ======================================================================================
+//
+// What each party bought, by the product addon groups (the master addon fields of the products: PRODGROUP, PRODTYPE ...), year by year: the
+// sale book's stock lines (with a voucher) of each of the company's years (as report 103, the year's own dates), the quantity added up by party
+// and addon values. A column a year (Sale_25_26), or with Month Wise Require a column a month, April first (Apr_25_26 ...), and TOTAL; rows
+// by party name. Licence 2 counts TRN_QTY3.
+//  - The procedure's addon fields are read with FIEL_ENTRYPOS = '' (nothing is found); here the products' master fields (FIEL_ENTRYPOS = 'N') as
+//    the other reports take them.
+//  - Month Wise: the procedure names the groups by the day (IL_DATE) and so none of its month columns is filled; here a month's column holds
+//    the quantity of its month.
+
+async function multiYearPartyProductAddonSale(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const monthWise = call.checkQuery.includes("CHK_MONTHWISE,");
+  const quantity = call.licence === 2 ? "sum(prodled.trn_qty3)" : "sum(prodled.quantity - prodled.ag_qty)";
+  const fields = (await runReportSql(loader, `SELECT btrim(fiel_save) AS save FROM ${db}ADDON_FLD WHERE fiel_pos = 'A' AND fiel_type = 'M' AND fiel_relate = 'P' AND fiel_masterpos = 'Y' AND fiel_entrypos = 'N' ORDER BY fiel_serial`)).rows
+    .map((row) => toText(row.save)).filter((name) => /^[A-Za-z0-9_]+$/.test(name));
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const fiscal = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
+  const yy = (date: Date) => String(date.getFullYear()).slice(-2);
+
+  const table = new ResultTable();
+  table.addColumn("SMART_NAME");
+  table.addColumn("NAME");
+  type Group = { name: string; addons: string[]; values: Map<string, number> };
+  const groups = new Map<string, Group>();
+  const usable: string[] = [];
+  const valueColumns: string[] = [];
+  let first = true;
+  for (const year of await companyYears(loader, plan)) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('prod_ledger','addon_data','account')", [schema])).rows[0];
+    if (num(exists?.n) < 3) continue;
+    if (first) {
+      // The addon fields this database has a text column for.
+      const have = new Set((await runReportSql(loader, "SELECT lower(column_name) AS name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'addon_data'", [schema])).rows.map((row) => toText(row.name)));
+      usable.push(...fields.filter((name) => have.has(`txt_${name.toLowerCase()}`)));
+      first = false;
+    }
+    const y1 = year.y1 as Date;
+    const y2 = year.y2 as Date;
+    const label = `${yy(y1)}_${yy(y2)}`;
+    const columns = monthWise ? fiscal.map((month) => ({ month, name: `${MONTHS[month - 1]}_${label}` })) : [{ month: 0, name: `Sale_${label}` }];
+    for (const column of columns) valueColumns.push(column.name);
+    const addonSelect = usable.map((name) => `padata.txt_${name} AS "${name}"`).join(", ");
+    const addonGroup = usable.map((name) => `padata.txt_${name}`).join(", ");
+    const rows = (await runReportSql(loader, `SELECT ac.name AS name${addonSelect === "" ? "" : `, ${addonSelect}`}, ${monthWise ? "extract(month FROM prodled.il_date)::int" : "0"} AS m, ${quantity} AS qty`
+      + ` FROM ${schema}.prod_ledger prodled LEFT JOIN ${schema}.addon_data padata ON padata.prod_id = prodled.prod_id LEFT JOIN ${schema}.account ac ON ac.code = prodled.code`
+      + ` WHERE prodled.il_pos = 'A' AND prodled.inventory = 'Y' AND prodled.book = 8 AND prodled.led_id IS NOT NULL AND prodled.il_date BETWEEN $1 AND $2`
+      + ` GROUP BY ac.name${addonGroup === "" ? "" : `, ${addonGroup}`}${monthWise ? ", extract(month FROM prodled.il_date)::int" : ""}`, [desktopDate(y1), desktopDate(y2)])).rows;
+    for (const row of rows) {
+      const addons = usable.map((name) => toText(row[name]));
+      const key = JSON.stringify([row.name === null ? null : toText(row.name), addons]);
+      const group = groups.get(key) ?? { name: row.name === null ? "" : toText(row.name), addons, values: new Map<string, number>() };
+      const column = columns.find((candidate) => candidate.month === num(row.m));
+      if (column) group.values.set(column.name, (group.values.get(column.name) ?? 0) + num(row.qty));
+      groups.set(key, group);
+    }
+  }
+  for (const name of usable) table.addColumn(name);
+  for (const name of valueColumns) table.setKind(name, "decimal");
+  table.setKind("TOTAL", "decimal");
+  table.rows = [...groups.values()]
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => (a.group.name.toUpperCase() === b.group.name.toUpperCase() ? a.index - b.index : a.group.name.toUpperCase() < b.group.name.toUpperCase() ? -1 : 1))
+    .map(({ group }) => {
+      const row: ResultRow = { SMART_NAME: group.name, NAME: group.name };
+      usable.forEach((name, at) => { row[name] = group.addons[at]; });
+      let total = 0;
+      for (const name of valueColumns) { const value = group.values.get(name); row[name] = value === undefined ? null : value; total += value ?? 0; }
+      row.TOTAL = Math.round(total * 100) / 100;
+      return row;
+    });
+  return table;
+}
+
+// ======================================================================================
+// 267: MULTI YEAR TOP REPORTS (SP_FRT_RPT_MULTY_YEAR_TOP_REPORTS; ANALYSIS REP. > Multi Year > Top Report)
+// ======================================================================================
+//
+// The first combo's Customers / Suppliers (by amount), Item Sold / Purchase by Value, Item Sold / Purchase by Quantity, for each of the company's
+// years (as report 103, at most ten) on its own database between From and Upto (the dates chosen, not the year's). Without Year As a Column: a
+// row a party / item of each year (YEAR_NAME, Row_No, name, amount ...) ordered by year, then amount (quantity) high first, and with Top Record
+// the first N of each year. With Year As a Column Require: a row a party / item, a column a year (2025_2026) and TOTAL, those with something
+// in a year only, ordered by TOTAL high first, and with Top Record the first N.
+// The amounts as the procedure takes them (the sale / purchase vouchers with the credit / debit notes against them; the stock lines' value or
+// quantity less the returns), not as the single year Top Reports (211) does. The procedure looks up each customer's quantity with a sub-query
+// that reads the stock lines once a customer; here it is one grouped read.
+
+async function multiYearTopReports(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const text = call.fcText.trim().toLowerCase();
+  const book = ["customers", "item sold by value", "item sold by quantity"].includes(text) ? 8 : 13;
+  const returns = book === 8 ? 16 : 11;
+  const mode = text === "customers" || text === "suppliers" ? "party" : text.endsWith("by value") ? "value" : "quantity";
+  const yearColumn = call.checkQuery.includes("CHK_YEARCOL,");
+  const limitText = call.text.find((value) => value.trim() !== "")?.trim() ?? "";
+  const limit = limitText !== "" && Number.isFinite(Number(limitText)) ? Math.trunc(Number(limitText)) : 0;
+  const period = [desktopDate(call.from), desktopDate(call.upto)];
+  const licenceHides = [19, 29, 68, 73].includes(call.licence);
+
+  type Entry = { name: string; amount: number; closing: number | null; invoices: number; quantity: number; stock: number | null };
+  const perYear: { label: string; entries: Entry[] }[] = [];
+  let hideBooks = true;
+  let checkedHide = false;
+  for (const year of await companyYears(loader, plan)) {
+    const schema = toText(year.schema_name);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('ledger','account','ac_balance','prod_ledger','product_master','prod_balance','addon_data')", [schema])).rows[0];
+    if (num(exists?.n) < 7) continue;
+    if (licenceHides && !checkedHide) {
+      hideBooks = num((await runReportSql(loader, `SELECT count(*)::int AS n FROM ${schema}.account WHERE a_pos <> 'D' AND strpos(a_short, 'CA_ENT') > 0`)).rows[0]?.n) > 0;
+      checkedHide = true;
+    }
+    const hide = !hideBooks && licenceHides;
+    const label = `${(year.y1 as Date).getFullYear()}_${(year.y2 as Date).getFullYear()}`;
+    const finishGoods = call.licence === 21 && book === 8 ? " AND adata.txt_prodtype = 'Finish Goods'" : "";
+    let rows: ResultRow[];
+    if (mode === "party") {
+      const amount = book === 8
+        ? "sum(CASE WHEN led.ag_book = 8 AND led.ac_dbcode = 2 THEN led.amount::numeric * -1 WHEN led.ag_book = 8 AND led.ac_dbcode = 1 THEN led.amount::numeric WHEN led.ag_book = 0 THEN led.amount::numeric END)"
+        : "sum(CASE WHEN led.ag_book = 13 AND led.ac_dbcode = 1 THEN led.amount::numeric * -1 WHEN led.ag_book = 13 AND led.ac_dbcode = 2 THEN led.amount::numeric WHEN led.ag_book = 0 THEN led.amount::numeric END)";
+      rows = (await runReportSql(loader, `SELECT ac.name AS name, ${amount} AS amount, acbal.closing::numeric AS clsg_bal, count(*)::int AS invoices, coalesce(q.qty, 0) AS qty`
+        + ` FROM ${schema}.ledger led LEFT JOIN ${schema}.account ac ON ac.code = led.code LEFT JOIN ${schema}.ac_balance acbal ON acbal.code = ac.code`
+        + ` LEFT JOIN (SELECT code, sum(CASE WHEN book = ${book} THEN quantity - ag_qty ELSE quantity * -1 END) AS qty FROM ${schema}.prod_ledger WHERE il_pos = 'A' AND book IN (${book}, ${returns}) AND il_date BETWEEN $1 AND $2 AND inventory = 'Y' AND led_id > 0 GROUP BY code) q ON q.code = led.code`
+        + ` WHERE led.doc_pos <> 'D' AND ac.a_pos <> 'D' AND led.doc_posting = 'P' AND led.doc_date BETWEEN $1 AND $2 AND led.book IN (${book}, 11, 16) AND (led.ag_book = ${book} OR coalesce(led.ag_book, 0) = 0)`
+        + (hide ? ` AND led.book_code IN (SELECT code FROM ${schema}.account WHERE a_short <> 'CA_ENT')` : "")
+        + ` GROUP BY led.code, ac.name, acbal.closing, q.qty`, period)).rows;
+    } else if (mode === "value") {
+      rows = (await runReportSql(loader, `SELECT prodmas.prod_desc AS name, sum(CASE WHEN prodled.book = ${book} THEN prodled.il_value::numeric ELSE prodled.il_value::numeric * -1 END) AS amount`
+        + ` FROM ${schema}.prod_ledger prodled LEFT JOIN ${schema}.product_master prodmas ON prodmas.prod_key = prodled.prod_id LEFT JOIN ${schema}.account ac ON ac.code = prodled.code LEFT JOIN ${schema}.addon_data adata ON adata.prod_id = prodled.prod_id`
+        + ` WHERE prodled.il_pos <> 'D' AND prodled.inventory = 'Y' AND prodmas.prod_pos <> 'D' AND ac.a_pos <> 'D' AND prodled.quantity - prodled.ag_qty > 0 AND prodled.il_value > 0 AND prodled.il_date BETWEEN $1 AND $2${finishGoods}`
+        + ` AND prodled.book IN (${book === 8 ? "8, 16" : "13, 11"})` + (hide ? ` AND prodled.book_code IN (SELECT code FROM ${schema}.account WHERE a_short <> 'CA_ENT')` : "")
+        + ` GROUP BY prodled.prod_id, prodmas.prod_desc`, period)).rows;
+    } else {
+      const quantity = call.licence === 2 ? "prodled.trn_qty1" : "(prodled.quantity - prodled.ag_qty)";
+      const negative = call.licence === 2 ? "prodled.trn_qty1" : "prodled.quantity";
+      const stock = "case when prodmas.rep1_uom = prodmas.pcs_uom then prodbal.clsg_pcs when prodmas.rep1_uom = prodmas.qty1_uom then prodbal.clsg_qty1 when prodmas.rep1_uom = prodmas.qty2_uom then prodbal.clsg_qty2"
+        + " when prodmas.rep1_uom = prodmas.qty3_uom then prodbal.clsg_qty3 when prodmas.rep1_uom = prodmas.pack_uom then prodbal.clsg_pack when prodmas.rep1_uom = prodmas.weight_uom then prodbal.clsg_weight else prodbal.clsg_pcs end";
+      rows = (await runReportSql(loader, `SELECT prodmas.prod_desc AS name, sum(CASE WHEN prodled.book = ${book} THEN ${quantity} ELSE ${negative} * -1 END) AS qty, ${stock} AS stock`
+        + ` FROM ${schema}.prod_ledger prodled LEFT JOIN ${schema}.product_master prodmas ON prodmas.prod_key = prodled.prod_id LEFT JOIN ${schema}.account ac ON ac.code = prodled.code`
+        + ` LEFT JOIN ${schema}.prod_balance prodbal ON prodbal.prod_id = prodmas.prod_key LEFT JOIN ${schema}.addon_data adata ON adata.prod_id = prodled.prod_id`
+        + ` WHERE prodled.il_pos <> 'D' AND prodled.inventory = 'Y' AND prodbal.prec_flag = 'RP' AND prodmas.prod_pos <> 'D' AND ac.a_pos <> 'D' AND prodled.quantity - prodled.ag_qty > 0 AND prodled.il_date BETWEEN $1 AND $2${finishGoods}`
+        + ` AND prodled.book IN (${book === 8 ? "8, 16" : "13, 11"})` + (hide ? ` AND prodled.book_code IN (SELECT code FROM ${schema}.account WHERE a_short <> 'CA_ENT')` : "")
+        + ` GROUP BY prodled.prod_id, prodmas.prod_desc, prodmas.rep1_uom, prodmas.pcs_uom, prodmas.qty1_uom, prodmas.qty2_uom, prodmas.qty3_uom, prodmas.pack_uom, prodmas.weight_uom, prodbal.clsg_pcs, prodbal.clsg_qty1, prodbal.clsg_qty2, prodbal.clsg_qty3, prodbal.clsg_pack, prodbal.clsg_weight`, period)).rows;
+    }
+    perYear.push({
+      label,
+      entries: rows.map((row) => ({
+        name: toText(row.name), amount: num(row.amount), closing: row.clsg_bal === undefined || row.clsg_bal === null ? null : num(row.clsg_bal), invoices: num(row.invoices),
+        quantity: mode === "party" || mode === "quantity" ? num(row.qty) : 0, stock: row.stock === undefined || row.stock === null ? null : num(row.stock),
+      })),
+    });
+  }
+
+  const figure = (entry: Entry) => (mode === "quantity" ? entry.quantity : entry.amount);
+  const byName = (a: string, b: string) => (a.toUpperCase() === b.toUpperCase() ? 0 : a.toUpperCase() < b.toUpperCase() ? -1 : 1);
+  const table = new ResultTable();
+  if (!yearColumn) {
+    for (const column of ["YEAR_NAME", "SMART_NAME", "Row_No", "name", ...(mode === "quantity" ? ["Quantity", "Clsg_Stock"] : ["amount", ...(mode === "party" ? ["clsg_bal", "No_Of_invoice", "Quantity"] : [])])]) table.addColumn(column);
+    for (const column of ["amount", "clsg_bal", "Quantity", "Clsg_Stock"]) if (table.has(column)) table.setKind(column, "decimal");
+    for (const column of ["Row_No", "No_Of_invoice"]) if (table.has(column)) table.setKind(column, "int");
+    for (const { label, entries } of perYear) {
+      const ranked = [...entries].sort((a, b) => figure(b) - figure(a) || byName(a.name, b.name));
+      ranked.forEach((entry, index) => {
+        if (limit > 0 && index + 1 > limit) return;
+        const row: ResultRow = { YEAR_NAME: label, SMART_NAME: label, Row_No: index + 1, name: entry.name };
+        if (mode === "quantity") { row.Quantity = entry.quantity; row.Clsg_Stock = entry.stock; } else {
+          row.amount = entry.amount;
+          if (mode === "party") { row.clsg_bal = entry.closing; row.No_Of_invoice = entry.invoices; row.Quantity = entry.quantity; }
+        }
+        table.rows.push(row);
+      });
+    }
+    return table;
+  }
+  table.addColumn("name");
+  for (const { label } of perYear) table.setKind(label, "decimal");
+  table.setKind("TOTAL", "decimal");
+  const names = new Map<string, Map<string, number>>();
+  for (const { label, entries } of perYear) {
+    for (const entry of entries) {
+      if (!(figure(entry) > 0)) continue;
+      const values = names.get(entry.name) ?? new Map<string, number>();
+      values.set(label, (values.get(label) ?? 0) + figure(entry));
+      names.set(entry.name, values);
+    }
+  }
+  const rows = [...names.entries()].map(([name, values]) => {
+    const row: ResultRow = { name };
+    let total = 0;
+    for (const { label } of perYear) { const value = values.get(label); row[label] = value === undefined ? null : Math.round(value * 100) / 100; total += value ?? 0; }
+    row.TOTAL = Math.round(total * 100) / 100;
+    return row;
+  }).sort((a, b) => num(b.TOTAL) - num(a.TOTAL) || byName(toText(a.name), toText(b.name)));
+  table.rows = limit > 0 ? rows.slice(0, limit) : rows;
+  return table;
+}
+
+// ======================================================================================
+// 279: MULTI YEAR SALES V/S RECEIPT SUMMARY (SP_FRT_RPT_MULTI_YEAR_SALES_RECEIPT_REP; ANALYSIS REP. > Multi Year > Sales V/S Receipt)
+// ======================================================================================
+//
+// A row a month for the SALE (the sale and credit note vouchers of book 8 / 16, debit less credit) and a row a month for the RECEIPT (the cash
+// and bank vouchers of books 4 / 6 against the debtors, credit less debit), a column a year (2025_2026) with its share of the side's total
+// (2025_2026_PERC) and TOTAL (the years' amounts). The years are those meeting From .. Upto (as report 103, at most ten), each read whole, from
+// its own database. With Multi Company Require each year has a pair of columns for every company of the group that has a short name and the
+// same year (CO_SHORT_2025_2026). The subtotals under SALE and RECEIPT are the output layer's (SMART_SELECTED_ADDON1).
+// The procedure asks each month's amount of the whole ledger once a year, as here (one grouped read each for the sale and the receipt).
+
+async function multiYearSalesReceipt(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const multi = call.checkQuery.includes("CHK_MULTICO,");
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const fiscal = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
+  const cell = (side: "SALE" | "RECEIPT") => ({ side, tag: side === "SALE" ? " S" : "R" });
+
+  type Unit = { schema: string; label: string };
+  const units: Unit[] = [];
+  for (const year of await companyYears(loader, plan)) {
+    const y1 = year.y1 as Date;
+    const y2 = year.y2 as Date;
+    const suffix = `${y1.getFullYear()}_${y2.getFullYear()}`;
+    if (!multi) { units.push({ schema: toText(year.schema_name), label: suffix }); continue; }
+    const companies = (await runReportSql(loader, `SELECT lower(btrim(c.co_dataname)) AS schema_name, btrim(c.co_short) AS short FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id`
+      + ` WHERE n.c_tarikh1::date = $1::date AND n.c_tarikh2::date = $2::date AND coalesce(btrim(c.co_short), '') <> '' AND c.co_group_name = (SELECT co_group_name FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $3) ORDER BY c.co_short`,
+    [desktopDate(y1), desktopDate(y2), call.companyKey])).rows;
+    for (const company of companies) units.push({ schema: toText(company.schema_name), label: `${toText(company.short)}_${suffix}` });
+  }
+
+  const table = new ResultTable();
+  table.addColumn("Particular");
+  table.addColumn("SMART_SELECTED_ADDON1");
+  table.addColumn("SORTING_COL");
+  const present: Unit[] = [];
+  const amounts = new Map<string, Map<string, number>>();
+  for (const unit of units) {
+    if (!/^[a-z0-9_]+$/.test(unit.schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('ledger','account')", [unit.schema])).rows[0];
+    if (num(exists?.n) < 2) continue;
+    present.push(unit);
+    const sale = await runReportSql(loader, `SELECT extract(month FROM doc_date)::int AS m, sum(CASE WHEN ac_dbcode = 1 THEN amount::numeric ELSE amount::numeric * -1 END) AS amount FROM ${unit.schema}.ledger WHERE doc_pos = 'A' AND doc_posting = 'P' AND book IN (8, 16) GROUP BY 1`);
+    const receipt = await runReportSql(loader, `SELECT extract(month FROM led.doc_date)::int AS m, sum(CASE WHEN led.ac_dbcode = 2 THEN led.amount::numeric ELSE led.amount::numeric * -1 END) AS amount`
+      + ` FROM ${unit.schema}.ledger led LEFT JOIN ${unit.schema}.account ac ON ac.code = led.code WHERE led.doc_pos = 'A' AND led.doc_posting = 'P' AND led.book IN (4, 6) AND ac.book IN (2) GROUP BY 1`);
+    for (const [side, rows] of [["SALE", sale.rows], ["RECEIPT", receipt.rows]] as const) {
+      const byMonth = new Map<string, number>();
+      for (const row of rows) byMonth.set(String(num(row.m)), (byMonth.get(String(num(row.m))) ?? 0) + num(row.amount));
+      amounts.set(`${unit.label}\u0000${side}`, byMonth);
+    }
+  }
+  for (const unit of present) { table.setKind(unit.label, "decimal"); table.setKind(`${unit.label}_PERC`, "decimal"); }
+  table.setKind("TOTAL", "decimal");
+
+  const sums = (label: string, side: string) => [...(amounts.get(`${label}\u0000${side}`)?.values() ?? [])].reduce((sum, value) => sum + value, 0);
+  const rows: ResultRow[] = [];
+  for (const { side, tag } of [cell("SALE"), cell("RECEIPT")]) {
+    fiscal.forEach((month, index) => {
+      if (!present.some((unit) => amounts.get(`${unit.label}\u0000${side}`)?.has(String(month)))) return;
+      const row: ResultRow = { Particular: MONTHS[month - 1], SMART_SELECTED_ADDON1: side, SORTING_COL: `${tag}${String(index + 1).padStart(2, "0")}` };
+      let total = 0;
+      for (const unit of present) {
+        const amount = Math.round((amounts.get(`${unit.label}\u0000${side}`)?.get(String(month)) ?? 0) * 100) / 100;
+        const whole = sums(unit.label, side);
+        row[unit.label] = amount;
+        row[`${unit.label}_PERC`] = whole === 0 ? 0 : Math.round(amount / whole * 100 * 100) / 100;
+        total += amount;
+      }
+      row.TOTAL = Math.round(total * 100) / 100;
+      rows.push(row);
+    });
+  }
+  table.rows = rows;
+  return table;
+}
+
+// ======================================================================================
+// 281: MULTI YEAR SALES V/S EXPENSE SUMMARY (SP_FRT_RPT_MULTI_YEAR_SALES_EXP_REP; ANALYSIS REP. > Multi Year > Sales V/S Expense)
+// ======================================================================================
+//
+// The SALES line (the sale, credit note and debit note vouchers of book 8: the taxable value when the book has a GST master slab, else the
+// voucher amount; parties named like a system company left out) and a line for each expense account (balance sheet code 02-04, debits less
+// credits) under its balance sheet head, for each of the company's years meeting From .. Upto (as report 103, at most ten), each read whole from
+// its own database: a column a year (2026_2027) with the expense's share of that year's sales (2026_2027_PERC), TOTAL and TOTAL_PERC. With Multi
+// Company Require a pair of columns for every company of the group with a short name and the same year (SHORT_2026_2027), and no TOTAL_PERC.
+// The expense lines with a TOTAL of 0 or less are left out. The subtotals (the head, then SALES / EXPENSE) are the output layer's.
+
+async function multiYearSalesExpense(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const multi = call.checkQuery.includes("CHK_MULTICO,");
+  type Unit = { schema: string; label: string };
+  const units: Unit[] = [];
+  for (const year of await companyYears(loader, plan)) {
+    const y1 = year.y1 as Date;
+    const y2 = year.y2 as Date;
+    const suffix = `${y1.getFullYear()}_${y2.getFullYear()}`;
+    if (!multi) { units.push({ schema: toText(year.schema_name), label: suffix }); continue; }
+    const companies = (await runReportSql(loader, `SELECT lower(btrim(c.co_dataname)) AS schema_name, btrim(c.co_short) AS short FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id`
+      + ` WHERE n.c_tarikh1::date = $1::date AND n.c_tarikh2::date = $2::date AND coalesce(btrim(c.co_short), '') <> '' AND c.co_group_name = (SELECT co_group_name FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $3) ORDER BY c.co_short`,
+    [desktopDate(y1), desktopDate(y2), call.companyKey])).rows;
+    for (const company of companies) units.push({ schema: toText(company.schema_name), label: `${toText(company.short)}_${suffix}` });
+  }
+
+  type Line = { particular: string; side: string; head: string; sorting: string; amounts: Map<string, number> };
+  const lines = new Map<string, Line>();
+  const present: Unit[] = [];
+  const put = (particular: string, side: string, head: string, sorting: string, label: string, amount: number) => {
+    const key = JSON.stringify([particular, side, head, sorting]);
+    const line = lines.get(key) ?? { particular, side, head, sorting, amounts: new Map<string, number>() };
+    line.amounts.set(label, (line.amounts.get(label) ?? 0) + amount);
+    lines.set(key, line);
+  };
+  for (const unit of units) {
+    if (!/^[a-z0-9_]+$/.test(unit.schema)) continue;
+    const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('ledger','ledger_post','ledger_ext','account','balsheet','slab_master')", [unit.schema])).rows[0];
+    if (num(exists?.n) < 6) continue;
+    present.push(unit);
+    const s = unit.schema;
+    const slab = Math.trunc(num((await runReportSql(loader, `SELECT slab_key FROM ${s}.slab_master WHERE slab_active = 'Y' AND slab_master = 'Y' AND slab_link = 0 AND book = 8 ORDER BY slab_order, slab_key`)).rows.at(-1)?.slab_key));
+    const where = `led.doc_pos = 'A' AND led.doc_posting = 'P' AND led.book IN (8, 11, 16) AND (led.ag_book = 8 OR coalesce(led.ag_book, 0) = 0) AND ac.name NOT IN (SELECT name FROM ${SYSTEM_SCHEMA}.company WHERE name IS NOT NULL)`;
+    const sale = slab !== 0
+      ? `SELECT sum(CASE WHEN led.ac_dbcode = 1 THEN coalesce(ledext.s_lastot::numeric - ledext.slab_amt::numeric, 0) ELSE coalesce(ledext.s_lastot::numeric - ledext.slab_amt::numeric, 0) * -1 END) AS amount`
+        + ` FROM ${s}.ledger led LEFT JOIN ${s}.account ac ON ac.code = led.code LEFT JOIN ${s}.ledger_ext ledext ON ledext.led_id = led.led_key AND ledext.il_id IS NULL AND ledext.slab_id = ${slab} WHERE ${where}`
+      : `SELECT sum(CASE WHEN led.ac_dbcode = 1 THEN led.amount::numeric ELSE led.amount::numeric * -1 END) AS amount FROM ${s}.ledger led LEFT JOIN ${s}.account ac ON ac.code = led.code WHERE ${where}`;
+    const sales = (await runReportSql(loader, sale)).rows[0];
+    if (sales?.amount !== null && sales?.amount !== undefined) put("SALES", "SALES", "SALES", "  SALES", unit.label, num(sales.amount));
+    else put("SALES", "SALES", "SALES", "  SALES", unit.label, 0);
+    const expense = await runReportSql(loader, `SELECT ac.name AS particular, bs.bs_desc AS head, sum(CASE WHEN ledpost.post_dbcode = 1 THEN ledpost.post_amt::numeric ELSE ledpost.post_amt::numeric * -1 END) AS amount`
+      + ` FROM ${s}.ledger_post ledpost LEFT JOIN ${s}.account ac ON ac.code = ledpost.post_code LEFT JOIN ${s}.balsheet bs ON bs.bs_key = ac.bs_id LEFT JOIN ${s}.ledger led ON ledpost.led_id = led.led_key`
+      + ` WHERE led.doc_pos = 'A' AND led.doc_posting = 'P' AND ac.a_pos <> 'D' AND coalesce(left(led.doc_no1, 3), '') <> 'END' AND ac.a_posting <> 'N'`
+      + ` AND ac.bs_id IN (SELECT bs1.bs_key FROM ${s}.balsheet bs1 WHERE left(bs1.bs_code::text, 2) ~ '^[0-9]+$' AND left(bs1.bs_code::text, 2)::int BETWEEN 2 AND 4) GROUP BY ac.name, bs.bs_desc`);
+    for (const row of expense.rows) put(toText(row.particular), "EXPENSE", toText(row.head), "EXPENSE", unit.label, num(row.amount));
+  }
+
+  const table = new ResultTable();
+  for (const column of ["Particular", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SORTING_COL"]) table.addColumn(column);
+  for (const unit of present) { table.setKind(unit.label, "decimal"); table.setKind(`${unit.label}_PERC`, "decimal"); }
+  table.setKind("TOTAL", "decimal");
+  if (!multi) table.setKind("TOTAL_PERC", "decimal");
+  const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
+  const salesOf = (label: string) => [...lines.values()].filter((line) => line.side === "SALES").reduce((sum, line) => sum + (line.amounts.get(label) ?? 0), 0);
+  const result: ResultRow[] = [];
+  for (const line of lines.values()) {
+    const row: ResultRow = { Particular: line.particular, SMART_SELECTED_ADDON1: line.side, SMART_SELECTED_ADDON2: line.head, SORTING_COL: line.sorting };
+    let total = 0;
+    for (const unit of present) {
+      const amount = r2(line.amounts.get(unit.label) ?? 0);
+      const sales = salesOf(unit.label);
+      row[unit.label] = amount;
+      row[`${unit.label}_PERC`] = line.side === "EXPENSE" && sales !== 0 ? r2(amount / sales * 100) : 0;
+      total += amount;
+    }
+    row.TOTAL = r2(total);
+    if (!multi) row.TOTAL_PERC = null;
+    if (line.side === "EXPENSE" && num(row.TOTAL) <= 0) continue;
+    result.push(row);
+  }
+  if (!multi) {
+    const sales = result.find((row) => row.SMART_SELECTED_ADDON1 === "SALES");
+    const whole = num(sales?.TOTAL);
+    for (const row of result) if (row.SMART_SELECTED_ADDON1 === "EXPENSE" && whole !== 0) row.TOTAL_PERC = r2(num(row.TOTAL) / whole * 100);
+  }
+  // The raw text: SORTING_COL "  SALES" starts with spaces (toText would trim them and put EXPENSE first).
+  const key = (value: unknown) => String(value ?? "").toUpperCase();
+  table.rows = result
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      for (const column of ["SORTING_COL", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "Particular"]) {
+        const x = key(a.row[column]);
+        const y = key(b.row[column]);
+        if (x !== y) return x < y ? -1 : 1;
+      }
+      return a.index - b.index;
+    })
+    .map(({ row }) => row);
+  return table;
+}
+
+// ======================================================================================
+// 264: ADDON DETAILS (SP_FRT_RPT_ADDON_DETAILS; ANALYSIS REP. > Addon Detail)
+// ======================================================================================
+//
+// The vouchers of the ticked accounts between From and Upto (not deleted, not Auto/999999), each as a line (date, voucher, party column,
+// debit, credit). With addon groups ticked the party column is the account's name and the lines go under a heading for each addon value
+// (ADDON_1 .. ADDON_4) and each account (AC); without them the party column is the addon field picked in Input Columns (the account's, or the
+// voucher's own) and a voucher it has no text for is left out, as is an account left with none. Summary adds each account's lines up
+// (DEBIT, CREDIT, CLOSING = debit - credit). The rows are in SORTING_COL order: addon values, account, date, the headings before their lines.
+// The accounts' subtotals and the final total are the output layer's.
+//  - The procedure's inserts of the account headings name SMART_SELECTED_ADDON12 with two or more addon groups (its own typo); here ADDON2.
+//  - An addon text that is null no longer makes the whole SORTING_COL null (so the line is not lost): it counts as blank.
+
+async function addonDetails(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const summary = call.formating.toUpperCase() === "SUMMARY";
+  const levels = [0, 1, 2, 3].filter((at) => call.selectKey[at] !== "");
+  const count = levels.length;
+  const accountKeys = call.selectKey[4];
+  if (accountKeys === "") throw new ReportRefusal("Select the accounts (Account group)", "INTERNAL PROGRAM FAILURE");
+  const keyOf = (at: number) => call.addon[at].replace(/ adata\.txt_/i, " adata.key_").replace(/ aentry\.txt_/i, " aentry.key_").trim();
+  const textOf = (at: number) => call.addon[at].trim();
+
+  let partyColumn = "ac.name";
+  if (count === 0) {
+    const field = (await runReportSql(loader, `SELECT btrim(fiel_save) AS save, btrim(fiel_entrypos) AS entrypos FROM ${db}ADDON_FLD WHERE fiel_pos = 'A' AND fiel_desc = $1 LIMIT 1`, [call.slabText])).rows[0];
+    const save = toText(field?.save);
+    if (!/^[A-Za-z0-9_]+$/.test(save)) throw new ReportRefusal("Select the Input Column (an addon field)", "INTERNAL PROGRAM FAILURE");
+    partyColumn = `${toText(field.entrypos) === "N" ? "adata" : "aentry"}.txt_${save}`;
+  }
+
+  const select = [`${partyColumn} AS party_name`, "ac.name AS smart_name", "to_char(led.doc_date, 'YYYYMMDD') AS d", "to_char(led.doc_date, 'DD/MM/YYYY') AS selected_date", "led.full_docno AS doc_no",
+    "CASE WHEN led.ac_dbcode = 1 THEN led.amount::numeric ELSE 0.00 END AS debit", "CASE WHEN led.ac_dbcode = 2 THEN led.amount::numeric ELSE 0.00 END AS credit",
+    ...levels.map((at, index) => `${textOf(at)} AS a${index}`)];
+  const where = [`led.doc_date BETWEEN '${desktopDate(call.from)}' AND '${desktopDate(call.upto)}'`, "led.doc_pos <> 'D'", "led.full_docno <> 'Auto/999999'", `led.code IN ${accountKeys}`,
+    ...levels.map((at) => `${keyOf(at)} IN ${call.selectKey[at]}`)];
+  const result = await runReportSql(loader, `SELECT ${select.join(", ")} FROM ${db}LEDGER led LEFT JOIN ${db}ADDON_AENTRY aentry ON aentry.aona_ledid = led.led_key LEFT JOIN ${db}ACCOUNT ac ON ac.code = led.code`
+    + ` LEFT JOIN ${db}ADDON_DATA adata ON adata.code = led.code WHERE ${where.join(" AND ")}`);
+
+  type Line = { party: string | null; name: string; date: string; shown: string; docNo: string; debit: number; credit: number; addons: string[] };
+  let lines: Line[] = result.rows.map((row) => ({
+    party: row.party_name === null ? null : toText(row.party_name), name: toText(row.smart_name), date: toText(row.d), shown: toText(row.selected_date), docNo: toText(row.doc_no),
+    debit: num(row.debit), credit: num(row.credit), addons: levels.map((_, index) => (row[`a${index}`] === null ? "" : toText(row[`a${index}`]))),
+  }));
+  // Without addon groups a voucher with no text in the party column is dropped, and so is the account left with no voucher.
+  if (count === 0) lines = lines.filter((line) => (line.party ?? "") !== "");
+
+  const addonColumns = levels.map((_, index) => `SMART_SELECTED_ADDON${index + 1}`);
+  const columns = summary
+    ? ["SORTING_COL", "PARTY_NAME", "SMART_NAME", "DEBIT", "CREDIT", "CLOSING", "ROW_DATA_TYPE", ...addonColumns]
+    : ["SORTING_COL", "ROW_DATA_TYPE", "Seelcted_Date", "Doc_No", "Party_Name", "SMART_NAME", "Debit", "Credit", ...addonColumns];
+  const table = new ResultTable();
+  for (const column of columns) table.addColumn(column);
+  for (const column of summary ? ["DEBIT", "CREDIT", "CLOSING"] : ["Debit", "Credit"]) table.setKind(column, "decimal");
+  const names = summary ? { party: "PARTY_NAME", debit: "DEBIT", credit: "CREDIT", type: "ROW_DATA_TYPE" } : { party: "Party_Name", debit: "Debit", credit: "Credit", type: "ROW_DATA_TYPE" };
+  const prefix = (addons: string[], name: string) => [...addons, name].join(" ");
+  const rows: ResultRow[] = [];
+  const base = (values: ResultRow): ResultRow => {
+    const row: ResultRow = {};
+    for (const column of columns) row[column] = null;
+    return Object.assign(row, values);
+  };
+  const addonValues = (addons: string[]) => Object.fromEntries(addonColumns.map((column, index) => [column, addons[index]]));
+
+  if (summary) {
+    const groups = new Map<string, { line: Line; debit: number; credit: number }>();
+    for (const line of lines) {
+      const key = JSON.stringify([line.party, line.name, line.addons]);
+      const group = groups.get(key) ?? { line, debit: 0, credit: 0 };
+      group.debit += line.debit;
+      group.credit += line.credit;
+      groups.set(key, group);
+    }
+    for (const { line, debit, credit } of groups.values()) {
+      rows.push(base({ SORTING_COL: `${prefix(line.addons, line.name)}   P`, PARTY_NAME: line.party, SMART_NAME: line.name, DEBIT: debit, CREDIT: credit, CLOSING: Math.round((debit - credit) * 100) / 100, ROW_DATA_TYPE: "LED", ...addonValues(line.addons) }));
+    }
+  } else {
+    for (const line of lines) {
+      rows.push(base({ SORTING_COL: `${prefix(line.addons, line.name)} ${line.date}   P`, ROW_DATA_TYPE: "LED", Seelcted_Date: line.shown, Doc_No: line.docNo, Party_Name: line.party, SMART_NAME: line.name, Debit: line.debit, Credit: line.credit, ...addonValues(line.addons) }));
+    }
+  }
+  // The headings: an addon value (ADDON_n) and, in Detail or without addon groups, the account (AC).
+  const tails = ["   A", "   A1", "   A2", "   A3"];
+  levels.forEach((_, index) => {
+    for (const value of new Set(lines.map((line) => line.addons[index]))) {
+      if (value === "") continue;
+      rows.push(base({ SORTING_COL: `${value}${tails[index]}`, [names.party]: value, [names.type]: `ADDON_${index + 1}`, [addonColumns[index]]: value, ...(summary ? { CLOSING: 0 } : {}) }));
+    }
+  });
+  if (!summary || count === 0) {
+    const seen = new Set<string>();
+    for (const line of lines) {
+      const key = JSON.stringify([line.name, line.addons]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(base({ SORTING_COL: `${prefix(line.addons, line.name)}   H`, [names.party]: line.name, SMART_NAME: line.name, [names.type]: "AC", ...addonValues(line.addons), ...(summary ? { CLOSING: 0 } : {}) }));
+    }
+  }
+  table.rows = rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const x = a.row.SORTING_COL === null ? null : String(a.row.SORTING_COL).toUpperCase();
+      const y = b.row.SORTING_COL === null ? null : String(b.row.SORTING_COL).toUpperCase();
+      if (x === y) return a.index - b.index;
+      if (x === null) return -1;
+      if (y === null) return 1;
+      return x < y ? -1 : 1;
+    })
+    .map(({ row }) => row);
+  return table;
+}
+
+// ======================================================================================
+// 151: FINISH PRODUCT STOCK (SP_FRT_RPT_RPI_FINISH_STOCK; SPECIAL > Extra Report (RP) > Finish Product Stock (Sales Dept.))
+// ======================================================================================
+//
+// The finish goods (the addon PRODTYPE FINISH GOODS) of the ticked products / addon groups, a row each: ITEM, the addon columns, PROD_PACK,
+// OPEN_QTY / OPEN_AMT, then what the period (From .. Upto) brought in and took out - PACKING (production), CR_QTY (sale returns), PURCH_QTY,
+// STOCK_ADD, DR_QTY (purchase returns), SALE_QTY, STOCK_LESS -, CLSG_QTY (whole pieces), CLSG_BOX_QTY / CLSG_LOOSE_QTY (cartons of PROD_PACK and
+// the rest), Rate (the latest sale rate up to Upto), Amount, Plan_Qty (the job cards' planned quantity not yet made), Pend_Order (sale orders
+// pending), Transit (purchase orders pending), Hold_Ctn / Hold_Qty / After_Hold_Stock / Hold_Remark. A From after the year's start carries what
+// moved before it into OPEN_QTY. Rows with nothing in any of the quantity columns are left out. Ordered by the first addon, ITEM, the other addons.
+// Only Production Require: the production of the period instead (PRODUCTION, Rate, Amount), for the products with a approved production line.
+// The procedure builds seven temp tables joined by ITEM (the product's description); here each is one grouped read matched by product.
+//  - The Hold columns (PRODUCT_MASTER.BUNDLE, HOLD_QTY) are read where the database has them, else 0 (this server's copy has neither).
+//  - The procedure joins PROD_BALANCE without its RP flag in the period read, so a product with two balance rows counts its lines twice; here once.
+
+async function finishProductStock(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const production = call.checkQuery.includes("CHK_PRODUCTION,");
+  const upto = desktopDate(call.upto);
+  const levels = [0, 1, 2, 3].filter((at) => call.addon[at].trim() !== "");
+  const aliasOf = (at: number) => /as\s+"([^"]+)"/i.exec(call.headingAddon[at])?.[1] ?? `ADDON${at + 1}`;
+  const productKeys = call.selectKey[4] !== "" ? ` AND product.prod_key IN ${call.selectKey[4]}` : "";
+  const addonKeys = levels.filter((at) => call.selectKey[at] !== "").map((at) => ` AND ${call.addon[at].trim().replace(/^(adata|aentry)\.txt_/i, "$1.key_")} IN ${call.selectKey[at]}`).join("");
+  const schema = db.replace(/\.$/, "");
+  const have = new Set((await runReportSql(loader, "SELECT lower(column_name) AS name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'product_master'", [schema.toLowerCase()])).rows.map((row) => toText(row.name)));
+  const bundle = have.has("bundle") ? "coalesce(product.bundle, 0)" : "0";
+  const holdQty = have.has("hold_qty") ? "coalesce(product.hold_qty, 0)" : "0";
+  const addonSelect = levels.map((at, index) => `${call.addon[at].trim()} AS a${index}`).join(", ");
+  const trn = "btrim(prodled.trn_module)";
+  const producedLine = `prodled.stock_nat = 'A' AND ((${trn} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD') OR ${trn} = 'PROD-FG' OR ${trn} = 'PROD-SFG' OR (${trn} = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> ''))`;
+  const approvedLine = `prodled.stock_nat = 'A' AND ((${trn} = 'PROD-FG' AND proce.ent_approve = 'Yes') OR ${trn} = 'PROD-SFG' OR (${trn} = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> ''))`;
+  const rates = new Map((await runReportSql(loader, `SELECT DISTINCT ON (prod_id) prod_id, pl_srate::numeric AS rate FROM ${db}PRICELIST WHERE pl_srate::numeric > 0 AND pl_pos <> 'D' AND pl_wefrom <= $1 ORDER BY prod_id, pl_wefrom DESC`, [upto])).rows.map((row) => [num(row.prod_id), num(row.rate)] as const));
+  const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
+  const names = levels.map((at) => aliasOf(at));
+  const addonSelected = levels.map((_, index) => `SMART_SELECTED_ADDON${index + 1}`);
+
+  type Product = { key: number; item: string; pack: number; open: number; holdCtn: number; hold: number; remark: string; addons: string[] };
+  const baseWhere = `product.prod_pos <> 'D' AND product.inventory = 'Y'${productKeys}${addonKeys}`;
+  const fromProducts = `${db}product_master product LEFT JOIN ${db}prod_balance prodbal ON product.prod_key = prodbal.prod_id AND prodbal.prec_flag = 'RP' INNER JOIN ${db}IDOPT_MASTER idopt ON product.prod_group = idopt.idopt_key LEFT JOIN ${db}ADDON_DATA adata ON adata.prod_id = product.prod_key`;
+  const sortRows = (rows: ResultRow[]) => {
+    const key = (row: ResultRow, column: string) => toText(row[column]).toUpperCase();
+    const order = [addonSelected[0], "ITEM", ...addonSelected.slice(1)].filter((column) => column !== undefined);
+    return rows.map((row, index) => ({ row, index })).sort((a, b) => {
+      for (const column of order) { const x = key(a.row, column); const y = key(b.row, column); if (x !== y) return x < y ? -1 : 1; }
+      return a.index - b.index;
+    }).map(({ row }) => row);
+  };
+  const withAddons = (row: ResultRow, product: Product): ResultRow => {
+    levels.forEach((_, index) => { row[names[index]] = product.addons[index]; });
+    levels.forEach((_, index) => { row[addonSelected[index]] = product.addons[index]; });
+    return row;
+  };
+  const table = new ResultTable();
+
+  if (production) {
+    const fromLines = `${db}product_master product LEFT JOIN ${db}IDOPT_MASTER idopt ON product.prod_group = idopt.idopt_key LEFT JOIN ${db}ADDON_DATA adata ON adata.prod_id = product.prod_key`
+      + ` LEFT JOIN ${db}PROD_LEDGER prodled ON prodled.prod_id = product.prod_key LEFT JOIN ${db}PROD_BALANCE prodbal ON prodbal.prod_id = product.prod_key LEFT JOIN ${db}PROCESS proce ON proce.process_key = prodled.process_id`;
+    const rows = (await runReportSql(loader, `SELECT product.prod_key, product.prod_desc AS item, product.base_pack AS pack${addonSelect === "" ? "" : `, ${addonSelect}`}, sum(CASE WHEN prodled.stock_nat = 'A' THEN prodled.quantity - prodled.ag_qty ELSE 0.00 END) AS production`
+      + ` FROM ${fromLines} WHERE ${baseWhere} AND prodbal.prec_flag = 'RP' AND (${approvedLine}) AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL AND prodled.il_pos = 'A' AND prodled.il_date BETWEEN $1 AND $2`
+      + ` GROUP BY product.prod_key, product.prod_desc, product.base_pack${levels.length > 0 ? `, ${levels.map((at) => call.addon[at].trim()).join(", ")}` : ""}`, [desktopDate(call.from), upto])).rows;
+    for (const column of ["ITEM", ...names, ...addonSelected]) table.addColumn(column);
+    table.setKind("PROD_PACK", "decimal"); table.setKind("PRODUCTION", "decimal"); table.setKind("Rate", "decimal"); table.setKind("Amount", "decimal");
+    const out = rows.map((row) => {
+      const rate = rates.get(num(row.prod_key)) ?? 0;
+      const base: ResultRow = { ITEM: toText(row.item) };
+      levels.forEach((_, index) => { base[names[index]] = row[`a${index}`] === null ? null : toText(row[`a${index}`]); base[addonSelected[index]] = base[names[index]]; });
+      return Object.assign(base, { PROD_PACK: num(row.pack), PRODUCTION: num(row.production), Rate: rate, Amount: r2(rate * num(row.production)) });
+    });
+    table.rows = sortRows(out);
+    return table;
+  }
+
+  const products: Product[] = [];
+  const seen = new Set<string>();
+  for (const row of (await runReportSql(loader, `SELECT product.prod_key, product.prod_desc AS item, product.base_pack AS pack, coalesce(prodbal.open_pcs::numeric, 0) AS open, ${bundle} AS hold_ctn, ${holdQty} AS hold_qty, coalesce(product.prod_info, '') AS remark${addonSelect === "" ? "" : `, ${addonSelect}`}`
+    + ` FROM ${fromProducts} WHERE ${baseWhere} AND upper(btrim(adata.txt_prodtype)) = 'FINISH GOODS'`)).rows) {
+    const addons = levels.map((_, index) => (row[`a${index}`] === null ? "" : toText(row[`a${index}`])));
+    const key = JSON.stringify([num(row.prod_key), addons]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    products.push({ key: num(row.prod_key), item: toText(row.item), pack: Math.trunc(num(row.pack)), open: num(row.open), holdCtn: num(row.hold_ctn), hold: num(row.hold_qty), remark: toText(row.remark), addons });
+  }
+  const keys = [...new Set(products.map((product) => product.key))];
+
+  const sum = (condition: string, quantity: string) => `sum(CASE WHEN ${condition} THEN ${quantity} ELSE 0.00 END)`;
+  const net = "prodled.quantity - prodled.ag_qty";
+  const movements = async (from: string, to: string, before: boolean) => new Map((await runReportSql(loader, `SELECT prodled.prod_id,`
+    + ` ${sum(`(${producedLine}) AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL`, before ? "prodled.quantity" : net)} AS packing,`
+    + ` ${sum(`(prodled.book = 16 OR prodled.book = 8) AND prodled.stock_nat = 'A' AND prodled.inventory = 'Y' AND prodled.led_id IS NOT NULL${before ? " AND prodled.rate > 0" : ""}`, net)} AS cr_qty,`
+    + ` ${sum(`(prodled.book = 13 OR prodled.book = 14) AND prodled.stock_nat = 'A' AND prodled.inventory = 'Y' AND prodled.led_id IS NOT NULL${before ? " AND prodled.rate > 0" : ""}`, net)} AS purch_qty,`
+    + ` ${sum(`(prodled.book = 11 OR prodled.book = 13) AND prodled.stock_nat = 'L' AND prodled.inventory = 'Y' AND prodled.led_id IS NOT NULL${before ? " AND prodled.rate > 0" : ""}`, net)} AS dr_qty,`
+    + ` ${sum(`prodled.stock_nat = 'A' AND ${trn} IN ('SVOU-ADD', 'STK-JV', 'JOB-IN') AND upper(left(prodled.full_docno, 4)) <> 'PROD' AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL`, "prodled.quantity")} AS stock_add,`
+    + ` ${sum(`(prodled.book = 8 OR prodled.book = 9) AND ${before ? "" : "prodled.stock_nat = 'L' AND "}prodled.inventory = 'Y' AND prodled.led_id IS NOT NULL`, net)} AS sale_qty,`
+    + ` ${sum(`prodled.stock_nat = 'L' AND ${trn} IN ('SVOU-LESS', 'STK-JV', 'JOB-OUT', 'PROD-FG') AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL`, before ? "prodled.quantity" : net)} AS stock_less`
+    + ` FROM ${db}PROD_LEDGER prodled WHERE prodled.il_pos = 'A' AND prodled.il_date BETWEEN $1 AND $2 AND prodled.prod_id = ANY($3::int[]) GROUP BY prodled.prod_id`, [from, to, keys])).rows.map((row) => [num(row.prod_id), row] as const));
+  const period = await movements(desktopDate(call.from), upto, false);
+  const between = call.from.getTime() !== call.tarikh1.getTime();
+  const before = between ? await movements(desktopDate(call.tarikh1), desktopDate(dayBefore(call.from)), true) : new Map<number, ResultRow>();
+
+  // The job cards' planned quantity not yet made, the sale orders and the purchase orders pending.
+  const planned = new Map<number, number>();
+  for (const row of (await runReportSql(loader, `SELECT prodplan.prod_id, coalesce(sum(prodplan.plan_qty - coalesce(prodplan.plan_sort, 0)), 0) - coalesce(ep.ent_pend_qty, 0) AS plan_pend`
+    + ` FROM ${db}PRODUCTION_PLANING prodplan LEFT JOIN (SELECT prodled.prod_id, aent.input_job_card, sum(CASE WHEN (${producedLine.replace("OR " + trn + " = 'PROD-FG'", `OR (${trn} = 'PROD-FG' AND proce.ent_approve = 'Yes')`)}) AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL THEN prodled.quantity - prodled.ag_qty ELSE 0.00 END) AS ent_pend_qty`
+    + ` FROM ${db}PROD_LEDGER prodled LEFT JOIN ${db}ADDON_AENTRY aent ON aent.aona_processid = prodled.process_id LEFT JOIN ${db}PROCESS proce ON proce.process_key = prodled.process_id WHERE prodled.il_pos = 'A' AND coalesce(aent.input_job_card, '') <> '' GROUP BY prodled.prod_id, aent.input_job_card) ep`
+    + ` ON ep.prod_id = prodplan.prod_id AND ep.input_job_card = prodplan.job_card_no WHERE coalesce(prodplan.job_card_no, '') <> '' GROUP BY prodplan.job_card_no, prodplan.prod_id, ep.ent_pend_qty`)).rows) {
+    if (num(row.plan_pend) > 0) planned.set(num(row.prod_id), (planned.get(num(row.prod_id)) ?? 0) + num(row.plan_pend));
+  }
+  const orders = async (extra: string, join: string) => new Map((await runReportSql(loader, `SELECT prodled.prod_id, coalesce(sum(prodled.quantity - prodled.ag_qty), 0) AS pending FROM ${db}PROD_LEDGER prodled ${join}`
+    + ` WHERE prodled.il_pos = 'A' AND prodled.il_date <= $1 AND ${extra} AND prodled.quantity - (prodled.ag_qty + coalesce(prodled.setof_qty, 0)) > 0 AND prodled.prod_id = ANY($2::int[]) GROUP BY prodled.prod_id`, [upto, keys])).rows.map((row) => [num(row.prod_id), num(row.pending)] as const));
+  const pendingOrders = await orders(`${trn} = 'ORD-OUT'`, "");
+  const transit = await orders(`ac.book = 3 AND ${trn} IN ('ORD-IN', 'ORD-PURCH')`, `LEFT JOIN ${db}ACCOUNT ac ON ac.code = prodled.code`);
+
+  const quantityColumns = ["OPEN_QTY", "OPEN_AMT", "PACKING", "CR_QTY", "PURCH_QTY", "STOCK_ADD", "DR_QTY", "SALE_QTY", "STOCK_LESS"];
+  const columns = ["ITEM", ...names, ...addonSelected, "PROD_PACK", ...quantityColumns, "CLSG_QTY", "CLSG_BOX_QTY", "CLSG_LOOSE_QTY", "Rate", "Amount", "Plan_Qty", "Pend_Order", "Transit", "Hold_Ctn", "Hold_Qty", "After_Hold_Stock", "Hold_Remark"];
+  for (const column of columns) table.addColumn(column);
+  for (const column of columns.filter((name) => !["ITEM", ...names, ...addonSelected, "Hold_Remark"].includes(name))) table.setKind(column, ["PROD_PACK", "CLSG_QTY", "CLSG_BOX_QTY", "CLSG_LOOSE_QTY"].includes(column) ? "int" : "decimal");
+  const rows: ResultRow[] = [];
+  for (const product of products) {
+    const moved = period.get(product.key);
+    const earlier = before.get(product.key);
+    const got = (row: ResultRow | undefined, column: string) => num(row?.[column]);
+    const opening = product.open + (earlier === undefined ? 0 : got(earlier, "packing") + got(earlier, "cr_qty") + got(earlier, "purch_qty") + got(earlier, "stock_add") - got(earlier, "dr_qty") - got(earlier, "sale_qty") - got(earlier, "stock_less"));
+    const values = { packing: got(moved, "packing"), cr: got(moved, "cr_qty"), purch: got(moved, "purch_qty"), add: got(moved, "stock_add"), dr: got(moved, "dr_qty"), sale: got(moved, "sale_qty"), less: got(moved, "stock_less") };
+    const rate = rates.get(product.key) ?? 0;
+    const closing = Math.round(opening + values.packing + values.cr + values.purch + values.add - values.dr - values.sale - values.less);
+    const plannedQty = planned.get(product.key) ?? 0;
+    const pend = pendingOrders.get(product.key) ?? 0;
+    const inTransit = transit.get(product.key) ?? 0;
+    if ([opening, values.packing, values.cr, values.purch, values.add, values.dr, values.sale, values.less, pend, plannedQty, inTransit, product.hold].every((value) => value === 0)) continue;
+    const box = product.pack > 1 ? Math.trunc(closing / product.pack) : 0;
+    const row: ResultRow = { ITEM: product.item };
+    withAddons(row, product);
+    Object.assign(row, {
+      PROD_PACK: product.pack, OPEN_QTY: r2(opening), OPEN_AMT: r2(opening * rate), PACKING: r2(values.packing), CR_QTY: r2(values.cr), PURCH_QTY: r2(values.purch), STOCK_ADD: r2(values.add), DR_QTY: r2(values.dr), SALE_QTY: r2(values.sale), STOCK_LESS: r2(values.less),
+      CLSG_QTY: closing, CLSG_BOX_QTY: box, CLSG_LOOSE_QTY: product.pack > 1 ? closing - Math.round(product.pack * box) : 0, Rate: rate, Amount: r2(closing * rate), Plan_Qty: r2(plannedQty), Pend_Order: r2(pend), Transit: r2(inTransit),
+      Hold_Ctn: r2(product.holdCtn), Hold_Qty: r2(product.hold), After_Hold_Stock: r2(closing - product.hold), Hold_Remark: product.remark,
+    });
+    rows.push(row);
+  }
+  table.rows = sortRows(rows);
+  return table;
+}
+
+// ======================================================================================
+// 163: FINISH PRODUCT COSTING (SP_FRT_RPT_RPI_FINISH_PROD_COSTING; SPECIAL > Extra Report (RP) > Finish Product Costing (Sales Dept.))
+// ======================================================================================
+//
+// The finish goods' bills of material (MFG-BOM vouchers) costed. A row for each BOM voucher of a finish good (its production and sales for the
+// year up to Upto, its DP rate and the NP rate 68% of it, the cost of the whole voucher, the difference and the profit / consumption ratios), and
+// under it a row for each material (its quantity, rate and cost): a semi finished material is replaced by the raw materials its own latest
+// BOM explodes to (quantities scaled, at most ten levels, leaves only), each costed at the BOM's rate, else the latest purchase rate of the year,
+// else the opening rate, else the report rate. Summary Require: the finish goods' rows only. Consumption Require: the finish goods' production
+// and what the same vouchers consumed. PMP Detail Require: the semi finished materials' BOM vouchers with the materials of each.
+// The procedure builds temp tables and updates them; here it is a few grouped reads and the same steps in memory (the BOM explosion is its
+// recursive query, done on the vouchers read once). Ordered by SORTING_FIELD (voucher, then its materials).
+
+async function finishProductCosting(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const check = (name: string) => call.checkQuery.includes(`${name},`);
+  const from = desktopDate(call.from);
+  const upto = desktopDate(call.upto);
+  const yearStart = desktopDate(call.tarikh1);
+  const keyOf = (at: number) => call.addon[at].trim().replace(/^(adata|aentry)\.txt_/i, "$1.key_");
+  const filters = (call.selectKey[4] !== "" ? ` AND prodmas.prod_key IN ${call.selectKey[4]}` : "")
+    + [0, 1, 2, 3].filter((at) => call.selectKey[at] !== "" && call.addon[at].trim() !== "").map((at) => ` AND ${keyOf(at)} IN ${call.selectKey[at]}`).join("");
+  const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
+  const r4 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 10000) / 10000;
+  const text = (value: unknown) => (value === null || value === undefined ? null : toText(value));
+  const upper = (value: string | null) => (value ?? "").trim().toUpperCase();
+  const raw = (value: unknown) => String(value ?? "").toUpperCase();
+  const byText = (a: string, b: string) => (raw(a) === raw(b) ? 0 : raw(a) < raw(b) ? -1 : 1);
+  const trn = "btrim(prodled.trn_module)";
+  const attributes = `adata.txt_prodcat AS prodcat, adata.txt_prodtype AS prodtype, adata.txt_prodgroup AS prodgroup`;
+  const base = `${db}PRODUCT_MASTER prodmas LEFT JOIN ${db}ADDON_DATA adata ON adata.prod_id = prodmas.prod_key LEFT JOIN ${db}PROD_LEDGER prodled ON prodled.prod_id = prodmas.prod_key`;
+  const produced = `prodled.stock_nat = 'A' AND ((${trn} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD') OR ${trn} = 'PROD-FG' OR ${trn} = 'PROD-SFG' OR (${trn} = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> '')) AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL`;
+  const table = new ResultTable();
+
+  // ---- Consumption Require: the finish goods' production and what the same vouchers consumed ----
+  if (check("CHK_CONSUMPTION")) {
+    const made = await runReportSql(loader, `SELECT prodled.full_docno AS doc, prodmas.prod_desc AS item, produom.uom_desc AS uom,`
+      + ` sum(CASE WHEN prodled.stock_nat = 'A' AND ((${trn} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD') OR ${trn} = 'PROD-FG') AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL THEN prodled.quantity - prodled.ag_qty ELSE 0.00 END) AS production`
+      + ` FROM ${base} LEFT JOIN ${db}PROD_UOM produom ON produom.uom_key = prodled.uomentry_id WHERE prodmas.prod_pos <> 'D' AND prodled.il_pos = 'A' AND prodled.stock_nat = 'A' AND ${trn} = 'PROD-FG' AND upper(btrim(adata.txt_prodtype)) = 'FINISH GOODS'`
+      + ` AND prodled.il_date BETWEEN $1 AND $2${filters} GROUP BY prodled.full_docno, prodmas.prod_desc, produom.uom_desc`, [from, upto]);
+    const docs = [...new Set(made.rows.map((row) => toText(row.doc)))];
+    const used = await runReportSql(loader, `SELECT prodled.full_docno AS doc, prodmas.prod_desc AS item, produom.uom_desc AS uom,`
+      + ` sum(CASE WHEN prodled.stock_nat = 'L' AND ${trn} = 'PROD-FG' AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL THEN prodled.quantity - prodled.ag_qty ELSE 0.00 END) AS consumption`
+      + ` FROM ${base} LEFT JOIN ${db}PROD_UOM produom ON produom.uom_key = prodled.uomentry_id WHERE prodmas.prod_pos <> 'D' AND prodled.il_pos = 'A' AND prodled.stock_nat = 'L' AND ${trn} = 'PROD-FG'`
+      + ` AND prodled.il_date BETWEEN $1 AND $2 AND prodled.full_docno = ANY($3::text[]) GROUP BY prodled.full_docno, prodmas.prod_desc, produom.uom_desc`, [from, upto, docs]);
+    for (const column of ["SORTING_FIELD", "Description", "PRODUCTION", "CONSUMPTION", "UOM"]) table.addColumn(column);
+    table.setKind("PRODUCTION", "int"); table.setKind("CONSUMPTION", "decimal");
+    const merged = new Map<string, ResultRow>();
+    const put = (sorting: string, item: string, uom: unknown, production: number, consumption: number) => {
+      const key = JSON.stringify([sorting, item, text(uom)]);
+      const row = merged.get(key) ?? { SORTING_FIELD: sorting, Description: item, PRODUCTION: 0, CONSUMPTION: 0, UOM: text(uom) };
+      row.PRODUCTION = num(row.PRODUCTION) + production;
+      row.CONSUMPTION = r4(num(row.CONSUMPTION) + consumption);
+      merged.set(key, row);
+    };
+    for (const row of made.rows) put(`${toText(row.doc)}z${toText(row.item)}`, toText(row.item), row.uom, Math.trunc(num(row.production)), 0);
+    for (const row of used.rows) put(`${toText(row.doc)}zz${toText(row.item)}   L`, toText(row.item), row.uom, 0, num(row.consumption));
+    table.rows = [...merged.values()].sort((a, b) => byText(toText(a.SORTING_FIELD), toText(b.SORTING_FIELD)));
+    return table;
+  }
+
+  // ---- PMP Detail Require: the semi finished materials' BOM vouchers and their materials ----
+  if (check("CHK_PMPDETAIL")) {
+    const headers = (await runReportSql(loader, `SELECT DISTINCT prodled.full_docno AS doc, prodmas.prod_desc AS item, ${attributes}, prodled.quantity::numeric AS qty FROM ${base}`
+      + ` WHERE prodmas.prod_pos <> 'D' AND prodled.il_pos = 'A' AND prodled.stock_nat = 'A' AND ${trn} = 'MFG-BOM' AND upper(btrim(adata.txt_prodtype)) = 'SEMI FINISHED MATERIAL'${filters}`)).rows;
+    const docs = [...new Set(headers.map((row) => toText(row.doc)))];
+    const lines = (await runReportSql(loader, `SELECT prodled.full_docno AS doc, product.prod_desc AS material, ${attributes}, prodled.quantity::numeric AS qty FROM ${db}PROD_LEDGER prodled JOIN ${db}PRODUCT_MASTER product ON product.prod_key = prodled.prod_id`
+      + ` JOIN ${db}ADDON_DATA adata ON adata.prod_id = product.prod_key WHERE prodled.il_pos <> 'D' AND prodled.stock_nat = 'L' AND prodled.full_docno = ANY($1::text[])`, [docs])).rows;
+    for (const column of ["SORTING_FIELD", "Prodcat", "Category", "prod_Group", "Description", "Material_Used", "QUANTITY", "SINGLE_PC_WEIGHT"]) table.addColumn(column);
+    table.setKind("QUANTITY", "decimal"); table.setKind("SINGLE_PC_WEIGHT", "decimal");
+    const out: ResultRow[] = [];
+    const keep = (type: unknown) => upper(text(type)) !== "SEMI FINISHED MATERIAL";
+    // The header rows carry the semi finished type as their category, so they are the ones deleted; the lines stay unless they are semi finished too.
+    const seen = new Set<string>();
+    for (const header of headers) {
+      for (const line of lines.filter((candidate) => toText(candidate.doc) === toText(header.doc))) {
+        if (!keep(line.prodtype)) continue;
+        const key = JSON.stringify([toText(header.doc), toText(header.item), toText(line.material), num(header.qty), num(line.qty)]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ SORTING_FIELD: `${toText(header.doc)}z${toText(header.item)}`, Prodcat: text(line.prodcat), Category: text(line.prodtype), prod_Group: text(line.prodgroup), Description: toText(header.item), Material_Used: toText(line.material), QUANTITY: num(header.qty), SINGLE_PC_WEIGHT: r4(num(header.qty) * num(line.qty)) });
+      }
+    }
+    table.rows = out.map((row, index) => ({ row, index })).sort((a, b) => byText(toText(a.row.SORTING_FIELD), toText(b.row.SORTING_FIELD)) || a.index - b.index).map(({ row }) => row);
+    return table;
+  }
+
+  // ---- The costing ----
+  type Cost = {
+    doc: string; sorting: string; main: string; prodKey: number; type: string | null; category: string | null; group: string | null; desc: string; material: string;
+    dp: number | null; np: number | null; pack: number | null; qty: number | null; single: number | null; total: number | null; rate: number | null; cost: number | null; diff: number | null;
+    production: number | null; prodVal: number | null; sale: number | null; diffVal: number | null; ratio: number | null; net: number | null; onCost: number | null;
+  };
+  const blank = (values: Partial<Cost>): Cost => ({ doc: "", sorting: "", main: "Finish Goods", prodKey: 0, type: null, category: null, group: null, desc: "", material: "", dp: 0, np: 0, pack: 0, qty: null, single: null, total: null, rate: 0, cost: 0, diff: 0,
+    production: 0, prodVal: 0, sale: 0, diffVal: 0, ratio: 0, net: 0, onCost: 0, ...values });
+  const dpRates = new Map((await runReportSql(loader, `SELECT DISTINCT ON (prod_id) prod_id, round(pl_srate::numeric, 2) AS rate FROM ${db}PRICELIST WHERE pl_wefrom <= $1 AND pl_srate::numeric > 0 AND pl_pos <> 'D' ORDER BY prod_id, pl_wefrom DESC`, [upto])).rows.map((row) => [num(row.prod_id), num(row.rate)] as const));
+  const yearly = new Map((await runReportSql(loader, `SELECT prod_id, sum(CASE WHEN stock_nat = 'A' AND ((btrim(trn_module) = 'SVOU-ADD' AND upper(left(full_docno, 4)) = 'PROD') OR btrim(trn_module) = 'PROD-FG' OR btrim(trn_module) = 'PROD-SFG' OR (btrim(trn_module) = 'PROD-MULTI' AND coalesce(close_remark, '') <> '')) AND inventory = 'Y' AND process_id IS NOT NULL THEN quantity - ag_qty ELSE 0.00 END) AS production,`
+    + ` sum(CASE WHEN (book = 8 OR book = 9) AND stock_nat = 'L' AND inventory = 'Y' AND led_id IS NOT NULL THEN quantity - ag_qty ELSE 0.00 END) AS sale FROM ${db}PROD_LEDGER WHERE il_pos = 'A' AND il_date BETWEEN $1 AND $2 GROUP BY prod_id`, [yearStart, upto])).rows.map((row) => [num(row.prod_id), row] as const));
+  const purchase = new Map((await runReportSql(loader, `SELECT DISTINCT ON (prod_id) prod_id, rate::numeric AS rate FROM ${db}PROD_LEDGER WHERE il_pos = 'A' AND il_date BETWEEN $1 AND $2 AND book = 13 AND led_id IS NOT NULL ORDER BY prod_id, il_date DESC`, [yearStart, upto])).rows.map((row) => [num(row.prod_id), num(row.rate)] as const));
+  const balances = new Map((await runReportSql(loader, `SELECT DISTINCT ON (prod_id) prod_id, open_rate::numeric AS open_rate, rep_rate::numeric AS rep_rate FROM ${db}PROD_BALANCE WHERE prec_flag = 'RP' ORDER BY prod_id`)).rows.map((row) => [num(row.prod_id), row] as const));
+
+  const headers = (await runReportSql(loader, `SELECT DISTINCT prodled.full_docno AS doc, prodmas.prod_key, prodmas.prod_desc AS item, prodmas.base_pack AS pack, ${attributes}, prodled.quantity::numeric AS qty FROM ${base}`
+    + ` WHERE prodmas.prod_pos <> 'D' AND prodled.il_pos = 'A' AND prodled.stock_nat = 'A' AND ${trn} = 'MFG-BOM' AND upper(btrim(adata.txt_prodtype)) = 'FINISH GOODS'${filters}`)).rows;
+  const docs = [...new Set(headers.map((row) => toText(row.doc)))];
+  const lineRows = (await runReportSql(loader, `SELECT DISTINCT prodled.full_docno AS doc, prodmas.prod_key, prodmas.prod_desc AS item, ${attributes}, prodled.quantity::numeric AS qty, prodled.rate::numeric AS rate FROM ${base}`
+    + ` WHERE prodmas.prod_pos <> 'D' AND prodled.il_pos = 'A' AND prodled.stock_nat = 'L' AND ${trn} = 'MFG-BOM' AND prodled.full_docno = ANY($1::text[])`, [docs])).rows;
+
+  let rows: Cost[] = [];
+  for (const header of headers) {
+    const key = num(header.prod_key);
+    const dp = dpRates.get(key) ?? 0;
+    const qty = r4(num(header.qty));
+    const year = yearly.get(key);
+    rows.push(blank({ doc: toText(header.doc), sorting: `${toText(header.doc)}z${toText(header.item)}`, prodKey: key, type: text(header.prodtype), category: text(header.prodcat), group: text(header.prodgroup), desc: toText(header.item), dp, np: dp > 0 ? r2(dp * 68 / 100) : 0,
+      pack: Math.trunc(num(header.pack)), qty, single: qty, total: qty, production: Math.trunc(num(year?.production)), sale: Math.trunc(num(year?.sale)) }));
+  }
+  for (const line of lineRows) {
+    const qty = r4(num(line.qty));
+    rows.push(blank({ doc: toText(line.doc), sorting: `${toText(line.doc)}zz${toText(line.item)}   L`, prodKey: num(line.prod_key), type: text(line.prodtype), category: text(line.prodcat), group: text(line.prodgroup), desc: toText(line.item), pack: 0, qty, single: qty, total: 0, cost: r2(num(line.rate)), production: 0, sale: 0 }));
+  }
+  // Every row's single piece weight is 1 (no Material_Used yet), so the total weight is the quantity.
+  for (const row of rows) { row.single = 1; row.total = r4((row.qty ?? 0) * 1); }
+  // A material's cost rate: the voucher's, else the year's latest purchase rate, else the opening rate, else the report rate.
+  const notFinish = (row: { type: string | null }) => upper(row.type) !== "FINISH GOODS";
+  for (const row of rows) {
+    if (!notFinish(row) || (row.cost ?? 0) !== 0) continue;
+    row.cost = purchase.get(row.prodKey) ?? row.cost;
+    if ((row.cost ?? 0) === 0) row.cost = num(balances.get(row.prodKey)?.open_rate) || row.cost;
+    if ((row.cost ?? 0) === 0) row.cost = num(balances.get(row.prodKey)?.rep_rate) || row.cost;
+  }
+  for (const row of rows) if (notFinish(row) && (row.cost ?? 0) > 0) row.rate = row.cost;
+  for (const row of rows) if (notFinish(row) && (row.cost ?? 0) > 0 && (row.qty ?? 0) > 0) row.cost = r2((row.qty ?? 0) * (row.cost ?? 0));
+
+  // ---- The BOM explosion of the semi finished materials (the procedure's recursive EXPLODE) ----
+  const products = new Map((await runReportSql(loader, `SELECT prod_key, prod_pos, btrim(prod_desc) AS item FROM ${db}PRODUCT_MASTER`)).rows.map((row) => [num(row.prod_key), row] as const));
+  const attribute = new Map((await runReportSql(loader, `SELECT DISTINCT ON (prod_id) prod_id, txt_prodgroup AS prodgroup, txt_prodtype AS prodtype, txt_prodcat AS prodcat FROM ${db}ADDON_DATA ORDER BY prod_id`)).rows.map((row) => [num(row.prod_id), row] as const));
+  const bom = (await runReportSql(loader, `SELECT full_docno AS doc, prod_id, stock_nat AS nature, quantity::numeric AS qty, rate::numeric AS rate, il_date FROM ${db}PROD_LEDGER WHERE btrim(trn_module) = 'MFG-BOM' AND il_pos <> 'D'`)).rows;
+  type Header = { doc: string; prodId: number; desc: string; qty: number; date: number };
+  const latest = new Map<string, Header>();
+  const everyHeader = new Set<string>();
+  const linesOf = new Map<string, { prodId: number; desc: string; qty: number; rate: number }[]>();
+  for (const row of bom) {
+    const desc = toText(products.get(num(row.prod_id))?.item).trim();
+    if (toText(row.nature) === "A") {
+      everyHeader.add(desc);
+      const header: Header = { doc: toText(row.doc), prodId: num(row.prod_id), desc, qty: num(row.qty), date: row.il_date instanceof Date ? row.il_date.getTime() : 0 };
+      const current = latest.get(desc);
+      if (!current || header.date > current.date || (header.date === current.date && byText(header.doc, current.doc) > 0)) latest.set(desc, header);
+    } else if (toText(row.nature) === "L") {
+      const list = linesOf.get(toText(row.doc)) ?? [];
+      list.push({ prodId: num(row.prod_id), desc, qty: num(row.qty), rate: num(row.rate) });
+      linesOf.set(toText(row.doc), list);
+    }
+  }
+  const semiDescriptions = new Set(rows.filter((row) => upper(row.type) === "SEMI FINISHED MATERIAL").map((row) => row.desc.trim()));
+  type Exploded = { root: Header; lastDoc: string; prodId: number; desc: string; qty: number; rate: number; level: number; path: string };
+  const exploded: Exploded[] = [];
+  let frontier: Exploded[] = [];
+  for (const desc of semiDescriptions) {
+    const header = latest.get(desc);
+    if (!header || toText(products.get(header.prodId)?.prod_pos) !== "A" || upper(text(attribute.get(header.prodId)?.prodtype)) !== "SEMI FINISHED MATERIAL") continue;
+    for (const line of linesOf.get(header.doc) ?? []) frontier.push({ root: header, lastDoc: header.doc, prodId: line.prodId, desc: line.desc, qty: line.qty, rate: line.rate, level: 1, path: `|${header.desc}|${line.desc}|` });
+  }
+  while (frontier.length > 0) {
+    exploded.push(...frontier);
+    const next: Exploded[] = [];
+    for (const row of frontier) {
+      const header = latest.get(row.desc);
+      if (!header || row.level >= 10) continue;
+      for (const line of linesOf.get(header.doc) ?? []) {
+        if (row.path.toUpperCase().includes(`|${line.desc.toUpperCase()}|`)) continue;
+        next.push({ root: row.root, lastDoc: header.doc, prodId: line.prodId, desc: line.desc, qty: header.qty === 0 ? NaN : row.qty * line.qty / header.qty, rate: line.rate, level: row.level + 1, path: `${row.path}${line.desc}|` });
+      }
+    }
+    frontier = next;
+  }
+  type Leaf = { finished: string; qty: number; group: string | null; type: string | null; category: string | null; cost: number; material: string };
+  const leaves: Leaf[] = [];
+  for (const row of exploded) {
+    if (toText(products.get(row.prodId)?.prod_pos) !== "A" || everyHeader.has(row.desc)) continue;
+    const purchased = purchase.get(row.prodId) === undefined ? null : r2(purchase.get(row.prodId)!);
+    const opening = balances.get(row.prodId) === undefined ? null : r2(num(balances.get(row.prodId)!.open_rate));
+    const rate = (row.rate ?? 0) === 0 && (purchased ?? 0) === 0 ? opening ?? 0 : (row.rate ?? 0) === 0 ? purchased ?? 0 : row.rate;
+    const attributes = attribute.get(row.prodId);
+    leaves.push({ finished: toText(products.get(row.root.prodId)?.item).trim(), qty: Number.isNaN(row.qty) ? NaN : r4(row.qty), group: text(attributes?.prodgroup), type: text(attributes?.prodtype), category: text(attributes?.prodcat), cost: rate, material: row.desc });
+  }
+  const snapshot = [...rows];
+  for (const row of snapshot) {
+    if (upper(row.type) !== "SEMI FINISHED MATERIAL") continue;
+    for (const leaf of leaves) {
+      if (leaf.finished !== row.desc.trim()) continue;
+      const qty = row.qty ?? 0;
+      rows.push(blank({ doc: row.doc, sorting: row.sorting, main: row.main, prodKey: row.prodKey, group: leaf.group, type: leaf.type, category: leaf.category, desc: leaf.finished, material: leaf.material, dp: null, np: null, pack: null, qty, single: leaf.qty,
+        total: r4(leaf.qty * qty), rate: leaf.cost, cost: Number.isNaN(leaf.qty) ? null : r2(leaf.qty * qty * leaf.cost), diff: null, production: null, prodVal: null, sale: null, diffVal: null, ratio: null, net: null, onCost: null }));
+    }
+  }
+  rows = rows.filter((row) => !(upper(row.type) === "SEMI FINISHED MATERIAL" && row.material === ""));
+
+  // The finish good's cost is the sum of its voucher's rows; then the differences, values and ratios.
+  const sums = new Map<string, number>();
+  for (const row of rows) sums.set(row.doc, (sums.get(row.doc) ?? 0) + (row.cost ?? 0));
+  for (const row of rows) if (upper(row.type) === "FINISH GOODS") row.cost = sums.get(row.doc) ?? 0;
+  for (const row of rows) if (upper(row.type) === "FINISH GOODS") row.diff = r2((row.np ?? 0) - (row.cost ?? 0));
+  for (const row of rows) {
+    if (upper(row.main) !== "FINISH GOODS") continue;
+    row.prodVal = row.production === null || row.cost === null ? null : r2(row.cost * row.production);
+    row.diffVal = row.diff === null || row.sale === null ? null : r2(row.diff * row.sale);
+    if ((row.diff ?? 0) > 0 && (row.cost ?? 0) > 0) {
+      row.onCost = r2((row.diff ?? 0) / (row.cost ?? 1) * 100);
+      row.ratio = r2((row.cost ?? 0) / (row.np ?? 1) * 100);
+      row.net = r2((row.diff ?? 0) / (row.np ?? 1) * 100);
+    }
+  }
+  if (check("CHK_SUMMARY")) rows = rows.filter((row) => upper(row.type) === "FINISH GOODS");
+
+  const columns = ["SORTING_FIELD", "Prod_type", "Category", "prod_Group", "Description", "Material_Used", "DP_RATE", "NP_RATE", "STD_PACK", "QUANTITY", "SINGLE_PC_WEIGHT", "TOTAL_WEIGHT", "Rate", "COST_RATE", "DIFF_RATE", "PRODUCTION", "PROD_VAL", "SALE", "DIFF_VAL", "CONSUMPTION_RATIO_%", "PROFIT_ON_NET_%", "PROFIT_ON_COST_%"];
+  for (const column of columns) table.addColumn(column);
+  for (const column of columns.slice(6)) table.setKind(column, ["STD_PACK", "PRODUCTION", "SALE"].includes(column) ? "int" : "decimal");
+  table.rows = rows.map((row, index) => ({ row, index })).sort((a, b) => byText(a.row.sorting, b.row.sorting) || a.index - b.index).map(({ row }) => ({
+    SORTING_FIELD: row.sorting, Prod_type: row.type, Category: row.category, prod_Group: row.group, Description: row.desc, Material_Used: row.material, DP_RATE: row.dp, NP_RATE: row.np, STD_PACK: row.pack, QUANTITY: row.qty, SINGLE_PC_WEIGHT: row.single, TOTAL_WEIGHT: row.total,
+    Rate: row.rate, COST_RATE: row.cost, DIFF_RATE: row.diff, PRODUCTION: row.production, PROD_VAL: row.prodVal, SALE: row.sale, DIFF_VAL: row.diffVal, "CONSUMPTION_RATIO_%": row.ratio, "PROFIT_ON_NET_%": row.net, "PROFIT_ON_COST_%": row.onCost,
+  }));
+  return table;
 }
