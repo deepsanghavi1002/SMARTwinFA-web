@@ -141,11 +141,23 @@ ${extraXfs.join("\n")}
 
 const places = (decimals: number) => Math.max(0, Math.min(4, Math.round(decimals || 0)));
 
-function cellXml(ref: string, value: ExportCell, style: number): string {
+function cellXml(ref: string, value: ExportCell, style: number, formula?: string | null): string {
+  if (formula) {
+    // A real formula, with the worked-out value beside it so it shows before Excel recalculates.
+    const f = `<f>${xml(formula)}</f>`;
+    if (typeof value === "number" && Number.isFinite(value)) return `<c r="${ref}" s="${style}">${f}<v>${value}</v></c>`;
+    if (typeof value === "string" && value !== "") return `<c r="${ref}" s="${style}" t="str">${f}<v>${xml(value)}</v></c>`;
+    return `<c r="${ref}" s="${style}">${f}</c>`;
+  }
   if (value === null || value === undefined || value === "") return `<c r="${ref}" s="${style}"/>`;
   if (value instanceof Date) return `<c r="${ref}" s="${style}"><v>${excelDate(value)}</v></c>`;
   if (typeof value === "number") return Number.isFinite(value) ? `<c r="${ref}" s="${style}"><v>${value}</v></c>` : `<c r="${ref}" s="${style}"/>`;
   return `<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
+}
+
+/** The sheet row of the column headings: the heading lines above them (company, title ...) and a blank line. */
+export function xlsxHeadRow(table: Pick<ExportTable, "company" | "title" | "titleRight" | "subtitle" | "footerCenter">): number {
+  return [table.company, table.title, table.titleRight ?? "", ...table.subtitle, table.footerCenter ?? ""].filter((line) => line.trim() !== "").length + 2;
 }
 
 export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
@@ -173,7 +185,7 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
       const kind: ExtraXf["kind"] = column.kind === "number" ? places(column.decimals) : column.kind === "date" ? "date" : "text";
       const style = rowStyle && (fill !== "" || rowStyle.bold) ? styledXf(/^[0-9A-F]{6}$/.test(fill) ? fill : "", Boolean(rowStyle.bold), kind)
         : column.kind === "number" ? S_NUMBER + places(column.decimals) : column.kind === "date" ? S_DATE : S_TEXT;
-      return cellXml(`${columnLetter(index + 1)}${r}`, values[index] ?? null, style);
+      return cellXml(`${columnLetter(index + 1)}${r}`, values[index] ?? null, style, table.formulas?.[offset]?.[index]);
     }).join("")}</row>`);
   });
   const lastData = headRow + table.rows.length;

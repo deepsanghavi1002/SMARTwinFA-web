@@ -31,6 +31,10 @@ import { GroupByPanel } from "./GroupByPanel";
 import { PivotPanel } from "./PivotPanel";
 import { applyPivot } from "../../lib/report/pivot";
 import type { PivotSpec } from "../../lib/report/pivot";
+import { FormulaColumns } from "./FormulaColumns";
+import { entryIndexes, excelFormulas, withFormulaColumns, workOut } from "../../lib/report/formulaColumns";
+import type { FormulaColumn } from "../../lib/report/formulaColumns";
+import { xlsxHeadRow } from "../../lib/export/xlsx";
 import { ReportCompare } from "./ReportCompare";
 import type { CompareResult } from "./ReportCompare";
 
@@ -70,6 +74,8 @@ const TREE_KEYS = "F6 : Close / F4 : Open Tree";
 const GRID_KEYS = "F6 : Summarize F4 : Unsummarize";
 
 type Point = { row: number; col: number };
+
+const NO_FORMULAS: readonly FormulaColumn[] = [];
 
 export type OutputStatus = { hotKeys: string; message: string; red?: boolean };
 
@@ -130,7 +136,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** Pivot: the rows on screen as a cross table (kept with the report it was set for). */
   const [pivoting, setPivoting] = useState<{ forBase: ReportOutput; spec: PivotSpec } | null>(null);
   const pivotSpec = pivoting !== null && pivoting.forBase === base ? pivoting.spec : null;
-  const output = useMemo(() => (pivotSpec ? applyPivot(served, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, groupSpecs, ungrouped, pivotSpec]);
+  const shaped = useMemo(() => (pivotSpec ? applyPivot(served, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, groupSpecs, ungrouped, pivotSpec]);
+  /** Add Column: the columns added with a formula (kept with the report they were added to). */
+  const [formulaCols, setFormulaCols] = useState<{ forBase: ReportOutput; list: readonly FormulaColumn[] }>({ forBase: base, list: [] });
+  const formulaSpecs = formulaCols.forBase === base ? formulaCols.list : NO_FORMULAS;
+  const [formulaOpen, setFormulaOpen] = useState(false);
+  const output = useMemo(() => withFormulaColumns(shaped, formulaSpecs), [shaped, formulaSpecs]);
 
   const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
@@ -143,7 +154,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [typed, setTyped] = useState("");
   const [search, setSearch] = useState("");
   const [borders, setBorders] = useState<ReadonlySet<string>>(new Set());
-  const [borderColour, setBorderColour] = useState("#ff0000");
+  const [borderColour] = useState("#ff0000");
   const [drawing, setDrawing] = useState(false);
   const [logTable, setLogTable] = useState<LogTable | null>(null);
   const [menu, setMenu] = useState<(GridMenuPlace & { key: string }) | null>(null);
@@ -154,7 +165,6 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
   const scroller = useRef<HTMLDivElement>(null);
-  const colourInput = useRef<HTMLInputElement>(null);
   const dragging = useRef(false);
 
   useEffect(() => {
@@ -656,12 +666,22 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         if (name && !fills.has(name)) fills.set(name, hexColour(name));
         return { fill: name ? fills.get(name) : undefined, bold: colours.bold };
       };
-      return exportTableFrom(
+      const table = exportTableFrom(
         { company: companyName, title: output.title || fallbackTitle, titleRight: output.dateLine, footerCenter: `${output.records} entries` },
         columns.map((column) => ({ caption: column.caption, kind: column.kind, decimals: column.decimals, align: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", width: widthOf(column), summed: false })),
         shown.map(({ row }) => columns.map((column) => (row.values[column.key] ?? "").replace(/,/g, column.kind === "number" ? "" : ","))),
         shown.map(({ row }) => styleOf(row)),
       );
+      if (formulaSpecs.length === 0) return table;
+      // The added columns go to Excel as real formulas (the cell keeps its value beside it).
+      const entries = new Set(entryIndexes(output));
+      const formulas = excelFormulas({
+        rows: shown.map(({ row, index }) => ({ kind: row.kind, level: row.level, entry: entries.has(index) })),
+        columns: columns.map((column) => ({ key: column.key, caption: column.caption })),
+        worked: workOut(shaped, formulaSpecs).worked,
+        headRow: xlsxHeadRow(table),
+      });
+      return { ...table, formulas };
     },
     name: output.title || fallbackTitle,
     sheet: (output.title || fallbackTitle).slice(0, 31),
@@ -860,8 +880,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               <button type="button" data-hotkey="g" aria-keyshortcuts="Alt+G" className={`mp-btn mp-btn-plain ${groupMode ? "rp-btn-on" : ""}`} onClick={() => void createGroup()} disabled={groupBusy} title="Group the entries on fields of your choice"><Icon name="columns" /><HotkeyLabel text="Create Group" hotkey="g" /></button>
               <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className={`mp-btn mp-btn-plain ${drawing ? "rp-btn-on" : ""}`} onClick={borderOn} title="Border the selected cells, then click cells to border them (Esc stops)"><Icon name="border" /><HotkeyLabel text="Border On" hotkey="o" /></button>
               <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-plain" onClick={borderOff} title="Remove Border from the selected cells, and stop drawing"><Icon name="borderOff" /><HotkeyLabel text="Border Off" hotkey="b" /></button>
-              <button type="button" data-hotkey="e" aria-keyshortcuts="Alt+E" className="mp-btn mp-btn-plain rp-colour-btn" onClick={() => colourInput.current?.click()} title="Border Colour"><span className="rp-colour-swatch" style={{ background: borderColour }} aria-hidden="true" /><HotkeyLabel text="Border Colour" hotkey="e" /></button>
-              <input ref={colourInput} type="color" className="rp-colour-input" tabIndex={-1} aria-label="Border colour" value={borderColour} onChange={(event) => setBorderColour(event.target.value)} />
+              <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className={`mp-btn mp-btn-plain ${formulaSpecs.length > 0 ? "rp-btn-on" : ""}`} onClick={() => setFormulaOpen(true)} title="Add a column with a spreadsheet-style formula (=QTY*RATE, =SUM(QTY*RATE)); Excel gets it as a real formula"><Icon name="plus" /><HotkeyLabel text="Add Column" hotkey="l" /></button>
               <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setArranging(true)} title="Arrange columns: change their order, show or hide them"><Icon name="columns" /><HotkeyLabel text="Arrange Columns" hotkey="o" />{layout.hiddenColumns.length ? ` (${layout.hiddenColumns.length} hidden)` : ""}</button>
             </>
           ) },
@@ -895,6 +914,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           onClose={() => { setArranging(false); scroller.current?.focus(); }}
         />
       )}
+      {formulaOpen && <FormulaColumns output={shaped} shown={columns.map((column) => ({ key: column.key, caption: column.caption }))} specs={formulaSpecs} onChange={(list) => setFormulaCols({ forBase: base, list })} onClose={() => { setFormulaOpen(false); scroller.current?.focus(); }} />}
       {logTable && <LogViewer table={logTable} title={`${output.title || fallbackTitle} Log`} onClose={() => { setLogTable(null); scroller.current?.focus(); }} />}
     </div>
   );

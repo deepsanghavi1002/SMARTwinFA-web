@@ -38,6 +38,11 @@ export type ExportTable = Readonly<{
   totals?: readonly (number | null)[];
   /** Each row's colour and weight (null: plain), as the grid shows its headings and subtotals. */
   rowStyles?: readonly (ExportRowStyle | null)[];
+  /**
+   * Excel formulas (without the "=") for cells of `rows`, row by row, column by column (null: the cell's value). Only the Excel
+   * export uses them, and writes the cell's value beside the formula so it shows before Excel works it out.
+   */
+  formulas?: readonly (readonly (string | null)[])[];
   /** The column that names a record on the "one record per page" layout (default: the first). */
   recordTitleColumn?: number;
 }>;
