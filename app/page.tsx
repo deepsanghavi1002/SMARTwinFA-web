@@ -5,6 +5,9 @@ import { MasterProgram } from "../features/master-program/MasterProgram";
 import { SmallEntry } from "../features/small-entry/SmallEntry";
 import { Entry } from "../features/entry/Entry";
 import { ReportCombine } from "../features/report/ReportCombine";
+import { PieChart } from "../features/piechart/PieChart";
+import { YearChart } from "../features/yearchart/YearChart";
+import { Dashboard } from "../features/dashboard/Dashboard";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { StartupGate, useStartupActions, useStartupSelection, ViewSwitchButton } from "../features/startup/StartupGate";
@@ -47,7 +50,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "pending";
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
@@ -77,6 +80,9 @@ function screenOf(node: MenuNode | null): Screen {
   if (code === "SMALL_ENTRY" && node.actionMenu) return "small-entry";
   if (code === "ENTRY" && node.actionMenu?.toUpperCase() === "INVOICE") return "entry";
   if (code === "REPORT" && node.actionMenu) return "report";
+  if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
+  if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";
+  if ((code === "REP_DASHBOARD" || code === "YEAR_DASHBOARD") && node.actionMenu) return "dashboard";
   return "pending";
 }
 
@@ -329,7 +335,7 @@ function MainMenu() {
   // than the window scrolls, and one that would run off the right opens to the left of its row.
   useLayoutEffect(() => {
     const fit = () => {
-      const margin = 4;
+      const margin = 6;
       for (const panel of menuBar.current?.querySelectorAll<HTMLElement>(".open-branch > .submenu") ?? []) {
         // The modern view's sidebar opens submenus in place: nothing to move there.
         if (getComputedStyle(panel).position !== "absolute") continue;
@@ -342,7 +348,15 @@ function MainMenu() {
         const room = window.innerHeight - 2 * margin;
         if (rect.height > room) { panel.style.maxHeight = `${room}px`; panel.style.overflowY = "auto"; rect = panel.getBoundingClientRect(); }
         const below = rect.bottom - (window.innerHeight - margin);
-        if (below > 0) panel.style.top = `${panel.offsetTop - Math.min(below, rect.top - margin)}px`;
+        if (below > 0) {
+          const maxShiftUp = Math.max(0, rect.top - margin);
+          const shift = Math.min(below, maxShiftUp);
+          panel.style.top = `${panel.offsetTop - shift}px`;
+        }
+        const finalRect = panel.getBoundingClientRect();
+        if (finalRect.top < margin) {
+          panel.style.top = `${panel.offsetTop + (margin - finalRect.top)}px`;
+        }
         if (rect.right > window.innerWidth - margin) { panel.style.left = "auto"; panel.style.right = "100%"; }
       }
     };
@@ -514,6 +528,9 @@ function MainMenu() {
       case "small-entry": return <SmallEntry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "pie-chart": return <PieChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "year-chart": return <YearChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "dashboard": return <Dashboard reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       default: return <NotBuiltYet node={node} />;
     }
   };
@@ -535,7 +552,7 @@ function MainMenu() {
   );
 
   return (
-    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "master" || screen === "small-entry" || screen === "report" ? "master-open" : ""}`}>
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
         {windows.length > 0 && (
@@ -583,7 +600,7 @@ function MainMenu() {
         <div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div>
       </header>
 
-      <div className={`menu-bar ${suspendHoverMenu ? "suspend-hover" : ""} ${keyboardMenus ? "menu-keys" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)} onKeyDown={menuKeys}>
+      <div className={`menu-bar ${openMenu !== null ? "menu-open" : ""} ${suspendHoverMenu ? "suspend-hover" : ""} ${keyboardMenus ? "menu-keys" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)} onKeyDown={menuKeys}>
         {/* Sidebar heading; the classic view hides it. */}
         <span className="menu-bar-title" aria-hidden="true">☰ Menu</span>
         {menus.map((menu) => (
@@ -618,7 +635,7 @@ function MainMenu() {
         </div>
       </section>
 
-      <section className={`work-area ${screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" ? "workflow-open" : ""}`}>
+      <section className={`work-area ${screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
         <div className="window-stack">
           {windows.map((node) => {
             const on = node.id === activeId;

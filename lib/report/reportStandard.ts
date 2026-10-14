@@ -185,21 +185,28 @@ async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> 
   const distinct = printSlabs || !entryAddon ? "" : "Distinct ";
 
   // Include / Exclude Slab: a column for each slab, and the vouchers that have none of the ticked slabs left out (or in).
-  const slabColumn = (key: number | string, short: string) => `,COALESCE((SELECT SLAB_AMT::numeric FROM ${db}LEDGER_EXT WHERE LED_ID=LED.LED_KEY AND SLAB_ID=${key} AND (IL_ID IS NULL) LIMIT 1),0.00) AS "${short}"`;
+  // Each voucher's slab amounts come from one grouped pass over LEDGER_EXT, joined (below) - a sub-query a voucher and slab read the whole
+  // table each time, as LEDGER_EXT has no index on LED_ID. A voucher without the slab gets 0.00, as before.
+  const columnSlabs: { key: number | string; short: string }[] = [];
+  const slabColumn = (key: number | string, short: string) => { columnSlabs.push({ key, short }); return `,COALESCE(SLAB_SUMS.s${columnSlabs.length - 1},0.00) AS "${short}"`; };
   let slabColumns = "";
   let where = call.where;
   if (format === "ISLAB") {
     tickedKeys.forEach((key, at) => { slabColumns += slabColumn(key, tickedShorts[at] ?? key); });
-    where += ` and led.LED_KEY in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0 and led_id=led.led_key)`;
+    where += ` and led.LED_KEY in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0)`;
   } else if (format === "ESLAB") {
     for (const slab of slabs) if (!tickedKeys.includes(String(slab.key)) && !slab.master) slabColumns += slabColumn(slab.key, slab.short);
-    where += ` and led.LED_KEY not in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0 and led_id=led.led_key)`;
+    where += ` and led.LED_KEY not in (select led_id from ${db}LEDGER_EXT where slab_id in (${tickedKeys.join(",") || "-1"}) and SLAB_AMT::numeric<>0 and led_id is not null)`;
   }
 
   // OUTER APPLY: the expense account's name, and the product lines' quantity, factor and MRP value. The product lines' sums are worked
   // out once for every voucher (GROUP BY LED_ID) and joined, not once a voucher: PROD_LEDGER has no index on LED_ID, so a per-voucher
   // sub-query read the whole table each time (Quantity: 14 s, with Show Default Slabs 62 s on 831 vouchers). A voucher with no line gets NULL, as before.
   let apply = ` LEFT JOIN LATERAL (SELECT acc.name AS exp_name FROM ${db}ACCOUNT acc WHERE acc.Code=led.post_bkcode) ALIAS1 ON TRUE`;
+  if (columnSlabs.length > 0) {
+    apply += ` LEFT JOIN (SELECT LED_ID AS slab_led,${columnSlabs.map((slab, at) => `SUM(CASE WHEN SLAB_ID=${slab.key} THEN SLAB_AMT::numeric END) AS s${at}`).join(",")}`
+      + ` FROM ${db}LEDGER_EXT WHERE IL_ID IS NULL AND SLAB_ID IN (${columnSlabs.map((slab) => slab.key).join(",")}) GROUP BY LED_ID) SLAB_SUMS ON SLAB_SUMS.slab_led=led.led_key`;
+  }
   if (call.checkQuery.includes("CHK_QUANTITY,")) apply += ` LEFT JOIN (SELECT LED_ID AS alias4_led, SUM(Quantity) AS qty FROM ${db}prod_ledger WHERE IL_POS='A' AND LED_ID IS NOT NULL GROUP BY LED_ID) ALIAS4 ON ALIAS4.alias4_led=led.led_key`;
   if (call.checkQuery.includes("CHK_FACTOR,")) {
     apply += ` LEFT JOIN (SELECT prodled.LED_ID AS alias5_led, SUM(CASE WHEN PRODUCT.REP2_UOM=PRODUCT.PCS_UOM THEN prodled.TRN_PCS-prodled.ag_qty`
@@ -220,7 +227,8 @@ async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> 
   const slabCells = printSlabs ? `,COALESCE(ltrim(rtrim(SLAB_REPOHD)),'') AS "SLAB_DESC",COALESCE(ledext.SLAB_AMT::numeric,0.00) AS "SLAB_AMOUNT"` : slabColumns;
   const narrationColumn = useUnion ? "NARRATION1" : "NARRATION";
   const sql = `SELECT ${distinct}${select}${slabCells},LED.DOC_REMARK,LED.NARRATION AS "${narrationColumn}"${end}${from}${apply}${where}${orderBy}`;
-  const result = await runReportSql(loader, frag(sql));
+  // Hash joins: with a long list of vouchers the planner chose nested loops over LEDGER_EXT / PROD_LEDGER (no index on LED_ID) and the statement timed out.
+  const result = await runReportSqlHashed(loader, frag(sql));
   let table = tableFromFields(result.fields);
   table.rows = result.rows.map((row) => ({ ...row }));
 

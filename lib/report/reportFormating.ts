@@ -279,7 +279,7 @@ async function registerPeriods(loader: Loader, plan: ReportPlan): Promise<Result
   const quantityJoin = dailyQuantity ? ` LEFT JOIN (SELECT led_id AS qty_led, sum(quantity) AS qty FROM ${db}PROD_LEDGER WHERE il_pos<>'D' AND inventory='Y' AND led_id IS NOT NULL GROUP BY led_id) DAY_QTY ON DAY_QTY.qty_led=LED.LED_KEY` : "";
   const body = `${lead}${label},sum(LED.AMOUNT) as "AMOUNT"${quantity}${slabColumns}`;
   const select = selectStart !== "" ? `SELECT ${body},${selectStart}` : `SELECT ${body}`;
-  return tableFromResult(await runReportSql(loader, frag(`${select}${from}${apply}${quantityJoin}${call.where}${groupOrderTail([csGroup, periodGroup], [csOrder, periodOrder])}`)));
+  return tableFromResult(await runReportSqlHashed(loader, frag(`${select}${from}${apply}${quantityJoin}${call.where}${groupOrderTail([csGroup, periodGroup], [csOrder, periodOrder])}`)));
 }
 
 /** Month: a row a month (and party). */
@@ -290,24 +290,30 @@ async function registerMonthly(loader: Loader, plan: ReportPlan): Promise<Result
   const { from } = registerFormatFrom(plan);
   const slabs = await registerSlabs(loader, plan, false);
   const byParty = call.groupBy.trim() !== "" && call.groupBy.toLowerCase().includes("ac.name");
-  const slabAmount = (key: number) => `coalesce((select SUM(slab_amt::numeric) from ${db}LEDGER_EXT WHERE SLAB_ID = ${key} AND LED_ID = LED.LED_KEY AND (IL_ID IS NULL)),0.00)`;
+  // Each voucher's slab amounts (and the first tax slab's net) come from one grouped pass over LEDGER_EXT, joined: a sub-query a voucher and
+  // slab read the whole table each time (LEDGER_EXT has no index on LED_ID) and timed out on a year's vouchers.
+  const slabAmount = (key: number) => `coalesce(SUM(SLAB_SUMS."s${key}"),0.00)`;
   // NET_AMOUNT (the tax slab's total less its tax) stands before the first tax slab, then each slab.
   const columns: { name: string; sql: string }[] = [];
   let tax = false;
+  let netSlab = 0;
   for (const slab of slabs) {
     if (slab.master) {
-      if (!tax) columns.push({ name: "NET_AMOUNT", sql: `coalesce((select SUM(S_LASTOT::numeric-slab_amt::numeric) from ${db}LEDGER_EXT WHERE SLAB_ID = ${slab.key} AND LED_ID = LED.LED_KEY AND (IL_ID IS NULL)),0.00)` });
+      if (!tax) { netSlab = slab.key; columns.push({ name: "NET_AMOUNT", sql: `coalesce(SUM(SLAB_SUMS."net"),0.00)` }); }
       tax = true;
     }
     columns.push({ name: slab.short, sql: slabAmount(slab.key) });
   }
   columns.push({ name: "FINAL_TOTAL", sql: "SUM(led.AMOUNT)" });
-  const quantity = call.checkQuery.includes("CHK_QUANTITY,")
-    ? `coalesce((select sum(quantity) from ${db}PROD_LEDGER where led_id=LED.LED_KEY and il_pos<>'D' and inventory='Y'),0)`
-    : "0";
+  const slabJoin = slabs.length === 0 ? "" : ` LEFT JOIN (SELECT LED_ID AS slab_led,${slabs.map((slab) => `SUM(CASE WHEN SLAB_ID=${slab.key} THEN SLAB_AMT::numeric END) AS "s${slab.key}"`).join(",")}`
+    + `${netSlab ? `,SUM(CASE WHEN SLAB_ID=${netSlab} THEN S_LASTOT::numeric-SLAB_AMT::numeric END) AS "net"` : ""}`
+    + ` FROM ${db}LEDGER_EXT WHERE IL_ID IS NULL AND SLAB_ID IN (${slabs.map((slab) => slab.key).join(",")}) GROUP BY LED_ID) SLAB_SUMS ON SLAB_SUMS.slab_led=LED.LED_KEY`;
+  const withQuantity = call.checkQuery.includes("CHK_QUANTITY,");
+  const quantity = withQuantity ? `coalesce(SUM(MONTH_QTY.qty),0)` : "0";
+  const quantityJoin = withQuantity ? ` LEFT JOIN (SELECT led_id AS qty_led, sum(quantity) AS qty FROM ${db}PROD_LEDGER WHERE il_pos<>'D' AND inventory='Y' AND led_id IS NOT NULL GROUP BY led_id) MONTH_QTY ON MONTH_QTY.qty_led=LED.LED_KEY` : "";
   const select = `SELECT to_char(led.doc_date,'YYYYMM') AS "SORTING_COL",${byParty ? `ac.name AS "PARTY_NAME",` : ""}to_char(led.doc_date,'FMMonth') AS "PARTICULARS",${quantity} AS "QUANTITY",${columns.map((column) => `${column.sql} AS "${column.name}"`).join(",")}`;
   const groupBy = ` GROUP BY ${byParty ? "ac.name," : ""}LED.LED_KEY,led.doc_date`;
-  const vouchers = await runReportSql(loader, frag(`${select}${from}${call.where}${groupBy}`));
+  const vouchers = await runReportSqlHashed(loader, frag(`${select}${from}${slabJoin}${quantityJoin}${call.where}${groupBy}`));
   const names = ["SORTING_COL", ...(byParty ? ["PARTY_NAME"] : []), "PARTICULARS", "QUANTITY", ...columns.map((column) => column.name)];
   const table = new ResultTable();
   for (const name of names) table.addColumn(name);
