@@ -216,9 +216,11 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
   const addon: Record<number, string> = {};
   const addonRow = (await loader.readTable(replaceEntryTokens((await restoreQuery(loader, "RESTINV_04_ADDON")).replace(/\|sys\.@pkval_1\|/gi, String(ledKey)), book.values)))?.[0];
   if (addonRow) {
-    const fields = (await loader.readTable(`SELECT fiel_key, fiel_save FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D'`)) ?? [];
+    const fields = (await loader.readTable(`SELECT fiel_key, fiel_save, fiel_type FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D'`)) ?? [];
     for (const item of fields) {
-      const value = field(addonRow, `txt_${text(item, "fiel_save").trim()}`);
+      const save = text(item, "fiel_save").trim();
+      // A list field keeps its text in txt_<name>; a typed field in input_<name>.
+      const value = text(item, "fiel_type").toUpperCase() === "I" ? field(addonRow, `input_${save}`) : field(addonRow, `txt_${save}`);
       if (value !== undefined && value !== null) addon[toInt(field(item, "fiel_key"))] = toText(displayValue(value)).trim();
     }
   }

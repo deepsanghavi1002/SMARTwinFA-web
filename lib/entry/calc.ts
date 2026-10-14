@@ -88,7 +88,7 @@ export type SlabCalcRow = Readonly<{
  * UTGST after CGST, of the figure before the row it is linked to) and adds or takes it off.
  * Returns each item-wise row's amount, by slab row index.
  */
-export function itemSlabAmounts(value: number, rows: readonly SlabCalcRow[], percents: readonly number[]): Map<number, number> {
+export function itemSlabAmounts(value: number, rows: readonly SlabCalcRow[], percents: readonly number[], typed: ReadonlyMap<number, number> = new Map()): Map<number, number> {
   const out = new Map<number, number>();
   const after: number[] = [value];
   let running = value;
@@ -96,7 +96,8 @@ export function itemSlabAmounts(value: number, rows: readonly SlabCalcRow[], per
     const row = rows[index];
     if (row.itemWise) {
       const base = row.link >= 0 && row.link < index ? after[row.link] : running;
-      const amount = round(base * (percents[index] ?? 0) / 100, 2);
+      // A discount row whose % is blank keeps the amount typed in its amount cell (C1dg_Inputdata_AfterEdit: the amount is worked out only from a % that is there).
+      const amount = typed.has(index) ? round(typed.get(index) ?? 0, 2) : round(base * (percents[index] ?? 0) / 100, 2);
       out.set(index, amount);
       running = row.mathOp === "L" ? running - amount : running + amount;
     }
@@ -141,4 +142,35 @@ export function slabRunTotal(rows: readonly SlabCalcRow[], productTotal: number,
     runTotals[index] = running;
   }
   return { amounts, runTotals, final: running };
+}
+
+/** Factor_calc: a quantity expressed in one of the product's units. */
+export function factorCalc(quantity: number, entryUom: number, factor: number, rateUom: number, base: number, baseUom: number, places: number, multiply: boolean): number {
+  if (baseUom === 0 || base === 0) return 0;
+  if (entryUom === baseUom) return quantity;
+  if (rateUom === baseUom) return factor;
+  if (multiply) return round(quantity * base, places);
+  return base > 0 ? round(quantity / base, places) : round(quantity, places);
+}
+
+/**
+ * C1dg_Inputdata's trn_* cells (Recalc_InputGrid_Upto_Value): the row's quantity in each of the product's stock units.
+ * Entered in pieces (the first unit) the figures follow Factor_calc; a row entered in another unit goes through pieces first.
+ */
+export function stockUnits(quantity: number, factor: number, entryUom: number, rateUom: number, units: ProductUnits, places: number, copyBundle: string | null): Record<string, number> {
+  const out = {
+    trn_pcs: factorCalc(quantity, entryUom, factor, rateUom, units.basePcs, units.pcsUom, places, true),
+    trn_pack: factorCalc(quantity, entryUom, factor, rateUom, units.basePack, units.packUom, places, false),
+    trn_weight: factorCalc(quantity, entryUom, factor, rateUom, units.baseWeight, units.weightUom, places, false),
+    trn_qty1: factorCalc(quantity, entryUom, factor, rateUom, units.baseQty1, units.qty1Uom, places, true),
+    trn_qty2: factorCalc(quantity, entryUom, factor, rateUom, units.baseQty2, units.qty2Uom, places, true),
+    trn_qty3: factorCalc(quantity, entryUom, factor, rateUom, units.baseQty3, units.qty3Uom, places, true),
+  };
+  if (copyBundle !== null) out.trn_pack = toNumber(copyBundle);
+  if (units.pcsUom > 0 && out.trn_pcs === 0) out.trn_pcs = quantity;
+  if (units.weightUom > 0 && out.trn_weight === 0) out.trn_weight = quantity;
+  if (units.qty1Uom > 0 && out.trn_qty1 === 0) out.trn_qty1 = quantity;
+  if (units.qty2Uom > 0 && out.trn_qty2 === 0) out.trn_qty2 = quantity;
+  if (units.qty3Uom > 0 && out.trn_qty3 === 0) out.trn_qty3 = quantity;
+  return out;
 }

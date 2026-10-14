@@ -154,7 +154,7 @@ export function HelpList({
             <tr>
               {help.columns.map((column) => (
                 <th key={column.key} title={onHeadingClick ? `${column.caption} · click to sort` : column.caption}
-                  className={[freezeSearch && column.key === searchColumn ? "mp-help-frozen" : "", onHeadingClick ? "mp-help-sortable" : "", filteredColumn?.(column) ? "mp-help-filtered" : ""].filter(Boolean).join(" ") || undefined}
+                  className={[freezeSearch && column.key === searchColumn ? "mp-help-frozen" : "", column.key === searchColumn ? "mp-help-cursor" : "", onHeadingClick ? "mp-help-sortable" : "", filteredColumn?.(column) ? "mp-help-filtered" : ""].filter(Boolean).join(" ") || undefined}
                   style={freezeSearch && column.key === searchColumn ? { left: frozenLeft } : undefined}
                   onClick={onHeadingClick ? () => onHeadingClick(column) : undefined}>
                   {column.caption}
@@ -177,7 +177,7 @@ export function HelpList({
                   {help.columns.map((column) => {
                     const text = formatCell(row[column.key] ?? "", column.format);
                     const main = column.key === searchColumn;
-                    return <td key={column.key} title={text} className={freezeSearch && main ? "mp-help-frozen" : undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(freezeSearch && main ? { left: frozenLeft } : {}) }}>{main && index === focusRow && found ? <FoundText text={text} typed={found} /> : main && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
+                    return <td key={column.key} title={text} className={[freezeSearch && main ? "mp-help-frozen" : "", main ? "mp-help-cursor" : "", main && index === focusRow ? "mp-help-cursor-now" : ""].filter(Boolean).join(" ") || undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(freezeSearch && main ? { left: frozenLeft } : {}) }}>{main && index === focusRow && found ? <FoundText text={text} typed={found} /> : main && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
                   })}
                 </tr>
               );

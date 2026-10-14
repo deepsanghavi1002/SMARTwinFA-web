@@ -516,6 +516,10 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     partyBooks: book.values.acHelp,
     defaults,
     taxPercs,
+    productRules: {
+      noDuplicate: toText(session.setup.i_duplichk).toUpperCase() === "Y",
+      message: !(book.values.bookKey === BOOK.SALE && book.values.bookActual) && book.values.stkmShort !== "CHLN-OUT" ? "" : para(session.setup, "item_para", "PROD_LOCK,") ? "lock" : para(session.setup, "item_para", "PROD_WARN,") ? "warn" : "",
+    },
     uoms,
     decimals: { qty: toInt(setup.i_decqty), factor: toInt(setup.i_decfact), rate: toInt(setup.i_decrate), value: toInt(setup.decamount) || 2 },
     stockNat: book.stockNat === "A" ? "A" : "L",
@@ -724,7 +728,7 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
   if (!account) throw new Error("The party is not in the account master");
   const events = (await controlEvents(loader, entryId)).filter((event) => text(event, "control_name").toLowerCase() === "tbx_partyname" && text(event, "control_event").toUpperCase() === "LF");
   let address: string[] = [];
-  const addon: { key: number; label: string; value: string; options?: EntryOption[] }[] = [];
+  const addon: { key: number; label: string; value: string; options?: EntryOption[]; date?: boolean; compulsory?: boolean }[] = [];
   for (const event of events) {
     const fillName = text(event, "fill_control_name").toLowerCase();
     if (fillName === "lbx_address") {
@@ -738,7 +742,7 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
         const type = text(row, "fiel_type");
         const compulsory = type !== "I" || text(row, "fiel_entry") === "C";
         const label = `${compulsory ? "* " : ""}${text(row, "addon_label")}`;
-        if (type !== "M") { addon.push({ key: toInt(field(row, "fiel_key")), label, value: "" }); continue; }
+        if (type !== "M") { addon.push({ key: toInt(field(row, "fiel_key")), label, value: "", date: text(row, "fiel_mbal").toUpperCase() === "D", compulsory }); continue; }
         // Fill_AddonGridCombo: a list of the addon's subs; the party's own value when the addon is kept on the master.
         const options = await queryOptions(loader, replaceEntryTokens(`select sub_name,sub_code from |sys.db|addon_sub where para_id=${toInt(field(row, "fiel_key"))} and sub_pos <> 'D' order by sub_name`, book.values));
         let value = options[0]?.text ?? "";
