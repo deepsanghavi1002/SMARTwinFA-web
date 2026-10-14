@@ -6,6 +6,11 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { bookContext, entryPreview, loadBook, loadInvoice, partyDetails, partyHelp, seriesDefaults } from "@/lib/entry/invoice";
+import { headerProblems } from "@/lib/entry/checks";
+import { entryLog } from "@/lib/entry/log";
+import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
+import type { SaveInput, SaveReport } from "@/lib/entry/save";
+import type { HeaderField } from "@/lib/entry/checks";
 import { productChoice, productHelp, restoreEntry } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
 
@@ -27,6 +32,77 @@ function chosenRegister(def: InvoiceDefinition, chosen: EntryOption | undefined)
   return option;
 }
 
+/** Thrown after a dry run's report is made, so its transaction rolls back. */
+class DryRun extends Error {
+  constructor(readonly report: SaveReport) { super("dry run"); }
+}
+
+/**
+ * Save for a new account-book invoice. The plan is always run inside a transaction; it is committed only when the
+ * request asks (commit: true) AND the server allows it (SMARTWINFA_ENTRY_SAVE_COMMIT=true). Otherwise the rows are
+ * numbered, written and read back, and everything is rolled back: the answer says what a save would have written.
+ */
+async function saveEntry(body: Body, key: SessionKey, moduleName: string) {
+  const wantsCommit = body.commit === true;
+  const allowed = process.env.SMARTWINFA_ENTRY_SAVE_COMMIT === "true";
+  const commit = wantsCommit && allowed;
+  try {
+    const report = await transaction(async (client) => {
+      const session = await readSession(client, key);
+      if (!allowedMasterMenu(await readMenuCatalog(session.companyGroup), body.entryName, moduleName, "ENTRY")) {
+        throw new Error("The requested entry and module are not in this company's visible menu");
+      }
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      const loader = new Loader(client, session);
+      const def = await loadInvoice(loader, body.entryName, moduleName);
+      const input = body.save as SaveInput | undefined;
+      const changing = Number(input?.editKey ?? 0) > 0;
+      if (def.rights.restricted && !changing && !def.rights.add) throw new Error("Invoice Entry Add Rights Not Available For User");
+      if (def.rights.restricted && changing && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
+      if (!input || typeof input !== "object") throw new Error("The entry to save is missing");
+      const plan = await buildSave(loader, body.entryName, chosenRegister(def, body.firstCombo), input);
+      const result = await runPlan(client, loader, plan, { commit });
+      if (!commit) throw new DryRun(result);
+      return result;
+    }, { timeoutMs: 60000 });
+    return Response.json({ report, committed: true }, { headers });
+  } catch (error) {
+    if (error instanceof DryRun) return Response.json({ report: error.report, committed: false, commitDisabled: wantsCommit && !allowed }, { headers });
+    console.error("Entry save error:", error);
+    return Response.json({ error: error instanceof Error ? error.message : "The entry could not be saved" }, { status: 500, headers });
+  }
+}
+
+/** Delete of a saved invoice; committed under the same two conditions as saveEntry. */
+async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
+  const wantsCommit = body.commit === true;
+  const allowed = process.env.SMARTWINFA_ENTRY_SAVE_COMMIT === "true";
+  const commit = wantsCommit && allowed;
+  try {
+    const report = await transaction(async (client) => {
+      const session = await readSession(client, key);
+      if (!allowedMasterMenu(await readMenuCatalog(session.companyGroup), body.entryName, moduleName, "ENTRY")) {
+        throw new Error("The requested entry and module are not in this company's visible menu");
+      }
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      const loader = new Loader(client, session);
+      const def = await loadInvoice(loader, body.entryName, moduleName);
+      if (def.rights.restricted && !def.rights.delete) throw new Error("Invoice Entry Delete Rights Not Available For User");
+      const uniqueKey = Number(body.uniqueKey);
+      if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the invoice to delete from Find / Edit");
+      const plan = await buildDelete(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey);
+      const result = await runPlan(client, loader, plan, { commit });
+      if (!commit) throw new DryRun(result);
+      return result;
+    }, { timeoutMs: 60000 });
+    return Response.json({ report, committed: true }, { headers });
+  } catch (error) {
+    if (error instanceof DryRun) return Response.json({ report: error.report, committed: false, commitDisabled: wantsCommit && !allowed }, { headers });
+    console.error("Entry delete error:", error);
+    return Response.json({ error: error instanceof Error ? error.message : "The entry could not be deleted" }, { status: 500, headers });
+  }
+}
+
 export async function POST(request: Request) {
   if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
     return Response.json({ error: "Entry migration is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
@@ -42,6 +118,8 @@ export async function POST(request: Request) {
   }
   const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
   const moduleName = String(body.menuShortName ?? "");
+  if (body.action === "save") return saveEntry(body, key, moduleName);
+  if (body.action === "delete") return deleteEntry(body, key, moduleName);
 
   try {
     const result = await transaction(async (client) => {
@@ -85,6 +163,25 @@ export async function POST(request: Request) {
           const uniqueKey = Number(body.uniqueKey);
           if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Choose an entry from the Find / Edit list");
           return { entry: await restoreEntry(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
+        }
+        case "check": {
+          const fieldName = String(body.field ?? "") as HeaderField;
+          if (!["date", "number", "chlnno", "entryno", "party"].includes(fieldName)) throw new Error("Unknown header box");
+          const register = chosenRegister(def, body.firstCombo);
+          const book = await bookContext(loader, body.entryName, register);
+          const clip = (value: unknown, size = 40) => String(value ?? "").slice(0, size);
+          const party = body.party as Record<string, unknown> | undefined;
+          const problems = await headerProblems(loader, body.entryName, book, {
+            field: fieldName, series: clip(body.series), date: clip(body.date, 20), number: clip(body.number), chlnNo: clip(body.chlnNo), entryNo: clip(body.entryNo),
+            editKey: Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0, editDate: clip(body.editDate, 20), taxGroup: clip(body.taxGroup, 1),
+            party: party ? { name: clip(party.name, 100), book: Number(party.book) || 0, closing: clip(party.closing, 30), limit: clip(party.limit, 30), message: clip(party.message, 500), startDate: clip(party.startDate, 20), lastDate: clip(party.lastDate, 20) } : undefined,
+          });
+          return { problems, warnings: loader.warnings };
+        }
+        case "log": {
+          const uniqueKey = Number(body.uniqueKey);
+          if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the entry from Find / Edit to see its log");
+          return { log: await entryLog(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
         }
         case "preview":
           return { preview: await entryPreview(loader, body.entryName, chosenRegister(def, body.firstCombo), String(body.series ?? "").slice(0, 40)), warnings: loader.warnings };

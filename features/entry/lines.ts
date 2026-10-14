@@ -58,7 +58,15 @@ export function recalcLine(line: Line, edited: string, { book, columns }: Contex
   // Item-wise slab columns: each one's % of the running figure of the row.
   const calcRows = slabCalcRows(book, slab);
   const percents = slab.map((row) => (row.itemWise ? itemPercent(book, columns, row, cells) : 0));
-  const amounts = itemSlabAmounts(value, calcRows, percents);
+  // Amounts the operator typed against a blank %: kept as typed (the edited amount cell always is, for this pass).
+  const typed = new Map<number, number>();
+  slab.forEach((row, index) => {
+    if (!row.itemWise || row.master) return;
+    const amountKey = `${row.short}_amt`;
+    const percentBlank = toNumber(cells[row.short]) === 0;
+    if (edited === amountKey || (percentBlank && toNumber(cells[amountKey]) !== 0)) typed.set(index, toNumber(cells[amountKey]));
+  });
+  const amounts = itemSlabAmounts(value, calcRows, percents, typed);
   slab.forEach((row, index) => { if (row.itemWise) cells[`${row.short}_amt`] = fixed(amounts.get(index) ?? 0, 2); });
   return { ...line, cells };
 }

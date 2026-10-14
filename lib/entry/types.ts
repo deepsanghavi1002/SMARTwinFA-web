@@ -116,6 +116,8 @@ export type BookScreen = Readonly<{
   defaults: SeriesDefaults;
   /** tax_master's tax_perc by tax_rec, for the tax lists of the slab and the item-wise columns. */
   taxPercs: Readonly<Record<string, number>>;
+  /** Product_Selection's company switches: I_DUPLICHK (a product once per bill) and item_para PROD_LOCK / PROD_WARN (the product's master message stops, or asks). */
+  productRules: Readonly<{ noDuplicate: boolean; message: "" | "lock" | "warn" }>;
   /** The UOM list (PROD_UOM_LIST_SRT): short name and key. */
   uoms: readonly EntryOption[];
   /** Decimals of quantity, factor, rate and value (i_decqty, i_decfact, i_decrate, decamount). */
@@ -178,7 +180,7 @@ export type PartyDetails = Readonly<{
   code: number;
   name: string;
   address: readonly string[];
-  addon: readonly Readonly<{ key: number; label: string; value: string; options?: readonly EntryOption[] }>[];
+  addon: readonly Readonly<{ key: number; label: string; value: string; options?: readonly EntryOption[]; /** fiel_mbal D: a date field (the date control, a date only). */ date?: boolean; compulsory?: boolean }>[];
   creditDays: string;
   /** The party's GST state code (address 1), and the tax group it gives: same state as the company CGST, else IGST. */
   stateCode: string;

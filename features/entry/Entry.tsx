@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
-import { parseDesktopDate } from "../../lib/master-program/legacy";
+import { formatDesktopDate, parseDesktopDate } from "../../lib/master-program/legacy";
 import { fixed, toNumber } from "../../lib/entry/calc";
 import type { BookScreen, EntryOption, HelpList as HelpData, InvoiceControl, InvoiceDefinition, PartyDetails, ProductChoice, RestoredEntry, SeriesDefaults, SlabRow } from "../../lib/entry/types";
+import type { HeaderField, HeaderProblem } from "../../lib/entry/checks";
+import type { SaveReport } from "../../lib/entry/save";
 import { entryCall } from "./api";
 import { useEditorTools } from "../grid/EditorTools";
 import { DateField } from "../grid/DateField";
@@ -17,6 +19,8 @@ import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { SearchCombo } from "../ui/SearchCombo";
 import { FindList } from "./FindList";
+import { EntryLog } from "./EntryLog";
+import type { EntryLog as EntryLogData } from "../../lib/entry/log";
 import { amountText, helpCell } from "./format";
 import { chooseProduct, filledLines, lineTotals, recalcLine, slabFromLines } from "./lines";
 import type { Line } from "./lines";
@@ -153,7 +157,12 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   const [preview, setPreview] = useState<HelpData | null>(null);
   /** The entry opened from Find / Edit (its unique key), or null for a new entry. */
   const [restored, setRestored] = useState<number | null>(null);
+  const [logView, setLogView] = useState<EntryLogData | null>(null);
   const screenRef = useRef<HTMLDivElement>(null);
+  /** Set when a register has just been chosen: the keyboard goes to the series once the screen is drawn. */
+  const focusSeries = useRef(false);
+  /** The first register's screen, drawn closed until a register is chosen (the desktop shows the whole form at once). */
+  const [ghost, setGhost] = useState<BookScreen | null>(null);
   const partyRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
   const tools = useEditorTools(yearStart);
@@ -237,7 +246,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       for (const name of ["dtp_chlndate", "dtp_entrydate", "dtp_ewaydate"]) if (next.controls.some((control) => control.name === name)) initial[name] = next.defaults.date;
       setValues(initial);
       setWarnings([...(def?.unsupported ?? []), ...next.warnings, ...body.warnings]);
-      Promise.resolve().then(() => screenRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button")?.focus());
+      focusSeries.current = true;
     } catch (error) {
       setBook(null);
       await failed(error);
@@ -258,6 +267,50 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       await failed(error);
     }
   }, [call, register, failed]);
+
+  // ---- Dtp_Date_Leave, Tbx_Number_Leave, Tbx_ChlnNo_Leave, Tbx_EntryNo_Leave, Tbx_PartyName_Leave: the checks made as a header box is left
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  /** Dt_Restore_Date: the date an opened entry was saved with (the lock dates judge that, not a changed date). */
+  const restoredDate = useRef("");
+  /**
+   * Asks the server the questions the desktop asks when a header box is left and shows its messages in order.
+   * False when a message sends the cursor back (the entry must not go on with that value).
+   */
+  const checkHeader = useCallback(async (name: HeaderField, extra: Record<string, unknown> = {}): Promise<boolean> => {
+    if (!register || !book) return true;
+    const now = valuesRef.current;
+    try {
+      const body = await call<{ problems: HeaderProblem[] }>("check", {
+        firstCombo: register, field: name, series: now.cmb_series ?? "", date: now.dtp_date ?? "", number: now.tbx_number ?? "", chlnNo: now.tbx_chlnno ?? "", entryNo: now.tbx_entryno ?? "",
+        editKey: restored ?? 0, editDate: restoredDate.current, taxGroup: restored !== null ? book.taxGroup : "", ...extra,
+      });
+      for (const problem of body.problems) {
+        if (problem.kind === "ask") {
+          if (await messageBox.ask(problem.text, problem.title, ["Yes", "No"], { defaultButton: "Yes" }) !== "Yes") return false;
+          continue;
+        }
+        await say(problem.text, problem.title);
+        if (problem.kind === "stop") {
+          if (problem.setDate) setValues((current) => ({ ...current, dtp_date: problem.setDate! }));
+          return false;
+        }
+      }
+    } catch (error) {
+      await failed(error);
+    }
+    return true;
+  }, [register, book, restored, call, say, failed]);
+  /** Leaving a checked box (not for a toolbar button, so Cancel and Quit are never held up): the box takes the keyboard back when its check stops. */
+  const leaveBox = (event: ReactFocusEvent<HTMLElement>, name: string) => {
+    const field: HeaderField | undefined = ({ dtp_date: "date", tbx_number: "number", tbx_chlnno: "chlnno", tbx_entryno: "entryno" } as Record<string, HeaderField>)[name];
+    const to = event.relatedTarget as Element | null;
+    if (!field || !book || event.currentTarget.contains(to) || to?.closest("button, .mp-calendar, [role=dialog]")) return;
+    const box = event.currentTarget;
+    setTimeout(() => {
+      void checkHeader(field).then((ok) => { if (!ok) box.querySelector<HTMLElement>("input")?.focus(); });
+    }, 60);
+  };
 
   // ---- The helps (Refresh_HelpGrid "A" and "P"), in the shared movable help window
   /** A help being read: the field's focus and its typing ask at once, and are given the one load. */
@@ -367,6 +420,8 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   const choosePartyRow = useCallback(async (row: Readonly<Record<string, string>> | undefined) => {
     if (!row || !register || !book) return;
     setHelpKind(null);
+    const allowed = await checkHeader("party", { party: { name: row.NAME ?? "", book: Number(row.BOOK) || 0, closing: row.CLOSING_BAL ?? "", limit: row.LIMIT ?? "", message: row.ac_message ?? "", startDate: row.a_startdate ?? "", lastDate: row.a_lastdate ?? "" } });
+    if (!allowed) { partyRef.current?.focus(); return; }
     setBusy("Party");
     try {
       const body = await call<{ party: PartyDetails }>("party", { firstCombo: register, code: Number(row.CODE), date: values.dtp_date ?? "" });
@@ -386,13 +441,19 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       setParty(next);
       setValues((current) => ({ ...current, tbx_partyname: next.name, tbx_credit_days: current.tbx_credit_days !== undefined ? next.creditDays : current.tbx_credit_days }));
       setAddon(Object.fromEntries(next.addon.map((item) => [item.key, item.value])));
-      setTimeout(() => { if (formRef.current && partyRef.current) moveOn(formRef.current, partyRef.current); }, 0);
+      // The party chosen: the keyboard goes to the Product of the next free row (its help shows), else the next box.
+      const freeRow = filledLines(lines).length;
+      setTimeout(() => {
+        if (!formRef.current || !partyRef.current) return;
+        if (book.inventory && focusEntryCell(formRef.current, `${freeRow}:prod_key`)) return;
+        moveOn(formRef.current, partyRef.current);
+      }, 0);
     } catch (error) {
       await failed(error);
     } finally {
       setBusy("");
     }
-  }, [register, book, call, values.dtp_date, lines, loadBook, say, failed]);
+  }, [register, book, call, checkHeader, values.dtp_date, lines, loadBook, say, failed]);
 
   const partyKeys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (helpKeys(event, "account", (row) => void choosePartyRow(row))) return;
@@ -409,8 +470,32 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   const productColumns = useMemo(() => book?.product.columns.filter((column) => column.visible) ?? [], [book]);
   const context = useMemo(() => (book ? { book, columns: productColumns } : null), [book, productColumns]);
 
+  /**
+   * Product_Selection's refusals, before the row takes the product: past its Last Date, locked (or warned) by its master
+   * message (PROD_LOCK / PROD_WARN), the same product twice (I_DUPLICHK). True when the choice must not go on.
+   */
+  const productRefused = async (row: number, help: Readonly<Record<string, string>>): Promise<boolean> => {
+    if (!book) return false;
+    const same = lines[row]?.product !== null && lines[row]?.product !== undefined && String(lines[row].product!.key) === help.prod_key;
+    const last = parseDesktopDate(help.last_date);
+    const entryDate = parseDesktopDate(values.dtp_date);
+    if (!same && last && entryDate && entryDate > last) { await say(`Entry date is greater than Product Last Date i.e. : ${formatDesktopDate(last)}`, "Entry Warning"); return true; }
+    const message = (help.prod_message ?? "").trim();
+    if (message !== "" && book.productRules.message === "lock") { await say(`Selected Product is Lock in Master The Reason is ${help.prod_message}`, "Entry Warning"); return true; }
+    if (message !== "" && book.productRules.message === "warn") {
+      const answer = await messageBox.ask(`Selected Product Warning Message! ${help.prod_message} Do You want to Continue Entry? `, "Product Warn Message", ["Yes", "No"], { defaultButton: "No" });
+      if (answer !== "Yes") return true;
+    }
+    if (book.productRules.noDuplicate) {
+      const at = lines.findLastIndex((line, index) => index !== row && line.product !== null && String(line.product.key) === help.prod_key);
+      if (at >= 0) { await say(`Selected product already in used at Serial ${at + 1}`, "Entry Warning"); return true; }
+    }
+    return false;
+  };
+
   const chooseProductRow = useCallback(async (row: number, helpRow: Readonly<Record<string, string>> | undefined) => {
     if (!helpRow || !register || !context) return;
+    if (await productRefused(row, helpRow)) { setTimeout(enterHelp, 0); return; }
     setHelpKind(null);
     setBusy("Product");
     try {
@@ -431,7 +516,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     } finally {
       setBusy("");
     }
-  }, [register, context, call, party, values.dtp_date, slab, productColumns, failed]);
+  }, [register, context, call, party, values.dtp_date, slab, productColumns, failed, lines, book]);
 
   /**
    * F5 in the product help (or its Product cell): the products are over. A row with a product but
@@ -482,10 +567,22 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     if (focusAfterDraw.current && focusEntryCell(formRef.current, focusAfterDraw.current)) focusAfterDraw.current = null;
   }, [lines]);
 
-  const editCell = useCallback((row: number, key: string, value: string) => {
-    if (!context) return;
+  const editCell = useCallback(async (row: number, key: string, value: string) => {
+    if (!context || !book) return;
+    // C1dg_Inputdata_AfterEdit: an item-wise tax chosen against the product master's tax asks first (half each for CGST / SGST).
+    const taxColumn = slab.some((item) => item.itemWise && item.master && item.short === key) ? productColumns.find((column) => column.key === key) : undefined;
+    const line = lines[row];
+    if (taxColumn && value !== "" && line?.product) {
+      const percOf = (text: string) => book.taxPercs[taxColumn.options?.find((option) => option.text === text)?.value ?? ""] ?? 0;
+      const chosen = percOf(value);
+      const expected = line.product.taxPerc > 0 && book.taxGroup === "G" ? line.product.taxPerc / 2 : line.product.taxPerc;
+      if ((chosen > 0 || percOf(line.cells[key] ?? "") !== chosen) && Math.abs(chosen - expected) > 0.001) {
+        const answer = await messageBox.ask("Selected Entry Tax And Product Master Tax Not Match Are You Continued Entry...", "Tax Selection Warning", ["Yes", "No"], { defaultButton: "No" });
+        if (answer !== "Yes") return;
+      }
+    }
     setLines((current) => current.map((line, index) => (index === row ? recalcLine({ ...line, cells: { ...line.cells, [key]: value } }, key, context, slab) : line)));
-  }, [context, slab]);
+  }, [context, book, slab, lines, productColumns]);
 
   const deleteRow = useCallback(async (row: number) => {
     if (!lines[row]?.product) return;
@@ -575,6 +672,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       setParty(partyDetails);
       setAddon({ ...Object.fromEntries((partyDetails?.addon ?? []).map((item) => [item.key, item.value])), ...entry.addon });
       setLines(restoredLines);
+      restoredDate.current = next.dtp_date ?? "";
       setRestored(entry.uniqueKey);
     } catch (error) {
       await failed(error);
@@ -582,6 +680,34 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       setBusy("");
     }
   }, [register, book, lines, restored, call, loadBook, blankEntry, say, failed]);
+
+  // The register chosen: the keyboard goes to the series as soon as the screen is drawn.
+  useEffect(() => {
+    if (!book || !focusSeries.current) return;
+    const target = screenRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button");
+    if (target) { focusSeries.current = false; target.focus(); }
+  }, [book]);
+
+  // Before a register is chosen the whole form is on screen, closed: the first register's layout is read once for it.
+  useEffect(() => {
+    if (!def || locked || ghost || book || !selection) return;
+    const first = def.firstCombo.options[0];
+    if (!first) return;
+    let cancelled = false;
+    entryCall<BookReply>(selection, entryName, menuShortName, "book", { firstCombo: first, taxGroup: "G" })
+      .then((body) => { if (!cancelled) setGhost(body.book); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [def, locked, ghost, book, selection, entryName, menuShortName]);
+
+  // The box or cell being entered is brought fully into view, the product window and the page scrolling to it.
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const show = (event: FocusEvent) => (event.target as HTMLElement).scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    form.addEventListener("focusin", show);
+    return () => form.removeEventListener("focusin", show);
+  }, []);
 
   // Enter moves to the next box of the header, as the desktop's KeyPreview did (the grids, the helps and the party box,
   // whose help is always showing, move on their own).
@@ -591,8 +717,13 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     const enter = (event: KeyboardEvent) => {
       if (event.key !== "Enter" || event.defaultPrevented) return;
       const target = event.target as HTMLElement;
+      const save = () => screenRef.current?.querySelector<HTMLElement>('[data-hotkey="s"]');
+      // The narration: Enter leaves it for the next box (Shift+Enter is a new line). Credit days is the last box: Enter goes to Save.
+      if (target.id === "ent-tbx_narration" && !event.shiftKey) { event.preventDefault(); if (!moveOn(form, target)) save()?.focus(); return; }
+      if (target.id === "ent-tbx_credit_days") { event.preventDefault(); save()?.focus(); return; }
       if (target.tagName === "TEXTAREA" || target.id === "ent-tbx_partyname" || target.closest(".mp-combo-list, .ent-grid, .ent-find, .mp-help")) return;
       if (moveOn(form, target)) event.preventDefault();
+      else if (target.closest(".ent-foot")) { event.preventDefault(); save()?.focus(); }
     };
     form.addEventListener("keydown", enter);
     return () => form.removeEventListener("keydown", enter);
@@ -619,6 +750,91 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   // Upload Document, E-Invoice and Log only for an entry opened from Find / Edit. Cancel, Refresh and Quit always.
   const isRestored = restored !== null;
   const canSave = Boolean(book) && (isRestored || ((values.cmb_series ?? "").trim() !== "" && (values.dtp_date ?? "").trim() !== "" && (values.tbx_number ?? "").trim() !== ""));
+  /**
+   * Btn_Save_Click (a new invoice): the screen's figures go to the server, which works them out again and writes the entry.
+   * The server only commits when it is switched to (SMARTWINFA_ENTRY_SAVE_COMMIT); otherwise it writes, reads back and
+   * rolls back, and the answer lists what a save would have written.
+   */
+  const saveEntry = async () => {
+    if (!book || !register) return;
+    if (filledLines(lines).length === 0) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
+    setBusy("Saving");
+    try {
+      const reply = await call<{ report: SaveReport; committed: boolean; commitDisabled?: boolean }>("save", {
+        firstCombo: register,
+        commit: true,
+        save: {
+          values,
+          party: { code: party?.code ?? 0 },
+          lines: filledLines(lines).map((line) => ({ prodKey: line.product!.key, cells: line.cells })),
+          slab: slab.map((row) => ({ perc: row.perc, amount: row.amount })),
+          addon,
+          taxGroup: book.taxGroup,
+          finalAmount: fixed(slabResult.final, 2),
+          editKey: restored ?? 0,
+        },
+      });
+      const counts = new Map<string, number>();
+      for (const row of reply.report.rows) counts.set(row.table, (counts.get(row.table) ?? 0) + 1);
+      const list = [...counts].map(([table, count]) => `${table} ${count}`).join(", ");
+      if (reply.committed) {
+        await say(`${reply.report.summary.fullDocNo} saved.  Amount ${amountText(String(reply.report.summary.finalAmount), 2)}`, "Entry Saved");
+        blankEntry();
+        setBook(null);
+        setValues({});
+        setAccountHelp(null);
+      } else {
+        await say(`Save checked, NOTHING was written (saving is switched off on this server).
+
+${reply.report.summary.fullDocNo}   amount ${amountText(String(reply.report.summary.finalAmount), 2)}   book ${amountText(String(reply.report.summary.bookAmount), 2)}
+Rows it would write: ${list}
+Balance updates: ${reply.report.updates.length}`, "Save (dry run)");
+      }
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  /** Btn_Delete_Click: after the question the invoice stays as a deleted row, its postings are taken off the balances. */
+  const deleteEntry = async () => {
+    if (!book || !register || restored === null) return;
+    const answer = await messageBox.ask("Are You Sure Want To Delete Entry ? ", "Entry Delete", ["Yes", "No"], { defaultButton: "No" });
+    if (answer !== "Yes") return;
+    setBusy("Deleting");
+    try {
+      const reply = await call<{ report: SaveReport; committed: boolean }>("delete", { firstCombo: register, uniqueKey: restored, commit: true });
+      if (reply.committed) {
+        await say(`${reply.report.summary.fullDocNo} deleted.`, "Entry Deleted");
+        blankEntry();
+        setBook(null);
+        setValues({});
+        setAccountHelp(null);
+      } else {
+        await say(`Delete checked, NOTHING was changed (saving is switched off on this server).
+
+${reply.report.summary.fullDocNo}`, "Delete (dry run)");
+      }
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  /** Btn_Log_Click: the entry's special log (every save of it, side by side). */
+  const showLog = async () => {
+    if (!register || restored === null) return;
+    setBusy("Reading the log");
+    try {
+      const reply = await call<{ log: EntryLogData }>("log", { firstCombo: register, uniqueKey: restored });
+      if (reply.log.rows.length === 0) { await say("No log records for this entry.", "No Data"); return; }
+      setLogView(reply.log);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
   const notPorted = (what: string) => () => void say(`${what} is not ported to the web yet. Product entry and opening entries are done; saving comes next.`, "Entry");
 
   /** Credit days run 0 to 365, or 366 when the accounting year takes in a 29 February. */
@@ -632,7 +848,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     const boxStyle: CSSProperties = place?.box ?? { left: item.box.left, top: item.box.top - shift, width: item.box.width, ...(item.name === "tbx_narration" ? { height: Math.min(item.box.height, FORM_HEIGHT - 2 - (item.box.top - shift)) } : {}) };
     return [
       <label key={`${item.name}-label`} className={`ent-label ${item.compulsory ? "ent-compulsory" : ""}`} style={labelStyle} title={item.tooltip || undefined} htmlFor={`ent-${item.name}`}>{item.label}</label>,
-      <span key={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})}>
+      <span key={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})} onBlur={(event) => leaveBox(event, item.name)}>
         {item.type === "CB" ? (
           item.name === "cmb_series" ? (
             <SearchCombo ariaLabel={item.label} options={item.options} value={item.options.find((option) => option.text === value) ?? null} onChoose={(option) => void chooseSeries(option.text)} />
@@ -676,12 +892,14 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     ];
   };
 
-  const headControls = book?.controls.filter((item) => item.place === "T") ?? [];
-  const footControls = book?.controls.filter((item) => item.place === "B") ?? [];
-  const ewayControls = book?.controls.filter((item) => item.place === "E" && (def?.ewayDates || !["dtp_ewaydate", "tbx_ewayvalid"].includes(item.name))) ?? [];
-  const showParty = Boolean(book?.party && headControls.some((item) => item.name === "tbx_partyname"));
+  const view = book ?? ghost;
+  const shownColumns = book ? productColumns : (ghost?.product.columns.filter((column) => column.visible) ?? []);
+  const headControls = view?.controls.filter((item) => item.place === "T") ?? [];
+  const footControls = view?.controls.filter((item) => item.place === "B") ?? [];
+  const ewayControls = view?.controls.filter((item) => item.place === "E" && (def?.ewayDates || !["dtp_ewaydate", "tbx_ewayvalid"].includes(item.name))) ?? [];
+  const showParty = Boolean(view?.party && headControls.some((item) => item.name === "tbx_partyname"));
   // The Particulars column 30% wider than the setup gives it; the slab grid grows by as much.
-  const slabColumns = (book?.grids.slab ?? []).map((column) => (column.key === "slab_desc" ? { ...column, width: Math.round(column.width * 1.3) } : column));
+  const slabColumns = (view?.grids.slab ?? []).map((column) => (column.key === "slab_desc" ? { ...column, width: Math.round(column.width * 1.3) } : column));
   const slabWidth = slabColumns.reduce((sum, column) => sum + column.width, 0) + 20;
   const slabGridRows = slab.map((row, index) => ({
     slab_order: String(row.order), slab_mathoper: row.sign, slab_desc: row.desc, slab_perc: row.perc,
@@ -704,18 +922,33 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   /** The last round-off row works its amount out (slab_calc A, or B with no decimals): nothing to type. */
   const roundsOff = (row: number) => { const item = slab[row]; return Boolean(item) && row === slab.length - 1 && item.mathOp === "U" && (item.calc === "A" || (item.calc === "B" && item.roundPlaces === 0)); };
   /** A slab row's own % is typed (a % row) or chosen (a tax row); its amount is typed where the row allows it. */
+  /** C1dg_Slab_AfterEdit: the SGST (UTGST) tax chosen must be the CGST row's percentage. */
+  const chooseSlabTax = async (row: number, perc: string) => {
+    const item = slab[row];
+    const percOf = (candidate: SlabRow, text: string) => view?.taxPercs[candidate.options?.find((option) => option.text === text)?.value ?? ""] ?? 0;
+    if (book && /SGST/i.test(item.desc) && !item.itemWise) {
+      const central = slab.find((candidate) => !candidate.itemWise && /CGST/i.test(candidate.desc));
+      const chosen = percOf(item, perc);
+      const cgst = central ? percOf(central, central.perc) : 0;
+      if (chosen > 0 && cgst > 0 && Math.abs(cgst - chosen) > 0.0001) {
+        await say(`CGST And ${/UTGST/i.test(item.desc) ? "UTGST" : "SGST"} Tax Percentage Different not allowed...`, "Entry Warning");
+        return;
+      }
+    }
+    setSlabRow(row, { perc });
+  };
   const slabCell = (row: number, key: string) => {
     const item = slab[row];
     const shown = slabGridRows[row];
     const cellId = `s${row}:${key}`;
     const onEnter = () => nextSideCell("Slab", cellId);
     if (key === "slab_perc" && !item.itemWise && item.options && item.options.length > 0) {
-      return <EntryCell kind="combo" cellId={cellId} value={item.perc} options={item.options} tools={tools} ariaLabel={`${item.desc} tax`} onChange={(perc) => setSlabRow(row, { perc })} onEnter={onEnter} />;
+      return <EntryCell kind="combo" cellId={cellId} value={item.perc} options={item.options} tools={tools} ariaLabel={`${item.desc} tax`} onChange={(perc) => void chooseSlabTax(row, perc)} onEnter={onEnter} />;
     }
     if (key === "slab_perc" && item.percEditable && !item.itemWise) {
       return <EntryCell kind="number" cellId={cellId} value={item.perc} align="right" rules={PERCENT_RULES} tools={tools} ariaLabel={`${item.desc} %`} onChange={(perc) => setSlabRow(row, { perc })} onEnter={onEnter} />;
     }
-    const typedAmount = item.amountEditable && !item.itemWise && !roundsOff(row) && !(row === 0 && book?.inventory && item.calc !== "M") && !(toNumber(item.perc) > 0 && item.percEditable);
+    const typedAmount = item.amountEditable && !item.itemWise && !roundsOff(row) && !(row === 0 && view?.inventory && item.calc !== "M") && !(toNumber(item.perc) > 0 && item.percEditable);
     if (key === "slab_amount" && typedAmount) {
       return <EntryCell kind="number" cellId={cellId} value={item.amount === "0.00" ? "" : item.amount} align="right" rules={AMOUNT_RULES} tools={tools} ariaLabel={`${item.desc} amount`} onChange={(amount) => setSlabRow(row, { amount })} onEnter={onEnter} />;
     }
@@ -733,6 +966,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
 
   return (
     <div ref={screenRef} className={`mp-screen ent-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title}>
+      {logView && <EntryLog log={logView} title={register?.text ?? title} onClose={() => setLogView(null)} />}
       <div className="ent-scroll">
         <div ref={formRef} className="ent-form" style={{ height: FORM_HEIGHT }} role="group" aria-label={def?.caption || title}>
           <div className="ent-head" role="group" aria-label={`${def?.caption || title} header`}>
@@ -748,12 +982,12 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
                 onChoose={(option) => void chooseRegister(option)}
               />
             </span>
-            {book && <span className="ent-side" style={{ left: 406, top: 6 }} title="Book posting side">{book.side}</span>}
-            {book?.balance && <span className="ent-balance" style={{ left: 238, top: 28 }} title="Book balance as on the last date of the year">{book.balance}</span>}
-            {headControls.flatMap(control)}
-            {book && headControls.some((item) => item.name === "dtp_date") && <span className="ent-day" style={{ left: 204, top: 50 }}>{dayOf(values.dtp_date ?? "")}</span>}
-            {book && headControls.some((item) => item.name === "dtp_chlndate") && <span className="ent-day" style={{ left: 204, top: 72 }}>{dayOf(values.dtp_chlndate ?? "")}</span>}
-            {book && headControls.some((item) => item.name === "dtp_entrydate") && <span className="ent-day" style={{ left: 616, top: 50 }}>{dayOf(values.dtp_entrydate ?? "")}</span>}
+            {view && <span className="ent-side" style={{ left: 406, top: 6 }} title="Book posting side">{view.side}</span>}
+            {view?.balance && <span className="ent-balance" style={{ left: 238, top: 28 }} title="Book balance as on the last date of the year">{view.balance}</span>}
+            <div style={{ display: "contents" }} inert={!book}>{headControls.flatMap(control)}</div>
+            {view && headControls.some((item) => item.name === "dtp_date") && <span className="ent-day" style={{ left: 204, top: 50 }}>{dayOf(values.dtp_date ?? "")}</span>}
+            {view && headControls.some((item) => item.name === "dtp_chlndate") && <span className="ent-day" style={{ left: 204, top: 72 }}>{dayOf(values.dtp_chlndate ?? "")}</span>}
+            {view && headControls.some((item) => item.name === "dtp_entrydate") && <span className="ent-day" style={{ left: 616, top: 50 }}>{dayOf(values.dtp_entrydate ?? "")}</span>}
             {showParty && (
               <>
                 <span className="ent-label" style={{ right: PARTY_RIGHT + PARTY_WIDTH + 6, top: 28, width: 74 }}>Address</span>
@@ -792,8 +1026,8 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
             </div>
           )}
 
-          {book && (
-            <div className="ent-tabs" style={{ top: TAB_TOP, height: PAGE_HEIGHT + 20 }}>
+          {view && (
+            <div className="ent-tabs" style={{ top: TAB_TOP, height: PAGE_HEIGHT + 20 }} inert={!book}>
               <div className="ent-tab-strip" role="tablist">
                 <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "ent-tab-on" : ""} onClick={() => void openTab("all")}>Product &amp; Slab</button>
                 {def?.tabs.outstanding && <button type="button" role="tab" aria-selected={tab === "outstanding"} className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}>Outstanding</button>}
@@ -803,18 +1037,18 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
               <div className="ent-page" style={{ height: PAGE_HEIGHT }} role="tabpanel">
                 {tab === "all" && (
                   <>
-                    {book.inventory ? (
+                    {view.inventory ? (
                       <ProductGrid
-                        columns={productColumns}
-                        frozen={book.product.frozen}
+                        columns={shownColumns}
+                        frozen={view.product.frozen}
                         lines={lines}
-                        uoms={book.uoms}
+                        uoms={view.uoms}
                         totals={totals}
                         decimals={decimalsOf}
                         style={{ left: 3, right: 6, top: PRODUCT_TOP, height: PRODUCT_HEIGHT }}
                         totalsStyle={{ left: 3, right: 6, top: PRODUCT_TOP + PRODUCT_HEIGHT + 2, height: 20 }}
                         productText={productText}
-                        locked={locked}
+                        locked={locked || !book}
                         onCell={editCell}
                         onProductText={(row, text) => { setProductText({ row, text }); setProductRow(row); setHelpAt(0); if (helpKind !== "product") void openHelp("product"); }}
                         onProductKeys={productKeys}
@@ -826,7 +1060,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
                     ) : (
                       <div className="ent-note" style={{ left: 3, right: 6, top: PRODUCT_TOP }}>This book takes no product rows: the amount goes in the slab grid&apos;s first row.</div>
                     )}
-                    {book.slab && (
+                    {view.slab && (
                       <SideGrid
                         label="Slab"
                         fill
@@ -835,7 +1069,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
                         cellClass={(row, column) => {
                           const item = slab[row];
                           const percOpen = !item?.itemWise && (item?.percEditable || (item?.options?.length ?? 0) > 0);
-                          const amountOpen = !item?.itemWise && item?.amountEditable && !roundsOff(row) && !(row === 0 && book.inventory && item.calc !== "M");
+                          const amountOpen = !item?.itemWise && item?.amountEditable && !roundsOff(row) && !(row === 0 && view.inventory && item.calc !== "M");
                           return (column.key === "slab_perc" && !percOpen) || (column.key === "slab_amount" && !amountOpen) ? "ent-disabled" : column.editable ? "ent-open" : "";
                         }}
                         rows={slabGridRows}
@@ -845,8 +1079,8 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
                     <SideGrid
                       label="Addon"
                       fill
-                      style={book.slab ? { left: `calc(50% + ${SIDE_GAP / 2}px)`, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT } : { left: 3, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT }}
-                      columns={book.grids.addon}
+                      style={view.slab ? { left: `calc(50% + ${SIDE_GAP / 2}px)`, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT } : { left: 3, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT }}
+                      columns={view.grids.addon}
                       rows={(party?.addon ?? []).map((item) => ({ addon_label: item.label, addon_input: addon[item.key] ?? "" }))}
                       empty={showParty ? "Choose the party: its addon fields show here" : undefined}
                       cell={(row, column) => {
@@ -855,13 +1089,13 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
                         const value = addon[item.key] ?? "";
                         const set = (next: string) => setAddon((current) => ({ ...current, [item.key]: next }));
                         const cellId = `a${row}`;
-                        return <EntryCell kind={item.options ? "combo" : "text"} cellId={cellId} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextSideCell("Addon", cellId)} />;
+                        return <EntryCell kind={item.options ? "combo" : item.date ? "date" : "text"} optional={!item.compulsory} cellId={cellId} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextSideCell("Addon", cellId)} />;
                       }}
                     />
                   </>
                 )}
                 {tab === "outstanding" && (
-                  <SideGrid label="Outstanding" style={{ left: 11, top: 15, width: 582, height: Math.min(249, PAGE_HEIGHT - 20) }} columns={book.grids.outstanding} rows={party?.outstanding ?? []} empty={party ? "No pending entries for this party" : "Choose the party first"} />
+                  <SideGrid label="Outstanding" style={{ left: 11, top: 15, width: 582, height: Math.min(249, PAGE_HEIGHT - 20) }} columns={view.grids.outstanding} rows={party?.outstanding ?? []} empty={party ? "No pending entries for this party" : "Choose the party first"} />
                 )}
                 {tab === "find" && <FindList preview={preview} style={{ left: 3, right: 3, top: 3, bottom: 3 }} onOpen={(row) => void openEntry(row)} />}
                 {tab === "eway" && <div className="ent-eway">{ewayControls.flatMap(control)}</div>}
@@ -869,8 +1103,8 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
             </div>
           )}
 
-          {book && (
-            <div className="ent-foot">
+          {view && (
+            <div className="ent-foot" inert={!book}>
               <span className="ent-label ent-final-label" style={{ left: 2, top: FOOT_TOP, width: 130 }}>Entry Final Amt.:</span>
               <output className="ent-final" style={{ left: 138, top: FOOT_TOP, width: 101 }} aria-label="Entry final amount">{amountText(String(slabResult.final), 2) || "0.00"}</output>
               {footControls.flatMap(control)}
@@ -880,15 +1114,15 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       </div>
 
       <div className="ent-toolbar" role="toolbar" aria-label="Entry buttons">
-        <button type="button" className="mp-btn mp-btn-green" data-hotkey="s" aria-keyshortcuts="Alt+S" disabled={!canSave} title="Saving an invoice is not ported yet" onClick={notPorted("Save")}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
+        <button type="button" className="mp-btn mp-btn-green" data-hotkey="s" aria-keyshortcuts="Alt+S" disabled={!canSave} title="Save the invoice (checked on the server; written only when saving is switched on)" onClick={() => void saveEntry()}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="c" aria-keyshortcuts="Alt+C" onClick={() => void cancelEntry()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="d" aria-keyshortcuts="Alt+D" disabled={!isRestored} title="Deleting an invoice is not ported yet" onClick={notPorted("Delete")}><Icon name="clear" /><HotkeyLabel text="Delete" hotkey="d" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="d" aria-keyshortcuts="Alt+D" disabled={!isRestored} title="Delete the opened invoice" onClick={() => void deleteEntry()}><Icon name="clear" /><HotkeyLabel text="Delete" hotkey="d" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored} title="Printing an invoice is not ported yet" onClick={notPorted("Print")}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setHelpKind(null); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!isRestored} title="Range print is not ported yet" onClick={notPorted("Range print")}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
         {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="Upload document is not ported yet" onClick={notPorted("Upload document")}><Icon name="image" />Upload Document</button>}
         {def?.buttons.einvoice && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="E-invoice is not ported yet" onClick={notPorted("E-invoice")}><Icon name="export" />E-Invoice</button>}
-        {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="The entry log is not ported yet" onClick={notPorted("Log")}><Icon name="log" />Log</button>}
+        {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" />Log</button>}
         <div className="ent-status" aria-live="polite">
           {busy && <span className="mp-busy">{busy}…</span>}
           {book && <span>{def?.statusHead} · {register?.text} · {book.entryFor}{book.slab ? ` · ${book.taxGroup === "G" ? "CGST" : book.taxGroup === "I" ? "IGST" : "VAT"}` : ""}{isRestored ? " · Edit" : ""}</span>}
