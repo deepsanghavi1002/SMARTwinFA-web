@@ -16,6 +16,12 @@ import type { StockYear } from "./multiYearStock";
 import { multiYearExpense as multiYearExpenseTable } from "./multiYearExpense";
 import type { ExpenseYear } from "./multiYearExpense";
 import type { YearData } from "./multiYear";
+import { multiCompanyAccountSummary, multiCompanyProfitLoss } from "./multiCompanyAccountSummary";
+import { multiCompanyLedger } from "./multiCompanyLedger";
+import { multiCompanyProduct } from "./multiCompanyProduct";
+import { patiya } from "./patiya";
+import { incomeTaxFormats } from "./incomeTax";
+import { multiCompanyDayBook } from "./multiCompanyDayBook";
 import { SYSTEM_SCHEMA } from "../master-program/session";
 
 /**
@@ -40,6 +46,13 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 30: return partySummary(loader, plan);
     case 35: return nonFunction(loader, plan);
     case 280: return salesExpense(loader, plan);
+    case 150: return patiya(loader, plan);
+    case 26: return incomeTaxFormats(loader, plan);
+    case 115: return multiCompanyAccountSummary(loader, plan);
+    case 178: return multiCompanyProfitLoss(loader, plan);
+    case 116: return multiCompanyProduct(loader, plan);
+    case 117: return multiCompanyDayBook(loader, plan);
+    case 118: return multiCompanyLedger(loader, plan);
     case 103: return multiYearAccountBalance(loader, plan);
     case 104: return multiYearStock(loader, plan);
     case 105: return multiYearLedger(loader, plan);

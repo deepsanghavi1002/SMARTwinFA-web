@@ -1,4 +1,4 @@
-import { fastHelpSql } from "./helpSql";
+import { fastHelpSql, invoiceHelpSql } from "./helpSql";
 import { Loader } from "../master-program/load";
 import { securityRead, securityWrite, toInt, toText } from "../master-program/legacy";
 import { readRights, SETUP_SCHEMA, SYSTEM_SCHEMA } from "../master-program/session";
@@ -29,7 +29,7 @@ const flag = (row: Row | undefined, name: string) => {
 };
 
 /** Reports whose output is ported (their SP_REPORT_STANDARD branch and Report_Combine's handling of it). */
-export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 27, 35, 280, 103, 104, 105, 106, 125, 133, 138, 157, 176, 267, 279, 281, 264, 151, 163, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 158, 162, 211, 232, 255, 143, 30, 127, 129, 130, 131, 258, 284]);
+export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 27, 35, 280, 103, 26, 150, 115, 178, 136, 116, 117, 118, 104, 105, 106, 125, 133, 138, 157, 176, 267, 279, 281, 264, 151, 163, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 162, 211, 232, 255, 143, 30, 127, 129, 130, 131, 258, 284, 158]);
 
 /** The help grid each help id fills, when report_controlval does not name one (UNKNOWN_HELP_GRID). */
 const KEY_COLUMN: Readonly<Record<string, string>> = {
@@ -116,7 +116,7 @@ export async function smartHelp(loader: Loader, helpId: string, bookList = " 1, 
   const found = await helpQuery(loader, helpId);
   if (!found) return null;
   // Per-product lookups into ADDON_DATA / PRICELIST grouped once and joined (lib/report/helpSql.ts): the same rows, seconds faster.
-  let sql = fastHelpSql(found.sql);
+  let sql = helpId === "HELP_INVOICENO" ? invoiceHelpSql(fastHelpSql(found.sql)) : fastHelpSql(found.sql);
   if (sql.includes("|sys.replace_acaddon|")) {
     const addons = await loader.readTable(
       `SELECT fiel_save FROM ${session.companySchema}.addon_fld WHERE UPPER(BTRIM(COALESCE(account_help::text, ''))) IN ('TRUE', '1', 'Y') AND fiel_relate = 'A' AND fiel_type = 'M' AND fiel_pos <> 'D'`,
@@ -171,7 +171,9 @@ async function loadHelp(loader: Loader, helpId: string, grid: string, frozen: nu
   if (!help) return null;
   const keys = help.rows[0] ? Object.keys(help.rows[0]) : [];
   const columns = await helpColumns(loader, helpId, keys);
-  const keyColumn = KEY_COLUMN[grid] ?? keys.find((key) => key.toLowerCase() !== "tick" && key.toLowerCase() !== "ticked") ?? "";
+  // A help without the grid's usual key column (the Multi Company reports' Book grid lists companies: CO_KEY) is keyed by its own, else every row shares one key and a click ticks all.
+  const has = (name: string | undefined) => name !== undefined && keys.some((key) => key.toLowerCase() === name.toLowerCase());
+  const keyColumn = (has(KEY_COLUMN[grid]) ? KEY_COLUMN[grid] : undefined) ?? keys.find((key) => key.toLowerCase() === "co_key") ?? keys.find((key) => key.toLowerCase() !== "tick" && key.toLowerCase() !== "ticked") ?? "";
   return {
     grid,
     helpId,

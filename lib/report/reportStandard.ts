@@ -1,4 +1,10 @@
 import type { Loader } from "../master-program/load";
+import { multiCompanyAccountSummary, multiCompanyProfitLoss } from "./multiCompanyAccountSummary";
+import { multiCompanyLedger } from "./multiCompanyLedger";
+import { multiCompanyProduct } from "./multiCompanyProduct";
+import { patiya } from "./patiya";
+import { incomeTaxSummary } from "./incomeTax";
+import { multiCompanyDayBook } from "./multiCompanyDayBook";
 import { toText } from "../master-program/legacy";
 import type { ResultRow } from "./call";
 import { ResultTable } from "./call";
@@ -74,6 +80,14 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 119: return checklistInvoice(loader, plan);
     case 120: return checklistDaybook(loader, plan);
     case 23: return balanceSheet(loader, plan);
+    case 150: return patiya(loader, plan);
+    case 26: return incomeTaxSummary(loader, plan);
+    case 115: return multiCompanyAccountSummary(loader, plan);
+    case 178: return multiCompanyProfitLoss(loader, plan);
+    case 116: return multiCompanyProduct(loader, plan);
+    case 117: return multiCompanyDayBook(loader, plan);
+    case 118: return multiCompanyLedger(loader, plan);
+    case 136: return multiCompanyBalanceSheet(loader, plan);
     case 138: return multiYearBalanceSheet(loader, plan);
     case 24: return annexure(loader, plan);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey} is not available in the web version yet.`, "Not ported yet");
@@ -7622,7 +7636,33 @@ async function multiYearBalanceSheet(loader: Loader, plan: ReportPlan): Promise<
   const years = company === undefined ? [] : (await runReportSql(loader, `SELECT n.c_tarikh1::date AS y1, n.c_tarikh2::date AS y2, lower(btrim(c.co_dataname)) AS schema_name`
     + ` FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id WHERE n.c_tarikh2::date >= $1::date AND n.c_tarikh1::date <= $2::date AND c.name = $3 ORDER BY n.c_tarikh1`,
   [desktopDate(call.from), desktopDate(call.upto), company.name])).rows;
+  const dayText = (date: Date) => `${String(date.getDate()).padStart(2, "0")}${String(date.getMonth() + 1).padStart(2, "0")}${date.getFullYear()}`;
+  return balanceColumns(loader, plan, years.map((year) => ({
+    schema: toText(year.schema_name), label: `${(year.y1 as Date).getFullYear()}_${(year.y2 as Date).getFullYear()}`,
+    start: desktopDate(year.y1 as Date), upto: desktopDate(year.y2 as Date), yearId: `${dayText(year.y1 as Date)}${dayText(year.y2 as Date)}`,
+  })));
+}
 
+// ======================================================================================
+// 136: MULTI COMPANY BALANCE SHEET (the same branch of SP_REPORT_STANDARD as 23)
+// ======================================================================================
+//
+// The companies of the group (the same billing name and group, a short name; the ticked ones of the Book group) that have the year, each balance
+// sheet worked out on its own database from the year's start to Upto as report 23 does. Laid out as report 138 with a column a company (its
+// short name) in place of a column a year; a company whose sides do not balance adds a "Difference" row.
+
+async function multiCompanyBalanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const companies = (await runReportSql(loader, `SELECT lower(btrim(c.co_dataname)) AS schema_name, btrim(c.co_short) AS short FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id`
+    + ` WHERE n.c_tarikh1::date = $1::date AND n.c_tarikh2::date = $2::date AND coalesce(btrim(c.co_short), '') <> ''`
+    + ` AND c.co_group_name = (SELECT co_group_name FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $3)`
+    + (/^\(\s*\d+(\s*,\s*\d+)*\s*\)$/.test(call.selectBookKey.trim()) ? ` AND c.co_key IN ${call.selectBookKey.trim()}` : "")
+    + ` ORDER BY c.co_short`, [desktopDate(call.tarikh1), desktopDate(call.tarikh2), call.companyKey])).rows;
+  return balanceColumns(loader, plan, companies.map((company) => ({ schema: toText(company.schema_name), label: toText(company.short), start: desktopDate(call.tarikh1), upto: desktopDate(call.upto), yearId: call.yearId })));
+}
+
+/** The side-by-side balance sheet of 136 and 138: a column a database (company or year), a row a head, TOTAL. */
+async function balanceColumns(loader: Loader, plan: ReportPlan, units: { schema: string; label: string; start: string; upto: string; yearId: string }[]): Promise<ResultTable> {
   type Bucket = { side: string; name: string; values: Map<string, number> };
   const buckets = new Map<string, Bucket>();
   const labels: string[] = [];
@@ -7633,18 +7673,14 @@ async function multiYearBalanceSheet(loader: Loader, plan: ReportPlan): Promise<
     buckets.set(key, bucket);
   };
   const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
-  const two = (value: number) => String(value).padStart(2, "0");
-  const dayId = (date: Date) => `${two(date.getDate())}${two(date.getMonth() + 1)}${date.getFullYear()}`;
-  for (const year of years) {
-    const schema = toText(year.schema_name);
+  for (const unit of units) {
+    const schema = unit.schema;
     if (!/^[a-z0-9_]+$/.test(schema)) continue;
     const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','ac_balance','balsheet','ledger_post')", [schema])).rows[0];
     if (num(exists?.n) < 4) continue;
-    const y1 = year.y1 as Date;
-    const y2 = year.y2 as Date;
-    const label = `${y1.getFullYear()}_${y2.getFullYear()}`;
+    const label = unit.label;
     labels.push(label);
-    const { liabilities, assets } = await balanceHeads(loader, plan, `${schema}.`, desktopDate(y1), desktopDate(y2), `${dayId(y1)}${dayId(y2)}`);
+    const { liabilities, assets } = await balanceHeads(loader, plan, `${schema}.`, unit.start, unit.upto, unit.yearId);
     for (const head of liabilities) put("LIABILITY", head.heading, label, head.closing);
     for (const head of assets) put("ASSET", head.heading, label, head.closing);
     const total = r2(liabilities.reduce((sum, head) => sum + head.closing, 0) - assets.reduce((sum, head) => sum + head.closing, 0));

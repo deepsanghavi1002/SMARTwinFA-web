@@ -187,12 +187,19 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const stockSummaryFormat = reportKey === 29 || (reportKey === 17 && (call.fcText.toUpperCase() === "SUMMARY" || call.fcValue === 2));
   if (reportKey === 17 && stockSummaryFormat) hidden.push("SELECTED_DATE", "FULL_DOCNO", "NAME", "TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2", "DAYS", "PROD_KEY", "FORM_CODE", "DOC_NO1", "BUNDLE", "PACKING");
   if (reportKey === 1 && table.has("closing_bal")) cashBookTotals(plan);
+  // The multi company bank / cash book: the running balance runs on Receipt and Payment even where the setup names no subtotal columns.
+  if (reportKey === 117 && plan.subtotalColumns.length < 2 && table.has("RECEIPT") && table.has("PAYMENT")) plan.subtotalColumns.splice(0, plan.subtotalColumns.length, "RECEIPT", "PAYMENT");
+  // The multi company ledger: the running balance and each company's closing line run on Debit and Credit.
+  if (reportKey === 118 && plan.subtotalColumns.length < 2 && table.has("DEBIT") && table.has("CREDIT")) plan.subtotalColumns.splice(0, plan.subtotalColumns.length, "DEBIT", "CREDIT");
   const subtotalColumns = [...plan.subtotalColumns];
   const grouping = [...plan.grouping];
   // Sales V/S Expense subtotals on the side (SALES / EXPENSE / EXP %), then the balance sheet head inside it (the desktop's grid).
   if (reportKey === 280 || reportKey === 281) for (const column of ["SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2"]) if (!grouping.includes(column)) grouping.push(column);
   // The multi year balance sheet subtotals on its side (LIABILITY / ASSET), the Difference row apart.
-  if (reportKey === 138 && !grouping.includes("BAL_SIDE")) grouping.push("BAL_SIDE");
+  if ((reportKey === 136 || reportKey === 138) && !grouping.includes("BAL_SIDE")) grouping.push("BAL_SIDE");
+  // The multi company account summary, with schedules ticked: a subtotal under each schedule.
+  const scheduleSubtotals = (reportKey === 115 || reportKey === 178) && table.has("SMART_SELECTED_SCHDULE");
+  if (scheduleSubtotals && !grouping.includes("SMART_SELECTED_SCHDULE")) grouping.push("SMART_SELECTED_SCHDULE");
   // The multi year party product addon sale subtotals on the party (NAME), a row for each of its addon combinations under it.
   if (reportKey === 176 && !grouping.includes("NAME")) grouping.push("NAME");
   // The multi year top reports, a row a party / item of each year (Year As a Column not ticked): a subtotal for each YEAR_NAME.
@@ -326,10 +333,10 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const formattedReport = false;
   const allowSubtotal = !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
   const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string }[] = [];
-  const subtotalsWanted = (flag(properties, "subtotal_req") || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
+  const subtotalsWanted = (flag(properties, "subtotal_req") || scheduleSubtotals || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
   // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
   const oneRowAParty = (reportKey === 5 && ["SUMMARY", "MONTHLY"].includes(plan.call.filterText.toUpperCase()));
-  if (subtotalsWanted && groupColumns.length > 0 && flag(properties, "subtotal_req") && !oneRowAParty) {
+  if (subtotalsWanted && groupColumns.length > 0 && (flag(properties, "subtotal_req") || scheduleSubtotals) && !oneRowAParty) {
     const sums = groupColumns.map(() => new Map<string, number>());
     const reset = (level: number) => { for (const column of sumColumns) sums[level].set(column, 0); };
     groupColumns.forEach((_, level) => reset(level));

@@ -20,3 +20,15 @@ export function fastHelpSql(sql: string): string {
   }
   return out;
 }
+
+/**
+ * The Patiya report's Invoice help (HELP_INVOICENO): the desktop's grid has a LOCATION column (the voucher's remark) that the PostgreSQL
+ * copy of the query lacks, and a voucher without a transport would lose its DOC_NO (a NULL in the concatenation). Its order,
+ * right(space(20)+DOC_NO,10), adds texts with +, which PostgreSQL refuses: the whole help came back empty.
+ */
+export function invoiceHelpSql(sql: string): string {
+  return sql
+    .replace(/\(aent\.TXT_TRANS\)::text\s+as\s+"DOC_NO"/i, `coalesce(aent.TXT_TRANS, '')::text as "DOC_NO"`)
+    .replace(/right\(\s*space\(20\)\s*\+\s*DOC_NO\s*,\s*10\s*\)/i, "right(repeat(' ', 20) || DOC_NO, 10)")
+    .replace(/(as\s+"DATE")(\s+FROM\b)/i, `$1,coalesce(led.doc_remark,'') as "LOCATION"$2`);
+}
