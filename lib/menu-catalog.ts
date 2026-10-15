@@ -79,8 +79,25 @@ function isVisible(row: MenuRow, licence: number) {
   return row.menuspecial ? listed(row.menuvisible) : !listed(row.menuhide);
 }
 
+/**
+ * Every entry / master request checks its menu row against this catalog, and the menu only changes when the setup is edited, so the
+ * tree is kept for a minute per licence: one connection and query less on each of a screen's many requests.
+ */
+const CATALOG_KEEP_MS = 60_000;
+const catalogs = new Map<string, { at: number; tree: Promise<MenuNode[]> }>();
+
 /** The menu tree a company may open, in menumaster's own order. */
 export async function readMenuCatalog(companyGroup: string | null): Promise<MenuNode[]> {
+  const key = `${setupSchema()}:${companyLicence(companyGroup)}`;
+  const kept = catalogs.get(key);
+  if (kept && Date.now() - kept.at < CATALOG_KEEP_MS) return kept.tree;
+  const tree = readMenuCatalogNow(companyGroup);
+  catalogs.set(key, { at: Date.now(), tree });
+  tree.catch(() => catalogs.delete(key));
+  return tree;
+}
+
+async function readMenuCatalogNow(companyGroup: string | null): Promise<MenuNode[]> {
   const licence = companyLicence(companyGroup);
   const SETUP_SCHEMA = setupSchema();
   return readOnly(async (client) => {

@@ -8,6 +8,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { bookContext, entryPreview, loadBook, loadInvoice, partyDetails, partyHelp, seriesDefaults } from "@/lib/entry/invoice";
 import { headerProblems } from "@/lib/entry/checks";
 import { entryLog } from "@/lib/entry/log";
+import { masterDetails } from "@/lib/entry/details";
 import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
 import type { HeaderField } from "@/lib/entry/checks";
@@ -174,9 +175,15 @@ export async function POST(request: Request) {
           const problems = await headerProblems(loader, body.entryName, book, {
             field: fieldName, series: clip(body.series), date: clip(body.date, 20), number: clip(body.number), chlnNo: clip(body.chlnNo), entryNo: clip(body.entryNo),
             editKey: Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0, editDate: clip(body.editDate, 20), taxGroup: clip(body.taxGroup, 1),
+            voucher: body.voucher ? { rows: Number((body.voucher as Record<string, unknown>).rows) || 1, sideDbcode: Number((body.voucher as Record<string, unknown>).sideDbcode) || 1, bookName: clip((body.voucher as Record<string, unknown>).bookName, 100) } : undefined,
             party: party ? { name: clip(party.name, 100), book: Number(party.book) || 0, closing: clip(party.closing, 30), limit: clip(party.limit, 30), message: clip(party.message, 500), startDate: clip(party.startDate, 20), lastDate: clip(party.lastDate, 20) } : undefined,
           });
           return { problems, warnings: loader.warnings };
+        }
+        case "master-details": {
+          const key = Number(body.key);
+          if (!Number.isInteger(key) || key <= 0 || (body.kind !== "account" && body.kind !== "product")) throw new Error("Choose an account or a product row");
+          return { details: await masterDetails(loader, body.kind, key), warnings: loader.warnings };
         }
         case "log": {
           const uniqueKey = Number(body.uniqueKey);

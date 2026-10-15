@@ -1404,7 +1404,7 @@
 .fc-result{font-size:11px;color:#59646f;max-width:240px}
 
 /* Entry Log window (the Log button) */
-.ent-log-back{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(15,30,55,.45)}
+.ent-log-back{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(15,30,55,.45)}
 .ent-log{display:flex;flex-direction:column;width:min(1200px,96vw);height:min(700px,92vh);background:#fff;border:1px solid #1f5fa8;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden}
 .ent-log-title{flex:none;padding:8px 12px;font-weight:700;color:#fff;background:linear-gradient(#2d6fb5,#1a4f8a)}
 .ent-log-scroll{flex:1;min-height:0;overflow:auto}
@@ -1428,3 +1428,44 @@
 /* Entry: a focused cell is scrolled into view below the sticky heading. */
 .ent-grid{scroll-padding-top:26px}
 .ent-scroll{scroll-padding-bottom:8px}
+
+/* Helps, 2026-10-15: the help colour scheme (same for the account, product, party and every other help). Title bar dark blue with white text,
+   grid heading dark charcoal with soft yellow text, white rows with LavenderBlush alternate rows, aqua blue selected row, Alice blue window,
+   light grey grid lines, golden outer border. The column the keyboard is on (the one typing searches) is shaded and embossed. */
+.mp-help{background:#f0f8ff;border:2px solid #d6b85a}
+.mp-help-title{background:#1f3a78;color:#ffe082}
+.mp-help-title button,.mp-help-title .mp-help-name{color:#ffe082}
+.mp-help-scroll{background:#fff}
+.mp-help-search{flex:none;margin-left:14px}
+.mp-help-search input{width:255px;box-sizing:border-box;height:20px;padding:0 6px;border:1px solid #b9c6d4;border-radius:3px;background:#fff;color:#1b2a3a;font:inherit;font-weight:400;font-size:11px}
+.mp-help-search input:focus{outline:2px solid #d6b85a;outline-offset:-1px}
+.mp-help .mp-help-tip{display:block;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;margin-left:12px}
+.mp-help-icon{flex:none}
+.ent-find-title{flex:none;padding:3px 8px;gap:8px}
+.mp-help tbody td{background:#fff;border-color:#d9e0e7;color:#1b2a3a}
+.mp-help tbody tr.mp-help-alt td{background:#fffbe6}
+.mp-help tbody td.mp-help-frozen{background:#fff}
+.mp-help tbody tr.mp-help-alt td.mp-help-frozen{background:#fffbe6}
+.mp-help thead th{background:#343a40;color:#ffe082;font-weight:400;border-bottom:2px solid #d6b85a;border-color:#4b535b}
+.mp-help thead th.mp-help-frozen{background:#343a40}
+.mp-help thead th.mp-help-sortable:hover{background:#454d55}
+.mp-help thead th.mp-help-filtered{background:#5a4a12}
+.mp-help thead th .mp-help-sort,.mp-help thead th .mp-filter-button{color:#ffe082}
+.mp-help tbody td.mp-help-cursor{background-image:none;background:#fffaf0}
+.mp-help tbody tr.mp-help-alt td.mp-help-cursor{background:#fff3c4}
+.mp-help thead th.mp-help-cursor{background:#4d565f;box-shadow:inset 1px 1px 0 #ffffff55,inset -1px -2px 0 #14171a}
+.mp-help tbody tr.mp-current-row td{background:#7fdbff;color:#0b2a4a}
+.mp-help tbody tr.mp-current-row td.mp-help-frozen{background:#7fdbff}
+.mp-help tbody tr.mp-current-row td.mp-help-cursor{background:#7fdbff}
+.mp-help tbody tr.mp-current-row td.mp-help-cursor-now{background:#4cc3ee;color:#062238;font-weight:700;box-shadow:inset 2px 2px 0 rgba(255,255,255,.7),inset -2px -2px 0 rgba(0,60,100,.45)}
+.mp-help td mark.mp-found{background:#ffd23f;color:#1b1b1b}
+.ent-label[style*="text-align: right"]{padding-right:10px}
+.ent-details-host{display:flex;max-width:96vw}
+.ent-details-host .mp-help{box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.ent-details-host .mp-help{width:fit-content}
+.ent-details-host .mp-help-tip{display:none}
+
+.ent-grid:focus-visible{outline:2px solid #d6b85a;outline-offset:-2px}
+.ent-grid tr.ent-grid-current td{box-shadow:inset 0 0 0 1px #4cc3ee}
+.ent-grid:focus tr.ent-grid-current td{background:#bfeeff}
+.ent-grid td mark.mp-found{padding:0;border-radius:2px;background:#ffd23f;color:#1b1b1b;font-weight:700}

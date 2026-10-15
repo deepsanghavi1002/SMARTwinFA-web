@@ -105,6 +105,8 @@ export type BookScreen = Readonly<{
   /** "G" CGST+SGST, "I" IGST, "V" VAT: str_Entry_AddTaxGroup. */
   taxGroup: "G" | "I" | "V";
   controls: readonly InvoiceControl[];
+  /** Voucher only: the Book Side list (Payment / Receipt ...) with the series each side offers; acDbcode is the account's side (1 debit, 2 credit). */
+  sides?: readonly Readonly<{ text: string; value: string; acDbcode: number; series: readonly EntryOption[] }>[];
   /** The product grid (c1dg_Inputdata): its columns and how many rows it offers. */
   product: Readonly<{ columns: readonly EntryColumn[]; rows: number; frozen: number; totals: readonly string[] }>;
   slabRows: readonly SlabRow[];
@@ -165,7 +167,8 @@ export type RestoredEntry = Readonly<{
 /** A column of the side grids, as Setting_GridCol shows it. */
 export type GridColumn = Readonly<{ key: string; caption: string; width: number; align: "L" | "R" | "C"; decimals: number; editable: boolean }>;
 
-export type SeriesDefaults = Readonly<{ date: string; number: string }>;
+/** A series' default date and number, and the period the series runs (bn_from / bn_upto, else the accounting year) as dd/MMM/yyyy. */
+export type SeriesDefaults = Readonly<{ date: string; number: string; from: string; upto: string; /** The earliest challan date: 120 days before the series starts. */ chlnFrom: string }>;
 
 /** The party help list (HELP_ENT_ACCOUNT through Help_Design). */
 export type HelpList = Readonly<{

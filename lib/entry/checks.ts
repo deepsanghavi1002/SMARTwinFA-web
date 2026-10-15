@@ -38,6 +38,8 @@ export type HeaderInput = Readonly<{
   editDate: string;
   /** The tax group of the opened entry (str_Entry_UpdTaxGroup), "" when adding. */
   taxGroup: string;
+  /** The voucher style: this is account row `rows` (1 for the first), the side picked (1 account debit, 2 account credit) and the day book's name. */
+  voucher?: Readonly<{ rows: number; sideDbcode: number; bookName: string }>;
   party?: Readonly<{ name: string; book: number; closing: string; limit: string; message: string; startDate: string; lastDate: string }>;
 }>;
 
@@ -186,11 +188,45 @@ function dateProblems(loader: Loader, book: BookContext, bn: Row, input: HeaderI
   return problems;
 }
 
+/**
+ * Voucher_Validate_Account (Entry.cs): the account chosen for a voucher row. The messages are built in the desktop's order, a later one
+ * replacing an earlier one; a day-lock message (DL) or a warning (DW) from the account master is shown for the voucher style.
+ */
+function voucherAccountProblems(loader: Loader, book: BookContext, input: HeaderInput, party: NonNullable<HeaderInput["party"]>, voucher: NonNullable<HeaderInput["voucher"]>): HeaderProblem[] {
+  const partyLock = toText(loader.session.setup.party_lock).toUpperCase();
+  const problems: HeaderProblem[] = [];
+  let error = "";
+  const message = party.message.trim();
+  if (message !== "") {
+    if (partyLock.includes("DL,")) error = `Party Lock Message : ${message}`;
+    else if (partyLock.includes("DW,")) problems.push({ text: `Party Warning Message : ${message}`, title: "Party Warning", kind: "warn" });
+  }
+  if (voucher.bookName.trim().toUpperCase() === party.name.trim().toUpperCase()) error = "Book and Account can't be Same...";
+  const date = parseDay(input.date);
+  const start = parseDay(party.startDate);
+  const last = parseDay(party.lastDate);
+  if (start && date && date < start) error = "Selected Master not allowed as Entry Date is less than Account Start date";
+  if (last && date && date > last) error = "Selected Master not allowed as Entry Date is greater than Account last date";
+  const key = book.values.bookKey;
+  const cashOrBank = (value: number) => value === 4 || value === 6;
+  if (voucher.rows > 1 && cashOrBank(key) && cashOrBank(party.book)) error = "Contra entry can not have Multiple Rows";
+  const allowed = (groups: readonly number[]) => groups.includes(party.book);
+  if (key === 4 && !allowed([1, 2, 3, 4, 7])) error = "Account name not allowed in Cash entry";
+  if (key === 4 && voucher.sideDbcode === 2 && party.book === 4) error = "Cash to Cash Contra entry allowed only from Payment Side";
+  if (key === 5 && !allowed([1, 2, 3])) error = "Account name not allowed in Discount entry";
+  if (key === 6 && !allowed([1, 2, 3, 4, 6, 7])) error = "Account name not allowed in Bank entry";
+  if (key === 6 && voucher.sideDbcode === 2 && party.book === 6) error = "Bank to Bank Contra entry allowed only from Payment Side";
+  if (key === 19 && [4, 6, 7].includes(party.book)) error = "Account name not allowed in JV entry";
+  if (error !== "") return [...problems.filter((problem) => problem.kind === "warn"), { text: error, title: "Entry Warning", kind: "stop" }];
+  return problems;
+}
+
 /** Tbx_PartyName_Leave: the messages in the order the desktop builds str_Error_Message (later ones replace earlier ones). */
 function partyProblems(loader: Loader, book: BookContext, input: HeaderInput): HeaderProblem[] {
   const { session } = loader;
   const party = input.party;
   if (!party) return [];
+  if (input.voucher) return voucherAccountProblems(loader, book, input, party, input.voucher);
   const partyPara = toText(session.setup.party_para).toUpperCase();
   const messPara = toText(session.setup.mess_para).toUpperCase();
   const adding = input.editKey === 0;

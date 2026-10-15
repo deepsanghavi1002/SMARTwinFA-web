@@ -78,7 +78,7 @@ function screenOf(node: MenuNode | null): Screen {
   const code = node.actionCode?.toUpperCase();
   if (code === "MASTER" && node.actionMenu) return "master";
   if (code === "SMALL_ENTRY" && node.actionMenu) return "small-entry";
-  if (code === "ENTRY" && node.actionMenu?.toUpperCase() === "INVOICE") return "entry";
+  if (code === "ENTRY" && ["INVOICE", "VOUCHER"].includes(node.actionMenu?.toUpperCase() ?? "")) return "entry";
   if (code === "REPORT" && node.actionMenu) return "report";
   if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
   if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";

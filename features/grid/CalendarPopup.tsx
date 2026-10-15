@@ -21,10 +21,17 @@ const addMonths = (date: Date, months: number) => {
   return new Date(date.getFullYear(), date.getMonth() + months, Math.min(date.getDate(), last));
 };
 
-/** `canClear` false: a compulsory date, with no Clear button and Delete ignored. */
-export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, canClear = true }: { initial: Date | null; onPick: (date: Date | null) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement>; canClear?: boolean }) {
+/** The days a calendar lets be picked: nothing before `min` or after `max` (either may be left open). */
+export type DateRange = Readonly<{ min?: Date | null; max?: Date | null }>;
+
+/** `canClear` false: a compulsory date, with no Clear button and Delete ignored. `range`: days outside it are greyed and cannot be reached or picked. */
+export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, canClear = true, range }: { initial: Date | null; onPick: (date: Date | null) => void; onClose: () => void; style?: CSSProperties; dragHandle?: HTMLAttributes<HTMLDivElement>; canClear?: boolean; range?: DateRange }) {
   const today = new Date();
-  const [focused, setFocused] = useState<Date>(initial ?? new Date(today.getFullYear(), today.getMonth(), today.getDate()));
+  const dayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const inRange = (date: Date) => !(range?.min && dayStart(date) < dayStart(range.min)) && !(range?.max && dayStart(date) > dayStart(range.max));
+  /** The nearest day the range allows. */
+  const clamp = (date: Date) => (range?.min && dayStart(date) < dayStart(range.min) ? dayStart(range.min) : range?.max && dayStart(date) > dayStart(range.max) ? dayStart(range.max) : date);
+  const [focused, setFocused] = useState<Date>(clamp(initial ?? new Date(today.getFullYear(), today.getMonth(), today.getDate())));
   const grid = useRef<HTMLDivElement>(null);
   useEffect(() => { grid.current?.focus(); }, []);
 
@@ -34,7 +41,7 @@ export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, can
 
   const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
-    const move = (next: Date) => { event.preventDefault(); setFocused(next); };
+    const move = (next: Date) => { event.preventDefault(); setFocused(clamp(next)); };
     switch (event.key) {
       case "ArrowLeft": move(addDays(focused, -1)); return;
       case "ArrowRight": move(addDays(focused, 1)); return;
@@ -45,7 +52,7 @@ export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, can
       case "Home": move(new Date(focused.getFullYear(), focused.getMonth(), 1)); return;
       case "End": move(new Date(focused.getFullYear(), focused.getMonth() + 1, 0)); return;
       case "t": case "T": move(new Date(today.getFullYear(), today.getMonth(), today.getDate())); return;
-      case "Enter": case " ": event.preventDefault(); onPick(focused); return;
+      case "Enter": case " ": event.preventDefault(); if (inRange(focused)) onPick(focused); return;
       case "Delete": case "Backspace": event.preventDefault(); if (canClear) onPick(null); return;
       case "Escape": event.preventDefault(); onClose(); return;
     }
@@ -54,9 +61,9 @@ export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, can
   return (
     <div className="mp-cal" role="dialog" aria-label="Calendar" style={style}>
       <div className="mp-cal-title mp-drag-handle" {...dragHandle} title="Drag to move">
-        <button type="button" aria-label="Previous month (PgUp)" onClick={() => { setFocused(addMonths(focused, -1)); grid.current?.focus(); }}>‹</button>
+        <button type="button" aria-label="Previous month (PgUp)" onClick={() => { setFocused(clamp(addMonths(focused, -1))); grid.current?.focus(); }}>‹</button>
         <b>{MONTHS[focused.getMonth()]} {focused.getFullYear()}</b>
-        <button type="button" aria-label="Next month (PgDn)" onClick={() => { setFocused(addMonths(focused, 1)); grid.current?.focus(); }}>›</button>
+        <button type="button" aria-label="Next month (PgDn)" onClick={() => { setFocused(clamp(addMonths(focused, 1))); grid.current?.focus(); }}>›</button>
       </div>
       <div
         ref={grid}
@@ -73,16 +80,17 @@ export function CalendarPopup({ initial, onPick, onClose, style, dragHandle, can
             type="button"
             tabIndex={-1}
             role="gridcell"
+            disabled={!inRange(date)}
             aria-selected={sameDay(date, focused)}
             className={`mp-cal-day ${date.getMonth() !== focused.getMonth() ? "mp-cal-other" : ""} ${sameDay(date, focused) ? "mp-cal-focused" : ""} ${sameDay(date, initial) ? "mp-cal-chosen" : ""} ${sameDay(date, today) ? "mp-cal-today" : ""}`}
-            onClick={() => onPick(date)}
+            onClick={() => { if (inRange(date)) onPick(date); }}
           >
             {date.getDate()}
           </button>
         ))}
       </div>
       <div className="mp-cal-actions">
-        <button type="button" onClick={() => onPick(new Date(today.getFullYear(), today.getMonth(), today.getDate()))}>Today (T)</button>
+        <button type="button" disabled={!inRange(today)} onClick={() => onPick(new Date(today.getFullYear(), today.getMonth(), today.getDate()))}>Today (T)</button>
         {canClear && <button type="button" onClick={() => onPick(null)}>Clear (Del)</button>}
         <button type="button" onClick={onClose}>Close (Esc)</button>
       </div>

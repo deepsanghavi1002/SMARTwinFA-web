@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { HelpIcon } from "../grid/HelpIcon";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { HelpList } from "../../lib/entry/types";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
@@ -84,6 +85,7 @@ export function FindList({ preview, style, onOpen }: { preview: HelpList | null;
   const tableWidth = columns.reduce((sum, column) => sum + layout.widthOf(column), 0);
   return (
     <div ref={grid} className="ent-find" style={style}>
+      <div className="mp-help-title ent-find-title"><span><HelpIcon name="file-text" /><b className="mp-help-name">FIND / EDIT HELP</b></span></div>
       <div ref={scroller} className="ent-grid ent-find-grid" tabIndex={0} role="grid" aria-label="Entries" aria-rowcount={rows.length} onKeyDown={keys}>
         <table style={{ width: tableWidth }}>
           <colgroup>{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>

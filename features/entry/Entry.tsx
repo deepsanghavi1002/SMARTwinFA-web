@@ -20,11 +20,15 @@ import { Icon } from "../ui/Icon";
 import { SearchCombo } from "../ui/SearchCombo";
 import { FindList } from "./FindList";
 import { EntryLog } from "./EntryLog";
+import { MasterDetails } from "./MasterDetails";
+import type { MasterDetails as MasterDetailsData } from "../../lib/entry/details";
 import type { EntryLog as EntryLogData } from "../../lib/entry/log";
 import { amountText, helpCell } from "./format";
 import { chooseProduct, filledLines, lineTotals, recalcLine, slabFromLines } from "./lines";
 import type { Line } from "./lines";
 import { ProductGrid } from "./ProductGrid";
+import { VoucherGrid, filledVoucherLines } from "./VoucherGrid";
+import type { VoucherLine } from "./VoucherGrid";
 import { EntryCell, focusEntryCell } from "./EntryCell";
 import { properHeading } from "../../lib/master-program/heading";
 import { SideGrid } from "./SideGrid";
@@ -121,11 +125,11 @@ const dayOf = (value: string) => { const date = parseDesktopDate(value); return 
  * right edge; the entry date and entry number sit beside the date / number and challan lines.
  */
 function headerPlace(item: InvoiceControl): { label: CSSProperties; box: CSSProperties } | null {
-  const right = (top: number) => ({ label: { right: PARTY_RIGHT + PARTY_WIDTH + 6, left: "auto", top, width: 74, textAlign: "left" as const }, box: { right: PARTY_RIGHT, left: "auto", top, width: PARTY_WIDTH } });
+  const right = (top: number) => ({ label: { right: PARTY_RIGHT + PARTY_WIDTH, left: "auto", top, width: 90, textAlign: "right" as const }, box: { right: PARTY_RIGHT, left: "auto", top, width: PARTY_WIDTH } });
   switch (item.name) {
     case "tbx_partyname": return right(item.box.top);
-    case "dtp_entrydate": return { label: { left: 412, top: 50, width: 86, textAlign: "right" }, box: { left: 500, top: 50, width: 112 } };
-    case "tbx_entryno": return { label: { left: 412, top: 72, width: 86, textAlign: "right" }, box: { left: 500, top: 72, width: 88 } };
+    case "dtp_entrydate": return { label: { left: 412, top: 50, width: 88, textAlign: "right" }, box: { left: 500, top: 50, width: 112 } };
+    case "tbx_entryno": return { label: { left: 412, top: 72, width: 88, textAlign: "right" }, box: { left: 500, top: 72, width: 88 } };
     default: return null;
   }
 }
@@ -144,6 +148,13 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   const [values, setValues] = useState<Record<string, string>>({});
   const [slab, setSlab] = useState<SlabRow[]>([]);
   const [lines, setLines] = useState<Line[]>([]);
+  /** The voucher style (Entry.cs str_Entry_Style V): account rows instead of product rows. */
+  const [vlines, setVlines] = useState<VoucherLine[]>([]);
+  /** The series' own period (bn_from to bn_upto, inside the year): the date box takes no day outside it. */
+  const [period, setPeriod] = useState<{ from: string; upto: string; chlnFrom: string } | null>(null);
+  const [accountText, setAccountText] = useState<{ row: number; text: string } | null>(null);
+  /** The voucher row whose Account cell the account help belongs to. */
+  const [voucherRow, setVoucherRow] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>("all");
   const [party, setParty] = useState<PartyDetails | null>(null);
   const [addon, setAddon] = useState<Record<number, string>>({});
@@ -158,6 +169,8 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   /** The entry opened from Find / Edit (its unique key), or null for a new entry. */
   const [restored, setRestored] = useState<number | null>(null);
   const [logView, setLogView] = useState<EntryLogData | null>(null);
+  /** The F1 window of a help row: the account or product master, field and value side by side. */
+  const [details, setDetails] = useState<{ kind: HelpKind; data: MasterDetailsData } | null>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   /** Set when a register has just been chosen: the keyboard goes to the series once the screen is drawn. */
   const focusSeries = useRef(false);
@@ -208,6 +221,9 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   const blankEntry = useCallback(() => {
     setSlab([]);
     setLines([]);
+    setVlines([]);
+    setAccountText(null);
+    setVoucherRow(null);
     setParty(null);
     setAddon({});
     setHelpKind(null);
@@ -241,6 +257,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       setAccountHelp(null);
       const initial: Record<string, string> = {};
       for (const control of next.controls) initial[control.name] = control.initial;
+      setPeriod({ from: next.defaults.from, upto: next.defaults.upto, chlnFrom: next.defaults.chlnFrom });
       initial.dtp_date = next.defaults.date;
       initial.tbx_number = next.defaults.number;
       for (const name of ["dtp_chlndate", "dtp_entrydate", "dtp_ewaydate"]) if (next.controls.some((control) => control.name === name)) initial[name] = next.defaults.date;
@@ -262,6 +279,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     if (!register) return;
     try {
       const body = await call<{ defaults: SeriesDefaults }>("series", { firstCombo: register, series });
+      setPeriod({ from: body.defaults.from, upto: body.defaults.upto, chlnFrom: body.defaults.chlnFrom });
       setValues((current) => ({ ...current, dtp_date: body.defaults.date, tbx_number: body.defaults.number, dtp_chlndate: current.dtp_chlndate !== undefined ? body.defaults.date : current.dtp_chlndate }));
     } catch (error) {
       await failed(error);
@@ -306,9 +324,11 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     const field: HeaderField | undefined = ({ dtp_date: "date", tbx_number: "number", tbx_chlnno: "chlnno", tbx_entryno: "entryno" } as Record<string, HeaderField>)[name];
     const to = event.relatedTarget as Element | null;
     if (!field || !book || event.currentTarget.contains(to) || to?.closest("button, .mp-calendar, [role=dialog]")) return;
+    // Going back to the date (the way a refused number is put right) is never held up.
+    if (name !== "dtp_date" && to?.closest("[data-box=dtp_date]")) return;
     const box = event.currentTarget;
     setTimeout(() => {
-      void checkHeader(field).then((ok) => { if (!ok) box.querySelector<HTMLElement>("input")?.focus(); });
+      void checkHeader(field).then((ok) => { if (!ok) setTimeout(() => box.querySelector<HTMLInputElement>("input")?.focus(), 50); });
     }, 60);
   };
 
@@ -344,9 +364,33 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     return load;
   }, [book, register, accountHelp, productHelp, call, say, failed]);
 
+  /** Reads a help in the background, so it is already there when its field gets the keyboard (nothing is shown). */
+  const prefetchHelp = useCallback((kind: HelpKind) => {
+    if (!book || !register || (kind === "account" ? accountHelp : productHelp) || helpLoads.current[kind]) return;
+    helpLoads.current[kind] = (async () => {
+      try {
+        const body = kind === "account"
+          ? await call<{ help: HelpData }>("party-help", { firstCombo: register, partyBooks: book.partyBooks })
+          : await call<{ help: HelpData }>("product-help", { firstCombo: register });
+        if (kind === "account") setAccountHelp(body.help); else setProductHelp(body.help);
+        return body.help;
+      } catch {
+        return null;
+      } finally {
+        delete helpLoads.current[kind];
+      }
+    })();
+  }, [book, register, accountHelp, productHelp, call]);
+  useEffect(() => {
+    if (!book || !register || locked) return;
+    if (book.inventory) prefetchHelp("product");
+    if (book.party || def?.style === "V") prefetchHelp("account");
+  }, [book, register, locked, def, prefetchHelp]);
+
   /** What the field the help belongs to has typed: the help keeps the entries that start with it. */
   const typedName = values.tbx_partyname ?? "";
-  const typed = helpKind === "account" ? (party?.name === typedName ? "" : typedName) : helpKind === "product" && productText?.row === productRow ? productText.text : "";
+  const voucher = def?.style === "V";
+  const typed = helpKind === "account" ? (voucher ? (accountText?.row === voucherRow ? accountText?.text ?? "" : "") : party?.name === typedName ? "" : typedName) : helpKind === "product" && productText?.row === productRow ? productText.text : "";
   const typedHelp = useMemo((): HelpData | null => {
     const help = helpKind === "account" ? accountHelp : helpKind === "product" ? productHelp : null;
     if (!help || !helpKind) return null;
@@ -366,9 +410,34 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
 
   /** The field a help belongs to: the party box, or the Product cell it opened from. */
   const focusHelpField = useCallback((kind: HelpKind | null) => {
-    if (kind === "account") partyRef.current?.focus();
+    if (kind === "account") { if (voucher) { if (voucherRow !== null) focusEntryCell(formRef.current, `${voucherRow}:name`); } else partyRef.current?.focus(); }
     else if (kind === "product" && productRow !== null) focusEntryCell(formRef.current, `${productRow}:prod_key`);
-  }, [productRow]);
+  }, [productRow, voucher, voucherRow]);
+  /** F1 on a help row: the whole master record of the row the cursor is on (Esc closes it and the help gets the keyboard back). */
+  const showDetails = async (kind: HelpKind) => {
+    const rows = shownHelp?.rows ?? [];
+    const row = rows[Math.min(helpAt, rows.length - 1)];
+    const key = Number(kind === "account" ? row?.CODE : row?.prod_key);
+    if (!row || !key) return;
+    setBusy("Master details");
+    try {
+      const body = await call<{ details: MasterDetailsData }>("master-details", { kind, key });
+      setDetails({ kind, data: body.details });
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  /** Esc on the details: the keyboard goes back to the field the help belongs to (its help shows again). */
+  const closeDetails = () => {
+    const kind = details?.kind;
+    setDetails(null);
+    setTimeout(() => {
+      if (kind === "account") { if (voucher) { if (voucherRow !== null) focusEntryCell(formRef.current, `${voucherRow}:name`); } else partyRef.current?.focus(); }
+      else if (kind === "product" && productRow !== null) focusEntryCell(formRef.current, `${productRow}:prod_key`);
+    }, 0);
+  };
   const closeHelp = useCallback((focusBack = true) => {
     const kind = helpKind;
     setHelpKind(null);
@@ -386,6 +455,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     const to = event.relatedTarget as Element | null;
     if (!to || event.currentTarget.contains(to)) return;
     if (helpKind === "account" && to === partyRef.current) return;
+    if (helpKind === "account" && voucher && to.getAttribute("data-cell") === `${voucherRow}:name`) return;
     if (helpKind === "product" && to.getAttribute("data-cell") === `${productRow}:prod_key`) return;
     setHelpKind(null);
   };
@@ -397,6 +467,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
    */
   const helpKeys = (event: ReactKeyboardEvent<HTMLInputElement>, kind: HelpKind, choose: (row: Readonly<Record<string, string>>) => void): boolean => {
     const open = helpKind === kind && shownHelp !== null;
+    if (event.key === "F1" && open) { event.preventDefault(); void showDetails(kind); return true; }
     if (event.key === "ArrowDown" || event.key === "F2") {
       event.preventDefault();
       if (!open) void openHelp(kind).then(enterHelp); else enterHelp();
@@ -464,6 +535,62 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     const at = accountHelp?.rows.findIndex((row) => row.NAME === party?.name) ?? -1;
     setHelpAt(at >= 0 ? at : 0);
     void openHelp("account");
+  };
+
+  // ---- The voucher's account rows: Voucher_Validate_Account and Voucher_AcHelp_Selection
+  const sideDbcode = book?.sides?.find((side) => side.text === values.cmb_side)?.acDbcode ?? 1;
+  const journal = book?.bookKey === 19;
+  const chooseVoucherAccount = useCallback(async (row: number, helpRow: Readonly<Record<string, string>> | undefined) => {
+    if (!helpRow || !register || !book) return;
+    setHelpKind(null);
+    const allowed = await checkHeader("party", {
+      voucher: { rows: row + 1, sideDbcode, bookName: register.text },
+      party: { name: helpRow.NAME ?? "", book: Number(helpRow.BOOK) || 0, closing: helpRow.CLOSING_BAL ?? "", limit: helpRow.LIMIT ?? "", message: helpRow.ac_message ?? "", startDate: helpRow.a_startdate ?? "", lastDate: helpRow.a_lastdate ?? "" },
+    });
+    setAccountText(null);
+    if (!allowed) { setTimeout(() => focusEntryCell(formRef.current, `${row}:name`), 0); return; }
+    setVlines((current) => {
+      const copy = [...current];
+      while (copy.length <= row) copy.push({ code: 0, book: 0, cells: {} });
+      copy[row] = { code: Number(helpRow.CODE), book: Number(helpRow.BOOK) || 0, cells: { ...copy[row].cells, name: helpRow.NAME ?? "" } };
+      return copy;
+    });
+    // The side the book side picks takes the figure (a journal book either; the debit first).
+    focusAfterVoucher.current = `${row}:${sideDbcode === 1 || journal ? "debit_amt" : "credit_amt"}`;
+  }, [register, book, sideDbcode, journal, checkHeader]);
+  /** The cell to put the keyboard on once the voucher rows are drawn again (the figure of the account just taken). */
+  const focusAfterVoucher = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusAfterVoucher.current && focusEntryCell(formRef.current, focusAfterVoucher.current)) focusAfterVoucher.current = null;
+  }, [vlines]);
+  const accountKeys = (event: ReactKeyboardEvent<HTMLInputElement>, row: number): boolean => helpKeys(event, "account", (helpRow) => void chooseVoucherAccount(row, helpRow));
+  const accountFocus = (row: number) => {
+    setVoucherRow(row);
+    if (accountText && accountText.row !== row) setAccountText(null);
+    setHelpAt(0);
+    void openHelp("account");
+  };
+  const editVoucherCell = (row: number, key: string, value: string) => setVlines((current) => current.map((line, index) => {
+    if (index !== row) return line;
+    // One figure per row unless the book is a journal: typing one side clears the other.
+    const cells = { ...line.cells, [key]: value };
+    if (!journal && value !== "" && key === "debit_amt") cells.credit_amt = "";
+    if (!journal && value !== "" && key === "credit_amt") cells.debit_amt = "";
+    return { ...line, cells };
+  }));
+  const deleteVoucherRow = (row: number) => setVlines((current) => current.filter((_line, index) => index !== row));
+  const voucherTotals = useMemo(() => {
+    const sum = (key: string) => vlines.reduce((total, line) => total + toNumber(line.cells[key]), 0);
+    const debit = sum("debit_amt");
+    const credit = sum("credit_amt");
+    return { debit: fixed(debit, 2), credit: fixed(credit, 2), difference: fixed(Math.abs(debit - credit), 2), final: Math.max(debit, credit) };
+  }, [vlines]);
+  /** Cmb_Side_Leave: the side picked decides the open figure and the series offered. */
+  const chooseSide = (text: string) => {
+    const side = book?.sides?.find((candidate) => candidate.text === text);
+    setValues((current) => ({ ...current, cmb_side: text }));
+    if (side?.series[0]) void chooseSeries(side.series[0].text);
+    setVlines((current) => current.map((line) => ({ ...line, cells: { ...line.cells, debit_amt: side && side.acDbcode === 2 && !journal ? "" : line.cells.debit_amt ?? "", credit_amt: side && side.acDbcode === 1 && !journal ? "" : line.cells.credit_amt ?? "" } })));
   };
 
   // ---- The product rows (C1dg_Inputdata): Product_Selection and the recalculation after each cell
@@ -558,7 +685,8 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     setProductRow(row);
     if (productText && productText.row !== row) setProductText(null);
     setHelpAt(0);
-    void openHelp("product");
+    // The keyboard goes into the product help (it is read already); Esc brings it back to this cell.
+    void openHelp("product").then((help) => { if (help) setTimeout(enterHelp, 30); });
   };
 
   /** A cell to put the keyboard on once the product rows are drawn again (the next cell after a product is taken). */
@@ -730,7 +858,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
   }, []);
 
   const quit = async () => {
-    if (book && (party || filledLines(lines).length > 0 || (values.tbx_narration ?? "") !== "")) {
+    if (book && (party || filledLines(lines).length > 0 || filledVoucherLines(vlines).length > 0 || (values.tbx_narration ?? "") !== "")) {
       const answer = await messageBox.ask("Quit the entry? What is typed is not saved.", "Quit", ["Yes", "No"], { defaultButton: "No" });
       if (answer !== "Yes") return;
     }
@@ -757,6 +885,11 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
    */
   const saveEntry = async () => {
     if (!book || !register) return;
+    if (voucher) {
+      if (filledVoucherLines(vlines).length === 0) { await say("Account Name not selected...", "Entry Warning"); return; }
+      await say("Saving a voucher is not ported to the web yet. The account rows, side, series, date and number are set up; saving comes next.", "Voucher");
+      return;
+    }
     if (filledLines(lines).length === 0) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
     setBusy("Saving");
     try {
@@ -839,27 +972,52 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
 
   /** Credit days run 0 to 365, or 366 when the accounting year takes in a 29 February. */
   const maxCreditDays = yearHasLeapDay(yearStart, yearEnd) ? 366 : 365;
+  /** The series offered: a voucher offers the picked book side's own series. */
+  const seriesList = (item: InvoiceControl) => (voucher ? view?.sides?.find((side) => side.text === values.cmb_side)?.series ?? item.options : item.options);
+  /** The days a date box takes: the entry date stays in the series' period; the challan date is never after the entry date and goes back no more than 120 days before the series starts. */
+  const dateRange = (name: string) => {
+    if (name === "dtp_date" && period) return { min: parseDesktopDate(period.from), max: parseDesktopDate(period.upto) };
+    if (name === "dtp_chlndate") return { min: period ? parseDesktopDate(period.chlnFrom) : null, max: parseDesktopDate(values.dtp_date ?? "") };
+    if (name === "dtp_entrydate") return { min: yearStart, max: yearEnd };
+    return undefined;
+  };
   const control = (item: InvoiceControl) => {
     const value = values[item.name] ?? "";
     const set = (next: string) => setValues((current) => ({ ...current, [item.name]: next }));
     const shift = item.place === "B" ? DESKTOP_FOOT_TOP - FOOT_TOP : 0;
     const place = item.place === "T" ? headerPlace(item) : null;
-    const labelStyle: CSSProperties = place?.label ?? { left: item.label_.left, top: item.label_.top - shift, width: item.label_.width, height: item.label_.height, textAlign: item.label_.right ? "right" : "left" };
+    const labelStyle: CSSProperties = place?.label ?? { left: item.label_.left, top: item.label_.top - shift, width: item.label_.right ? Math.max(24, item.box.left - item.label_.left) : item.label_.width, height: item.label_.height, textAlign: item.label_.right ? "right" : "left" };
     const boxStyle: CSSProperties = place?.box ?? { left: item.box.left, top: item.box.top - shift, width: item.box.width, ...(item.name === "tbx_narration" ? { height: Math.min(item.box.height, FORM_HEIGHT - 2 - (item.box.top - shift)) } : {}) };
     return [
       <label key={`${item.name}-label`} className={`ent-label ${item.compulsory ? "ent-compulsory" : ""}`} style={labelStyle} title={item.tooltip || undefined} htmlFor={`ent-${item.name}`}>{item.label}</label>,
-      <span key={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})} onBlur={(event) => leaveBox(event, item.name)}>
+      <span key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})} onBlur={(event) => leaveBox(event, item.name)}>
         {item.type === "CB" ? (
           item.name === "cmb_series" ? (
-            <SearchCombo ariaLabel={item.label} options={item.options} value={item.options.find((option) => option.text === value) ?? null} onChoose={(option) => void chooseSeries(option.text)} />
+            <SearchCombo ariaLabel={item.label} options={seriesList(item)} value={seriesList(item).find((option) => option.text === value) ?? null} onChoose={(option) => void chooseSeries(option.text)} />
           ) : (
-            <select id={`ent-${item.name}`} className="mp-control" aria-label={item.label} value={value} onChange={(event) => set(event.target.value)}>
+            <select id={`ent-${item.name}`} className="mp-control" aria-label={item.label} value={value} onChange={(event) => (item.name === "cmb_side" ? chooseSide(event.target.value) : set(event.target.value))}>
               {!item.options.some((option) => option.text === value) && value !== "" && <option value={value}>{value}</option>}
               {item.options.map((option) => <option key={`${option.value}-${option.text}`} value={option.text}>{option.text}</option>)}
             </select>
           )
         ) : item.type === "DT" ? (
-          <DateField ariaLabel={item.label} value={value} tools={tools} required={item.compulsory} onChange={set} />
+          <DateField
+            ariaLabel={item.label}
+            value={value}
+            tools={tools}
+            required={item.compulsory}
+            range={dateRange(item.name)}
+            onRefuse={(refused) => say(item.name === "dtp_chlndate" ? (period && refused < (parseDesktopDate(period.chlnFrom) ?? refused) ? `Challan date can not be earlier than ${period.chlnFrom} (120 days before the series starts)` : `Challan date can not be greater than the entry date ${values.dtp_date ?? ""}`) : item.name === "dtp_entrydate" ? "Date out of Accounting Year..." : "Date out of Series Period...", item.name === "dtp_chlndate" ? "Challan Date Warning" : "Date Warning")}
+            onChange={(next) => {
+              set(next);
+              // A challan date is never after the entry date: moving the entry date back brings it along.
+              if (item.name === "dtp_date" && values.dtp_chlndate) {
+                const chln = parseDesktopDate(values.dtp_chlndate);
+                const entry = parseDesktopDate(next);
+                if (chln && entry && chln > entry) setValues((current) => ({ ...current, dtp_date: next, dtp_chlndate: next }));
+              }
+            }}
+          />
         ) : item.name === "tbx_partyname" ? (
           <input
             id={`ent-${item.name}`}
@@ -893,6 +1051,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   };
 
   const view = book ?? ghost;
+  const voucherColumns = useMemo(() => (book ?? ghost)?.product.columns.filter((column) => column.visible && !/^addon_/i.test(column.key)) ?? [], [book, ghost]);
   const shownColumns = book ? productColumns : (ghost?.product.columns.filter((column) => column.visible) ?? []);
   const headControls = view?.controls.filter((item) => item.place === "T") ?? [];
   const footControls = view?.controls.filter((item) => item.place === "B") ?? [];
@@ -956,9 +1115,21 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     return key === "slab_amount" || key === "s_lastot" ? amountText(value, 2) : value;
   };
 
+  /** The part of the entry screen the operator can see (the form is wider than a small window): a help opens inside it, so the screen need not be scrolled to read it. */
+  const [seen, setSeen] = useState<{ left: number; width: number } | null>(null);
+  useEffect(() => {
+    const box = screenRef.current?.querySelector<HTMLElement>(".ent-scroll");
+    if (!box || !helpKind) return;
+    const measure = () => setSeen(box.scrollWidth > box.clientWidth + 1 ? { left: box.scrollLeft, width: box.clientWidth } : null);
+    measure();
+    box.addEventListener("scroll", measure);
+    window.addEventListener("resize", measure);
+    return () => { box.removeEventListener("scroll", measure); window.removeEventListener("resize", measure); };
+  }, [helpKind]);
   const helpStyle = (kind: HelpKind): CSSProperties => ({
-    ...(kind === "account" ? { top: 28, right: PARTY_RIGHT, left: "auto", bottom: "auto" } : { left: 40, top: TAB_TOP + 60, right: "auto", bottom: "auto" }),
-    maxHeight: "none", maxWidth: "calc(100% - 16px)", zIndex: 30,
+    ...(seen ? { top: kind === "account" ? 28 : TAB_TOP + 60, left: seen.left + 8, right: "auto", bottom: "auto" }
+      : kind === "account" ? { top: 28, right: PARTY_RIGHT, left: "auto", bottom: "auto" } : { left: 40, top: TAB_TOP + 60, right: "auto", bottom: "auto" }),
+    maxHeight: "none", maxWidth: seen ? seen.width - 16 : "calc(100% - 16px)", zIndex: 30,
     ...((kind === "account" ? accountDrag.style : productDrag.style) ?? {}),
   });
 
@@ -966,6 +1137,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
 
   return (
     <div ref={screenRef} className={`mp-screen ent-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title}>
+      {details && <MasterDetails details={details.data} kind={details.kind} onClose={closeDetails} />}
       {logView && <EntryLog log={logView} title={register?.text ?? title} onClose={() => setLogView(null)} />}
       <div className="ent-scroll">
         <div ref={formRef} className="ent-form" style={{ height: FORM_HEIGHT }} role="group" aria-label={def?.caption || title}>
@@ -1005,11 +1177,11 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               help={shownHelp}
               focusRow={Math.min(helpAt, shownHelp.rows.length - 1)}
               onFocusRow={setHelpAt}
-              onChoose={(index) => (helpKind === "account" ? void choosePartyRow(shownHelp.rows[index]) : productRow !== null && void chooseProductRow(productRow, shownHelp.rows[index]))}
+              onChoose={(index) => (helpKind === "account" ? (voucher ? voucherRow !== null && void chooseVoucherAccount(voucherRow, shownHelp.rows[index]) : void choosePartyRow(shownHelp.rows[index])) : productRow !== null && void chooseProductRow(productRow, shownHelp.rows[index]))}
               searchKey={HELP_MAIN[helpKind]}
               onClose={() => closeHelp()}
               onEscape={() => focusHelpField(helpKind)}
-              onKey={(event) => { if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; } return false; }}
+              onKey={(event) => { if (event.key === "F1") { event.preventDefault(); void showDetails(helpKind); return true; } if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; } return false; }}
               onHeadingClick={helpView.sortBy}
               sortMark={helpView.sortMark}
               headingTools={helpView.headingTools}
@@ -1021,6 +1193,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               dragHandle={helpKind === "account" ? accountDrag.handle : productDrag.handle}
               onResetPosition={helpKind === "account" ? accountDrag.reset : productDrag.reset}
               formatCell={helpCell}
+              f1
               shown={helpKind === "product" ? PRODUCT_HELP_ROWS : HELP_ROWS}
             />
             </div>
@@ -1029,15 +1202,34 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           {view && (
             <div className="ent-tabs" style={{ top: TAB_TOP, height: PAGE_HEIGHT + 20 }} inert={!book}>
               <div className="ent-tab-strip" role="tablist">
-                <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "ent-tab-on" : ""} onClick={() => void openTab("all")}>Product &amp; Slab</button>
-                {def?.tabs.outstanding && <button type="button" role="tab" aria-selected={tab === "outstanding"} className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}>Outstanding</button>}
+                <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "ent-tab-on" : ""} onClick={() => void openTab("all")}>{voucher ? "Voucher" : "Product & Slab"}</button>
+                {def?.tabs.outstanding && !voucher && <button type="button" role="tab" aria-selected={tab === "outstanding"} className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}>Outstanding</button>}
                 <button type="button" role="tab" aria-selected={tab === "find"} className={tab === "find" ? "ent-tab-on" : ""} onClick={() => void openTab("find")}>Find / Edit</button>
                 {def?.tabs.eway && <button type="button" role="tab" aria-selected={tab === "eway"} className={tab === "eway" ? "ent-tab-on" : ""} onClick={() => void openTab("eway")}>E-Way Bill</button>}
               </div>
               <div className="ent-page" style={{ height: PAGE_HEIGHT }} role="tabpanel">
                 {tab === "all" && (
                   <>
-                    {view.inventory ? (
+                    {voucher ? (
+                      <VoucherGrid
+                        columns={voucherColumns}
+                        lines={vlines}
+                        debitOpen={journal || sideDbcode === 1}
+                        creditOpen={journal || sideDbcode === 2}
+                        style={{ left: 3, right: 6, top: PRODUCT_TOP, height: PRODUCT_HEIGHT }}
+                        totalsStyle={{ left: 3, right: 6, top: PRODUCT_TOP + PRODUCT_HEIGHT + 2, height: 20 }}
+                        accountText={accountText}
+                        locked={locked || !book}
+                        tools={tools}
+                        totals={voucherTotals}
+                        onCell={editVoucherCell}
+                        onAccountText={(row, text) => { setAccountText({ row, text }); setVoucherRow(row); setHelpAt(0); if (helpKind !== "account") void openHelp("account"); }}
+                        onAccountKeys={accountKeys}
+                        onAccountFocus={accountFocus}
+                        onAccountBlur={(event) => leaveField(event, "account")}
+                        onDeleteRow={deleteVoucherRow}
+                      />
+                    ) : view.inventory ? (
                       <ProductGrid
                         columns={shownColumns}
                         frozen={view.product.frozen}
@@ -1060,9 +1252,10 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                     ) : (
                       <div className="ent-note" style={{ left: 3, right: 6, top: PRODUCT_TOP }}>This book takes no product rows: the amount goes in the slab grid&apos;s first row.</div>
                     )}
-                    {view.slab && (
+                    {view.slab && !voucher && (
                       <SideGrid
                         label="Slab"
+                        searchKey="slab_desc"
                         fill
                         style={{ left: 3, top: SLAB_TOP, width: `calc(50% - ${3 + SIDE_GAP / 2}px)`, minWidth: slabWidth, height: SLAB_HEIGHT }}
                         columns={slabColumns}
@@ -1078,18 +1271,19 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                     )}
                     <SideGrid
                       label="Addon"
+                      searchKey="addon_label"
                       fill
-                      style={view.slab ? { left: `calc(50% + ${SIDE_GAP / 2}px)`, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT } : { left: 3, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT }}
+                      style={view.slab && !voucher ? { left: `calc(50% + ${SIDE_GAP / 2}px)`, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT } : { left: 3, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT }}
                       columns={view.grids.addon}
                       rows={(party?.addon ?? []).map((item) => ({ addon_label: item.label, addon_input: addon[item.key] ?? "" }))}
-                      empty={showParty ? "Choose the party: its addon fields show here" : undefined}
+                      empty={showParty ? "Choose the party: its addon fields show here" : voucher ? "Choose the account: its addon fields show here" : undefined}
                       cell={(row, column) => {
                         const item = party!.addon[row];
                         if (column.key !== "addon_input") return item.label;
                         const value = addon[item.key] ?? "";
                         const set = (next: string) => setAddon((current) => ({ ...current, [item.key]: next }));
                         const cellId = `a${row}`;
-                        return <EntryCell kind={item.options ? "combo" : item.date ? "date" : "text"} optional={!item.compulsory} cellId={cellId} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextSideCell("Addon", cellId)} />;
+                        return <EntryCell kind={item.options ? "combo" : item.date ? "date" : "text"} optional={!item.compulsory || Boolean(item.date)} cellId={cellId} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextSideCell("Addon", cellId)} />;
                       }}
                     />
                   </>
@@ -1106,7 +1300,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           {view && (
             <div className="ent-foot" inert={!book}>
               <span className="ent-label ent-final-label" style={{ left: 2, top: FOOT_TOP, width: 130 }}>Entry Final Amt.:</span>
-              <output className="ent-final" style={{ left: 138, top: FOOT_TOP, width: 101 }} aria-label="Entry final amount">{amountText(String(slabResult.final), 2) || "0.00"}</output>
+              <output className="ent-final" style={{ left: 138, top: FOOT_TOP, width: 101 }} aria-label="Entry final amount">{amountText(String(voucher ? voucherTotals.final : slabResult.final), 2) || "0.00"}</output>
               {footControls.flatMap(control)}
             </div>
           )}
@@ -1125,7 +1319,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" />Log</button>}
         <div className="ent-status" aria-live="polite">
           {busy && <span className="mp-busy">{busy}…</span>}
-          {book && <span>{def?.statusHead} · {register?.text} · {book.entryFor}{book.slab ? ` · ${book.taxGroup === "G" ? "CGST" : book.taxGroup === "I" ? "IGST" : "VAT"}` : ""}{isRestored ? " · Edit" : ""}</span>}
+          {book && <span>{def?.statusHead} · {register?.text} · {voucher ? values.cmb_side : book.entryFor}{book.slab && !voucher ? ` · ${book.taxGroup === "G" ? "CGST" : book.taxGroup === "I" ? "IGST" : "VAT"}` : ""}{isRestored ? " · Edit" : ""}</span>}
           {warnings.map((warning) => <span key={warning} className="ent-warning" title={warning}>⚠ {warning}</span>)}
         </div>
         <button type="button" className="mp-btn mp-btn-red" data-hotkey="q" aria-keyshortcuts="Alt+Q" onClick={() => void quit()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>

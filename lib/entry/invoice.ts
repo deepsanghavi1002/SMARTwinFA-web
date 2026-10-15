@@ -76,7 +76,6 @@ export async function loadInvoice(loader: Loader, entryName: string, menuShortNa
   const entryId = toInt(field(properties, "entry_key"));
   const style = entryName.trim().toUpperCase().startsWith("V") ? "V" : "I";
   const unsupported: string[] = [];
-  if (style !== "I") unsupported.push("The Voucher screen is not ported yet; only the Invoice screen is.");
 
   // Read_Entry_FirstComboBox: first_combo_query + where + order by (licences 5, 7, 16, 18 order by name).
   let sql = text(properties, "first_combo_query");
@@ -324,8 +323,17 @@ function setRow(body: BodyItem[], column: string, change: Row) {
 }
 
 /** InputCol_Property_Change, for the invoice style. */
-function columnChanges(loader: Loader, book: BookContext, body: BodyItem[]): { hidden: Set<string>; captions: Map<string, string>; widths: Map<string, number> } {
+function columnChanges(loader: Loader, book: BookContext, body: BodyItem[], style: "I" | "V" = "I"): { hidden: Set<string>; captions: Map<string, string>; widths: Map<string, number> } {
   const { licence } = loader.session;
+  if (style === "V") {
+    // The voucher style keeps a column only for the day books its visible_for_book lists (Entry.cs, InputCol_Property_Change).
+    const hiddenColumns = new Set<string>();
+    for (const item of body) {
+      const books = text(item.row, "visible_for_book").trim();
+      if (books !== "" && !` ${books}`.includes(` ${book.values.bookKey},`)) hiddenColumns.add(item.column.toLowerCase());
+    }
+    return { hidden: hiddenColumns, captions: new Map(), widths: new Map() };
+  }
   const sw = columnSwitches(loader, book);
   const { values } = book;
   const hidden = new Set<string>();
@@ -398,7 +406,11 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
   const slabRows: SlabRow[] = [];
   const itemSlabColumns: { item: BodyItem; options?: readonly EntryOption[] }[] = [];
 
+  const voucher = entryName.trim().toUpperCase().startsWith("V");
   for (const event of events) {
+    // control_cond_oper "in": the event runs only for the books listed (the journal book's own series list).
+    if (text(event, "control_cond_oper").toLowerCase() === "in" && !` ${text(event, "control_cond_book")}`.includes(` ${book.values.bookKey},`)) continue;
+    if (voucher && text(event, "control_type").toLowerCase() === "cmb" && text(event, "control_cond_oper") === "") continue;
     const eventId = toInt(field(event, "fill_grid_event_id"));
     const fillFor = text(event, "fill_column_for").toLowerCase();
     const fill = toText(field(event, "fill_control_query"));
@@ -447,6 +459,8 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
       else if (system === "sys.var.str_inventory" && first !== "Y" && book.slab) inventory = false;
     }
   }
+  const sides = voucher ? await voucherSides(loader, book, allEvents, replace) : [];
+  if (voucher && sides.length > 0 && seriesOptions.length === 0) seriesOptions = [...sides[0].series];
   if (book.values.acHelp === "") book = { ...book, values: { ...book.values, acHelp: text(book.row, "bs_achelp") || " 2, 3," } };
 
   // The balance label hides on HIDEBAL, and for a book that does not post (str_Book_Post N).
@@ -462,7 +476,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
   if (!book.values.bookActual && text(book.row, "stkm_rate") === "N") setRow(body, "rate", { update_grid_editable: false });
   // Item-wise slab columns go after the event's own columns, then the product addon columns.
   const productBody = [...body.filter((item) => !item.addon), ...itemSlabColumns.map((entry) => entry.item), ...body.filter((item) => item.addon)];
-  const changes = columnChanges(loader, book, productBody);
+  const changes = columnChanges(loader, book, productBody, entryName.trim().toUpperCase().startsWith("V") ? "V" : "I");
   const options = new Map<string, readonly EntryOption[]>(itemSlabColumns.filter((entry) => entry.options).map((entry) => [entry.item.column.toLowerCase(), entry.options!]));
   const plan = { body: productBody } as unknown as GridPlan;
   const seen = new Set<string>();
@@ -491,7 +505,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
 
   const controls = await headerControls(loader, entryId, book, replace);
   const series = seriesOptions[0]?.text ?? "";
-  const defaults = series === "" ? { date: clampToYear(loader, new Date()), number: "" } : await seriesDefaults(loader, entryName, book, series);
+  const defaults = series === "" ? { date: clampToYear(loader, new Date()), number: "", from: formatDesktopDate(session.tarikh1), upto: formatDesktopDate(session.tarikh2), chlnFrom: formatDesktopDate(addDays(session.tarikh1, -120)) } : await seriesDefaults(loader, entryName, book, series);
   const taxPercs = Object.fromEntries(((await loader.readTable(`SELECT tax_rec, tax_perc FROM |sys.db|tax_master WHERE tax_pos <> 'D'`)) ?? []).map((row) => [toText(displayValue(field(row, "tax_rec"))), toDecimal(field(row, "tax_perc"))]));
   const uomQuery = text((await loader.readTable(`SELECT query_string FROM ${SETUP_SCHEMA}.query_table WHERE BTRIM(query_prog_id) = 'PROD_UOM_LIST_SRT'`))?.[0], "query_string");
   const uoms = uomQuery !== "" ? await queryOptions(loader, replace(uomQuery)) : [];
@@ -508,7 +522,8 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     slab: book.slab,
     balance,
     taxGroup,
-    controls: controls.map((control) => (control.name === "cmb_series" ? { ...control, options: seriesOptions, initial: series } : control)),
+    controls: controls.map((control) => (control.name === "cmb_series" ? { ...control, options: seriesOptions, initial: series } : control.name === "cmb_side" ? { ...control, options: sides.map((side) => ({ text: side.text, value: side.value })), initial: sides[0]?.text ?? "" } : control)),
+    sides,
     // The desktop offers Field_LastValue.Count() (2000) rows: enough for any bill.
     product: { columns, rows: inventory ? 200 : 0, frozen, totals },
     slabRows,
@@ -526,6 +541,27 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     warnings,
     asksTaxGroup: asks && !chosenGroup,
   };
+}
+
+/**
+ * The voucher's Book Side box (combo_value V): book_properties.book_side holds the letters (RP receipt / payment, DC debit / credit,
+ * GT given / taken), BOOK_SIDE lists their names, and the side picked sets the account's side (Cmb_Side_Leave: first item account debit,
+ * second account credit) which picks the series list (cmb_side's LF event, bn_dbcode = the book's side).
+ */
+async function voucherSides(loader: Loader, book: BookContext, events: readonly Row[], replace: (sql: string) => string): Promise<NonNullable<BookScreen["sides"]>> {
+  const letters = text((await loader.readTable(`SELECT book_side FROM |sys.db|book_properties WHERE book_key = $1`, [book.values.bookKey]))?.[0], "book_side").trim();
+  if (letters === "") return [];
+  const list = (await loader.readTable(`SELECT combo_list, crv_key FROM ${SETUP_SCHEMA}.combo_runvalue WHERE BTRIM(combo_run_id) = 'BOOK_SIDE' AND STRPOS($1, BTRIM(combo_run_value)) > 0 ORDER BY crv_key`, [letters])) ?? [];
+  const seriesEvent = events.find((event) => text(event, "control_name").toLowerCase() === "cmb_side" && text(event, "control_event").toUpperCase() === "LF");
+  const sides: NonNullable<BookScreen["sides"]>[number][] = [];
+  for (const [index, row] of list.entries()) {
+    const acDbcode = index === 0 ? 1 : 2;
+    const bkDbcode = acDbcode === 1 ? 2 : 1;
+    const fill = toText(field(seriesEvent, "fill_control_query"));
+    const series = fill === "" ? [] : await queryOptions(loader, replaceEntryTokens(blankCoalesceAsText(`Select ${fill}`), { ...book.values, acDbcode, bkDbcode }));
+    sides.push({ text: text(row, "combo_list"), value: toText(displayValue(field(row, "crv_key"))), acDbcode, series });
+  }
+  return sides;
 }
 
 /** Fill_Slab_and_Addon's item_slab branch: the slab rows, their tax lists, and the item-wise columns. */
@@ -619,6 +655,10 @@ async function slabGrid(loader: Loader, book: BookContext, rows: Row[], group: B
 // ---------------------------------------------------------------------------------------
 // Dtp_Date_Enter / Tbx_Number_Enter: a series' default date and number
 
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
 function clampToYear(loader: Loader, now: Date): string {
   const { tarikh1, tarikh2 } = loader.session;
   return formatDesktopDate(now > tarikh2 ? tarikh2 : now < tarikh1 ? tarikh1 : now);
@@ -637,7 +677,15 @@ export async function seriesDefaults(loader: Loader, entryName: string, book: Bo
   const numberEvent = events.find((event) => text(event, "control_name").toLowerCase() === "cmb_series" && text(event, "control_event").toUpperCase() === "LF" && text(event, "system_value").toLowerCase() === "sys.var.booknumber");
   const bookNumber = numberEvent ? (await loader.readTable(replaceEntryTokens(`Select ${toText(field(numberEvent, "fill_control_query"))}`, values)))?.[0] : undefined;
   const today = clampToYear(loader, now);
-  if (!bookNumber) return { date: today, number: "" };
+  const seriesFrom = parseDesktopDate(displayValue(field(bookNumber, "bn_from")));
+  const seriesUpto = parseDesktopDate(displayValue(field(bookNumber, "bn_upto")));
+  const seriesPeriod = {
+    from: formatDesktopDate(seriesFrom && seriesFrom > loader.session.tarikh1 ? seriesFrom : loader.session.tarikh1),
+    upto: formatDesktopDate(seriesUpto && seriesUpto < loader.session.tarikh2 ? seriesUpto : loader.session.tarikh2),
+    // A challan may be dated up to 120 days before the series starts.
+    chlnFrom: formatDesktopDate(addDays(seriesFrom ?? loader.session.tarikh1, -120)),
+  };
+  if (!bookNumber) return { date: today, number: "", ...seriesPeriod };
   const queryFor = book.values.bookActual ? "B" : "S";
   const conditions = (await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.query_condition WHERE BTRIM(qc_control_event) = 'GF' AND LOWER(BTRIM(qc_bn_fieldname)) IN ('bn_datedefa', 'bn_docdefa') AND BTRIM(qc_queryfor) = $1 ORDER BY query_condition_key`, [queryFor])) ?? [];
 
@@ -661,7 +709,7 @@ export async function seriesDefaults(loader: Loader, entryName: string, book: Bo
       number = /^\d+$/.test(last) ? String(BigInt(last) + BigInt(1)) : text(bookNumber, "bn_start");
     } else if (text(condition, "qc_systemvalue").toLowerCase().includes("sys.blank")) number = "";
   }
-  return { date, number };
+  return { date, number, ...seriesPeriod };
 }
 
 // ---------------------------------------------------------------------------------------
