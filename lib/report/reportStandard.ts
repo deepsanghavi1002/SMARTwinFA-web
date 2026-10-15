@@ -2,8 +2,27 @@ import type { Loader } from "../master-program/load";
 import { multiCompanyAccountSummary, multiCompanyProfitLoss } from "./multiCompanyAccountSummary";
 import { multiCompanyLedger } from "./multiCompanyLedger";
 import { multiCompanyProduct } from "./multiCompanyProduct";
+import { packingPlan } from "./packingPlan";
+import { productionInquiry } from "./productionInquiry";
+import { productionSummary } from "./productionSummary";
+import { collectionSummary } from "./collectionSummary";
+import { rateDiff } from "./rateDiff";
+import { sfgDifference } from "./sfgDifference";
+import { ssCircle } from "./ssCircle";
+import { hvPurchase } from "./hvPurchase";
+import { paymentTransfer } from "./paymentTransfer";
+import { productionSetoff } from "./productionSetoff";
+import { stockAgeing } from "./stockAgeing";
+import { productionPlanDetail } from "./productionPlanDetail";
 import { patiya } from "./patiya";
 import { incomeTaxSummary } from "./incomeTax";
+import { stockLots, STOCK_AGE_BUCKETS } from "./stockAgeing";
+import { totalExpense } from "./totalExpense";
+import { planVsProduction } from "./planVsProduction";
+import { purchasePrice } from "./purchasePrice";
+import { jobSetoffExpense } from "./jobSetoffExpense";
+import { jobWorkMaster } from "./jobWorkMaster";
+import { mouldingPlan } from "./mouldingPlan";
 import { multiCompanyDayBook } from "./multiCompanyDayBook";
 import { toText } from "../master-program/legacy";
 import type { ResultRow } from "./call";
@@ -81,6 +100,24 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 120: return checklistDaybook(loader, plan);
     case 23: return balanceSheet(loader, plan);
     case 150: return patiya(loader, plan);
+    case 153: return packingPlan(loader, plan);
+    case 154: case 168: return productionInquiry(loader, plan);
+    case 160: case 216: return productionSummary(loader, plan);
+    case 161: return collectionSummary(loader, plan);
+    case 122: return rateDiff(loader, plan);
+    case 169: return sfgDifference(loader, plan);
+    case 171: return ssCircle(loader, plan);
+    case 172: return hvPurchase(loader, plan);
+    case 174: return paymentTransfer(loader, plan);
+    case 175: case 177: return productionSetoff(loader, plan);
+    case 187: return stockAgeing(loader, plan);
+    case 188: case 302: return totalExpense(loader, plan);
+    case 189: return planVsProduction(loader, plan);
+    case 198: return purchasePrice(loader, plan);
+    case 199: return jobSetoffExpense(loader, plan);
+    case 200: return jobWorkMaster(loader, plan);
+    case 203: return mouldingPlan(loader, plan);
+    case 170: case 207: case 208: case 209: return productionPlanDetail(loader, plan);
     case 26: return incomeTaxSummary(loader, plan);
     case 115: return multiCompanyAccountSummary(loader, plan);
     case 178: return multiCompanyProfitLoss(loader, plan);
@@ -2756,9 +2793,10 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   const notPorted = (what: string) => new ReportRefusal(`${what} of the Stock report is not available in the web version yet.`, "Not ported yet");
   if (filter === "AVERAGE VALUE") throw notPorted("The Average Value valuation (the procedure compares the closing quantity with a variable that is empty in this run and keeps a running count across products, so its figures are not reproducible)");
   if (!["NONE", "REPORT RATE", "", ...VALUATIONS].includes(filter)) throw notPorted(`The "${call.filterText}" valuation`);
-  for (const [option, caption] of [["CHK_UPD_MASTER", "Update Value In Master"], ["CHK_UPD_RATE", "Update Rate In Master"], ["CHK_FOLDER", "Folder"], ["CHK_CHLNCOL", "Challan date"], ["CHK_AGECOL", "Age columns"], ["CHK_FG_VALADD", "FG value add"], ["CHK_MINMAX_COL", "Min / Max columns"], ["CHK_EXP", "Valuation with expense"]] as const) {
+  for (const [option, caption] of [["CHK_UPD_MASTER", "Update Value In Master"], ["CHK_UPD_RATE", "Update Rate In Master"], ["CHK_FOLDER", "Folder"], ["CHK_CHLNCOL", "Challan date"], ["CHK_FG_VALADD", "FG value add"], ["CHK_MINMAX_COL", "Min / Max columns"], ["CHK_EXP", "Valuation with expense"]] as const) {
     if (check(option)) throw notPorted(`The ${caption} option`);
   }
+  if (check("CHK_AGECOL") && !summary) throw notPorted("The Age columns option of the Ledger first combo (it is in the Summary)");
   if (call.sortingText !== "" && call.sortingText.toUpperCase() !== "NONE") throw notPorted("The Above / Below Days sorting");
   if (call.addon.some((text) => text.toUpperCase().includes("GODOWN")) || call.selectBookKey !== "") throw notPorted("The Godown and Batch / Expiry selections");
 
@@ -2824,13 +2862,24 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   });
   const r2 = (value: number) => decimalRound(value, 2);
   const valued = new Map<number, { rate: number; value: number }>();
+  // Stock With Ageing / Print Days Column (Summary): the closing against the year's additions, newest first, in the age columns, and the age of the oldest lot used.
+  const ageing = summary && check("CHK_AGECOL") ? await stockLots(loader, db, call.upto, call.tarikh1, typeKey, new Map(shown.map(({ product, closing }) => [product.key, closing] as const))) : null;
+  if (ageing) {
+    for (const column of STOCK_AGE_BUCKETS) table.setKind(column, "decimal");
+    table.setKind("Days", "int");
+  }
   if (filter === "REPORT RATE") for (const { product, closing } of shown) valued.set(product.key, { rate: product.rate, value: r2(closing * product.rate) });
   else if (VALUATIONS.includes(filter)) for (const [key, entry] of await stockValuation(loader, plan, filter, new Map(shown.map(({ product, closing }) => [product.key, closing] as const)), typeKey)) valued.set(key, entry);
   for (const { product, rows, added, less, closing } of shown) {
     const entry = valued.get(product.key) ?? { rate: 0, value: 0 };
     const rateValues = withRate ? { RATE: entry.rate, VALUE: entry.value } : {};
+    const ageValues = (key: number): Record<string, number> => {
+      const found = ageing?.get(key);
+      if (!ageing) return {};
+      return Object.fromEntries([["Days", found ? found.days : 0], ...STOCK_AGE_BUCKETS.map((column, at) => [column, found ? found.buckets[at] : 0])]);
+    };
     if (summary) {
-      table.insert({ ROW_DATA_TYPE: "LED", SORTING_COL: `${product.short}   P`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, NAME: "", Prod_key: product.key, UOM1: product.uom, OPENING: product.opening, ADD_QTY: added, LESS_QTY: less, CLSG_QTY: closing, ...rateValues });
+      table.insert({ ROW_DATA_TYPE: "LED", SORTING_COL: `${product.short}   P`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, NAME: product.desc, Prod_key: product.key, UOM1: product.uom, OPENING: product.opening, ADD_QTY: added, LESS_QTY: less, CLSG_QTY: closing, ...rateValues, ...ageValues(product.key) });
       continue;
     }
     table.insert({ ROW_DATA_TYPE: "PRODUCT", SORTING_COL: `${product.short}   H`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, FULL_DOCNO: `${product.short} - ${product.desc}`, Prod_key: product.key, UOM1: product.uom });

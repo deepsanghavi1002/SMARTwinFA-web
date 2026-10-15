@@ -292,6 +292,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       base.caption = name.toUpperCase().includes("DR_CR") ? name.toUpperCase().replace("DR_CR", "##").replace(/_/g, " ") : name.toUpperCase().replace(/_/g, " ");
       base.width = Math.min(260, Math.max(60, base.caption.length * 8, ...table.rows.slice(0, 200).map((row) => cellString(row[name]).length * 7)));
     }
+    // Moulding Production Plan: the figures read right-justified whatever the setup says.
+    if (reportKey === 203 && ["STD_WT", "PCS_HOUR", "PLANING_QTY", "PRODUCTION", "PENDING_PLAN_QTY"].includes(name.toUpperCase())) base.align = "R";
     columns.push(base);
   }
 
@@ -325,10 +327,12 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   }
 
   // Update_Subtotal: a subtotal row under each group of each level, then the final total.
-  const groupColumns = grouping.filter((name) => !(reportKey === 21 && call.formating.toUpperCase() === "SUMMARY" && name.toUpperCase() === "NAME")).filter((name) => !(stockSummaryFormat && name.toUpperCase() === "SMART_SELECTED_PRODUCT")).filter((name) => table.has(name)).map((name) => table.name(name)!)
+  // The production planning setoff (175) and PMP assemble (177): no subtotal under a product or addon; the setoff's Summary has one under each packing date.
+  const plainGroupColumns = grouping.filter((name) => !(reportKey === 21 && call.formating.toUpperCase() === "SUMMARY" && name.toUpperCase() === "NAME")).filter((name) => !(stockSummaryFormat && name.toUpperCase() === "SMART_SELECTED_PRODUCT")).filter(() => reportKey !== 175 && reportKey !== 177).filter((name) => table.has(name)).map((name) => table.name(name)!)
     // Form Summary subtotals the tax level only, not each tax inside it, in all three formats (the desktop's grid).
     // Marketing's Month and Summary are a row a group already: subtotals only for the groups outside the last one (one group: the final total only).
     .slice(0, reportKey === 14 ? 1 : reportKey === 25 && formatted ? -1 : undefined);
+  const groupColumns = reportKey === 175 && call.formating.toUpperCase() === "SUMMARY" && table.has("Plan_Pack_Date") ? [table.name("Plan_Pack_Date")!] : plainGroupColumns;
   const sumColumns = subtotalColumns.filter((name) => !name.includes("%") && !name.includes("INTEREST") && table.has(name) && !hidden.includes(name)).map((name) => table.name(name)!);
   const formattedReport = false;
   const allowSubtotal = !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
@@ -416,7 +420,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     const node = entry.kind !== "data";
     const rowType = entry.rowType.toUpperCase();
     for (const column of shown) {
-      const raw = column.name === "HEADING_COLUMN_BY_SYSTEM" ? null : entry.values[column.name];
+      // The stock summary has no name column: the product's description heads its line in the system's PARTICULARS column.
+      const raw = column.name === "HEADING_COLUMN_BY_SYSTEM" ? (reportKey === 17 && stockSummaryFormat && !node ? entry.values[table.name("SELECTED_PRODUCT") ?? "SELECTED_PRODUCT"] : null) : entry.values[column.name];
       if (column.kind !== "number") { values[column.name] = column.kind === "date" || /date/i.test(column.name) ? dateCell(raw) : cellString(raw); continue; }
       if (raw === null || raw === undefined || raw === "") { values[column.name] = ""; continue; }
       const value = num(raw);
