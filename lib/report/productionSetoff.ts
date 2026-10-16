@@ -29,7 +29,7 @@ type Prod = { key: number; desc: string; unit: string; cls: string; group: strin
 type Row = { sr: number; plan: Plan | null; prod: Prod | null; qty: number | null; short: number | null; fgValue: number | null; net: number | null; balance: number; rate: number | null };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const style6 = (date: Date | null) => (date === null ? null : `${String(date.getDate()).padStart(2, "0")}-${MONTHS[date.getMonth()]}-${String(date.getFullYear()).slice(-2)}`);
+export const style6 = (date: Date | null) => (date === null ? null : `${String(date.getDate()).padStart(2, "0")}-${MONTHS[date.getMonth()]}-${String(date.getFullYear()).slice(-2)}`);
 const round = (value: number, places: number) => { const factor = 10 ** places; return Math.round((value + Math.sign(value) * 1e-9) * factor) / factor; };
 const isExport = (text: string | null | undefined) => (text ?? "").slice(0, 6) === "Export";
 const compareText = (a: string | null | undefined, b: string | null | undefined) => (a ?? "").toLowerCase().localeCompare((b ?? "").toLowerCase());
@@ -37,7 +37,7 @@ const day = (date: Date | null) => (date === null ? -Infinity : Date.UTC(date.ge
 const ymd = (text: string | null) => { const match = /^(\d{2})-([A-Za-z]{3})-(\d{2})$/.exec(text ?? ""); return match ? `20${match[3]}${String(MONTHS.findIndex((name) => name.toLowerCase() === match[2].toLowerCase()) + 1).padStart(2, "0")}${match[1]}` : "19000101"; };
 
 /** The addon text of the plan's product date (input_phn_date: dd/mon/yyyy or mm/dd/yyyy) as dd/mm/yyyy. */
-function phnDate(text: string): string {
+export function phnDate(text: string): string {
   const named = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/.exec(text.trim());
   if (named) { const month = MONTHS.findIndex((name) => name.toLowerCase() === named[2].toLowerCase()) + 1; return month > 0 ? `${named[1].padStart(2, "0")}/${String(month).padStart(2, "0")}/${named[3]}` : ""; }
   const numeric = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text.trim());

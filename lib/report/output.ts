@@ -292,6 +292,15 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       base.caption = name.toUpperCase().includes("DR_CR") ? name.toUpperCase().replace("DR_CR", "##").replace(/_/g, " ") : name.toUpperCase().replace(/_/g, " ");
       base.width = Math.min(260, Math.max(60, base.caption.length * 8, ...table.rows.slice(0, 200).map((row) => cellString(row[name]).length * 7)));
     }
+    // Stock (17), licence 21: the quantity columns (opening, add, less, closing, the factor columns, Min Qty and Max Qty) show 4 decimals.
+    if (reportKey === 17 && call.licence === 21 && ["OPENING", "ADD_QTY", "LESS_QTY", "CLSG_QTY", "ADD_FACT", "LESS_FACT", "BAL_FACT", "MIN_QTY", "MAX_QTY"].includes(name.toUpperCase())) base.decimals = 4;
+    if (reportKey === 29 && call.licence === 21 && ["OPEN_QTY", "PURCH_QTY", "CR_QTY", "CHLNIN_QTY", "PRODUCTION", "STOCK_ADD", "STOCK_JV_ADD", "SALE_QTY", "DR_QTY", "CHLNOUT_QTY", "CONSUMPTION", "STOCK_LESS", "STOCK_JV_LESS", "DAMAGEIN_QTY", "DAMAGEOUT_QTY", "CLSG_QTY"].includes(name.toUpperCase())) base.decimals = 4;
+    // MFG Formula Search: the component quantity shows 4 decimals.
+    if (reportKey === 227 && name.toUpperCase() === "RM_QTY") { base.decimals = 4; base.align = "R"; }
+    // Order Clearance: the serial no and delay days read right-justified.
+    if (reportKey === 231 && ["SERIAL_NO", "DELAY_DAYS"].includes(name.toUpperCase())) base.align = "R";
+    // Stock Status: the standard pack reads right-justified.
+    if (reportKey === 244 && name.toUpperCase() === "STD_PACK") base.align = "R";
     // Moulding Production Plan: the figures read right-justified whatever the setup says.
     if (reportKey === 203 && ["STD_WT", "PCS_HOUR", "PLANING_QTY", "PRODUCTION", "PENDING_PLAN_QTY"].includes(name.toUpperCase())) base.align = "R";
     columns.push(base);
@@ -321,9 +330,19 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     }
     if (at >= columns.length || at === calculationAt) {
       const insertAt = at > 0 && columns[at - 1]?.name.toUpperCase() === "OPENING_BAL" ? at - 1 : Math.max(0, at);
-      columns.splice(insertAt, 0, { key: "HEADING_COLUMN_BY_SYSTEM", name: "HEADING_COLUMN_BY_SYSTEM", caption: "PARTICULARS", width: 86, align: "L", kind: "text", decimals: 0, visible: ![23, 44, 64].includes(reportKey), summable: false, dateTyped: false });
+      columns.splice(insertAt, 0, { key: "HEADING_COLUMN_BY_SYSTEM", name: "HEADING_COLUMN_BY_SYSTEM", caption: "PARTICULARS", width: 86, align: "L", kind: "text", decimals: 0, visible: ![15, 23, 44, 64].includes(reportKey), summable: false, dateTyped: false });
       headingColumn = "HEADING_COLUMN_BY_SYSTEM";
     } else headingColumn = columns[at].name;
+  }
+  // Stock (17): the Opening column stands right after Particulars (it is not in the setup's output columns, so it would come last).
+  if (reportKey === 17) {
+    const opening = columns.findIndex((column) => column.name.toUpperCase() === "OPENING");
+    const heading = columns.findIndex((column) => column.name === "HEADING_COLUMN_BY_SYSTEM" && column.visible);
+    const after = heading >= 0 ? heading : columns.findIndex((column) => column.name.toUpperCase() === "NAME" && column.visible);
+    if (opening >= 0 && after >= 0 && opening !== after + 1) {
+      const [moved] = columns.splice(opening, 1);
+      columns.splice(opening < after ? after : after + 1, 0, moved);
+    }
   }
 
   // Update_Subtotal: a subtotal row under each group of each level, then the final total.
@@ -335,7 +354,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const groupColumns = reportKey === 175 && call.formating.toUpperCase() === "SUMMARY" && table.has("Plan_Pack_Date") ? [table.name("Plan_Pack_Date")!] : plainGroupColumns;
   const sumColumns = subtotalColumns.filter((name) => !name.includes("%") && !name.includes("INTEREST") && table.has(name) && !hidden.includes(name)).map((name) => table.name(name)!);
   const formattedReport = false;
-  const allowSubtotal = !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
+  // Planning FG Analysis (210): dates and day counts, no final total.
+  const allowSubtotal = reportKey !== 210 && !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
   const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string }[] = [];
   const subtotalsWanted = (flag(properties, "subtotal_req") || scheduleSubtotals || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
   // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
@@ -415,6 +435,14 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     const main = out[at].kind === "data" && (headingLevel[type] === 0 || (reportKey === 4 && type === "AC"));
     if (main && out[at - 1].rowType !== "GAP") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   }
+  // Bank Reconciliation (15): its heading and total lines (H0 .. H2, T0 .. T2) are drawn as the desktop's coloured level lines: the bank book's balance and the pass book's
+  // balance (level 0), the cheques issued and their total (1), the cheques deposited and their total (2).
+  if (reportKey === 15) {
+    for (const entry of out) {
+      const match = /^[HT]([0-2])$/.exec(entry.rowType.toUpperCase());
+      if (match) { entry.kind = "subtotal"; entry.level = [1, 3, 0][Number(match[1])]; }
+    }
+  }
   const rows: OutputRow[] = out.map((entry) => {
     const values: Record<string, string> = {};
     const node = entry.kind !== "data";
@@ -426,7 +454,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       if (raw === null || raw === undefined || raw === "") { values[column.name] = ""; continue; }
       const value = num(raw);
       let shownText = formatNumber(value, column.decimals);
-      if (!node && value === 0) {
+      if ((!node || reportKey === 15) && value === 0) {
         if (ledgerDrawing) {
           const caption = column.caption.toUpperCase();
           if (rowType !== "CLOSING" || caption.startsWith("DEBIT")) {
@@ -459,7 +487,31 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       }
     }
     const keyOf = (name: string) => { const column = table.name(name); return column && !node ? Math.max(0, Math.trunc(num(entry.values[column]))) : 0; };
-    return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY") };
+    // Stock Status (244): the standard pack cell is coloured by the status (Available green, Low Stock red, Under Process blue).
+    const statusName = reportKey === 244 && !node ? table.name("PROD_STATUS") : undefined;
+    const packName = statusName ? table.name("STD_PACK") : undefined;
+    const status = statusName ? toText(entry.values[statusName]) : "";
+    const statusColour = status.startsWith("Available") ? "MediumSeaGreen" : status.startsWith("Low Stock") ? "Red" : status === "Under Process" ? "DodgerBlue" : undefined;
+    const colours: Record<string, string> = packName && statusColour ? { [packName]: statusColour } : {};
+    // Stock (17) with Print Min - Max Qty. Column: the Min Qty cell is red when the closing is under it, the Max Qty cell green when the closing is over it.
+    if (reportKey === 17 && !node) {
+      const closingName = table.name("CLSG_QTY");
+      const minName = table.name("MIN_QTY");
+      const maxName = table.name("MAX_QTY");
+      const closingRaw = closingName ? entry.values[closingName] : null;
+      if (closingRaw !== null && closingRaw !== undefined && closingRaw !== "") {
+        const closing = num(closingRaw);
+        const min = minName ? entry.values[minName] : null;
+        const max = maxName ? entry.values[maxName] : null;
+        if (minName && min !== null && min !== undefined && min !== "" && num(min) > 0 && closing < num(min)) colours[minName] = "Red";
+        if (maxName && max !== null && max !== undefined && max !== "" && num(max) > 0 && closing > num(max)) colours[maxName] = "LimeGreen";
+      }
+    }
+    const cellColours = Object.keys(colours).length > 0 ? colours : undefined;
+    // Trial Balance (an account above the schedule codes) and Sales with Expense: Enter zooms into the account's Ledger.
+    const zoomCode = (reportKey === 6 || reportKey === 280) && !node ? keyOf("SMART_AC_CODE") : 0;
+    const acCode = zoomCode > (reportKey === 6 ? 27 : 0) ? zoomCode : 0;
+    return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY"), ...(cellColours ? { cellColours } : {}), ...(acCode ? { acCode } : {}) };
   });
 
   // Subtotal and heading colours (report_style, and Update_Subtotal's colour for a grouping column).

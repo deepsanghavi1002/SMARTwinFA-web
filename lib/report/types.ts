@@ -183,6 +183,10 @@ export type OutputRow = Readonly<{
   /** The voucher the row is from (SMART_LED_KEY / SMART_PROCESS_KEY), for its log; 0 when none. */
   ledKey: number;
   processKey: number;
+  /** A cell's own background (column key to colour), where the desktop colours a cell by its row's value (Stock Status). */
+  cellColours?: Readonly<Record<string, string>>;
+  /** The account of the row where Enter zooms into its Ledger (Trial Balance, Sales with Expense). */
+  acCode?: number;
 }>;
 
 export type ReportOutput = Readonly<{

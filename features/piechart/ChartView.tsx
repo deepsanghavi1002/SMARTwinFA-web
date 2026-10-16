@@ -12,18 +12,20 @@ export const CHART_TYPES = ["Bar", "Point", "Bubble", "Column", "Pie", "Doughnut
 export type ChartType = (typeof CHART_TYPES)[number];
 
 const FONT = "Segoe UI, Arial, sans-serif";
-const INK = "#28324a";
-const GRID = "#e6eaf0";
+const INK = "#44507a";
+const MUTED = "#8a95b0";
+const GRID = "#e3e8f3";
 
-/** Slice i's colour: the hue steps by 137 degrees so neighbours differ (saturation 0.7, value 0.9). */
+const PALETTE = ["#4a5ff0", "#00a896", "#ff7043", "#7c4dff", "#f5a623", "#2bb673", "#e84a8a", "#03a9f4", "#8d6e63", "#7cb342", "#ef5350", "#26c6da"];
+
+/** Slice i's colour: a fixed modern palette; past its twelve colours the same hues come round again, lighter. */
 export function sliceColor(index: number): string {
-  const hue = (index * 137) % 360;
-  const [s, v] = [0.7, 0.9];
-  const f = (n: number) => {
-    const k = (n + hue / 60) % 6;
-    return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255);
-  };
-  return `rgb(${f(5)},${f(3)},${f(1)})`;
+  const base = PALETTE[index % PALETTE.length];
+  const round = Math.floor(index / PALETTE.length);
+  if (round === 0) return base;
+  const light = Math.min(0.55, round * 0.22);
+  const channel = (at: number) => Math.round(parseInt(base.slice(at, at + 2), 16) * (1 - light) + 255 * light);
+  return `rgb(${channel(1)},${channel(3)},${channel(5)})`;
 }
 
 /** A value axis from 0 (or the lowest) up in round steps. */
@@ -54,7 +56,7 @@ export const ChartView = forwardRef<SVGSVGElement, Props>(function ChartView({ s
     const cx = W / 2, cy = H / 2, r = Math.max(60, Math.min(W / 2 - 110, H / 2 - 30)), inner = type === "Doughnut" ? r * 0.53 : 0;
     const sum = slices.reduce((total, slice) => total + Math.max(0, slice.value), 0) || 1;
     let angle = -Math.PI / 2;
-    body = slices.map((slice, index) => {
+    const rings = slices.map((slice, index) => {
       const share = Math.max(0, slice.value) / sum;
       const start = angle, end = angle + share * Math.PI * 2;
       angle = end;
@@ -70,11 +72,17 @@ export const ChartView = forwardRef<SVGSVGElement, Props>(function ChartView({ s
       return (
         <g key={index} {...pick(slice)}>
           <title>{tip(slice)}</title>
-          <path d={path} fill={sliceColor(index)} fillRule="evenodd" stroke="#fff" strokeWidth={1.5} />
-          {share >= 0.015 && text(lx, ly, format(slice.value), { textAnchor: Math.cos(mid) >= 0 ? "start" : "end", fontWeight: 600, fontSize: 13 })}
+          <path d={path} fill={sliceColor(index)} fillRule="evenodd" stroke="#fff" strokeWidth={3} strokeLinejoin="round" />
+          {share >= 0.015 && text(lx, ly, format(slice.value), { textAnchor: Math.cos(mid) >= 0 ? "start" : "end", fontWeight: 700, fontSize: 12.5, fill: INK })}
         </g>
       );
     });
+    body = (
+      <>
+        {rings}
+        {type === "Doughnut" && <>{text(cx, cy - 4, "Total", { textAnchor: "middle", fontSize: 12, fill: MUTED, fontWeight: 600 })}{text(cx, cy + 18, format(slices.reduce((total, slice) => total + slice.value, 0)), { textAnchor: "middle", fontSize: 18, fontWeight: 800, fill: "#1f2a4d" })}</>}
+      </>
+    );
   } else if (type === "Funnel" || type === "Pyramid") {
     const sorted = slices.map((slice, index) => ({ slice, index })).sort((a, b) => (type === "Funnel" ? b.slice.value - a.slice.value : a.slice.value - b.slice.value));
     const sum = sorted.reduce((total, entry) => total + Math.max(0, entry.slice.value), 0) || 1;
@@ -105,17 +113,18 @@ export const ChartView = forwardRef<SVGSVGElement, Props>(function ChartView({ s
     const ticks = Array.from({ length: Math.round((scale.hi - scale.lo) / scale.step) + 1 }, (_, i) => scale.lo + i * scale.step);
     body = (
       <>
-        {ticks.map((value) => <g key={value}><line x1={x(value)} x2={x(value)} y1={top} y2={bottom} stroke={GRID} />{text(x(value), bottom + 16, axisFormat(value), { textAnchor: "middle", fontSize: 12 })}</g>)}
-        <line x1={x(0)} x2={x(0)} y1={top} y2={bottom} stroke="#9aa5b8" />
+        <defs>{slices.map((_, index) => <linearGradient key={index} id={`pc-h-${index}`} x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stopColor={sliceColor(index)} stopOpacity={0.55} /><stop offset="100%" stopColor={sliceColor(index)} stopOpacity={1} /></linearGradient>)}</defs>
+        {ticks.map((value) => <g key={value}><line x1={x(value)} x2={x(value)} y1={top} y2={bottom} stroke={GRID} strokeDasharray={value === 0 ? undefined : "3 4"} />{text(x(value), bottom + 16, axisFormat(value), { textAnchor: "middle", fontSize: 11.5, fill: MUTED })}</g>)}
+        <line x1={x(0)} x2={x(0)} y1={top} y2={bottom} stroke="#c5cde0" />
         {slices.map((slice, index) => (
           <g key={index} {...pick(slice)}>
             <title>{tip(slice)}</title>
-            <rect x={Math.min(x(0), x(slice.value))} y={top + index * band + band * 0.15} width={Math.abs(x(slice.value) - x(0))} height={band * 0.7} fill={sliceColor(index)} />
-            {text(left - 8, top + index * band + band / 2 + 4, short(slice.label, 22), { textAnchor: "end", fontSize: 13 })}
-            {text(Math.max(x(slice.value), x(0)) + 4, top + index * band + band / 2 + 4, format(slice.value), { fontWeight: 600, fontSize: 12 })}
+            <rect x={Math.min(x(0), x(slice.value))} y={top + index * band + band * 0.17} width={Math.max(Math.abs(x(slice.value) - x(0)), 2)} height={band * 0.66} rx={Math.min(8, band * 0.33)} fill={`url(#pc-h-${index})`} />
+            {text(left - 10, top + index * band + band / 2 + 4, short(slice.label, 22), { textAnchor: "end", fontSize: 12.5, fill: INK, fontWeight: 600 })}
+            {text(Math.max(x(slice.value), x(0)) + 8, top + index * band + band / 2 + 4, format(slice.value), { fontWeight: 700, fontSize: 12, fill: "#1f2a4d" })}
           </g>
         ))}
-        {text((left + right) / 2, H - 12, axisY, { textAnchor: "middle", fontWeight: 600 })}
+        {text((left + right) / 2, H - 12, axisY, { textAnchor: "middle", fontWeight: 700, fill: MUTED, fontSize: 12 })}
       </>
     );
   } else {
@@ -128,13 +137,14 @@ export const ChartView = forwardRef<SVGSVGElement, Props>(function ChartView({ s
     const ticks = Array.from({ length: Math.round((scale.hi - scale.lo) / scale.step) + 1 }, (_, i) => scale.lo + i * scale.step);
     body = (
       <>
-        {ticks.map((value) => <g key={value}><line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke={GRID} />{text(left - 6, y(value) + 4, axisFormat(value), { textAnchor: "end", fontSize: 12 })}</g>)}
-        <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#9aa5b8" />
+        <defs>{slices.map((_, index) => <linearGradient key={index} id={`pc-v-${index}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={sliceColor(index)} stopOpacity={1} /><stop offset="100%" stopColor={sliceColor(index)} stopOpacity={0.5} /></linearGradient>)}</defs>
+        {ticks.map((value) => <g key={value}><line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke={GRID} strokeDasharray={value === 0 ? undefined : "3 4"} />{text(left - 8, y(value) + 4, axisFormat(value), { textAnchor: "end", fontSize: 11.5, fill: MUTED })}</g>)}
+        <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#c5cde0" />
         {slices.map((slice, index) => {
           const cx = left + index * band + band / 2;
           const color = sliceColor(index);
           const mark = type === "Column"
-            ? <rect x={cx - band * 0.35} y={Math.min(y(0), y(slice.value))} width={band * 0.7} height={Math.abs(y(slice.value) - y(0))} fill={color} />
+            ? <rect x={cx - band * 0.32} y={Math.min(y(0), y(slice.value))} width={band * 0.64} height={Math.max(Math.abs(y(slice.value) - y(0)), 2)} rx={Math.min(8, band * 0.2)} fill={`url(#pc-v-${index})`} />
             : type === "Bubble"
               ? <circle cx={cx} cy={y(slice.value)} r={6 + 22 * Math.sqrt(Math.abs(slice.value) / maxAbs)} fill={color} fillOpacity={0.75} stroke={color} />
               : type === "Point"
@@ -145,12 +155,12 @@ export const ChartView = forwardRef<SVGSVGElement, Props>(function ChartView({ s
             <g key={index} {...pick(slice)}>
               <title>{tip(slice)}</title>
               {mark}
-              {text(cx, labelY, format(slice.value), { textAnchor: "middle", fontWeight: 600, fontSize: 12 })}
-              <text x={cx} y={bottom + 18} fontFamily={FONT} fontSize={13} fill={INK} textAnchor={slices.length > 8 ? "end" : "middle"} transform={slices.length > 8 ? `rotate(-35 ${cx} ${bottom + 18})` : undefined}>{short(slice.label, 18)}</text>
+              {text(cx, labelY, format(slice.value), { textAnchor: "middle", fontWeight: 700, fontSize: 11.5, fill: "#1f2a4d" })}
+              <text x={cx} y={bottom + 18} fontFamily={FONT} fontSize={12.5} fontWeight={600} fill={INK} textAnchor={slices.length > 8 ? "end" : "middle"} transform={slices.length > 8 ? `rotate(-35 ${cx} ${bottom + 18})` : undefined}>{short(slice.label, 18)}</text>
             </g>
           );
         })}
-        {text((left + right) / 2, H - 8, axisX, { textAnchor: "middle", fontWeight: 600 })}
+        {text((left + right) / 2, H - 8, axisX, { textAnchor: "middle", fontWeight: 700, fill: MUTED, fontSize: 12 })}
       </>
     );
   }

@@ -9,9 +9,10 @@ import { messageBox } from "../ui/MessageBox";
 import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { ScreenStatus } from "../ui/ScreenStatus";
-import { activeScope, useWindowActive, useWindowCloser } from "../ui/activeWindow";
+import { activeScope, useWindowActive, useWindowActiveNow, useWindowCloser } from "../ui/activeWindow";
 import { Plot } from "../piechart/Plot";
-import { sliceColor } from "../piechart/ChartView";
+import { useZoom } from "../report/zoom";
+import { useWindowLink } from "../ui/windowLink";
 import { dashCall } from "./api";
 import { DrillTable } from "./DrillTable";
 import type { DrillData } from "./DrillTable";
@@ -52,12 +53,21 @@ const BALANCES: { key: Balance; title: string; accent: string }[] = [
   { key: "cash", title: "Cash Balance", accent: "#03a9f4" },
 ];
 
+/** The balance tiles' icons (24 x 24 line icons). */
+const ICONS: Record<Balance, string> = {
+  payable: "M12 3v12m0 0l-4-4m4 4l4-4M4 19h16",
+  receivable: "M12 21V9m0 0l-4 4m4-4l4 4M4 5h16",
+  expensepayable: "M5 4h14v16l-3-2-2 2-2-2-2 2-2-2-3 2V4zM9 9h6M9 13h6",
+  bank: "M3 10l9-6 9 6M5 10v8m4-8v8m6-8v8m4-8v8M3 20h18",
+  cash: "M3 7h18v10H3zM12 12m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M6 10v.01M18 14v.01",
+};
+
 /** Each point's change on the one before (first: none), as the desktop's legend shows it. */
 function changes(points: Point[]): (number | null)[] {
   return points.map((point, index) => (index === 0 ? null : points[index - 1].value !== 0 ? Math.round(((point.value - points[index - 1].value) / points[index - 1].value) * 10000) / 100 : 0));
 }
 
-function Bars({ points, size, onPick }: { points: Point[]; size: { width: number; height: number }; onPick: (point: Point) => void }) {
+function Bars({ points, size, accent, id, onPick }: { points: Point[]; size: { width: number; height: number }; accent: string; id: string; onPick: (point: Point) => void }) {
   const { width: W, height: H } = size;
   const left = 62, right = W - 10, top = 22, bottom = H - 26;
   const max = Math.max(...points.map((point) => point.value), 0), min = Math.min(...points.map((point) => point.value), 0);
@@ -69,19 +79,36 @@ function Bars({ points, size, onPick }: { points: Point[]; size: { width: number
   const band = (right - left) / points.length;
   const ticks = Array.from({ length: Math.round((hi - lo) / unit) + 1 }, (_, i) => lo + i * unit);
   const font = "Segoe UI, Arial, sans-serif";
+  /** Where a bar ends (a hairline at least, so a zero month still shows). */
+  const tipOf = (value: number) => (Math.abs(y(value) - y(0)) < 1 ? y(0) - (value >= 0 ? 1 : -1) : y(value));
+  const peak = points.reduce((best, point, index) => (point.value > points[best].value ? index : best), 0);
+  /** A bar with rounded top corners (the bottom stays on the axis). */
+  const bar = (x: number, w: number, y0: number, y1: number) => {
+    const r = Math.min(7, w / 2, Math.abs(y1 - y0));
+    const top = Math.min(y0, y1), bottomEdge = Math.max(y0, y1), up = y1 <= y0;
+    return up
+      ? `M${x},${bottomEdge} V${top + r} Q${x},${top} ${x + r},${top} H${x + w - r} Q${x + w},${top} ${x + w},${top + r} V${bottomEdge} Z`
+      : `M${x},${top} V${bottomEdge - r} Q${x},${bottomEdge} ${x + r},${bottomEdge} H${x + w - r} Q${x + w},${bottomEdge} ${x + w},${bottomEdge - r} V${top} Z`;
+  };
   return (
     <svg className="pc-svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Chart">
-      {ticks.map((value) => <g key={value}><line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke="#eef1f5" /><text x={left - 6} y={y(value) + 4} textAnchor="end" fontFamily={font} fontSize={11} fill="#6b7686">{short(value)}</text></g>)}
-      <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#9aa5b8" />
+      <defs>
+        <linearGradient id={`dash-up-${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={accent} stopOpacity={1} /><stop offset="100%" stopColor={accent} stopOpacity={0.55} /></linearGradient>
+        <linearGradient id={`dash-soft-${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={accent} stopOpacity={0.62} /><stop offset="100%" stopColor={accent} stopOpacity={0.28} /></linearGradient>
+        <linearGradient id={`dash-down-${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef5350" stopOpacity={0.5} /><stop offset="100%" stopColor="#ef5350" stopOpacity={0.95} /></linearGradient>
+      </defs>
+      {ticks.map((value) => <g key={value}><line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke="#e8ecf5" strokeDasharray={value === 0 ? undefined : "3 4"} /><text x={left - 8} y={y(value) + 4} textAnchor="end" fontFamily={font} fontSize={11} fill="#8a95b0">{short(value)}</text></g>)}
+      <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#c5cde0" />
       {points.map((point, index) => {
         const cx = left + index * band + band / 2;
-        const barW = Math.min(band * 0.7, 56);
+        const barW = Math.min(band * 0.62, 46);
         return (
-          <g key={point.label} onClick={() => onPick(point)} style={{ cursor: "pointer" }}>
+          <g key={point.label} className="dash-bar" onClick={() => onPick(point)} style={{ cursor: "pointer" }}>
             <title>{`${point.label}\n${money(point.value)}`}</title>
-            <rect x={cx - barW / 2} y={Math.min(y(0), y(point.value))} width={barW} height={Math.max(Math.abs(y(point.value) - y(0)), 1)} rx={3} fill={sliceColor(index)} />
-            {band >= 40 && <text x={cx} y={(point.value >= 0 ? y(point.value) - 5 : y(point.value) + 14)} textAnchor="middle" fontFamily={font} fontSize={11} fontWeight={600} fill="#28324a">{short(point.value)}</text>}
-            <text x={cx} y={bottom + 16} textAnchor="middle" fontFamily={font} fontSize={12} fill="#28324a">{point.label}</text>
+            <rect x={cx - band / 2} y={top} width={band} height={bottom - top} fill="transparent" />
+            <path d={bar(cx - barW / 2, barW, y(0), tipOf(point.value))} fill={point.value < 0 ? `url(#dash-down-${id})` : index === peak ? `url(#dash-up-${id})` : `url(#dash-soft-${id})`} />
+            {band >= 44 && <text x={cx} y={(point.value >= 0 ? y(point.value) - 7 : y(point.value) + 15)} textAnchor="middle" fontFamily={font} fontSize={10.5} fontWeight={700} fill={index === peak ? "#1f2a4d" : "#6a7592"}>{short(point.value)}</text>}
+            <text x={cx} y={bottom + 17} textAnchor="middle" fontFamily={font} fontSize={11.5} fontWeight={index === peak ? 700 : 500} fill={index === peak ? "#1f2a4d" : "#6a7592"}>{point.label}</text>
           </g>
         );
       })}
@@ -96,12 +123,14 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
   const [upto, setUpto] = useState("");
   const [initial, setInitial] = useState({ from: "", upto: "" });
   const [data, setData] = useState<Data | null>(null);
-  const [drill, setDrill] = useState<{ title: string; table: DrillData } | null>(null);
+  const [drill, setDrill] = useState<{ title: string; table: DrillData; accent?: string } | null>(null);
   const [busy, setBusy] = useState("Loading");
   const [fatal, setFatal] = useState("");
   const [message, setMessage] = useState("");
   const [messageRed, setMessageRed] = useState(false);
   const screen = useRef<HTMLDivElement>(null);
+  /** The period the figures on screen were read for (a bar's list is read for the same). */
+  const loaded = useRef({ from: "", upto: "" });
   const windowActive = useWindowActive();
   const tools = useEditorTools(useMemo(() => parseDesktopDate(yearStart), [yearStart]));
   useAltHotkeys(screen);
@@ -117,6 +146,7 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
     try {
       const result = await call<{ data: Data }>("data", { from: start, upto: end });
       setData(result.data);
+      loaded.current = { from: start, upto: end };
     } catch (error) {
       setData(null);
       setMessage(error instanceof Error ? error.message : "The dashboard could not be loaded"); setMessageRed(true);
@@ -161,17 +191,35 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
     if (yearly || !data) { await messageBox.alert(`You clicked on:\nLabel: ${point.label}\nValue: ${money(point.value)}`, "Chart Click"); return; }
     setBusy("Loading");
     try {
-      const result = await call<{ table: DrillData }>("month", { kind, month: point.month });
-      setDrill({ title: `${label} - ${point.label}`, table: result.table });
+      const result = await call<{ table: DrillData }>("month", { kind, month: point.month, ...loaded.current });
+      setDrill({ title: `${label} - ${point.label}`, table: result.table, accent: CHARTS.find((chart) => chart.kind === kind)?.accent });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The list could not be loaded"); setMessageRed(true);
     } finally { setBusy(""); }
   };
+  /** Enter or a double click on a row of the list: a voucher opens in its entry, an account in its Ledger. */
+  const openZoom = useZoom();
+  const openRow = (row: Record<string, string | number>) => {
+    if (!openZoom) return;
+    const led = Number(row._led) || 0;
+    const code = Number(row._code) || 0;
+    if (led > 0) openZoom({ entryName: [4, 5, 6, 19].includes(Number(row._book)) ? "VOUCHER" : "INVOICE", ledKey: led });
+    else if (code > 0) openZoom({ reportName: "REPORT_LEDGER", acCode: code });
+  };
+  // An entry saved or deleted in a window opened from this one: the figures are read again when the dashboard is next in front.
+  const windowLink = useWindowLink();
+  const inFront = useWindowActiveNow();
+  useEffect(() => {
+    if (!inFront || !windowLink.stale || !from || !upto) return;
+    windowLink.clearStale();
+    setDrill(null);
+    void load(from, upto);
+  }, [inFront, windowLink.stale]);
   const openBalance = async (key: Balance) => {
     setBusy("Loading");
     try {
       const result = await call<{ title: string; table: DrillData }>("balance", { balance: key });
-      setDrill(result);
+      setDrill({ ...result, accent: BALANCES.find((entry) => entry.key === key)?.accent });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The list could not be loaded"); setMessageRed(true);
     } finally { setBusy(""); }
@@ -194,6 +242,20 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
       </div>
 
       <div className="dash-body">
+        {data?.balances && (
+          <>
+            <h3 className="dash-asof">Position as on today</h3>
+            <div className="dash-balances">
+              {BALANCES.map((balance) => (
+                <button key={balance.key} type="button" className="pc-card dash-balance" style={{ ["--accent" as string]: balance.accent }} onClick={() => void openBalance(balance.key)} title="Click to see the accounts">
+                  <span className="dash-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[balance.key]} /></svg></span>
+                  <small>{balance.title}</small>
+                  <b className={data.balances![balance.key] < 0 ? "neg" : ""}>₹ {money(data.balances![balance.key])}</b>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <div className="dash-grid">
           {CHARTS.map((chart) => {
             const points = data?.series[chart.kind] ?? [];
@@ -210,12 +272,12 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
                 </header>
                 {points.length > 0
                   ? <>
-                      <Plot>{(size) => <Bars points={points} size={size} onPick={(point) => void pick(chart.kind, chart.title, point)} />}</Plot>
+                      <Plot>{(size) => <Bars points={points} size={size} accent={chart.accent} id={chart.kind} onPick={(point) => void pick(chart.kind, chart.title, point)} />}</Plot>
                       <ul className="dash-legend">
                         {points.map((point, index) => (
                           <li key={point.label} onClick={() => void pick(chart.kind, chart.title, point)}>
-                            <i style={{ background: sliceColor(index) }} />
-                            <span>{point.label} - {money(point.value)}{deltas[index] !== null && <em className={(deltas[index] as number) >= 0 ? "up" : "down"}> {deltas[index]}%</em>}</span>
+                            <i />
+                            <span>{point.label}<b className="dash-amt">{money(point.value)}</b>{deltas[index] !== null && <em className={(deltas[index] as number) >= 0 ? "up" : "down"}>{(deltas[index] as number) >= 0 ? "▲" : "▼"} {Math.abs(deltas[index] as number)}%</em>}</span>
                           </li>
                         ))}
                       </ul>
@@ -225,23 +287,9 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
             );
           })}
         </div>
-
-        {data?.balances && (
-          <>
-            <h3 className="dash-asof">As On Today</h3>
-            <div className="dash-balances">
-              {BALANCES.map((balance) => (
-                <button key={balance.key} type="button" className="pc-card dash-balance" style={{ ["--accent" as string]: balance.accent }} onClick={() => void openBalance(balance.key)} title="Click to see the accounts">
-                  <small>{balance.title}</small>
-                  <b>₹ {money(data.balances![balance.key])}</b>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
       </div>
       {tools.popups}
-      {drill && <DrillTable title={drill.title} data={drill.table} onClose={() => setDrill(null)} />}
+      {drill && <DrillTable title={drill.title} data={drill.table} accent={drill.accent} onClose={() => setDrill(null)} onOpen={openRow} />}
       <ScreenStatus hotKeys="" message={message} error={messageRed} version="" rows="" totals="" />
     </div>
   );

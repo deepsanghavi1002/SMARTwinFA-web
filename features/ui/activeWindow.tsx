@@ -36,6 +36,11 @@ export function useWindowCloser(close: () => void) {
   }, [setCloser]);
 }
 
+/** Whether this screen's window is the one in front, as a value (for an effect that runs when the window comes to the front). */
+export function useWindowActiveNow() {
+  return useContext(WindowActiveContext);
+}
+
 /** Whether this screen's window is the one in front, as a ref (for listeners added once). Outside the windows: always true. */
 export function useWindowActive() {
   const active = useContext(WindowActiveContext);

@@ -9,6 +9,7 @@ import { ReportRefusal } from "@/lib/report/generate";
 import { runGroupedReport, runReport } from "@/lib/report/reportCombine";
 import { loadReport, againstBookItems, formFilterItems, lostFocusItems, slabFilterItems } from "@/lib/report/setup";
 import { readEntryLog } from "@/lib/report/log";
+import { zoomTarget } from "@/lib/report/zoom";
 import type { ReportOutput, ReportSelection } from "@/lib/report/types";
 import { packedOutputStream } from "@/lib/report/wire";
 
@@ -17,7 +18,7 @@ import { packedOutputStream } from "@/lib/report/wire";
  * REPORT row of the company's visible menu can be opened, and everything runs read-only.
  */
 
-type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; fields?: string[] }>;
+type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; acCode?: number; name?: string; fields?: string[] }>;
 
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
 const headers = { "cache-control": "no-store" };
@@ -90,6 +91,7 @@ export async function POST(request: Request) {
         case "slabs": return await slabFilterItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""), Math.trunc(Number(String(body.selection?.choices?.cmb_AgainstBook ?? "").split("|").pop()) || 0));
         case "forms": return await formFilterItems(loader);
         case "log": return { log: await readEntryLog(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0)) };
+        case "zoom": return { zoom: await zoomTarget(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0), Math.trunc(Number(body.acCode) || 0), String(body.name ?? "").slice(0, 200)) };
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);
       }

@@ -1,6 +1,7 @@
 "use client";
 
-import { activeScope, useWindowActive } from "../ui/activeWindow";
+import { activeScope, useWindowActive, useWindowActiveNow } from "../ui/activeWindow";
+import { useWindowLink } from "../ui/windowLink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
@@ -86,7 +87,7 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
-export function ReportCombine({ reportName, menuShortName, title, onClose }: { reportName: string; menuShortName: string; title: string; onClose: () => void }) {
+export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount }: { reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
   const [fatal, setFatal] = useState("");
@@ -269,8 +270,17 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
   const setCheck = (name: string, value: boolean) => {
     if (!def) return;
     const row = def.checkboxes.find((check) => check.name === name);
+    // SYS.ENABLE with the Filter (the stock report's valuation options): the option can be ticked only with a Filter other than the one it is hidden for ("None");
+    // ticked, it ticks the option that names it in TICKED_FOR_ID (Valuation On Factor Column ticks Print Factor Column).
+    const filterDenies = value && row?.sysValue.toUpperCase() === "SYS.ENABLE" && row.hideAgainstControl.toLowerCase() === "lbox_filter" && chosenItem("lbox_Filter") !== undefined
+      && chosenItem("lbox_Filter")!.text.trim().toUpperCase() === row.hideFor.trim().toUpperCase();
+    if (filterDenies) { say(`${row!.caption.trim()} : choose a Filter (not ${row!.hideFor}) first`, "", true); return; }
     setChecks((current) => {
       const next = { ...current, [name]: value };
+      if (value && row?.sysValue.toUpperCase() === "SYS.ENABLE" && row.hideAgainstControl.toLowerCase() === "lbox_filter") {
+        const partner = def.checkboxes.find((check) => check.tickedForId === name);
+        if (partner) next[partner.name] = true;
+      }
       if (row?.sysValue.toUpperCase() === "SYS.CHK") {
         const untick = def.checkboxes.find((check) => check.untickedForId === name);
         const tick = def.checkboxes.find((check) => check.tickedForId === name);
@@ -326,6 +336,35 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     setViewsOpen(false);
     say(`View "${view.name}" applied. Press OK to run it.`);
   };
+
+  // A window zoomed from this one changed data (an entry saved or deleted): the report runs again when this window is next in front.
+  const windowLink = useWindowLink();
+  const inFront = useWindowActiveNow();
+  useEffect(() => {
+    if (!inFront || !windowLink.stale || !output || busy) return;
+    windowLink.clearStale();
+    void generate();
+  }, [inFront, windowLink.stale, output, busy]);
+
+  // Report_Combine_Activated with Zoom_Accode: the account is ticked in the Account help, the first group (Account) is ticked and the report is run.
+  const zoomStarted = useRef(false);
+  const [zoomRun, setZoomRun] = useState(false);
+  useEffect(() => {
+    if (!zoomAccount || !def || zoomStarted.current) return;
+    zoomStarted.current = true;
+    const help = def.helps.find((candidate) => candidate.grid === "C1HelpAccount");
+    const key = help?.rows.map((row) => row[help.keyColumn] ?? "").find((value) => value.trim() === String(zoomAccount));
+    const group = groupControl?.items.find((item) => item.showControls === "C1HelpAccount") ?? groupControl?.items[0];
+    if (!help || key === undefined || !group) { void messageBox.alert("The account is not in the Account help of this report.", "Zoom", "warning"); return; }
+    setTicks((current) => ({ ...current, [help.grid]: new Set([key]) }));
+    tickGroup(group, true);
+    setZoomRun(true);
+  }, [zoomAccount, def]);
+  useEffect(() => {
+    if (!zoomRun) return;
+    setZoomRun(false);
+    void generate();
+  }, [zoomRun]);
 
   // Btn_ok_Click: GenerateReport.
   const generate = async () => {
@@ -451,6 +490,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
     }
   }, [call]);
   const loadLog = useCallback(async (ledKey: number, processKey: number) => (await call<{ log: LogTable }>("log", { ledKey, processKey })).log, [call]);
+  const loadZoom = useCallback(async (request: { ledKey: number; processKey: number; acCode: number; name: string }) => (await call<{ zoom: { entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string } }>("zoom", request)).zoom, [call]);
 
   /** C1_CHECKBOX, the Report Options: the first tab of the help grids, ticked like them. */
   const optionsHelp = useMemo<HelpGridData | null>(() => {
@@ -569,7 +609,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
               <span key={box.name} className="rp-runtime-label">{box.text}</span>
             ) : (
               <label key={box.name} className="rp-field">
-                <span>{box.name.replace(/^txt_/, "").replace(/amt$/i, " Amount")}</span>
+                {/* Steel Plant Challan: the Challan No / Vehicle No box carries no heading. */}
+                {def.key !== 228 && <span>{box.name.replace(/^txt_/, "").replace(/amt$/i, " Amount")}</span>}
                 <input className="mp-control" inputMode="decimal" maxLength={box.maxChars || undefined} value={texts[box.name] ?? ""} onChange={(event) => { const value = event.target.value; if (/^-?\d*\.?\d*$/.test(value)) setTexts((current) => ({ ...current, [box.name]: value })); }} />
               </label>
             ))}
@@ -661,6 +702,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose }: { r
           onRefresh={() => void generate()}
           onQuit={() => void leave()}
           loadLog={loadLog}
+          loadZoom={loadZoom}
           loadGroup={loadGroup}
           loadCompare={loadCompare}
           comparePeriod={generatedPeriod}

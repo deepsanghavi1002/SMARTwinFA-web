@@ -105,30 +105,34 @@ export async function dashboardData(loader: Loader, yearly: boolean, from: strin
 
 const MONEY = { name: "amount", text: "Amount", numeric: true };
 
-/** The vouchers of a month behind a bar (the chart's click). */
-export async function monthVouchers(loader: Loader, kind: DashKind, month: number): Promise<DashTable> {
+/**
+ * The vouchers of a month behind a bar (the chart's click): the very rows the bar adds up (the same source, filters, amount, month and period), so the list's total
+ * is the bar's value. A sale or purchase voucher shows what the chart takes of it (the sale / purchase accounts' postings, a credit note or return as a minus), not
+ * its gross amount with the taxes.
+ */
+export async function monthVouchers(loader: Loader, kind: DashKind, month: number, from: string, upto: string): Promise<DashTable> {
   const schema = loader.session.companySchema;
   const typed = await hasType(loader.client, schema);
   const m = Math.trunc(month);
   if (!(m >= 1 && m <= 12)) throw new Error("Choose a month from the chart");
-  const book = (own: number) => `(led.book=${own} OR (led.book=16 AND led.ag_book=${own}) OR (led.book=11 AND led.ag_book=${own}))`;
-  const voucher = (cond: string) => `SELECT led.led_key, led.book, to_char(led.doc_date,'DD/MM/YYYY') AS doc_date, led.full_docno AS doc_no, ac.name, ac1.name AS book_name, led.amount::numeric(20,2) AS amount`
-    + ` FROM ${schema}.ledger led LEFT JOIN ${schema}.account ac ON ac.code=led.code LEFT JOIN ${schema}.account ac1 ON ac1.code=led.book_code WHERE ${cond} AND extract(month from led.doc_date)=${m} ORDER BY led.doc_date, led.doc_no`;
+  const source = chartSource(kind, schema, typed);
+  const where = `${source.where} AND extract(month from ${source.monthColumn})=${m} AND ${source.dateColumn} BETWEEN $1 AND $2`;
+  const head = "led.led_key, led.book, to_char(led.doc_date,'DD/MM/YYYY') AS doc_date, led.full_docno AS doc_no";
   let sql: string;
-  switch (kind) {
-    case "sale": sql = voucher(`led.doc_pos='A' AND led.doc_posting='P' AND ${book(8)}`); break;
-    case "purchase": sql = voucher(`led.doc_pos='A' AND led.doc_posting='P' AND ${book(13)}`); break;
-    case "receipt": sql = voucher(`led.doc_pos='A' AND led.ac_dbcode=2 AND led.doc_posting='P'${typed ? " AND led.type=0" : ""} AND led.book IN (4,6)`); break;
-    case "payment": sql = voucher(`led.doc_pos='A' AND led.ac_dbcode=1 AND led.doc_posting='P'${typed ? " AND led.type=0" : ""} AND led.book IN (4,6)`); break;
-    case "expense":
-      sql = `SELECT led.led_key, led.book, to_char(led.doc_date,'DD/MM/YYYY') AS doc_date, led.full_docno AS doc_no, ac.name, lp.post_amt::numeric(20,2) AS amount FROM ${schema}.ledger_post lp`
-        + ` LEFT JOIN ${schema}.ledger led ON led.led_key=lp.led_id LEFT JOIN ${schema}.account ac ON ac.code=lp.post_code LEFT JOIN ${schema}.balsheet bal ON bal.bs_key=ac.bs_id`
-        + ` WHERE ac.a_pos<>'D' AND ac.book=1 AND left(bal.bs_code,2)='02' AND lp.post_dbcode=1 AND led.doc_pos<>'D' AND led.doc_posting='P' AND extract(month from lp.post_date)=${m} ORDER BY lp.post_date, led.doc_no`;
-      break;
+  if (kind === "expense") {
+    // Each posting to an expense account is a row, named by that account.
+    sql = `SELECT ${head}, ac.name, (${source.measure})::numeric(20,2) AS amount FROM ${source.from} WHERE ${where} ORDER BY led.doc_date, led.doc_no`;
+  } else {
+    // A row for each voucher: its party, its register and what the chart adds up of it.
+    const posts = source.from.includes("ledger_post");
+    sql = `SELECT ${head}, pac.name, ac1.name AS book_name, sum(${source.measure})::numeric(20,2) AS amount FROM ${source.from}`
+      + ` LEFT JOIN ${schema}.account pac ON pac.code=led.code LEFT JOIN ${schema}.account ac1 ON ac1.code=led.book_code WHERE ${where}`
+      + ` GROUP BY led.led_key, led.book, led.doc_date, led.full_docno, led.doc_no, pac.name, ac1.name ORDER BY led.doc_date, led.doc_no`;
+    void posts;
   }
-  const rows = (await loader.client.query(sql)).rows;
+  const rows = (await loader.client.query(sql, [from, upto])).rows;
   const columns = [{ name: "doc_date", text: "Doc Date", numeric: false }, { name: "doc_no", text: "Doc No", numeric: false }, { name: "name", text: "Name", numeric: false }, ...(kind === "expense" ? [] : [{ name: "book_name", text: "Book Name", numeric: false }]), MONEY];
-  return { columns, rows: rows.map((row) => ({ doc_date: toText(row.doc_date), doc_no: toText(row.doc_no), name: toText(row.name), book_name: toText(row.book_name), amount: toDecimal(row.amount) })) };
+  return { columns, rows: rows.map((row) => ({ doc_date: toText(row.doc_date), doc_no: toText(row.doc_no), name: toText(row.name), book_name: toText(row.book_name), amount: toDecimal(row.amount), _led: Number(row.led_key) || 0, _book: Number(row.book) || 0 })) };
 }
 
 /** The accounts behind a balance (the tile's click), those with a closing balance. */
@@ -137,6 +141,6 @@ export async function balanceAccounts(loader: Loader, key: DashBalance): Promise
   const rows = (await loader.client.query(`SELECT * FROM (${balanceSql(loader.session.companySchema, spec.books, spec.posting, spec.extra)}) b WHERE closing<>0 ORDER BY name`)).rows;
   return {
     title: spec.title,
-    table: { columns: [{ name: "name", text: "Name", numeric: false }, { name: "closing", text: "Closing", numeric: true }], rows: rows.map((row) => ({ name: toText(row.name), closing: toDecimal(row.closing) })) },
+    table: { columns: [{ name: "name", text: "Name", numeric: false }, { name: "closing", text: "Closing", numeric: true }], rows: rows.map((row) => ({ name: toText(row.name), closing: toDecimal(row.closing), _code: Number(row.code) || 0 })) },
   };
 }

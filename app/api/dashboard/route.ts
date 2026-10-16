@@ -62,7 +62,7 @@ export async function POST(request: Request) {
         case "month": {
           const kind = DASH_KINDS.find((candidate) => candidate === body.kind);
           if (!kind) throw new Error("Choose a chart");
-          return { table: await monthVouchers(loader, kind, Number(body.month)) };
+          return { table: await monthVouchers(loader, kind, Number(body.month), isoDate(body.from, "From date"), isoDate(body.upto, "Upto date")) };
         }
         case "balance": {
           const balance = DASH_BALANCES.find((candidate) => candidate === body.balance);

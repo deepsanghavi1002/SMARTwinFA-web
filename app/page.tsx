@@ -5,11 +5,14 @@ import { MasterProgram } from "../features/master-program/MasterProgram";
 import { SmallEntry } from "../features/small-entry/SmallEntry";
 import { Entry } from "../features/entry/Entry";
 import { ReportCombine } from "../features/report/ReportCombine";
+import { ZoomContext } from "../features/report/zoom";
+import type { ZoomTarget } from "../features/report/zoom";
 import { PieChart } from "../features/piechart/PieChart";
 import { YearChart } from "../features/yearchart/YearChart";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
+import { WindowLinkProvider } from "../features/ui/windowLink";
 import { StartupGate, useStartupActions, useStartupSelection, ViewSwitchButton } from "../features/startup/StartupGate";
 
 /**
@@ -54,6 +57,12 @@ type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-char
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
+  /** Zoom from a report row: the voucher (ledger key) an entry window opens on. */
+  zoomLedKey?: number;
+  /** Zoom from a report row: the account whose Ledger a report window opens on. */
+  zoomAcCode?: number;
+  /** The window this one was zoomed from (a report row's voucher or account). */
+  zoomParent?: number;
 }
 
 function getNextWindowLabel(windows: WindowInstance[], baseLabel: string): string {
@@ -195,6 +204,29 @@ function MainMenu() {
     bringToFront(id);
     closer();
   };
+  /** Windows whose zoom windows changed data since they last ran: each runs its report again when it is next in front. */
+  const [stale, setStale] = useState<ReadonlySet<number>>(() => new Set());
+  const markChanged = (id: number) => {
+    const chain: number[] = [];
+    let parent = windows.find((open) => open.id === id)?.zoomParent;
+    while (parent !== undefined && !chain.includes(parent)) { chain.push(parent); parent = windows.find((open) => open.id === parent)?.zoomParent; }
+    if (chain.length > 0) setStale((current) => new Set([...current, ...chain]));
+  };
+  const clearStale = (id: number) => setStale((current) => { if (!current.has(id)) return current; const next = new Set(current); next.delete(id); return next; });
+
+  /** Zoom from a report row (Enter): the entry program of the voucher opens in a window of its own, on that voucher. */
+  const openZoom = (target: ZoomTarget) => {
+    const wanted = (target.entryName ?? target.reportName ?? "").toUpperCase();
+    const screen = target.entryName ? "entry" : "report";
+    const found = (list: MenuNode[]): MenuNode | null => { for (const node of list) { if (screenOf(node) === screen && node.actionMenu?.toUpperCase() === wanted) return node; const inner = found(node.children); if (inner) return inner; } return null; };
+    const node = found(menus);
+    if (!node) { void messageBox.alert(`The ${wanted} program is not in this company's menu, so it cannot be opened.`, "Zoom", "warning"); return; }
+    if (windows.length >= MAX_WINDOWS) { void messageBox.alert(`${MAX_WINDOWS} windows are open already.\nClose one (× on its tab) to open it.`, "Too Many Windows", "warning"); return; }
+    const winId = nextWindowId.current++;
+    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode }) }]);
+    bringToFront(winId);
+  };
+
   const choose = (node: MenuNode) => {
     // SETUP > COMPANY > SELECT: the company and accounting year selection, as after the login.
     if (node.actionCode?.toUpperCase() === "COMPANY_SELECT" && startup) {
@@ -526,8 +558,8 @@ function MainMenu() {
     switch (screenOf(node)) {
       case "master": return <MasterProgram programName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "small-entry": return <SmallEntry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
-      case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
-      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoom={(node as WindowInstance).zoomLedKey} />;
+      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} />;
       case "pie-chart": return <PieChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "year-chart": return <YearChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "dashboard": return <Dashboard reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
@@ -552,6 +584,7 @@ function MainMenu() {
   );
 
   return (
+    <ZoomContext.Provider value={openZoom}>
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
@@ -641,7 +674,9 @@ function MainMenu() {
             const on = node.id === activeId;
             return (
               <div key={node.id} className={`app-window ${on ? "app-window-on" : ""}`} data-window={node.id} data-window-active={on ? "true" : undefined} inert={!on} aria-hidden={!on} onFocus={(event) => lastFocus.current.set(node.id, event.target as HTMLElement)}>
-                <WindowActiveProvider active={on} windowId={node.id} onCloser={setCloser}>{windowScreen(node)}</WindowActiveProvider>
+                <WindowActiveProvider active={on} windowId={node.id} onCloser={setCloser}>
+                  <WindowLinkProvider value={{ stale: stale.has(node.id), clearStale: () => clearStale(node.id), changed: () => markChanged(node.id) }}>{windowScreen(node)}</WindowLinkProvider>
+                </WindowActiveProvider>
               </div>
             );
           })}
@@ -654,6 +689,7 @@ function MainMenu() {
 
       <footer className="status-strip"><span>{menuError || (running === null ? "Select menu to start" : screen === "pending" ? `${running.label} - screen not built yet (${running.programName ?? "no program"})` : `Running: ${running.label}`)}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
     </main>
+    </ZoomContext.Provider>
   );
 }
 

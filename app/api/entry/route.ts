@@ -12,7 +12,7 @@ import { masterDetails } from "@/lib/entry/details";
 import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
 import type { HeaderField } from "@/lib/entry/checks";
-import { productChoice, productHelp, restoreEntry } from "@/lib/entry/products";
+import { productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
 
 /**
@@ -164,6 +164,11 @@ export async function POST(request: Request) {
           const uniqueKey = Number(body.uniqueKey);
           if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Choose an entry from the Find / Edit list");
           return { entry: await restoreEntry(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
+        }
+        case "zoom": {
+          const ledKey = Number(body.ledKey);
+          if (!Number.isInteger(ledKey) || ledKey <= 0) throw new Error("Choose a voucher row");
+          return { zoom: await zoomRegister(loader, def.firstCombo.options, ledKey), warnings: loader.warnings };
         }
         case "check": {
           const fieldName = String(body.field ?? "") as HeaderField;

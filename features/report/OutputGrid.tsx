@@ -9,6 +9,7 @@ import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilte
 import { filterHolds, sortedDistinct } from "../grid/filter";
 import { exportTableFrom } from "../grid/exportTable";
 import { FoundText } from "../grid/FoundText";
+import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuPlace } from "../grid/GridMenu";
@@ -94,7 +95,7 @@ function hexColour(colour: string): string {
   }
 }
 
-export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy }: {
+export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy }: {
   output: ReportOutput;
   fallbackTitle: string;
   companyName: string;
@@ -104,6 +105,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   onRefresh: () => void;
   onQuit: () => void;
   loadLog: (ledKey: number, processKey: number) => Promise<LogTable>;
+  /** Enter on a voucher row: the entry program that opens it (or why it cannot). */
+  loadZoom: (request: { ledKey: number; processKey: number; acCode: number; name: string }) => Promise<{ entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string }>;
   /** Create Group: the report's entries grouped on these fields (none: the final total only). */
   loadGroup: (fields: readonly string[]) => Promise<ReportOutput | null>;
   /** Compare periods: the report for other dates of the year, and the dates this one is for. */
@@ -487,6 +490,21 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     "e-Mail is not available in the web version yet.\nThe desktop prints each party's Ledger Confirmation (Ledger_Confirmation.rpt) to PDF and sends it through the company's mail server; neither is set up for the web yet.",
     "Not ported yet",
   );
+  const openZoom = useZoom();
+  const zoomEntry = async (request: { ledKey: number; processKey: number; acCode: number; name: string }) => {
+    if (!openZoom) return;
+    try {
+      const target = await loadZoom(request);
+      if ((!target.entryName || !target.ledKey) && (!target.reportName || !target.acCode)) {
+        if (request.name !== "") await messageBox.alert(target.message || "No Record Found......", "Warning", "warning");
+        else onStatus({ hotKeys: "", message: target.message || "This row has no voucher to open", red: true });
+        return;
+      }
+      openZoom(target);
+    } catch (error) {
+      await messageBox.alert(error instanceof Error ? error.message : String(error), "Zoom", "error");
+    }
+  };
   const showLog = async () => {
     const entry = shown[at.row];
     if (!entry || (entry.row.ledKey <= 0 && entry.row.processKey <= 0)) { onStatus({ hotKeys: "", message: "Log : put the cursor on a voucher row", red: true }); return; }
@@ -550,7 +568,18 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         return;
       case "Enter": {
         const entry = shown[at.row];
-        if (tree && entry?.row.kind === "subtotal") { event.preventDefault(); toggleNode(entry.index); }
+        if (tree && entry?.row.kind === "subtotal") { event.preventDefault(); toggleNode(entry.index); return; }
+        // Zoom: the voucher of the row opens in its own screen, an account row (Trial Balance, Sales with Expense) in its Ledger, a Profit and Loss
+        // cell with an account's name in that account's Ledger.
+        if (entry && entry.row.kind === "data") {
+          if (entry.row.ledKey > 0 || entry.row.processKey > 0 || (entry.row.acCode ?? 0) > 0) { event.preventDefault(); void zoomEntry({ ledKey: entry.row.ledKey, processKey: entry.row.processKey, acCode: entry.row.acCode ?? 0, name: "" }); }
+          else if (output.reportKey === 22) {
+            event.preventDefault();
+            const cell = (entry.row.values[columns[at.col]?.key ?? ""] ?? "").trim();
+            if (cell === "" || /^-?[\d,]*\.?\d+$/.test(cell)) void messageBox.alert("Please Click On Alphabet Column......", "Warning", "warning");
+            else void zoomEntry({ ledKey: 0, processKey: 0, acCode: 0, name: cell });
+          }
+        }
         return;
       }
       case "Backspace": event.preventDefault(); setTyped((text) => text.slice(0, -1)); return;
@@ -822,7 +851,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                         key={column.key}
                         data-col={col}
                         className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""}`}
-                        style={{ width, textAlign: label && look.captionRight ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...borderStyle(position, col) }}
+                        style={{ width, textAlign: label && look.captionRight ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
                         data-tip={text}
                       >
                         {label && kindOf(row) === "heading" && output.subtotals && (
@@ -843,7 +872,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={served} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterTo(columnKey, party) : undefined} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterTo(columnKey, party) : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto) => { const result = await loadCompare(from, upto); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       </div>

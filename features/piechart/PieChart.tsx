@@ -194,9 +194,18 @@ export function PieChart({ reportName, menuShortName, title, onClose }: { report
         <section className="pc-card pc-legend" aria-label="Legend">
           <h3>{shown?.addon ? `${shown.addon} Legend` : "Month Legend"}</h3>
           <ul>
-            {(slices ?? []).map((slice, index) => (
-              <li key={`${slice.label}-${index}`}><i style={{ background: sliceColor(index) }} /><span title={slice.label}>{slice.label} - {format(slice.value)}</span></li>
-            ))}
+            {(slices ?? []).map((slice, index) => {
+              const share = total !== 0 ? (slice.value * 100) / total : 0;
+              return (
+                <li key={`${slice.label}-${index}`} style={{ ["--c" as string]: sliceColor(index) }} title={`${slice.label} - ${format(slice.value)}`}>
+                  <i />
+                  <span className="pc-leg-name">{slice.label}</span>
+                  <b>{format(slice.value)}</b>
+                  <em>{share.toFixed(1)}%</em>
+                  <u style={{ width: `${Math.max(0, Math.min(100, share))}%` }} />
+                </li>
+              );
+            })}
           </ul>
         </section>
       </div>

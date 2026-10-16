@@ -15,6 +15,7 @@ import { HelpList } from "../grid/HelpList";
 import { useHelpView } from "../grid/useHelpView";
 import { useDraggable } from "../grid/useDraggable";
 import { messageBox } from "../ui/MessageBox";
+import { useWindowLink } from "../ui/windowLink";
 import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { SearchCombo } from "../ui/SearchCombo";
@@ -134,8 +135,9 @@ function headerPlace(item: InvoiceControl): { label: CSSProperties; box: CSSProp
   }
 }
 
-export function Entry({ entryName, menuShortName, title, onClose }: { entryName: string; menuShortName: string; title: string; onClose: () => void }) {
+export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entryName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the voucher (ledger key) the screen opens on. */ zoom?: number }) {
   const selection = useStartupSelection();
+  const windowLink = useWindowLink();
   const [def, setDef] = useState<InvoiceDefinition | null>(null);
   const [fatal, setFatal] = useState("");
   const [locked, setLocked] = useState(true);
@@ -816,6 +818,29 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
     if (target) { focusSeries.current = false; target.focus(); }
   }, [book]);
 
+  // Zoom from a report row (Comman_Entry with Zoom_Ledid): the voucher's register is chosen, then the entry opens as from Find / Edit.
+  const zoomStarted = useRef(false);
+  const zoomPending = useRef<number | null>(null);
+  useEffect(() => {
+    if (!zoom || locked || !def || zoomStarted.current) return;
+    zoomStarted.current = true;
+    void (async () => {
+      try {
+        const reply = await call<{ zoom: { option: EntryOption; uniqueKey: number } }>("zoom", { ledKey: zoom });
+        zoomPending.current = reply.zoom.uniqueKey;
+        await chooseRegister(reply.zoom.option);
+      } catch (error) {
+        await failed(error);
+      }
+    })();
+  }, [zoom, locked, def, call, chooseRegister, failed]);
+  useEffect(() => {
+    if (zoomPending.current === null || !register || !book) return;
+    const uniqueKey = zoomPending.current;
+    zoomPending.current = null;
+    void openEntry({ unique_key: String(uniqueKey) });
+  }, [register, book, openEntry]);
+
   // Before a register is chosen the whole form is on screen, closed: the first register's layout is read once for it.
   useEffect(() => {
     if (!def || locked || ghost || book || !selection) return;
@@ -911,6 +936,7 @@ export function Entry({ entryName, menuShortName, title, onClose }: { entryName:
       for (const row of reply.report.rows) counts.set(row.table, (counts.get(row.table) ?? 0) + 1);
       const list = [...counts].map(([table, count]) => `${table} ${count}`).join(", ");
       if (reply.committed) {
+        windowLink.changed();
         await say(`${reply.report.summary.fullDocNo} saved.  Amount ${amountText(String(reply.report.summary.finalAmount), 2)}`, "Entry Saved");
         blankEntry();
         setBook(null);
@@ -938,6 +964,7 @@ Balance updates: ${reply.report.updates.length}`, "Save (dry run)");
     try {
       const reply = await call<{ report: SaveReport; committed: boolean }>("delete", { firstCombo: register, uniqueKey: restored, commit: true });
       if (reply.committed) {
+        windowLink.changed();
         await say(`${reply.report.summary.fullDocNo} deleted.`, "Entry Deleted");
         blankEntry();
         setBook(null);

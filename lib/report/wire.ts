@@ -31,6 +31,8 @@ function rowKeysOf(rows: readonly OutputRow[]): string[] {
 function packRow(row: OutputRow, keys: readonly string[]): PackedRow {
   const packed: unknown[] = [KIND[row.kind], row.level, row.rowType, row.ledKey, row.processKey];
   for (const key of keys) packed.push(Object.prototype.hasOwnProperty.call(row.values, key) ? row.values[key] : null);
+  // After the values: what the row carries besides them (its cell colours, its zoom account), when it has any.
+  if (row.cellColours || row.acCode) packed.push({ c: row.cellColours, a: row.acCode });
   return packed;
 }
 
@@ -70,7 +72,8 @@ export function unpackOutput(output: ReportOutput | PackedOutput): ReportOutput 
       const value = packed[column + 5];
       if (value !== null && value !== undefined) values[rowKeys[column]] = value as string;
     }
-    rows[index] = { kind: KIND_OF[packed[0] as number] ?? "data", level: packed[1] as number, rowType: packed[2] as string, values, ledKey: packed[3] as number, processKey: packed[4] as number };
+    const extras = packed[rowKeys.length + 5] as { c?: Record<string, string>; a?: number } | undefined;
+    rows[index] = { kind: KIND_OF[packed[0] as number] ?? "data", level: packed[1] as number, rowType: packed[2] as string, values, ledKey: packed[3] as number, processKey: packed[4] as number, ...(extras?.c ? { cellColours: extras.c } : {}), ...(extras?.a ? { acCode: extras.a } : {}) };
   }
   return { ...rest, rows };
 }
