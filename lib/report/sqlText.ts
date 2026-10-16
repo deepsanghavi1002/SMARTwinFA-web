@@ -82,6 +82,8 @@ export function pgFragment(sql: string, plan: Readonly<{ moneyColumns: readonly 
     const bare = new RegExp(`\\b(then|else)\\s+(${plan.moneyColumns.join("|")})\\b(?!\\s*::|\\s*\\.|\\s*\\()`, "gi");
     out = out.replace(bare, "$1 $2::numeric");
   }
+  // The document number is text here: a number compared with it (the Numbers sort's Between boxes: led.doc_no >= 1 and led.doc_no <= 4) is read as a number, as SQL Server does.
+  out = out.replace(/\b((?:led|ledger|proce|process|prodled|pled)\.)?doc_no\s*(>=|<=|>|<|=)\s*(\d+)(?![\w.'"])/gi, (_match, owner: string | undefined, operator: string, value: string) => `(CASE WHEN btrim(${owner ?? ""}doc_no) ~ '^[0-9]+$' THEN btrim(${owner ?? ""}doc_no)::numeric END) ${operator} ${value}`);
   // SQL Server reads '' as 0 in a numeric CASE (case when ... then amount else '' end).
   out = out.replace(/(::numeric\s+else\s+)''/gi, (_match, head: string) => `${head}0`);
   return out;

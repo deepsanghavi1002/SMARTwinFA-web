@@ -12,7 +12,7 @@ import { FoundText } from "../grid/FoundText";
 import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
-import type { GridMenuPlace } from "../grid/GridMenu";
+import type { GridMenuItem, GridMenuPlace } from "../grid/GridMenu";
 import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, NO_SCREEN_COLOUR } from "../grid/levelStyle";
 import type { RowKind, RowLook } from "../grid/levelStyle";
 import { LogViewer } from "../grid/LogViewer";
@@ -152,6 +152,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [closed, setClosed] = useState<ReadonlySet<number>>(new Set());
   const [cursor, setCursor] = useState<Point>({ row: 0, col: 0 });
   const [selEnd, setSelEnd] = useState<Point | null>(null);
+  /** Whether the current selection includes the column header when copied (e.g. clicked column header or copied with header). */
+  const [headerSelected, setHeaderSelected] = useState(false);
   /** Single cells added with Ctrl+click ("rowIndex|columnKey", rowIndex in output.rows). */
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [typed, setTyped] = useState("");
@@ -308,6 +310,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const cellKey = (position: number, col: number) => { const entry = shown[position]; const column = columns[col]; return entry && column ? `${entry.index}|${column.key}` : ""; };
   const inBox = (row: number, col: number) => box !== null && row >= box.r1 && row <= box.r2 && col >= box.c1 && col <= box.c2;
   const isSelected = (row: number, col: number) => inBox(row, col) || picked.has(cellKey(row, col));
+  const isColSelected = (col: number) => {
+    if (shown.length === 0) return false;
+    if (box !== null && box.r1 === 0 && box.r2 === shown.length - 1 && col >= box.c1 && col <= box.c2) return true;
+    if (picked.size >= shown.length && Array.from({ length: shown.length }, (_, r) => cellKey(r, col)).every((k) => picked.has(k))) return true;
+    return false;
+  };
 
   /** Every selected cell (the block, or the current cell, and the Ctrl+clicked ones), as rowIndex|columnKey. */
   const selectedKeys = () => {
@@ -390,7 +398,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
 
   const toggleNode = (index: number) => setClosed((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
   const showLevel = (level: number) => setClosed(new Set(output.rows.flatMap((row, index) => (row.kind === "subtotal" && row.level >= level ? [index] : []))));
-  const resetView = () => { setTree(false); setClosed(new Set()); setCollapsed(false); setCursor({ row: 0, col: 0 }); setSelEnd(null); setPicked(new Set()); setBorders(new Set()); setDrawing(false); };
+  const resetView = () => { setTree(false); setClosed(new Set()); setCollapsed(false); setCursor({ row: 0, col: 0 }); setSelEnd(null); setPicked(new Set()); setBorders(new Set()); setDrawing(false); setHeaderSelected(false); };
 
   // ---- Buttons ----
   /** btnCreateTree_Click: the tree format on, or off again. */
@@ -517,22 +525,93 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     }
   };
 
-  /** Ctrl+C: the cell at the cursor, or the block / Ctrl+clicked cells selected, as text for the clipboard (a block as tab-separated lines, for Excel). */
-  const copySelection = async () => {
+  /** Select an entire column (or range of columns with extend, or toggle with toggle). */
+  const selectColumn = (col: number, extend = false, toggle = false) => {
+    if (shown.length === 0) return;
+    setTyped("");
+    setHeaderSelected(true);
+    if (toggle) {
+      const colCells = Array.from({ length: shown.length }, (_, r) => cellKey(r, col)).filter(Boolean);
+      const allSelected = colCells.length > 0 && colCells.every((key) => picked.has(key));
+      setPicked((current) => {
+        const next = new Set(current);
+        if (next.size === 0 && cellKey(at.row, at.col)) next.add(cellKey(at.row, at.col));
+        for (const key of colCells) {
+          if (allSelected) next.delete(key);
+          else next.add(key);
+        }
+        return next;
+      });
+      const caption = columns[col]?.caption ?? "";
+      onStatus({ hotKeys: "Ctrl+C : Copy selected", message: `${allSelected ? "Deselected" : "Selected"} column : ${caption}` });
+      return;
+    }
+    if (extend) {
+      const startCol = at.col;
+      setCursor({ row: 0, col: startCol });
+      setSelEnd({ row: shown.length - 1, col });
+      setPicked(new Set());
+      const c1 = Math.min(startCol, col);
+      const c2 = Math.max(startCol, col);
+      const count = c2 - c1 + 1;
+      onStatus({ hotKeys: "Ctrl+C : Copy columns / Ctrl+V into Excel, Word, Notepad", message: `Selected ${count} column${count === 1 ? "" : "s"} (${shown.length} rows)` });
+      return;
+    }
+    setCursor({ row: 0, col });
+    setSelEnd({ row: shown.length - 1, col });
+    setPicked(new Set());
+    const caption = columns[col]?.caption ?? "";
+    onStatus({ hotKeys: "Ctrl+C : Copy column / Ctrl+V into Excel, Word, Notepad", message: `Selected column : ${caption} (${shown.length} rows)` });
+  };
+
+  /** Ctrl+A: select all rows and columns in the report. */
+  const selectAll = () => {
+    if (shown.length === 0 || columns.length === 0) return;
+    setTyped("");
+    setHeaderSelected(true);
+    setCursor({ row: 0, col: 0 });
+    setSelEnd({ row: shown.length - 1, col: columns.length - 1 });
+    setPicked(new Set());
+    onStatus({ hotKeys: "Ctrl+C : Copy all / Ctrl+V into Excel, Word, Notepad", message: `Selected entire report (${shown.length} rows × ${columns.length} columns)` });
+  };
+
+  /** Ctrl+C: the cell at the cursor, or the block / column / Ctrl+clicked cells selected, as text for the clipboard (for Excel, Word, Notepad). */
+  const copySelection = async (withHeader?: boolean) => {
+    const isCol = box !== null && box.r1 === 0 && box.r2 === shown.length - 1;
+    const includeHeader = withHeader !== undefined ? withHeader : (headerSelected || isCol);
     const textAt = (row: number, col: number) => { const entry = shown[row]; const column = columns[col]; return entry && column ? (rowByIndex.get(entry.index)?.values[column.key] ?? "").trim() : ""; };
     let text: string;
     if (picked.size > 0) {
       const wanted = selectedKeys();
       const lines: string[] = [];
+      if (includeHeader) {
+        const headerCells = columns.flatMap((column, col) => (shown.some((_, r) => wanted.has(cellKey(r, col))) ? [column.caption] : []));
+        if (headerCells.length > 0) lines.push(headerCells.join("\t"));
+      }
       for (let row = 0; row < shown.length; row += 1) { const cells = columns.flatMap((column, col) => (wanted.has(cellKey(row, col)) ? [textAt(row, col)] : [])); if (cells.length > 0) lines.push(cells.join("\t")); }
       text = lines.join("\n");
     } else if (box) {
-      text = Array.from({ length: box.r2 - box.r1 + 1 }, (_, i) => Array.from({ length: box.c2 - box.c1 + 1 }, (_, j) => textAt(box.r1 + i, box.c1 + j)).join("\t")).join("\n");
+      const headerLine = includeHeader ? columns.slice(box.c1, box.c2 + 1).map((c) => c.caption).join("\t") : "";
+      const bodyLines = Array.from({ length: box.r2 - box.r1 + 1 }, (_, i) => Array.from({ length: box.c2 - box.c1 + 1 }, (_, j) => textAt(box.r1 + i, box.c1 + j)).join("\t"));
+      text = (headerLine ? [headerLine, ...bodyLines] : bodyLines).join("\n");
     } else {
-      text = textAt(at.row, at.col);
+      text = includeHeader ? `${columns[at.col]?.caption ?? ""}\n${textAt(at.row, at.col)}` : textAt(at.row, at.col);
     }
-    try { await navigator.clipboard.writeText(text); onStatus({ hotKeys: "", message: box || picked.size > 0 ? "Selected cells copied" : `Copied : ${text}` }); }
-    catch { onStatus({ hotKeys: "", message: "The browser did not allow copying", red: true }); }
+    try {
+      await navigator.clipboard.writeText(text);
+      const count = box ? box.r2 - box.r1 + 1 : picked.size > 0 ? picked.size : 1;
+      const colName = isCol && box && box.c1 === box.c2 ? ` "${columns[box.c1]?.caption}"` : "";
+      onStatus({
+        hotKeys: "Paste with Ctrl+V into Excel, Word, or Notepad",
+        message: isCol
+          ? `Copied ${count} rows of${colName}${includeHeader ? " (with heading)" : ""} to clipboard`
+          : box || picked.size > 0
+          ? `Selected cells copied (${count} items)`
+          : `Copied : ${text}`,
+      });
+    } catch {
+      onStatus({ hotKeys: "", message: "The browser did not allow copying", red: true });
+    }
   };
 
   // ---- Keyboard ----
@@ -552,10 +631,20 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       return;
     }
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); void copySelection(); return; }
-    if (event.key in moves) { event.preventDefault(); go(moves[event.key], event.shiftKey); setTyped(""); return; }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === " " || event.code === "Space")) {
+      event.preventDefault();
+      selectColumn(at.col, event.shiftKey, false);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      selectAll();
+      return;
+    }
+    if (event.key in moves) { event.preventDefault(); go(moves[event.key], event.shiftKey); setTyped(""); setHeaderSelected(false); return; }
     switch (event.key) {
-      case "Home": event.preventDefault(); go(event.ctrlKey ? { row: 0, col: 0 } : { row: from.row, col: 0 }, event.shiftKey); setTyped(""); return;
-      case "End": event.preventDefault(); go(event.ctrlKey ? { row: shown.length - 1, col: columns.length - 1 } : { row: from.row, col: columns.length - 1 }, event.shiftKey); setTyped(""); return;
+      case "Home": event.preventDefault(); go(event.ctrlKey ? { row: 0, col: 0 } : { row: from.row, col: 0 }, event.shiftKey); setTyped(""); setHeaderSelected(false); return;
+      case "End": event.preventDefault(); go(event.ctrlKey ? { row: shown.length - 1, col: columns.length - 1 } : { row: from.row, col: columns.length - 1 }, event.shiftKey); setTyped(""); setHeaderSelected(false); return;
       case "F6":
         event.preventDefault();
         if (tree) showLevel(0); else { setCollapsed(true); setCursor({ row: 0, col: at.col }); setSelEnd(null); }
@@ -586,7 +675,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       case "Escape":
         // What Esc can still undo here goes first; a bare Esc is left to the screen, which asks to quit.
         if (drawing) { event.preventDefault(); setDrawing(false); onStatus({ hotKeys: GRID_KEYS, message: "Border drawing stopped" }); }
-        else if (typed || selEnd || picked.size > 0) { event.preventDefault(); setTyped(""); setSelEnd(null); setPicked(new Set()); }
+        else if (typed || selEnd || picked.size > 0 || headerSelected) { event.preventDefault(); setTyped(""); setSelEnd(null); setPicked(new Set()); setHeaderSelected(false); }
         else if (groupMode) { event.preventDefault(); exitGroup(); }
         return;
     }
@@ -642,6 +731,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     setCursor(point);
     setSelEnd(null);
     setPicked(new Set());
+    setHeaderSelected(false);
     if (drawing) { const key = cellKey(point.row, point.col); borderKeys([key], !borders.has(key)); return; }
     dragging.current = true;
   };
@@ -656,9 +746,52 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     const key = headCell?.getAttribute("data-head") ?? (point ? columns[point.col]?.key : undefined);
     if (!key) return;
     event.preventDefault();
-    if (point && !isSelected(point.row, point.col)) { setCursor(point); setSelEnd(null); setPicked(new Set()); }
+    if (point && !isSelected(point.row, point.col)) { setCursor(point); setSelEnd(null); setPicked(new Set()); setHeaderSelected(false); }
     else if (headCell) { const col = columns.findIndex((column) => column.key === key); if (col >= 0) setCursor({ row: at.row, col }); }
     setMenu({ x: event.clientX, y: event.clientY, key });
+  };
+
+  const reportMenuItems = (key: string): GridMenuItem[] => {
+    const colIndex = columns.findIndex((c) => c.key === key);
+    const column = columns[colIndex];
+    const caption = column ? column.caption : key;
+    const items: GridMenuItem[] = [];
+    if (colIndex >= 0) {
+      items.push(
+        {
+          label: `Copy Column "${caption}" (Ctrl+C)`,
+          title: "Copy the entire column with heading to paste in Excel, Word, or Notepad",
+          onClick: () => {
+            selectColumn(colIndex, false, false);
+            void copySelection(true);
+          },
+        },
+        {
+          label: `Copy Column "${caption}" (Values Only)`,
+          title: "Copy the column data values only without the column heading",
+          onClick: () => {
+            selectColumn(colIndex, false, false);
+            void copySelection(false);
+          },
+        },
+        {
+          label: `Select Column "${caption}" (Ctrl+Space)`,
+          title: "Select all rows of this column",
+          onClick: () => {
+            selectColumn(colIndex, false, false);
+          },
+        },
+      );
+    }
+    if (box || picked.size > 0) {
+      items.push({
+        label: "Copy Selection (Ctrl+C)",
+        title: "Copy selected cells to clipboard",
+        onClick: () => void copySelection(),
+      });
+    }
+    items.push(...columnMenuItems(layout, key, () => setArranging(true)));
+    return items;
   };
 
   // ---- Drawing ----
@@ -809,7 +942,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           onMouseDown={mouseDown}
           onMouseMove={mouseMove}
           onContextMenu={contextMenu}
-          onFocus={() => onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: drawing ? "Drawing borders · Esc stops" : "Shift+Click or drag: a block · Ctrl+Click: more cells · type to find · right-click: columns" })}
+          onFocus={() => onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: drawing ? "Drawing borders · Esc stops" : "Click header or Ctrl+Space: select column · Ctrl+C: copy for Excel/Word/Notepad · Shift+Click / drag: a block · right-click: options" })}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         >
           <div className="mp-grid" style={{ height: (shown.length + 1) * ROW, minWidth: totalWidth + 20 }}>
@@ -817,7 +950,20 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               <div className="mp-cell mp-rownum rp-count" aria-hidden="true" />
               {tree && <div className="mp-cell rp-tree" aria-hidden="true" />}
               {columns.map((column, col) => (
-                <div key={column.key} data-head={column.key} className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""}`} style={{ width: widthOf(column), textAlign: align(column) }} data-tip={`${column.caption} · ${filterable ? "▾ to filter · " : ""}right-click to hide · drag the right edge to size`}>
+                <div
+                  key={column.key}
+                  data-head={column.key}
+                  className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${isColSelected(col) ? "rp-head-sel" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""}`}
+                  style={{ width: widthOf(column), textAlign: align(column) }}
+                  data-tip={`${column.caption} · click to select column · ${filterable ? "▾ to filter · " : ""}right-click for options · drag right edge to size`}
+                  onMouseDown={(event) => {
+                    if (event.button !== 0) return;
+                    if ((event.target as Element).closest(".mp-resize, button, input, .mp-filter-popup")) return;
+                    event.preventDefault();
+                    selectColumn(col, event.shiftKey, event.ctrlKey || event.metaKey);
+                    scroller.current?.focus();
+                  }}
+                >
                   <span className="mp-head-label">{column.caption}</span>
                   {filterable && <FilterButton caption={column.caption} onOpen={() => columnFilters.open(column.key, valuesOf(column))} skipTab />}
                   {layout.resizeHandle(column)}
@@ -931,7 +1077,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         )}
       />
       {gridOutput.dialogs}
-      {menu && <GridMenu at={menu} items={columnMenuItems(layout, menu.key, () => setArranging(true))} onClose={() => { setMenu(null); scroller.current?.focus(); }} />}
+      {menu && <GridMenu at={menu} items={reportMenuItems(menu.key)} onClose={() => { setMenu(null); scroller.current?.focus(); }} />}
       {arranging && (
         <ArrangeColumns
           items={layout.arrangeItems((column) => column.caption)}

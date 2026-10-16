@@ -565,7 +565,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
                 mode="pick"
                 entries={(list.name === def.lostFocusControl && lostItems ? lostItems : list.items).map((item) => ({ key: itemKey(item), text: item.text }))}
                 chosen={[choices[list.name] ?? ""]}
-                onPick={(key) => setChoices((current) => ({ ...current, [list.name]: key }))}
+                onPick={(key) => { setChoices((current) => ({ ...current, [list.name]: key })); if (helpTab === OPTIONS_GRID && helpShown.length === 1) setHelpTab(helpShown[0].grid); }}
                 onEnter={() => say(LIST_MESSAGES[list.name] ?? "", "↑↓ : Choose")}
               />
             ))}

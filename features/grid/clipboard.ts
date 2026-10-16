@@ -54,5 +54,10 @@ export function gridText(captions: readonly string[], rows: readonly (readonly s
   return [captions.join("\t"), ...rows.map((row) => row.join("\t"))].join("\n");
 }
 
+/** A single column formatted for the clipboard, for pasting vertically into Excel, Word, or Notepad. */
+export function columnText(caption: string, values: readonly string[], withHeader = true): string {
+  return withHeader ? [caption, ...values].join("\n") : values.join("\n");
+}
+
 /** "Pasted ... into n rows of ..." for the status row. */
 export const pastedMessage = (value: string, rows: number, caption: string) => `Pasted "${value}" into ${rows} row${rows === 1 ? "" : "s"} of ${caption}`;

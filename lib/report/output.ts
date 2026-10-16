@@ -186,6 +186,9 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // Stock report's Summary: a row a product (product, opening, added, less, closing, unit); the entry columns of the ledger format stay out.
   const stockSummaryFormat = reportKey === 29 || (reportKey === 17 && (call.fcText.toUpperCase() === "SUMMARY" || call.fcValue === 2));
   if (reportKey === 17 && stockSummaryFormat) hidden.push("SELECTED_DATE", "FULL_DOCNO", "NAME", "TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2", "DAYS", "PROD_KEY", "FORM_CODE", "DOC_NO1", "BUNDLE", "PACKING");
+  if (reportKey === 17 && stockSummaryFormat === false) hidden.push("PROD_KEY");
+  // The Ledger drops the factor columns (second unit) unless Factor is ticked.
+  if (reportKey === 17 && stockSummaryFormat === false && !call.checkQuery.includes("CHK_FACTOR,")) hidden.push("TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2");
   if (reportKey === 1 && table.has("closing_bal")) cashBookTotals(plan);
   // The multi company bank / cash book: the running balance runs on Receipt and Payment even where the setup names no subtotal columns.
   if (reportKey === 117 && plan.subtotalColumns.length < 2 && table.has("RECEIPT") && table.has("PAYMENT")) plan.subtotalColumns.splice(0, plan.subtotalColumns.length, "RECEIPT", "PAYMENT");
@@ -292,6 +295,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       base.caption = name.toUpperCase().includes("DR_CR") ? name.toUpperCase().replace("DR_CR", "##").replace(/_/g, " ") : name.toUpperCase().replace(/_/g, " ");
       base.width = Math.min(260, Math.max(60, base.caption.length * 8, ...table.rows.slice(0, 200).map((row) => cellString(row[name]).length * 7)));
     }
+    if (reportKey === 17 && name.toUpperCase() === "AGE_OPENING") base.caption = "OPENING";
     // Stock (17), licence 21: the quantity columns (opening, add, less, closing, the factor columns, Min Qty and Max Qty) show 4 decimals.
     if (reportKey === 17 && call.licence === 21 && ["OPENING", "ADD_QTY", "LESS_QTY", "CLSG_QTY", "ADD_FACT", "LESS_FACT", "BAL_FACT", "MIN_QTY", "MAX_QTY"].includes(name.toUpperCase())) base.decimals = 4;
     if (reportKey === 29 && call.licence === 21 && ["OPEN_QTY", "PURCH_QTY", "CR_QTY", "CHLNIN_QTY", "PRODUCTION", "STOCK_ADD", "STOCK_JV_ADD", "SALE_QTY", "DR_QTY", "CHLNOUT_QTY", "CONSUMPTION", "STOCK_LESS", "STOCK_JV_LESS", "DAMAGEIN_QTY", "DAMAGEOUT_QTY", "CLSG_QTY"].includes(name.toUpperCase())) base.decimals = 4;
@@ -330,10 +334,12 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     }
     if (at >= columns.length || at === calculationAt) {
       const insertAt = at > 0 && columns[at - 1]?.name.toUpperCase() === "OPENING_BAL" ? at - 1 : Math.max(0, at);
-      columns.splice(insertAt, 0, { key: "HEADING_COLUMN_BY_SYSTEM", name: "HEADING_COLUMN_BY_SYSTEM", caption: "PARTICULARS", width: 86, align: "L", kind: "text", decimals: 0, visible: ![15, 23, 44, 64].includes(reportKey), summable: false, dateTyped: false });
+      columns.splice(insertAt, 0, { key: "HEADING_COLUMN_BY_SYSTEM", name: "HEADING_COLUMN_BY_SYSTEM", caption: "PARTICULARS", width: reportKey === 17 && stockSummaryFormat ? 380 : 86, align: "L", kind: "text", decimals: 0, visible: ![15, 23, 44, 64].includes(reportKey), summable: false, dateTyped: false });
       headingColumn = "HEADING_COLUMN_BY_SYSTEM";
     } else headingColumn = columns[at].name;
   }
+  // Stock (17) Summary: a wide Particulars column, for the product descriptions.
+  if (reportKey === 17 && stockSummaryFormat) for (const column of columns) if (column.name === "HEADING_COLUMN_BY_SYSTEM") column.width = Math.max(column.width, 380);
   // Stock (17): the Opening column stands right after Particulars (it is not in the setup's output columns, so it would come last).
   if (reportKey === 17) {
     const opening = columns.findIndex((column) => column.name.toUpperCase() === "OPENING");
@@ -355,7 +361,9 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const sumColumns = subtotalColumns.filter((name) => !name.includes("%") && !name.includes("INTEREST") && table.has(name) && !hidden.includes(name)).map((name) => table.name(name)!);
   const formattedReport = false;
   // Planning FG Analysis (210): dates and day counts, no final total.
-  const allowSubtotal = reportKey !== 210 && !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
+  // Outstanding Age Wise, Date Wise Detail: one list by date, with a running balance, and no party subtotals.
+  const dateWiseList = reportKey === 5 && call.sortingText === "Date Wise" && call.filterText === "Detail";
+  const allowSubtotal = reportKey !== 210 && !dateWiseList && !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
   const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string }[] = [];
   const subtotalsWanted = (flag(properties, "subtotal_req") || scheduleSubtotals || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
   // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
@@ -398,11 +406,11 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     for (const row of table.rows) out.push({ kind: "data", level: -2, rowType: toText(table.get(row, "ROW_DATA_TYPE")), values: row });
   }
   // Stock Summary and the Stock report's Summary format: with an addon ticked only the addon subtotals are shown (the products stay out); without one, every product.
-  if (stockSummaryFormat && subtotalsWanted && groupColumns.length > 0 && !oneRowAParty) {
+  if (stockSummaryFormat && reportKey !== 17 && subtotalsWanted && groupColumns.length > 0 && !oneRowAParty) {
     for (let at = out.length - 1; at >= 0; at -= 1) if (out[at].kind === "data") out.splice(at, 1);
   }
   // A blank line between a group's subtotal and the next addon heading (web only), so one addon's block stands apart from the next.
-  for (let at = out.length - 1; at > 0; at -= 1) if (/^ADDON_[0-9]$/.test(out[at].rowType) && out[at - 1].kind === "subtotal") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
+  for (let at = out.length - 1; at > 0; at -= 1) if ((/^ADDON_[0-9]$/.test(out[at].rowType) || (reportKey === 17 && out[at].rowType === "PRODUCT")) && out[at - 1].kind === "subtotal") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   const finalTotal = ![18, 22, 57, 136, 138, 156, 279, 280, 281].includes(reportKey) || reportKey === 80;
   if (finalTotal && subtotalsWanted && !(reportKey === 4 && call.formating === "MONTHLY")) {
     const values: Record<string, unknown> = {};
@@ -521,7 +529,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     const colour = { SMART_NAME: styles.named.str_color_account, SMART_SELECTED_BOOK: styles.named.str_color_book, SMART_SELECTED_ADDON1: styles.named.str_color_addon1, SMART_SELECTED_ADDON2: styles.named.str_color_addon2, SMART_SELECTED_ADDON3: styles.named.str_color_addon3, SMART_SELECTED_ADDON4: styles.named.str_color_addon4 }[column.toUpperCase()];
     if (colour) levelColours[String(level)] = colour;
   });
-  const headingColours: Record<string, string> = { AC: styles.named.str_color_account, ST: styles.named.str_color_account, BOOK: styles.named.str_color_book, SCHEDULE: styles.named.str_color_schedule, FT: "Pink", ADDON_1: styles.named.str_color_addon1, ADDON_2: styles.named.str_color_addon2, ADDON_3: styles.named.str_color_addon3, ADDON_4: styles.named.str_color_addon4 };
+  const headingColours: Record<string, string> = { AC: styles.named.str_color_account, ST: styles.named.str_color_account, BOOK: styles.named.str_color_book, SCHEDULE: styles.named.str_color_schedule, FT: "Pink", ...(reportKey === 17 ? { PRODUCT: levelColours["0"] ?? styles.named.str_color_account } : {}), ADDON_1: styles.named.str_color_addon1, ADDON_2: styles.named.str_color_addon2, ADDON_3: styles.named.str_color_addon3, ADDON_4: styles.named.str_color_addon4 };
 
   // The group each heading row type stands for (an addon group is ADDON_1, ADDON_2 ... in tick order).
   const headingCaptions: Record<string, string> = {};

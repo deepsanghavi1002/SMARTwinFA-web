@@ -101,6 +101,13 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
   const box = useRef<HTMLDivElement>(null);
   const searchAt = useRef(0);
   const findInput = useRef<HTMLInputElement | null>(null);
+  const dragging = useRef(false);
+
+  useEffect(() => {
+    const up = () => { dragging.current = false; };
+    document.addEventListener("mouseup", up);
+    return () => document.removeEventListener("mouseup", up);
+  }, []);
 
   useEffect(() => { if (focusKey > 0 && !hidden) box.current?.focus(); }, [focusKey, hidden]);
   useEffect(() => {
@@ -159,6 +166,10 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
 
   const at = Math.min(cursor, Math.max(0, rows.length - 1));
   const atCol = Math.min(col, Math.max(0, columns.length - 1));
+  const low = selectionEnd === null ? at : Math.min(at, selectionEnd);
+  const high = selectionEnd === null ? at : Math.max(at, selectionEnd);
+  const isSelectedRange = selectionEnd !== null && selectionEnd !== at;
+  const inSelection = (index: number) => isSelectedRange && index >= low && index <= high;
   const lefts: number[] = [];
   columns.reduce((left, column, index) => { lefts[index] = left; return left + layout.widthOf(column); }, TICK_WIDTH);
   const frozenCount = freezeMain ? 1 : 0;
@@ -208,6 +219,11 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
     const on = !ticked.has(rowKey(row));
     const anchor = tickAnchor.current;
     tickAnchor.current = index;
+    // With rows selected (Shift+click, mouse drag, or Shift+Arrow), clicking any selected row's checkbox ticks or unticks all selected rows, as Spacebar does.
+    if (inSelection(index)) {
+      tickRange(low, high, on);
+      return;
+    }
     if (range && anchor !== null && anchor !== index) tickRange(anchor, index, on);
     else tickRange(index, index, on);
   };
@@ -231,7 +247,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
       case "Enter": {
         event.preventDefault();
         // With rows selected (Shift+click or Shift+↑↓) Space ticks them all, as the cursor row goes.
-        if (event.key === " " && selectionEnd !== null && selectionEnd !== at) { const row = rows[at]; if (row && canTick(row)) tickRange(at, selectionEnd, !ticked.has(rowKey(row))); }
+        if (event.key === " " && isSelectedRange) { const row = rows[at]; if (row && canTick(row)) tickRange(low, high, !ticked.has(rowKey(row))); }
         else toggle(at, event.shiftKey);
         if (event.key === "Enter") move(at + 1);
         setTyped("");
@@ -275,10 +291,27 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
     const index = Number(rowElement.getAttribute("data-row"));
     const cell = target.closest("[data-col]");
     if (cell) { setCol(Number(cell.getAttribute("data-col"))); setTyped(""); }
-    if (target.closest(".rp-tick")) { if (event.shiftKey) event.preventDefault(); else { setSelectionEnd(null); setCursor(index); } return; }
+    if (target.closest(".rp-tick")) {
+      if (event.shiftKey) event.preventDefault();
+      else if (!inSelection(index)) {
+        setSelectionEnd(null);
+        setCursor(index);
+      }
+      return;
+    }
     if (event.shiftKey) { event.preventDefault(); setSelectionEnd(index); return; }
     setSelectionEnd(null);
     setCursor(index);
+    dragging.current = true;
+  };
+
+  const mouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!dragging.current || event.buttons !== 1) return;
+    const target = event.target as Element;
+    const rowElement = target.closest("[data-row]");
+    if (!rowElement) return;
+    const index = Number(rowElement.getAttribute("data-row"));
+    if (index !== at || selectionEnd !== null) setSelectionEnd(index);
   };
 
   const first = Math.max(0, Math.floor(scrollTop / ROW) - 5);
@@ -286,8 +319,6 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
   const tickCount = baseRows.reduce((count, row) => count + (ticked.has(rowKey(row)) ? 1 : 0), 0);
   const align = (value: string) => (value === "R" ? "right" : value === "C" ? "center" : "left");
   const cellAlign = (column: HelpColumn) => ((kindOf(column) === "number" || numericText.has(column.key)) && column.align === "L" ? "right" : align(column.align));
-  const low = selectionEnd === null ? at : Math.min(at, selectionEnd);
-  const high = selectionEnd === null ? at : Math.max(at, selectionEnd);
   const totalColumn = columns[atCol];
   const totals = selectionEnd !== null && high > low && totalColumn && kindOf(totalColumn) === "number"
     ? selectionTotals(rows.slice(low, high + 1).map((row) => row[totalColumn.key] ?? ""), totalColumn.decimals || 2)
@@ -323,10 +354,28 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
           }}
         />
       </div>, findSlot)}
-      <div ref={box} className={`mp-scroll rp-help-scroll ${enabled ? "" : "rp-help-off"}`} tabIndex={-1} role="grid" aria-label={help.grid} onFocus={tellStatus} onKeyDown={(event) => void keys(event)} onMouseDown={mouseDown} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <div ref={box} className={`mp-scroll rp-help-scroll ${enabled ? "" : "rp-help-off"}`} tabIndex={-1} role="grid" aria-label={help.grid} onFocus={tellStatus} onKeyDown={(event) => void keys(event)} onMouseDown={mouseDown} onMouseMove={mouseMove} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <div className="mp-grid" style={{ height: (rows.length + 1) * ROW, minWidth: width }}>
           <div className="mp-row mp-head" style={{ top: 0 }}>
-            <div className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`} style={freezeMain ? { position: "sticky", left: 0 } : undefined}><span className="mp-head-label">Tick</span></div>
+            <div
+              className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`}
+              style={{ ...(freezeMain ? { position: "sticky", left: 0 } : {}), cursor: "pointer" }}
+              onClick={async () => {
+                if (rows.length === 0) return;
+                if (!enabled) { await messageBox.alert("Select All Failed..\nPlease Check / Select Appropriate Group Field", "Operation Failed!"); return; }
+                const next = new Set(ticked);
+                const firstTicked = ticked.has(rowKey(rows[0]));
+                for (const row of rows) {
+                  if (!canTick(row)) continue;
+                  const key = rowKey(row);
+                  if (!firstTicked) next.add(key); else next.delete(key);
+                }
+                onTicks(next);
+              }}
+              title="Click to toggle Select All / Deselect All (F4)"
+            >
+              <span className="mp-head-label">Tick</span>
+            </div>
             {columns.map((column, index) => (
               <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${index === atCol ? "rp-head-on" : ""}`} style={{ width: layout.widthOf(column), textAlign: cellAlign(column), ...frozenStyle(index) }} title={`${caption(column)} · click to sort · ▾ to filter`}>
                 <button type="button" tabIndex={-1} className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
@@ -344,7 +393,26 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
             const selected = selectionEnd !== null && index >= low && index <= high;
             return (
               <div key={index} className={`mp-row ${index % 2 ? "mp-alt" : ""} ${index === at ? "mp-current-row" : ""} ${selected ? "mp-selected" : ""} ${on ? "rp-row-ticked" : ""}`} style={{ top: (index + 1) * ROW }} data-row={index}>
-                <div className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`} style={freezeMain ? { position: "sticky", left: 0 } : undefined}><input type="checkbox" checked={on} disabled={!canTick(row)} onChange={() => undefined} onClick={(event) => toggle(index, event.shiftKey)} aria-label="Tick" tabIndex={-1} title="Click to tick · Shift+Click ticks every row from the last one ticked" /></div>
+                <div
+                  className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`}
+                  style={freezeMain ? { position: "sticky", left: 0 } : undefined}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).tagName !== "INPUT") {
+                      toggle(index, event.shiftKey);
+                    }
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={!canTick(row)}
+                    onChange={() => undefined}
+                    onClick={(event) => toggle(index, event.shiftKey)}
+                    aria-label="Tick"
+                    tabIndex={-1}
+                    title="Click to tick · Shift+Click ticks every row from the last one ticked"
+                  />
+                </div>
                 {columns.map((column, columnIndex) => {
                   const text = shown(column, row[column.key] ?? "");
                   const here = index === at && columnIndex === atCol;

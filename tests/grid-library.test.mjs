@@ -102,7 +102,7 @@ test("row rules close a cell the same way on every grid", () => {
   assert.equal(rowRuled(ruleSetup(), true), false);
 });
 
-const { copyCell, gridText, pasteValue, pastedMessage } = await import("../features/grid/clipboard.ts");
+const { copyCell, columnText, gridText, pasteValue, pastedMessage } = await import("../features/grid/clipboard.ts");
 const dates = { parse: (text) => (/^\d{1,2}\/\w{3}\/\d{4}$/.test(text) ? new Date(text) : null), write: (text) => text };
 
 test("copy and paste follow MnuCopy / MnuPaste", () => {
@@ -121,6 +121,8 @@ test("copy and paste follow MnuCopy / MnuPaste", () => {
   assert.equal(pasteValue({ value: "01/Apr/2026", addonId: "0" }, column({ field_type: "D" }), open, dates).ok, true);
 
   assert.equal(gridText(["Code", "Name"], [["1", "A"], ["2", "B"]]), "Code\tName\n1\tA\n2\tB");
+  assert.equal(columnText("Particulars", ["Cash", "Bank"]), "Particulars\nCash\nBank");
+  assert.equal(columnText("Particulars", ["Cash", "Bank"], false), "Cash\nBank");
   assert.equal(pastedMessage("5", 1, "Rate"), 'Pasted "5" into 1 row of Rate');
 });
 

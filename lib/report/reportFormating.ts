@@ -44,6 +44,7 @@ import { stockStatus } from "./stockStatus";
 import { distributorsDispatch } from "./distributorsDispatch";
 import { jobOutIndex } from "./jobOutIndex";
 import { trpRegister } from "./trpRegister";
+import { bankSlip } from "./bankSlip";
 import { purchasePrice } from "./purchasePrice";
 import { jobSetoffExpense } from "./jobSetoffExpense";
 import { jobWorkMaster } from "./jobWorkMaster";
@@ -65,6 +66,7 @@ import { SYSTEM_SCHEMA } from "../master-program/session";
 export async function formattedReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   switch (plan.call.reportKey) {
     case 1: return daybookFormats(loader, plan);
+    case 2: return journalFormats(loader, plan);
     case 3: return registerFormats(loader, plan);
     case 4: return ledgerFormats(loader, plan);
     case 14: return formSummaryFormats(loader, plan);
@@ -102,6 +104,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 248: return distributorsDispatch(loader, plan);
     case 254: return jobOutIndex(loader, plan);
     case 299: return trpRegister(loader, plan);
+    case 51: return bankSlip(loader, plan);
     case 189: return planVsProduction(loader, plan);
     case 198: return purchasePrice(loader, plan);
     case 199: return jobSetoffExpense(loader, plan);
@@ -570,6 +573,58 @@ async function registerMasters(loader: Loader, plan: ReportPlan): Promise<Result
     : `EXTRACT(YEAR FROM ${dateField}),EXTRACT(MONTH FROM ${dateField}),to_char(${dateField},'DD/MM/YYYY'),LED.DOC_NO`;
   const table = tableFromResult(await runReportSql(loader, frag(`${sql}${groupOrderTail([], [csOrder, tail])}`)));
   return table;
+}
+
+// ======================================================================================
+// 2: JOURNAL formats (SP_REPORT_FORMATING)
+// ======================================================================================
+//
+// The journal's formats work on the ledger vouchers themselves (LED.AC_DBCODE 1 debit, 2 credit, LED.AMOUNT) for the date field's period: DAILY, WEEKLY, HALF_MONTH
+// (SYSTEM_BLANK1 year and SYSTEM_BLANK2 month before the period), QUATER_YEAR (year) and HALF_YEAR give a row per period (and per account, with a group ticked) with
+// DEBIT and CREDIT; SUMMARY a row per account for the whole period; MONTHLY a row per account with a DEBIT and CREDIT column for each month of the period and the
+// final totals. MONTHLY and SUMMARY do not take a group (the procedure's "NOT ALLOWED PLEASE SELECT DETAIL OPTION").
+
+async function journalFormats(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  const format = call.formating;
+  const date = call.dateField;
+  if (date === "") throw new ReportRefusal("DATE FIELD FOUND BLANK\nPLEASE CHECK DATABASE","INTERNAL PROGRAM FAILURE");
+  const csFrom = cashBookFrom(plan);
+  const baseWhere = call.where.split("|sys.db|").join(call.database).split("|sys.yearid|").join(call.yearId);
+  const where = `${baseWhere} AND ${date} BETWEEN '${desktopDate(call.from)}' AND '${desktopDate(call.upto)}'`;
+  requireWhere(where);
+  const amounts = (debit: string, credit: string) => `sum(case when led.AC_DBCODE=1 then LED.AMOUNT else 0.00 end) as "${debit}",sum(case when led.AC_DBCODE=2 then LED.AMOUNT else 0.00 end) as "${credit}"`;
+  const decimals = (table: ResultTable) => { for (const column of table.columns) if (/(DEBIT|CREDIT)$/i.test(column)) table.setKind(column, "decimal"); return table; };
+
+  if (format === "MONTHLY" || format === "SUMMARY") {
+    if (call.queryStart.trim() !== "") throw new ReportRefusal(` ${format} NOT ALLOWED PLEASE SELECT DETAIL OPTION `, "INTERNAL PROGRAM FAILURE");
+    if (format === "SUMMARY") return decimals(tableFromResult(await runReportSql(loader, frag(`SELECT AC.NAME AS "NAME",${amounts("DEBIT", "CREDIT")}${csFrom}${where} GROUP BY AC.NAME ORDER BY AC.NAME`))));
+    const months: string[] = [];
+    for (let month = new Date(call.from.getFullYear(), call.from.getMonth(), 1); month <= call.upto; month = new Date(month.getFullYear(), month.getMonth() + 1, 1)) {
+      const name = MONTH_NAMES[month.getMonth()].slice(0, 3).toUpperCase();
+      const inMonth = `EXTRACT(MONTH FROM ${date})=${month.getMonth() + 1}`;
+      months.push(`coalesce(SUM(case when led.AC_DBCODE=1 and ${inMonth} then led.AMOUNT end),0.00) as "${name} DEBIT"`, `coalesce(SUM(case when led.AC_DBCODE=2 and ${inMonth} then led.AMOUNT end),0.00) as "${name} CREDIT"`);
+    }
+    months.push(`coalesce(SUM(case when led.AC_DBCODE=1 then led.AMOUNT end),0.00) as "FINAL_DEBIT"`, `coalesce(SUM(case when led.AC_DBCODE=2 then led.AMOUNT end),0.00) as "FINAL_CREDIT"`);
+    return decimals(tableFromResult(await runReportSql(loader, frag(`SELECT AC.NAME AS "NAME",${months.join(",")}${csFrom}${where} GROUP BY AC.NAME ORDER BY AC.NAME`))));
+  }
+
+  const period = formatPeriod(format, date);
+  if (!period) throw unknownFormat(format);
+  const blanks = format === "DAILY" || format === "WEEKLY" || format === "HALF_MONTH" ? `EXTRACT(YEAR FROM ${date}) as "SYSTEM_BLANK1",EXTRACT(MONTH FROM ${date}) as "SYSTEM_BLANK2",`
+    : format === "QUATER_YEAR" ? `EXTRACT(YEAR FROM ${date}) as "SYSTEM_BLANK1",` : "";
+  let groupBy = call.groupBy;
+  let orderBy = call.orderBy;
+  let select = `${blanks}${period.label} AS "${period.alias}",${amounts("DEBIT", "Credit")}`;
+  const own = call.queryStart.trim();
+  if (own !== "") select += own.toUpperCase().includes("NAME") ? `,${own}` : `,${own},AC.NAME`;
+  if (groupBy.trim() !== "") {
+    select = `AC.NAME as "NAME",${select}`;
+    if (!groupBy.toUpperCase().includes("NAME")) groupBy = `${groupBy},AC.NAME`;
+    if (orderBy.trim() !== "" && !orderBy.toUpperCase().includes("NAME")) orderBy = `${orderBy},AC.NAME`;
+  }
+  return decimals(tableFromResult(await runReportSql(loader, frag(`SELECT ${select}${csFrom}${where}${groupOrderTail([groupBy, period.group], [orderBy, period.order])}`))));
 }
 
 // ======================================================================================
@@ -1539,7 +1594,8 @@ export async function formSummaryFormats(loader: Loader, plan: ReportPlan): Prom
   if (!parts) throw new ReportRefusal("Internal program failure\nQuery Was Blank", "INTERNAL PROGRAM FAILURE");
 
   let where = call.where;
-  if (readsReturnAccounts(groupKeys)) where += ` AND (LED.BOOK_CODE IN (${keys}) OR LED.AG_BKCODE IN (${keys})) AND (LED.BOOK IN (${inBook}) OR LED.AG_BOOK IN (${inBook}))`;
+  // A credit / debit note register (book 16 / 11) reads its notes by the book they are against (AG_BOOK): the procedure tests the typed account codes for 11 and 16, which are the book numbers only in its own database.
+  if (readsReturnAccounts(groupKeys) || [11, 16].includes(book)) where += ` AND (LED.BOOK_CODE IN (${keys}) OR LED.AG_BKCODE IN (${keys})) AND (LED.BOOK IN (${inBook}) OR LED.AG_BOOK IN (${inBook}))`;
   else where += ` AND (LED.BOOK_CODE IN (${keys})) AND (LED.BOOK IN (${inBook}))`;
   where += ` AND ((CASE WHEN LEDEXT.SLAB_ID in (${slabKey}) AND TAX.TAX_DESC IS NULL THEN 'sys.remove' ELSE TAX.TAX_DESC END) <> 'sys.remove' OR LEDEXT.SLAB_ID not in (${slabKey}))`;
   where += ` AND SLAB.SLAB_ORDER >= (SELECT SM.SLAB_ORDER FROM ${db}SLAB_MASTER SM WHERE SM.SLAB_KEY in (${slabKey}) LIMIT 1)`;

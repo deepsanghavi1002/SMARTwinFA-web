@@ -159,11 +159,14 @@ export const STOCK_AGE_BUCKETS = ["Days_0_To_30", "Days_31_To_60", "Days_61_To_9
  * The closing of each product (> 0) set against its additions of the year, newest first (an addition counts its quantity less what was set off against it): the
  * quantity in each age column (the days from the entry to Upto, and one; 99999 for what is older than the year) and Days, the age of the oldest lot used.
  */
-export async function stockLots(loader: Loader, db: string, upto: Date, yearStart: Date, noteType: number, closings: ReadonlyMap<number, number>): Promise<Map<number, { days: number; buckets: number[] }>> {
-  const result = new Map<number, { days: number; buckets: number[] }>();
+const round2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
+
+export async function stockLots(loader: Loader, db: string, upto: Date, yearStart: Date, noteType: number, closings: ReadonlyMap<number, number>): Promise<Map<number, { days: number; buckets: number[]; opening: number }>> {
+  const result = new Map<number, { days: number; buckets: number[]; opening: number }>();
+  // A product closing below nil has all of it in Opening; the rest are set against their additions.
+  for (const [key, closing] of closings) if (closing < 0) result.set(key, { days: 0, buckets: STOCK_AGE_BUCKETS.map(() => 0), opening: round2(closing) });
   const keys = [...closings.entries()].filter(([, closing]) => closing > 0).map(([key]) => key);
   if (keys.length === 0) return result;
-  const round2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
   const dayNumber = (date: Date) => Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
   const lots = new Map<number, { date: Date; qty: number }[]>();
   const module = "btrim(prodled.trn_module)";
@@ -188,8 +191,9 @@ export async function stockLots(loader: Loader, db: string, upto: Date, yearStar
       left = round2(left - lot.qty);
       if (left <= 0) { left = 0; break; }
     }
-    if (left > 0) { days = 99999; buckets[6] = round2(buckets[6] + left); }
-    result.set(key, { days, buckets });
+    // What is left after the year's additions is the opening stock's: its own Opening column, not an age column.
+    if (left > 0) days = 99999;
+    result.set(key, { days, buckets, opening: left > 0 ? left : 0 });
   }
   return result;
 }

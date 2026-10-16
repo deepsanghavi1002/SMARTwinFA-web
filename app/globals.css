@@ -922,6 +922,7 @@
 .rp-tick{width:42px;justify-content:center;text-align:center}
 .rp-cell-on{outline:2px solid #000;outline-offset:-2px}
 .mp-head .mp-cell.rp-head-on{box-shadow:inset 0 -3px 0 var(--rp-accent)}
+.mp-head .mp-cell.rp-head-sel{background:#cfe2fb!important;color:#0b2c57;box-shadow:inset 0 -3px 0 var(--rp-accent)}
 .rp-row-ticked .mp-cell{font-weight:600}
 .rp-actions{grid-column:1/-1;display:flex;align-items:stretch;gap:16px;min-height:44px;padding:4px 4px 4px 12px;border:1px solid var(--rp-line);border-radius:10px;background:linear-gradient(180deg,#f7faff,#e8f0fa);box-shadow:0 1px 3px rgba(16,35,61,.1)}
 .rp-date{display:flex;align-items:center;gap:8px;align-self:center;font-size:12px;font-weight:700;color:var(--rp-ink);white-space:nowrap}

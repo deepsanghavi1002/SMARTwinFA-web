@@ -3,6 +3,69 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-16 (Outstanding Age Wise: Date Wise Detail, no subtotals, running balance)
+- Change: `lib/report/reportStandard.ts`, `lib/report/output.ts`. With Date Wise sorting and the Detail filter the list has no party subtotals (and no final total) and a RUNNING BAL column before NET AMOUNT: the pending added up down the list in the order shown. Tested: 234 rows, running balance 1,88,980.00 then 3,65,972.00 then 5,58,950.00.
+
+## 2026-10-16 (Form Summary: Debit Note / Credit Note gave No Records)
+- Fix: `lib/report/reportStandard.ts`, `lib/report/reportFormating.ts`. With Debit Note or Credit Note as the register (against Sale or Purchase) every format said 'No Records Found'. The procedure reads the notes by AG_BOOK only when the typed account codes contain 11 or 16 (the book numbers in its own database; here the accounts are 19 and 24), so the filter asked for notes that are books 8 / 13 and found none. A debit / credit note register now always reads them by the book they are against. Tested on RISHABH PLASTIC 2025-26: Debit Note against Purchase 426 rows (Details), 325 (Summarized), 12 (Summary); Credit Note against Sale 1,124 / 933 / 11.
+
+## 2026-10-16 (Fund Flow: Opening first)
+- Change: `lib/report/reportStandard.ts` `fundFlow`. The Opening row is the first row of its side (it sorted in among the particulars by name).
+
+## 2026-10-16 (Form Summary: Format opens the Account help)
+- Change: `features/report/ReportCombine.tsx`. On a report whose selection has Report Options and a single help (Form Summary: Account), choosing a Format shows that help (the Account grid) at once, as the desktop does; it used to stay on Report Options.
+
+## 2026-10-16 (Journal: Numbers sort with Between numbers failed)
+- Fix: `lib/report/sqlText.ts` `pgFragment`. The Numbers sort's boxes (led.doc_no >= 1 and led.doc_no <= 4) gave 'operator does not exist: character varying >= integer' because the voucher number is text here. A number compared with a document number is now read as a number, as SQL Server does (a voucher number that is not all digits does not match). It covers every report that uses this sort. Tested on the Journal: vouchers 1 to 4 in Detail and Month.
+
+## 2026-10-16 (Journal, report 2: the formats)
+- New: `lib/report/reportFormating.ts` `journalFormats`. Journal (REPORT > Journal) with a format no longer says Not ported: Daily, Weekly, 15 Days, Quater Year and Half Year give a row per period (and per account with a group ticked) with DEBIT and CREDIT; Summary For Period Selected a row per account; Month a row per account with a DEBIT and CREDIT column for each month and the final totals. Month and Summary with a group ticked give the procedure's 'NOT ALLOWED PLEASE SELECT DETAIL OPTION'. The Detail format was already there (16,665 vouchers, 0.6 s). Tested on RISHABH PLASTIC 2025-26: every format 0.1 to 0.2 s, and debit equals credit in every period.
+
+## 2026-10-16 (Bank Slip, report 51)
+- New: `lib/report/bankSlip.ts` (wired in `reportStandard.ts`, `reportFormating.ts`, `setup.ts` PORTED_REPORTS). REPORT > Bank / Cash > Bank Slip: a row for each cheque voucher of the period (date, voucher no, party, amount, cheque no and date, bank and branch from the entry addon, and the book's account code) in the order of the voucher date and number, as the procedure's Bank Slip branch. Licence 14 reads the bank from the bank-name master and takes the ticked banks (or every bank but BANK OF BARODA). Tested on RISHABH PLASTIC 2025-26: 5,289 rows for Kotak Cash Credit in 0.2 s.
+
+## 2026-10-16 (Stock Report Ledger: addon groups as headings)
+- Fix: `lib/report/reportStandard.ts` `stockReport`. Ledger with an addon group ticked (e.g. Prod Group, then Product Code): the products are in order of the group values and a heading row (the group's value) starts each group, as the procedure's ADDON_1 .. ADDON_4 rows; every row of a product carries its groups so the group subtotals come under the right group. Before, the products stayed in code order and the group subtotals fell under the wrong products.
+
+## 2026-10-16 (Stock Report Summary: addon groups)
+- Fix: `lib/report/reportStandard.ts` `stockReport`. Summary with an addon group ticked (e.g. Prod Group, then Product Code) showed one blank 'Subtotal For :' line because the product rows had no addon value. The rows now carry each ticked group's value and heading column, are sorted by the groups then the product, and the subtotals show the group names (125 lines for Prod Group on RISHABH PLASTIC, 1.5 s).
+
+## 2026-10-16 (Stock Report: From date after the year's start, speed and timeout)
+- Fix: `lib/report/reportStandard.ts` `stockReport`. With From later than the year's start (e.g. 01/May) the opening of every product was worked out by a subquery for each product, which was very slow and ended with 'canceling statement due to statement timeout'. It is one grouped query now. Summary of all 17,839 products from 01/May/2025: 1.6 s.
+
+## 2026-10-16 (Stock Report Ledger: Closing row)
+- Change: `lib/report/reportStandard.ts`. Each product in the Ledger ends with a Closing row (the closing balance in CLSG QTY, and with a valuation its rate and value), like the Opening row, before the product's subtotal.
+
+## 2026-10-16 (Stock Report Ledger: checked against the procedure's Ledger part)
+- Change: `lib/report/reportStandard.ts` `stockReport`. Line and opening filters as the procedure: licence 22 leaves out stock vouchers and stock JV; licences 19, 29, 68, 73 without a cash book entry account count only the active accounts' books (the opening strictly, the lines also with no book); licence 17 takes lines with no module; licences 5, 7, 16, 22 leave the process lines out and the folder products (group 27); the Folder option takes only the process lines of group 27. Above Days / Below Days sorting now works (additions with days at or under / over the typed number are taken out, issues get Days 0, balances still run over every line). Licence 21 JOB CARD now joins the entry addon by process as the procedure does.
+
+## 2026-10-16 (Stock Report Ledger, licence 21: Job Card, Colour, heading colour)
+- Change: `lib/report/reportStandard.ts`, `lib/report/output.ts`. Licence 21 Ledger adds JOB CARD (the entry addon's job card, else the line's) and COLOUR, as the procedure's licence 21 select. The product heading row takes the subtotal colour (pink) as on the desktop.
+
+## 2026-10-16 (Stock Report Summary: speed)
+- Change: `lib/report/reportStandard.ts` `stockReport`. The Summary no longer reads every ledger line (460,000 for the whole year) into the program: the server adds up each product's ADD and LESS (a row for each product) and the tax lookup is skipped. All 17,839 products: 6 s to 1.7 s, and with Actual and Age columns 16 s to 3.4 s. The rows are the same (9,423). The Ledger is unchanged.
+
+## 2026-10-16 (Stock Report Summary: age Opening and Open Pcs Amt)
+- Change: `lib/report/stockAgeing.ts`, `lib/report/reportStandard.ts`, `lib/report/output.ts`. With the Age columns option, after VALUE come OPENING (what is left of the closing after the year's additions, or the whole closing when it is below nil, as the procedure's Opening) and, with a Filter other than None, OPEN PCS AMT (rate to 2 decimals times that Opening), then the age columns. What is left no longer goes into the last age column.
+
+## 2026-10-16 (Stock Report Summary: age value columns)
+- Change: `lib/report/reportStandard.ts`. Summary with the Age columns option and a Filter other than None (Actual, Average ...) now also gives a value for each age column (Amt_0_To_30_Day ... Amt_181_And_Above): the rate to 2 decimals times the quantity of the column. Not done: the procedure's Open_Pcs_Amt (it needs its Opening lot quantity, which the web does not work out).
+
+## 2026-10-16 (Stock Report Summary: wide Particulars)
+- Change: `lib/report/output.ts`. The Particulars column of the Stock report Summary is 380 wide so product descriptions are not cut.
+
+## 2026-10-16 (Stock Report Ledger: blank row between subtotal and next product)
+- Change: `lib/report/output.ts`. The Ledger puts a blank row between a product's subtotal and the next product's heading, as the addon blocks do.
+
+## 2026-10-16 (Stock Report Ledger: Tax column, heading colour, Balance Factor)
+- Change: `lib/report/reportStandard.ts`, `lib/report/output.ts`. Ledger TAX column is filled as the procedure does (the entry's tax report heading, not SGST, from LEDGER_EXT / TAX_MASTER). The product heading row takes the account heading colour. With Factor ticked, BAL FACT runs down the product's lines (ADD FACT less LESS FACT). Without Factor the factor columns stay hidden, as on the desktop.
+
+## 2026-10-16 (Stock Report Ledger: as the procedure's screen)
+- Change: `lib/report/output.ts`, `lib/report/reportStandard.ts`. Ledger without Factor ticked no longer shows the factor columns (FACT., BAL FACT., second UOM). The Opening row puts the opening in ADD (or LESS when negative) so the product's subtotal includes it, and the heading and Opening rows have no UOM, as on the desktop.
+
+## 2026-10-16 (Stock Report: rules of the current SP_STD_RPT_STOCK)
+- Change: `lib/report/reportStandard.ts` `stockReport` (report 17), checked against the procedure supplied today (8,304 lines). Summary: rows with nothing at all are dropped, rows closing at nil are dropped unless Print Zero Stock, rows closing below nil are dropped unless Print Negative Stock (before, negatives always showed). Ledger: no Opening row when the opening is nil, and a product with no opening and no lines has no rows (Print Zero Stock does not apply to the Ledger). Ledger with Min-Max Qty, Update Rate In Master, FG With Additional Value, Update Rate Trf. or Update Before GST now gives the procedure's own message (Summary only). Similar Products (CHK_PRODSIMILIAR): the ticked products' parents and every product under them. Tested on RISHABH PLASTIC 2025-26: Summary 7,126 to 9,423 rows by option in about 6 s, Ledger 485,891 rows in 15 s.
+
 ## 2026-10-16 (Partywise Stock: Summary For Period Selected)
 - Change: `lib/report/reportStandard.ts` `partyStockSummary` (report 16, SP_FRT_RPT_PWISESTOCK). The Summary format no longer says Not ported: one row per party and product with ADD_QTY, LESS_QTY, BOX_QTY (licence 21), the product-wise slab columns (DISCOUNT ... UTGST, NET_AMOUNT), PURCH_VALUE, SALE_VALUE and MRP_VALUE. With slabs it is a row per entry line, as the procedure groups on IL_KEY. Slab amounts are read in one query (a subquery per line took minutes). Tested on RISHABH PLASTIC 2025-26 with 40 parties: 734 rows in 5.7 s. Licence 37 and 51 still refused.
 
