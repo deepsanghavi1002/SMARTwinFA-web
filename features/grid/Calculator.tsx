@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { evaluate } from "./calculate";
 import { numberRefusal } from "./rules";
+import { HotkeyLabel } from "../ui/hotkeys";
 import type { NumberRules } from "./rules";
 
 /**
@@ -36,11 +37,17 @@ export function Calculator({ initial, rules, onUse, onClose, style, dragHandle, 
   const apply = () => { if (usable) onUse(Number(shown) === 0 ? (0).toFixed(places) : shown); };
   const keys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     event.stopPropagation();
+    // Alt+C empties the field, Alt+U uses the answer, Alt+L closes (the underlined letters of the buttons).
+    if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.code === "KeyC") { event.preventDefault(); onUse(""); return; }
+      if (event.code === "KeyU") { event.preventDefault(); apply(); return; }
+      if (event.code === "KeyL") { event.preventDefault(); onClose(); return; }
+    }
     if (event.key === "Enter") { event.preventDefault(); apply(); }
     if (event.key === "Escape") { event.preventDefault(); onClose(); }
   };
   return (
-    <div className="mp-calc" role="dialog" aria-label="Calculator" style={style}>
+    <div className="mp-calc" role="dialog" aria-label="Calculator" style={style} data-own-alt-keys="clu">
       <div className="mp-calc-title mp-drag-handle" {...dragHandle} title="Drag to move">Calculator</div>
       <input
         className="mp-calc-input"
@@ -59,9 +66,9 @@ export function Calculator({ initial, rules, onUse, onClose, style, dragHandle, 
         <button type="button" onClick={() => { setExpression(""); box.current?.focus(); }} title="Clear the figure">C</button>
       </div>
       <div className="mp-calc-actions">
-        <button type="button" className="mp-btn mp-btn-plain" onClick={() => onUse("")} title="Empty the cell">Clear Field</button>
-        <button type="button" className="mp-btn mp-btn-green" disabled={!usable} onClick={apply}>Use</button>
-        <button type="button" className="mp-btn mp-btn-red" onClick={onClose}>Close</button>
+        <button type="button" className="mp-btn mp-btn-plain" onClick={() => onUse("")} title="Empty the cell (Alt+C)" aria-keyshortcuts="Alt+C"><HotkeyLabel text="Clear Field" hotkey="c" /></button>
+        <button type="button" className="mp-btn mp-btn-green" disabled={!usable} onClick={apply} title="Put the answer in the cell (Alt+U, or Enter)" aria-keyshortcuts="Alt+U"><HotkeyLabel text="Use" hotkey="u" /></button>
+        <button type="button" className="mp-btn mp-btn-red" onClick={onClose} title="Close the calculator (Alt+L, or Esc)" aria-keyshortcuts="Alt+L"><HotkeyLabel text="Close" hotkey="l" /></button>
       </div>
     </div>
   );

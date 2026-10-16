@@ -28,6 +28,7 @@ export function slabCalcRows(book: BookScreen, slab: readonly SlabRow[]): SlabCa
       mathOp: row.mathOp, calc: row.calc, roundPlaces: row.roundPlaces, link: row.link, itemWise: row.itemWise,
       percent: row.master ? tax : toNumber(row.perc),
       amount: toNumber(row.amount),
+      manual: row.manual === true,
       fromPercent: !row.itemWise && (row.master || row.percEditable) && (row.master ? tax > 0 : toNumber(row.perc) > 0),
     };
   });
@@ -47,6 +48,8 @@ export function recalcLine(line: Line, edited: string, { book, columns }: Contex
   if (!line.product) return line;
   const cells: Record<string, string> = { ...line.cells };
   const { decimals } = book;
+  // C1dg_Inputdata_AfterEdit INPUT_BUNDLE: boxes typed with no packing take the product's own packing.
+  if (edited === "bundle" && toNumber(cells.bundle) > 0 && (cells.pack_qty ?? "").trim() === "" && has(columns, "pack_qty") && line.product.units.basePack > 0) cells.pack_qty = fixed(line.product.units.basePack, decimals.qty);
   if (["bundle", "pack_qty", "loose_qty"].includes(edited) && (has(columns, "bundle") || has(columns, "pack_qty") || has(columns, "loose_qty"))) {
     const quantity = bundleQuantity(cells.bundle ?? "", cells.pack_qty ?? "", cells.loose_qty ?? "");
     if (quantity !== null) cells.quantity = fixed(quantity, decimals.qty);
@@ -67,7 +70,8 @@ export function recalcLine(line: Line, edited: string, { book, columns }: Contex
     if (edited === amountKey || (percentBlank && toNumber(cells[amountKey]) !== 0)) typed.set(index, toNumber(cells[amountKey]));
   });
   const amounts = itemSlabAmounts(value, calcRows, percents, typed);
-  slab.forEach((row, index) => { if (row.itemWise) cells[`${row.short}_amt`] = fixed(amounts.get(index) ?? 0, 2); });
+  // The amount being typed keeps the text as typed (1, 12, 123 ...); it is shown with its decimals when the cell is left.
+  slab.forEach((row, index) => { if (row.itemWise && edited !== `${row.short}_amt`) cells[`${row.short}_amt`] = fixed(amounts.get(index) ?? 0, 2); });
   return { ...line, cells };
 }
 
@@ -100,6 +104,13 @@ export function chooseProduct(line: Line, product: ProductChoice, context: Conte
     for (const row of slab) {
       if (!row.itemWise) continue;
       if (row.master) cells[row.short] = defaultTax(context.book, context.columns.find((column) => column.key === row.short), product);
+    }
+    // The party-rate hit's discount % fills the 1st..4th item-wise less column (ProductChangeEffect: int_col_Item_LessSlab1..4).
+    if (product.slabPercs) {
+      slab.filter((row) => row.itemWise && !row.master && row.mathOp !== "A").forEach((row, index) => {
+        const perc = product.slabPercs?.[index + 1];
+        if (perc !== undefined && perc > 0) cells[row.short] = String(perc);
+      });
     }
   }
   return recalcLine({ cells, product }, "", context, slab);

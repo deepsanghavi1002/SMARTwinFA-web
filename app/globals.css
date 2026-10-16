@@ -1190,7 +1190,6 @@
 .ent-side{position:absolute;width:55px;height:20px;display:flex;align-items:center;justify-content:center;font-weight:700;text-decoration:underline;background:#fff0f5;border:1px solid #d8b4c8;border-radius:3px;color:#5b1a3a}
 .ent-balance{position:absolute;width:223px;height:22px;display:flex;align-items:center;padding:0 6px;font-family:"Courier New",monospace;background:#e8e8fa;border:1px solid #b8b8e0}
 .ent-day{position:absolute;width:30px;height:20px;display:flex;align-items:center;justify-content:center;font-weight:700;background:#e8e8fa;border-radius:3px;font-size:11px}
-.ent-address{position:absolute;margin:0;padding:2px 4px;list-style:none;overflow:auto;background:#ececfb;border:1px solid #b8b8e0;border-radius:3px;font-family:"Courier New",monospace;font-size:11px;white-space:pre;line-height:15px}
 .ent-tabs{position:absolute;left:0;right:0;min-width:1023px;height:413px}
 .ent-tab-strip{display:flex;gap:2px;height:18px;padding-left:2px}
 .ent-tab-strip button{height:18px;padding:0 12px;border:1px solid #7fa6d6;border-bottom:0;border-radius:4px 4px 0 0;background:#d6e4f5;font:inherit;font-size:11px;font-weight:700;color:#16365f;cursor:pointer}
@@ -1575,3 +1574,67 @@
 .ent-grid tr.ent-grid-current td{box-shadow:inset 0 0 0 1px #4cc3ee}
 .ent-grid:focus tr.ent-grid-current td{background:#bfeeff}
 .ent-grid td mark.mp-found{padding:0;border-radius:2px;background:#ffd23f;color:#1b1b1b;font-weight:700}
+
+/* Entry: party address picker, product-type filter, grid watermarks */
+.ent-filter{position:absolute;z-index:31;display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f5fffa;border:2px solid #1f64b8;border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+.ent-filter label{font-weight:700;white-space:nowrap}
+.ent-filter .mp-combo{min-width:240px}
+.ent-watermark{position:absolute;z-index:1;display:flex;align-items:center;justify-content:center;padding-top:20px;box-sizing:border-box;pointer-events:none;overflow:hidden;font-size:34px;font-weight:800;letter-spacing:2px;color:rgba(31,100,184,.144);white-space:nowrap;user-select:none}
+.ent-scroll{overflow:hidden}
+/* Entry: the party's address box - label / value pairs that wrap, no sideways scroll */
+.ent-address{position:absolute;margin:0;padding:3px 5px;display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px 10px;overflow-x:hidden;overflow-y:auto;background:#fff;border:1px solid #9cb9e0;border-radius:6px;box-shadow:inset 0 1px 2px rgba(31,100,184,.08);font-size:11px;line-height:14px}
+.ent-addr-item{display:flex;align-items:baseline;gap:5px;min-width:0;max-width:100%;padding:0 2px;border-bottom:1px dotted #cfdcee}
+.ent-addr-item.ent-addr-wide{flex:1 1 100%}
+.ent-addr-item dt{flex:none;color:#59708f;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap}
+.ent-addr-item dt::after{content:":"}
+.ent-addr-item dd{margin:0;min-width:0;color:#16365f;font-weight:600;overflow-wrap:anywhere}
+.ent-addrpick-back{position:absolute;inset:0;z-index:40;background:rgba(20,40,80,.22)}
+.ent-addrpick-back .mp-help td:first-child{text-align:center;color:#1a8a3a;font-weight:700}
+/* Help windows: the F1 (master details) hint draws the eye - an amber key cap that pulses a few times when the help opens */
+.mp-help-f1{display:inline-flex;align-items:center;gap:5px;margin:0 8px;padding:1px 8px 1px 2px;border-radius:11px;background:#fff3c4;border:1px solid #d6a400;color:#5b4300;font:600 11px/16px inherit;white-space:nowrap;animation:mp-f1-pulse 1.1s ease-in-out 4}
+.mp-help-f1 b{padding:0 6px;border-radius:9px;background:#d6a400;color:#fff;font-weight:800}
+@keyframes mp-f1-pulse{0%,100%{box-shadow:0 0 0 0 rgba(214,164,0,.0)}50%{box-shadow:0 0 0 5px rgba(214,164,0,.45)}}
+@media (prefers-reduced-motion:reduce){.mp-help-f1{animation:none}}
+/* Column filter lists sit inside a coloured heading: their own text colour, not the heading's white */
+.mp-filter{color:#10233d}
+.mp-filter li label,.mp-filter-value{color:#10233d}
+.ent-find td mark.mp-found{background:#ffe27a;color:#1b1b1b}
+/* E-Way Bill tab: the grid library's list cell, in a box */
+.ent-eway .ent-box .ent-combo-cell{width:100%;height:22px;display:flex;align-items:center;justify-content:space-between;padding:0 4px;border:1px solid #8fb0d8;background:#fff;font:inherit;text-align:left;cursor:pointer}
+.ent-eway .ent-box .ent-combo-cell:focus{outline:2px solid #1f64b8;outline-offset:-2px}
+.ent-eway .ent-box .ent-combo-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ent-eway .ent-box .mp-editor-wrap{display:flex;align-items:center;width:100%;gap:2px}
+.ent-eway .ent-box .mp-editor-wrap .mp-editor{flex:1;min-width:0;height:22px;border:1px solid #8fb0d8;background:#fff;padding:0 4px;font:inherit}
+/* Find / Edit and every help: filter list text is dark on white whatever the coloured heading it sits in */
+.ent-find .mp-filter,.ent-find .mp-filter *,.mp-help .mp-filter,.mp-help .mp-filter *{color:#10233d}
+.ent-find .mp-filter .mp-filter-count,.ent-find .mp-filter .mp-filter-tip,.mp-help .mp-filter .mp-filter-count,.mp-help .mp-filter .mp-filter-tip{color:#4a5f78}
+.ent-find .mp-filter-value[aria-checked="true"] .mp-filter-box,.mp-help .mp-filter-value[aria-checked="true"] .mp-filter-box{color:#fff}
+.ent-find .mp-filter-actions button,.mp-help .mp-filter-actions button{color:#10233d}
+.ent-find th .ent-sortable{cursor:pointer}
+.ent-find th .ent-sortable:hover{text-decoration:underline}
+.ent-find th .ent-sort-mark{font-size:10px}
+.ent-find th button.ent-sortable{padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:inherit}
+.ent-find-foot .ent-all-fields{height:22px;padding:0 10px}
+.ent-find-foot .ent-all-fields.ent-all-on{box-shadow:inset 0 0 0 2px #ffb400}
+/* Find / Edit headings: the filter arrow is always at the right edge and the heading text (left or right aligned) ends a few pixels before it */
+.ent-find th{padding-right:20px}
+.ent-find th .ent-th-text{max-width:100%}
+.ent-find th .mp-filter-button{position:absolute;right:3px;top:50%;transform:translateY(-50%);z-index:3}
+/* Invoice Print: format choice and the bill preview */
+.ent-print-back{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:rgba(10,30,60,.45)}
+.ent-print-choose{width:360px;display:grid;gap:8px;padding:12px;border:2px solid #1f64b8;border-radius:6px;background:#f5fffa;box-shadow:0 8px 28px rgba(0,0,0,.4)}
+.ent-print-title,.ent-print-bar{cursor:move}
+.ent-print-title{display:flex;align-items:center;gap:6px;font-weight:700;color:#16365f}
+.ent-print-option{display:grid;gap:2px;padding:8px 10px;border:1px solid #8fb0d8;border-radius:5px;background:#fff;text-align:left;font:inherit;cursor:pointer}
+.ent-print-option b{color:#1f64b8;font-size:14px}
+.ent-print-option span{color:#59708f;font-size:11px}
+.ent-print-option:focus-visible,.ent-print-option:hover:not(:disabled){outline:2px solid #1f64b8;background:#eef5ff}
+.ent-print-option:disabled{opacity:.55;cursor:not-allowed}
+.ent-print-note{color:#16365f;font-size:11px}
+.ent-print-error{color:#b3261e;font-weight:700}
+.ent-print-actions{display:flex;justify-content:flex-end}
+.ent-print-preview{width:min(900px,96vw);height:min(94vh,1100px);display:grid;grid-template-rows:auto minmax(0,1fr);border:2px solid #1f64b8;border-radius:6px;background:#dfe6ef;box-shadow:0 8px 28px rgba(0,0,0,.4);overflow:hidden}
+.ent-print-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(#5d8fd0,#3c6fb3);color:#fff}
+.ent-print-bar b{margin-right:auto}
+.ent-print-sheet{width:100%;height:100%;border:0;background:#fff}
+.ent-print-preview:active .ent-print-sheet{pointer-events:none}

@@ -28,7 +28,7 @@ export function focusEntryCell(root: ParentNode | null | undefined, cellId: stri
  * letter typed on it opens the searchable list). No clear (cancel) button: Ctrl+Del still empties
  * a figure. Enter is the screen's (it moves on); `onKeys` sees every other key first.
  */
-export function EntryCell({ kind, cellId, value, onChange, tools, ariaLabel, align = "left", rules = NO_NUMBER_RULES, options, positiveInteger = false, optional = false, onEnter, onKeys }: {
+export function EntryCell({ kind, cellId, value, onChange, tools, ariaLabel, align = "left", rules = NO_NUMBER_RULES, options, positiveInteger = false, optional = false, clearable = false, onEnter, onKeys }: {
   kind: CellKind;
   /** data-cell: how the screen finds the cell to move to it. */
   cellId: string;
@@ -43,6 +43,8 @@ export function EntryCell({ kind, cellId, value, onChange, tools, ariaLabel, ali
   positiveInteger?: boolean;
   /** A date cell that may stay empty (an addon date that is not compulsory). */
   optional?: boolean;
+  /** A figure with the clear (cancel) button after the calculator (the E-Way distance); the grids leave it out. */
+  clearable?: boolean;
   onEnter: () => void;
   onKeys?: (event: ReactKeyboardEvent<HTMLElement>) => boolean;
 }) {
@@ -132,6 +134,7 @@ export function EntryCell({ kind, cellId, value, onChange, tools, ariaLabel, ali
       <input
         className="mp-editor ent-cell-input"
         data-cell={cellId}
+        data-own-alt-keys={kind === "number" ? "c" : undefined}
         aria-label={ariaLabel}
         inputMode={kind === "number" || positiveInteger ? "decimal" : undefined}
         style={{ textAlign: align }}
@@ -146,7 +149,7 @@ export function EntryCell({ kind, cellId, value, onChange, tools, ariaLabel, ali
           if (event.key === "Enter") { event.preventDefault(); onEnter(); }
         }}
       />
-      {kind === "number" && tools.buttons("number", value, set, rules, true)}
+      {kind === "number" && tools.buttons("number", value, set, rules, !clearable)}
     </span>
   );
 }

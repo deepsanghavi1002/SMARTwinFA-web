@@ -5,7 +5,7 @@ import type { CSSProperties, FocusEvent as ReactFocusEvent, KeyboardEvent as Rea
 import { useStartupSelection } from "../startup/StartupGate";
 import { formatDesktopDate, parseDesktopDate } from "../../lib/master-program/legacy";
 import { fixed, toNumber } from "../../lib/entry/calc";
-import type { BookScreen, EntryOption, HelpList as HelpData, InvoiceControl, InvoiceDefinition, PartyDetails, ProductChoice, RestoredEntry, SeriesDefaults, SlabRow } from "../../lib/entry/types";
+import type { BookScreen, EntryColumn, EntryOption, HelpList as HelpData, InvoiceControl, InvoiceDefinition, PartyDetails, ProductChoice, RestoredEntry, SeriesDefaults, SlabRow } from "../../lib/entry/types";
 import type { HeaderField, HeaderProblem } from "../../lib/entry/checks";
 import type { SaveReport } from "../../lib/entry/save";
 import { entryCall } from "./api";
@@ -33,6 +33,11 @@ import type { VoucherLine } from "./VoucherGrid";
 import { EntryCell, focusEntryCell } from "./EntryCell";
 import { properHeading } from "../../lib/master-program/heading";
 import { SideGrid } from "./SideGrid";
+import { InvoicePrint } from "./InvoicePrint";
+import { standardBillHtml } from "../../lib/entry/billHtml";
+import type { Bill } from "../../lib/entry/billHtml";
+import { AddressPick } from "./AddressPick";
+import { addressFields } from "./addressLines";
 
 /**
  * Comman_Entry (Entry.cs): the TRANSACTION > Invoice screen. Header boxes sit where entry_control
@@ -78,6 +83,12 @@ const PARTY_WIDTH = 427;
 const PARTY_RIGHT = 8;
 /** Gap between the slab and addon grids: two scroll bars. */
 const SIDE_GAP = 34;
+/** The form's least width (globals.css .ent-form min-width). */
+const FORM_MIN_WIDTH = 1130;
+/** A whole, positive figure (the E-Way distance in km). */
+const WHOLE_NUMBER_RULES = { decimals: 0, positiveOnly: true, rangeFrom: 0, rangeUpto: 0 };
+/** GST E-Way Bill start (desktop PublicVariable.EWAY_Bill_Date). */
+const EWAY_START = new Date(2018, 3, 1);
 const HELP_ROWS = 12;
 /** The product help shows 9 entries at a time, so it stays on the screen under the product grid. */
 const PRODUCT_HELP_ROWS = 9;
@@ -167,7 +178,18 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [productText, setProductText] = useState<{ row: number; text: string } | null>(null);
   /** The product row whose Product cell the product help belongs to. */
   const [productRow, setProductRow] = useState<number | null>(null);
+  /** The party whose addresses are being picked from (Display_Address: a party with several addresses), else null. */
+  const [addressPick, setAddressPick] = useState<PartyDetails | null>(null);
+  /** cmb_ProdFilter: the product-type choice the product help is filtered by, and the row it is being asked for. */
+  const [prodFilter, setProdFilter] = useState<EntryOption | null>(null);
+  const [filterAsk, setFilterAsk] = useState<number | null>(null);
+  const filterAsked = useRef<number | null>(null);
   const [preview, setPreview] = useState<HelpData | null>(null);
+  /** Find / Edit with every field of each entry: read only when "All fields" is pressed; shown while allFields is on. */
+  const [previewAll, setPreviewAll] = useState<HelpData | null>(null);
+  const [allFields, setAllFields] = useState(false);
+  /** The Print button: the format choice and the bill preview are open. */
+  const [printing, setPrinting] = useState(false);
   /** The entry opened from Find / Edit (its unique key), or null for a new entry. */
   const [restored, setRestored] = useState<number | null>(null);
   const [logView, setLogView] = useState<EntryLogData | null>(null);
@@ -228,9 +250,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setVoucherRow(null);
     setParty(null);
     setAddon({});
+    setAddressPick(null);
+    setFilterAsk(null);
+    filterAsked.current = null;
     setHelpKind(null);
     setProductText(null);
-    setPreview(null);
+    setPreview(null); setPreviewAll(null); setAllFields(false);
     setRestored(null);
     setTab("all");
   }, []);
@@ -277,7 +302,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // ---- Cmb_Series_Leave: another series has its own last date and number
   const chooseSeries = useCallback(async (series: string) => {
     setValues((current) => ({ ...current, cmb_series: series }));
-    setPreview(null);
+    setPreview(null); setPreviewAll(null); setAllFields(false);
     if (!register) return;
     try {
       const body = await call<{ defaults: SeriesDefaults }>("series", { firstCombo: register, series });
@@ -400,10 +425,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     // The main column's heading in capitals, the others in Proper Case.
     const columns = help.columns.map((column) => ({ ...column, caption: column.key === main ? column.caption.toUpperCase() : properHeading(column.caption) }));
     const needle = typed.trim().toUpperCase();
-    if (needle === "") return { ...help, columns };
-    const rows = help.rows.filter((row) => (row[main] ?? "").trim().toUpperCase().startsWith(needle));
+    // cmb_ProdFilter: only the products of the chosen type.
+    const byType = helpKind === "product" && help.filter && prodFilter ? help.rows.filter((row) => (row.pg_filter ?? "").trim() === prodFilter.text) : help.rows;
+    if (needle === "") return byType === help.rows ? { ...help, columns } : { ...help, columns, rows: byType, total: `${help.total} · ${byType.length} of type ${prodFilter?.text}` };
+    const rows = byType.filter((row) => (row[main] ?? "").trim().toUpperCase().startsWith(needle));
     return { ...help, columns, rows, total: `${help.total} · ${rows.length} found` };
-  }, [helpKind, accountHelp, productHelp, typed]);
+  }, [helpKind, accountHelp, productHelp, typed, prodFilter]);
   // Each help keeps its own column filters and sort (useHelpView); the list on screen is the one Enter takes from.
   const accountView = useHelpView(helpKind === "account" ? typedHelp : null, helpCell);
   const productView = useHelpView(helpKind === "product" ? typedHelp : null, helpCell);
@@ -489,6 +516,31 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     return false;
   };
 
+  /** The party (and its address) settled: the keyboard goes to the Product of the next free row (its help shows), else the next box. */
+  const afterParty = useCallback(() => {
+    const freeRow = filledLines(lines).length;
+    setTimeout(() => {
+      if (!formRef.current || !partyRef.current) return;
+      if (book?.inventory && focusEntryCell(formRef.current, `${freeRow}:prod_key`)) return;
+      moveOn(formRef.current, partyRef.current);
+    }, 0);
+  }, [book, lines]);
+  /** The address picked (null: Esc, the first address stays): a party with another address than the first shows its Ship to lines. */
+  const pickAddress = async (id: number | null) => {
+    const pending = addressPick;
+    setAddressPick(null);
+    if (!pending) return;
+    if (id !== null && id !== pending.addressId && register) {
+      try {
+        const body = await call<{ party: PartyDetails }>("party", { firstCombo: register, code: pending.code, date: values.dtp_date ?? "", addressId: id });
+        setParty(body.party);
+      } catch (error) {
+        await failed(error);
+      }
+    }
+    if (id === null) partyRef.current?.focus(); else afterParty();
+  };
+
   // ---- Tbx_PartyName_Leave: address, addons, pending bills, and the tax group the party's state gives
   const choosePartyRow = useCallback(async (row: Readonly<Record<string, string>> | undefined) => {
     if (!row || !register || !book) return;
@@ -514,19 +566,15 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setParty(next);
       setValues((current) => ({ ...current, tbx_partyname: next.name, tbx_credit_days: current.tbx_credit_days !== undefined ? next.creditDays : current.tbx_credit_days }));
       setAddon(Object.fromEntries(next.addon.map((item) => [item.key, item.value])));
-      // The party chosen: the keyboard goes to the Product of the next free row (its help shows), else the next box.
-      const freeRow = filledLines(lines).length;
-      setTimeout(() => {
-        if (!formRef.current || !partyRef.current) return;
-        if (book.inventory && focusEntryCell(formRef.current, `${freeRow}:prod_key`)) return;
-        moveOn(formRef.current, partyRef.current);
-      }, 0);
+      // Several addresses: the operator picks the one first (c1help_Address); the keyboard moves on after it.
+      if (next.addresses.length > 1) { setAddressPick(next); return; }
+      afterParty();
     } catch (error) {
       await failed(error);
     } finally {
       setBusy("");
     }
-  }, [register, book, call, checkHeader, values.dtp_date, lines, loadBook, say, failed]);
+  }, [register, book, call, checkHeader, values.dtp_date, lines, loadBook, say, failed, afterParty]);
 
   const partyKeys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (helpKeys(event, "account", (row) => void choosePartyRow(row))) return;
@@ -630,10 +678,13 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     try {
       const body = await call<{ product: ProductChoice }>("product", { firstCombo: register, prodKey: Number(helpRow.prod_key), acCode: party?.code ?? 0, date: values.dtp_date ?? "" });
       const product = { ...body.product, stock1: helpRow.stock_1 ?? body.product.stock1, stock2: helpRow.stock_2 ?? body.product.stock2 };
+      filterAsked.current = null;
       setLines((current) => {
         const copy = [...current];
         while (copy.length <= row) copy.push({ cells: {}, product: null });
-        copy[row] = chooseProduct(copy[row], product, context, slab);
+        const chosen = chooseProduct(copy[row], product, context, slab);
+        // IL_DIV: the product type the row was picked under is saved with it.
+        copy[row] = prodFilter && productHelp?.filter ? { ...chosen, cells: { ...chosen.cells, il_div: prodFilter.value } } : chosen;
         return copy;
       });
       setProductText(null);
@@ -645,7 +696,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     } finally {
       setBusy("");
     }
-  }, [register, context, call, party, values.dtp_date, slab, productColumns, failed, lines, book]);
+  }, [register, context, call, party, values.dtp_date, slab, productColumns, failed, lines, book, prodFilter, productHelp]);
 
   /**
    * F5 in the product help (or its Product cell): the products are over. A row with a product but
@@ -667,7 +718,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setHelpKind(null);
     const form = formRef.current;
     if (focusFirstCell(form?.querySelector("[aria-label=Slab]")) || focusFirstCell(form?.querySelector("[aria-label=Addon]"))) return;
-    form?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus();
+    afterGrids();
   };
 
   const productKeys = (event: ReactKeyboardEvent<HTMLInputElement>, row: number): boolean => {
@@ -688,6 +739,26 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (productText && productText.row !== row) setProductText(null);
     setHelpAt(0);
     // The keyboard goes into the product help (it is read already); Esc brings it back to this cell.
+    // A book with a product filter (PGFILT) asks the product type first, for each new row.
+    void openHelp("product").then((help) => {
+      if (!help) return;
+      if (help.filter && help.filter.options.length > 0 && !lines[row]?.product && filterAsked.current !== row) {
+        filterAsked.current = row;
+        setHelpKind(null);
+        setFilterAsk(row);
+        return;
+      }
+      setTimeout(enterHelp, 30);
+    });
+  };
+  /** cmb_ProdFilter chosen (null: Esc, all products): the product help opens on that type. */
+  const chooseFilter = (option: EntryOption | null) => {
+    const row = filterAsk;
+    setFilterAsk(null);
+    if (option) setProdFilter(option);
+    if (row === null) return;
+    setProductRow(row);
+    setHelpAt(0);
     void openHelp("product").then((help) => { if (help) setTimeout(enterHelp, 30); });
   };
 
@@ -747,6 +818,24 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setBusy("");
     }
   }, [preview, register, call, values.cmb_series, failed]);
+  /** "All fields": the list with the slab amounts, addons and every product line of each entry (one server read, only when asked). */
+  const toggleAllFields = async () => {
+    if (allFields) { setAllFields(false); return; }
+    if (!previewAll) {
+      if (!register) return;
+      setBusy("All fields");
+      try {
+        const body = await call<{ preview: HelpData }>("preview-all", { firstCombo: register, series: values.cmb_series ?? "" });
+        setPreviewAll(body.preview);
+      } catch (error) {
+        await failed(error);
+        return;
+      } finally {
+        setBusy("");
+      }
+    }
+    setAllFields(true);
+  };
 
   // ---- C1Help_EntryPreview_DoubleClick → Restore_Entry: the entry opens, ready to edit
   const openEntry = useCallback(async (row: Readonly<Record<string, string>>) => {
@@ -770,7 +859,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         next[control.name] = option ? option.text : saved;
       }
       let partyDetails: PartyDetails | null = null;
-      if (entry.partyCode > 0 && screenBook.party) partyDetails = (await call<{ party: PartyDetails }>("party", { firstCombo: register, code: entry.partyCode, date: next.dtp_date ?? "" })).party;
+      if (entry.partyCode > 0 && screenBook.party) partyDetails = (await call<{ party: PartyDetails }>("party", { firstCombo: register, code: entry.partyCode, date: next.dtp_date ?? "", addressId: entry.addressId })).party;
       // The slab rows' own % and amounts (the item-wise ones come from the product rows).
       const slabRows = screenBook.slabRows.map((slabRow) => {
         const saved = entry.slab[slabRow.key];
@@ -793,6 +882,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
             : toNumber(saved.perc) !== 0 ? saved.perc : "";
           cells[`${slabRow.short}_amt`] = fixed(toNumber(saved.amount), 2);
         }
+        // The quantity the bill already holds counts as stock of its own while it is edited (the stock check).
+        cells._orig_qty = cells.quantity ?? "";
         return { cells, product: line.product };
       });
       blankEntry();
@@ -868,6 +959,13 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     const form = formRef.current;
     if (!form) return;
     const enter = (event: KeyboardEvent) => {
+      // F5 is the entry's key (the products are over), never the browser's reload.
+      if (event.key === "F5") { event.preventDefault(); return; }
+      // The E-Way Bill tab's typed boxes: Enter goes to the next box.
+      {
+        const box = event.target as HTMLElement;
+        if (event.key === "Enter" && box.tagName === "INPUT" && box.closest(".ent-eway") && !box.hasAttribute("data-cell")) { event.preventDefault(); nextEway(box); return; }
+      }
       if (event.key !== "Enter" || event.defaultPrevented) return;
       const target = event.target as HTMLElement;
       const save = () => screenRef.current?.querySelector<HTMLElement>('[data-hotkey="s"]');
@@ -923,9 +1021,9 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         commit: true,
         save: {
           values,
-          party: { code: party?.code ?? 0 },
+          party: { code: party?.code ?? 0, addressId: party?.addressId ?? 1 },
           lines: filledLines(lines).map((line) => ({ prodKey: line.product!.key, cells: line.cells })),
-          slab: slab.map((row) => ({ perc: row.perc, amount: row.amount })),
+          slab: slab.map((row) => ({ perc: row.perc, amount: row.amount, manual: row.manual === true })),
           addon,
           taxGroup: book.taxGroup,
           finalAmount: fixed(slabResult.final, 2),
@@ -937,7 +1035,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       const list = [...counts].map(([table, count]) => `${table} ${count}`).join(", ");
       if (reply.committed) {
         windowLink.changed();
-        await say(`${reply.report.summary.fullDocNo} saved.  Amount ${amountText(String(reply.report.summary.finalAmount), 2)}`, "Entry Saved");
+        await say(`${reply.report.summary.renumberedFrom ? `Number ${reply.report.summary.renumberedFrom} was taken by another user meanwhile.\n` : ""}${reply.report.summary.fullDocNo} saved.  Amount ${amountText(String(reply.report.summary.finalAmount), 2)}`, "Entry Saved");
         blankEntry();
         setBook(null);
         setValues({});
@@ -1019,13 +1117,20 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
       <label key={`${item.name}-label`} className={`ent-label ${item.compulsory ? "ent-compulsory" : ""}`} style={labelStyle} title={item.tooltip || undefined} htmlFor={`ent-${item.name}`}>{item.label}</label>,
       <span key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})} onBlur={(event) => leaveBox(event, item.name)}>
         {item.type === "CB" ? (
-          item.name === "cmb_series" ? (
+          item.place === "E" ? (
+            <EntryCell kind="combo" cellId={`eway:${item.name}`} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextEway(document.activeElement)} />
+          ) : item.name === "cmb_series" ? (
             <SearchCombo ariaLabel={item.label} options={seriesList(item)} value={seriesList(item).find((option) => option.text === value) ?? null} onChoose={(option) => void chooseSeries(option.text)} />
           ) : (
-            <select id={`ent-${item.name}`} className="mp-control" aria-label={item.label} value={value} onChange={(event) => (item.name === "cmb_side" ? chooseSide(event.target.value) : set(event.target.value))}>
-              {!item.options.some((option) => option.text === value) && value !== "" && <option value={value}>{value}</option>}
-              {item.options.map((option) => <option key={`${option.value}-${option.text}`} value={option.text}>{option.text}</option>)}
-            </select>
+            <SearchCombo
+              ariaLabel={item.label}
+              options={item.options}
+              value={item.options.find((option) => option.text === value) ?? (value !== "" ? { text: value, value } : null)}
+              onChoose={(option) => {
+                if (item.name === "cmb_side") chooseSide(option.text); else set(option.text);
+                if (item.place === "E") setTimeout(() => nextEway(document.activeElement), 0);
+              }}
+            />
           )
         ) : item.type === "DT" ? (
           <DateField
@@ -1062,6 +1167,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           />
         ) : item.name === "tbx_narration" ? (
           <textarea id={`ent-${item.name}`} className="mp-control ent-narration" aria-label={item.label} maxLength={item.maxLength > 0 ? item.maxLength : undefined} value={value} onChange={(event) => set(event.target.value.replace(/'/g, ""))} />
+        ) : item.name === "tbx_distancekm" ? (
+          <EntryCell kind="number" positiveInteger cellId="eway:distance" value={value} onChange={set} tools={tools} ariaLabel={item.label} rules={WHOLE_NUMBER_RULES} align="right" clearable onEnter={() => nextEway(document.activeElement)} />
         ) : item.name === "tbx_credit_days" ? (
           <input id={`ent-${item.name}`} className="mp-control ent-number" aria-label={item.label} inputMode="numeric" maxLength={item.maxLength > 0 ? item.maxLength : 4} value={value}
             title={`Credit days: 0 to ${maxCreditDays}`} onFocus={(event) => event.target.select()}
@@ -1103,10 +1210,12 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const next = cells[at + 1];
     if (next) { focusEntryCell(box, next.getAttribute("data-cell") ?? next.getAttribute("data-cell-wrap") ?? ""); return; }
     if (grid === "Slab" && focusFirstCell(form?.querySelector("[aria-label=Addon]"))) return;
-    form?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus();
+    afterGrids();
   };
   /** The last round-off row works its amount out (slab_calc A, or B with no decimals): nothing to type. */
-  const roundsOff = (row: number) => { const item = slab[row]; return Boolean(item) && row === slab.length - 1 && item.mathOp === "U" && (item.calc === "A" || (item.calc === "B" && item.roundPlaces === 0)); };
+  const roundsOff = (row: number) => { const item = slab[row]; return Boolean(item) && row === slab.length - 1 && item.mathOp === "U" && item.calc === "A"; };
+  /** slab_calc B (auto + manual): the last row works the round-off out, the keyboard halts there, and a figure typed replaces it. */
+  const roundsAuto = (row: number) => { const item = slab[row]; return Boolean(item) && row === slab.length - 1 && item.mathOp === "U" && item.calc === "B" && item.roundPlaces === 0; };
   /** A slab row's own % is typed (a % row) or chosen (a tax row); its amount is typed where the row allows it. */
   /** C1dg_Slab_AfterEdit: the SGST (UTGST) tax chosen must be the CGST row's percentage. */
   const chooseSlabTax = async (row: number, perc: string) => {
@@ -1123,6 +1232,59 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     }
     setSlabRow(row, { perc });
   };
+  /** Enter in an E-Way Bill box: the next box of the tab; after the last, the narration. */
+  const nextEway = (from: Element | null) => {
+    const boxes = [...(formRef.current?.querySelectorAll<HTMLElement>(".ent-eway input:not([disabled]), .ent-eway button[data-cell]") ?? [])].filter((box) => box.offsetParent !== null);
+    const at = boxes.findIndex((box) => box === from || box.contains(from));
+    const next = boxes[at + 1];
+    if (at >= 0 && next) { next.focus(); return; }
+    setTab("all");
+    setTimeout(() => formRef.current?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus(), 0);
+  };
+  /**
+   * After the last grid: a sale whose final amount is above the E-Way limit (within the company state, or out of it) on or after the E-Way start date
+   * takes the E-Way Bill tab, the keyboard on its first box; any other entry goes on to the narration (Invoice_Tab_EwayBill.Show()).
+   */
+  const afterGrids = () => {
+    const limit = party?.taxGroup === "G" ? def?.ewayLimits.within ?? 0 : party?.taxGroup === "I" ? def?.ewayLimits.out ?? 0 : 0;
+    const date = parseDesktopDate(values.dtp_date);
+    const due = Boolean(def?.tabs.eway && book?.stockNat === "L" && book.bookActual !== false && limit > 0 && slabResult.final > limit && date && date >= EWAY_START && !/^(LQTN-ORD|ORD-IN)$/i.test(register?.text ?? ""));
+    if (due) {
+      setTab("eway");
+      setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-eway input:not([disabled])")?.focus(), 60);
+      return;
+    }
+    formRef.current?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus();
+  };
+  /**
+   * Compulsory stock checking (C1dg_Inputdata_ValidateEdit): leaving Qty, a quantity above the product's stock is refused ("Quantity Greater than N not allowed")
+   * and put back to the stock; with no stock the quantity is cleared and the keyboard goes back to the Product. An opened bill counts what it already holds.
+   */
+  const stockLeave = async (row: number): Promise<boolean> => {
+    if (!book?.productRules.stockCheck) return true;
+    const line = lines[row];
+    if (!line?.product) return true;
+    const quantity = toNumber(line.cells.quantity);
+    const stock = toNumber(line.cells.stock_1);
+    const allowed = stock + toNumber(line.cells._orig_qty);
+    if (quantity <= allowed) return true;
+    await say(`Quantity Greater than ${fixed(stock, book.decimals.qty)} not allowed`, "Entry Warning");
+    if (allowed > 0) {
+      void editCell(row, "quantity", fixed(allowed, book.decimals.qty));
+      setTimeout(() => focusEntryCell(formRef.current, `${row}:quantity`), 30);
+    } else {
+      void editCell(row, "quantity", "");
+      setTimeout(() => focusEntryCell(formRef.current, `${row}:prod_key`), 30);
+    }
+    return false;
+  };
+  /** C1dg_Inputdata: an item-wise discount's amount cell opens (the keyboard stops there) while its % is left blank; with a % it is worked out. */
+  const itemAmountOpen = (column: EntryColumn, row: number): boolean | undefined => {
+    const lower = column.key.toLowerCase();
+    const item = slab.find((candidate) => candidate.itemWise && !candidate.master && `${candidate.short}_amt`.toLowerCase() === lower);
+    if (!item) return undefined;
+    return toNumber(lines[row]?.cells[item.short]) === 0;
+  };
   const slabCell = (row: number, key: string) => {
     const item = slab[row];
     const shown = slabGridRows[row];
@@ -1136,12 +1298,30 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     }
     const typedAmount = item.amountEditable && !item.itemWise && !roundsOff(row) && !(row === 0 && view?.inventory && item.calc !== "M") && !(toNumber(item.perc) > 0 && item.percEditable);
     if (key === "slab_amount" && typedAmount) {
-      return <EntryCell kind="number" cellId={cellId} value={item.amount === "0.00" ? "" : item.amount} align="right" rules={AMOUNT_RULES} tools={tools} ariaLabel={`${item.desc} amount`} onChange={(amount) => setSlabRow(row, { amount })} onEnter={onEnter} />;
+      const auto = roundsAuto(row);
+      const shownAmount = auto && !item.manual ? fixed(slabResult.amounts[row] ?? 0, 2) : item.amount === "0.00" ? "" : item.amount;
+      return <EntryCell kind="number" cellId={cellId} value={shownAmount} align="right" rules={AMOUNT_RULES} tools={tools} ariaLabel={`${item.desc} amount`} onChange={(amount) => setSlabRow(row, auto ? { amount, manual: amount.trim() !== "" } : { amount })} onEnter={onEnter} />;
     }
     const value = shown[key as keyof typeof shown] ?? "";
     return key === "slab_amount" || key === "s_lastot" ? amountText(value, 2) : value;
   };
 
+  /** The window smaller than the form: the form shrinks to fit (down to 70%) instead of scrolling. */
+  const [fit, setFit] = useState(1);
+  useEffect(() => {
+    const box = screenRef.current?.querySelector<HTMLElement>(".ent-scroll");
+    if (!box) return;
+    const measure = () => {
+      const width = (box.clientWidth - 12) / FORM_MIN_WIDTH;
+      const height = (box.clientHeight - 10) / (FORM_HEIGHT + 2);
+      const next = Math.max(0.7, Math.min(1, width, height));
+      setFit((current) => (Math.abs(current - next) < 0.005 ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, []);
   /** The part of the entry screen the operator can see (the form is wider than a small window): a help opens inside it, so the screen need not be scrolled to read it. */
   const [seen, setSeen] = useState<{ left: number; width: number } | null>(null);
   useEffect(() => {
@@ -1167,7 +1347,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
       {details && <MasterDetails details={details.data} kind={details.kind} onClose={closeDetails} />}
       {logView && <EntryLog log={logView} title={register?.text ?? title} onClose={() => setLogView(null)} />}
       <div className="ent-scroll">
-        <div ref={formRef} className="ent-form" style={{ height: FORM_HEIGHT }} role="group" aria-label={def?.caption || title}>
+        <div ref={formRef} className="ent-form" style={{ height: FORM_HEIGHT, ...(fit < 1 ? { zoom: fit } : {}) }} role="group" aria-label={def?.caption || title}>
           <div className="ent-head" role="group" aria-label={`${def?.caption || title} header`}>
             <label className="ent-label ent-register-label" style={{ left: 2, top: 6, width: 84 }} htmlFor="ent-register">{def?.firstCombo.label ?? "Register"}</label>
             <span className="ent-box ent-register" style={{ left: 86, top: 6, width: 317 }} id="ent-register">
@@ -1190,9 +1370,14 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
             {showParty && (
               <>
                 <span className="ent-label" style={{ right: PARTY_RIGHT + PARTY_WIDTH + 6, top: 28, width: 74 }}>Address</span>
-                <ul className="ent-address" style={{ right: PARTY_RIGHT, top: 28, width: PARTY_WIDTH, height: TAB_TOP - 32 }} aria-label="Party address" title="Closing balance, address, telephone, GST number, opening balance, credit days and limit">
-                  {(party?.address ?? []).map((line, index) => <li key={index}>{line}</li>)}
-                </ul>
+                <dl className="ent-address" style={{ right: PARTY_RIGHT, top: 28, width: PARTY_WIDTH, height: TAB_TOP - 32 }} aria-label="Party address" title={(party?.addresses.length ?? 0) > 1 ? "Double-click to choose another address of the party" : "Closing balance, address, telephone, GST number, opening balance, credit days and limit"} onDoubleClick={() => { if (book && party && party.addresses.length > 1) setAddressPick(party); }}>
+                  {addressFields(party?.address ?? []).map((item, index) => (
+                    <div key={index} className={`ent-addr-item ${item.value.length > 26 || /^(address|ship to|email id|emil id|website)$/i.test(item.label) ? "ent-addr-wide" : ""}`}>
+                      <dt>{item.label}</dt>
+                      <dd title={item.value}>{item.value}</dd>
+                    </div>
+                  ))}
+                </dl>
               </>
             )}
             {isRestored && <span className="ent-mode" style={{ left: 406, top: 28 }} title="An entry opened from Find / Edit">EDIT</span>}
@@ -1226,6 +1411,14 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
             </div>
           )}
 
+          {filterAsk !== null && productHelp?.filter && (
+            <div className="ent-filter" style={{ left: 5, top: TAB_TOP + 21 }} onKeyDownCapture={(event) => { if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); setFilterAsk(null); void endProducts(); return; } if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); chooseFilter(null); } }}>
+              <label>{properHeading(productHelp.filter.caption)}</label>
+              <SearchCombo ariaLabel={productHelp.filter.caption} options={productHelp.filter.options} value={prodFilter} focus reselect onChoose={(option) => chooseFilter(option)} />
+            </div>
+          )}
+          {addressPick && <AddressPick name={addressPick.name} rows={addressPick.addresses} current={addressPick.addressId} onChoose={(id) => void pickAddress(id)} onEscape={() => void pickAddress(null)} />}
+
           {view && (
             <div className="ent-tabs" style={{ top: TAB_TOP, height: PAGE_HEIGHT + 20 }} inert={!book}>
               <div className="ent-tab-strip" role="tablist">
@@ -1258,6 +1451,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                       />
                     ) : view.inventory ? (
                       <ProductGrid
+                        amountOpen={itemAmountOpen}
+                        beforeLeave={stockLeave}
                         columns={shownColumns}
                         frozen={view.product.frozen}
                         lines={lines}
@@ -1318,7 +1513,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 {tab === "outstanding" && (
                   <SideGrid label="Outstanding" style={{ left: 11, top: 15, width: 582, height: Math.min(249, PAGE_HEIGHT - 20) }} columns={view.grids.outstanding} rows={party?.outstanding ?? []} empty={party ? "No pending entries for this party" : "Choose the party first"} />
                 )}
-                {tab === "find" && <FindList preview={preview} style={{ left: 3, right: 3, top: 3, bottom: 3 }} onOpen={(row) => void openEntry(row)} />}
+                {tab === "find" && <FindList preview={allFields && previewAll ? previewAll : preview} allFields={allFields} onAllFields={() => void toggleAllFields()} style={{ left: 3, right: 3, top: 3, bottom: 3 }} onOpen={(row) => void openEntry(row)} />}
                 {tab === "eway" && <div className="ent-eway">{ewayControls.flatMap(control)}</div>}
               </div>
             </div>
@@ -1338,8 +1533,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         <button type="button" className="mp-btn mp-btn-green" data-hotkey="s" aria-keyshortcuts="Alt+S" disabled={!canSave} title="Save the invoice (checked on the server; written only when saving is switched on)" onClick={() => void saveEntry()}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="c" aria-keyshortcuts="Alt+C" onClick={() => void cancelEntry()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="d" aria-keyshortcuts="Alt+D" disabled={!isRestored} title="Delete the opened invoice" onClick={() => void deleteEntry()}><Icon name="clear" /><HotkeyLabel text="Delete" hotkey="d" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored} title="Printing an invoice is not ported yet" onClick={notPorted("Print")}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setHelpKind(null); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored} title="Print the opened invoice: Standard (bill preview with a Print button) or Special (later)" onClick={() => setPrinting(true)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll(null); setAllFields(false); setHelpKind(null); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!isRestored} title="Range print is not ported yet" onClick={notPorted("Range print")}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
         {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="Upload document is not ported yet" onClick={notPorted("Upload document")}><Icon name="image" />Upload Document</button>}
         {def?.buttons.einvoice && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="E-invoice is not ported yet" onClick={notPorted("E-invoice")}><Icon name="export" />E-Invoice</button>}
@@ -1351,6 +1546,12 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         </div>
         <button type="button" className="mp-btn mp-btn-red" data-hotkey="q" aria-keyshortcuts="Alt+Q" onClick={() => void quit()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
       </div>
+      {printing && restored !== null && register && (
+        <InvoicePrint
+          onClose={() => setPrinting(false)}
+          load={async () => standardBillHtml((await call<{ bill: Bill }>("bill", { firstCombo: register, uniqueKey: restored })).bill)}
+        />
+      )}
       {tools.popups}
     </div>
   );

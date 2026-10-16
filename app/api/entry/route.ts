@@ -8,6 +8,8 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { bookContext, entryPreview, loadBook, loadInvoice, partyDetails, partyHelp, seriesDefaults } from "@/lib/entry/invoice";
 import { headerProblems } from "@/lib/entry/checks";
 import { entryLog } from "@/lib/entry/log";
+import { entryAll } from "@/lib/entry/all";
+import { entryBill } from "@/lib/entry/bill";
 import { masterDetails } from "@/lib/entry/details";
 import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
@@ -61,6 +63,8 @@ async function saveEntry(body: Body, key: SessionKey, moduleName: string) {
       if (def.rights.restricted && !changing && !def.rights.add) throw new Error("Invoice Entry Add Rights Not Available For User");
       if (def.rights.restricted && changing && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
       if (!input || typeof input !== "object") throw new Error("The entry to save is missing");
+      // One save at a time, taken before the number is checked: a save waiting here then sees what the one before it committed.
+      if (commit) await client.query("SELECT pg_advisory_xact_lock(hashtext('smartwinfa-entry-save'))");
       const plan = await buildSave(loader, body.entryName, chosenRegister(def, body.firstCombo), input);
       const result = await runPlan(client, loader, plan, { commit });
       if (!commit) throw new DryRun(result);
@@ -150,7 +154,7 @@ export async function POST(request: Request) {
         case "party": {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
-          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20)), warnings: loader.warnings };
+          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0), warnings: loader.warnings };
         }
         case "product-help":
           return { help: await productHelp(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
@@ -197,6 +201,15 @@ export async function POST(request: Request) {
         }
         case "preview":
           return { preview: await entryPreview(loader, body.entryName, chosenRegister(def, body.firstCombo), String(body.series ?? "").slice(0, 40)), warnings: loader.warnings };
+        case "bill": {
+          // The standard bill of a saved entry (print preview).
+          const uniqueKey = Number(body.uniqueKey);
+          if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the entry first");
+          return { bill: await entryBill(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
+        }
+        case "preview-all":
+          // Find / Edit with every field of each entry: read only when the operator asks for it.
+          return { preview: await entryAll(loader, body.entryName, chosenRegister(def, body.firstCombo), String(body.series ?? "").slice(0, 40)), warnings: loader.warnings };
         default:
           throw new Error(`Unknown action ${body.action}`);
       }

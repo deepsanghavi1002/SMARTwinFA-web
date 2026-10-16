@@ -3,7 +3,7 @@ import { Loader } from "../master-program/load";
 import { formatDesktopDate, parseDesktopDate, toDecimal, toInt, toText } from "../master-program/legacy";
 import { SETUP_SCHEMA } from "../master-program/session";
 import { round, stockUnits, toNumber } from "./calc";
-import { bookContext, entryProperties, loadBook, partyDetails } from "./invoice";
+import { bookContext, entryProperties, loadBook, partyDetails, seriesDefaults } from "./invoice";
 import type { BookContext } from "./invoice";
 import { productChoice } from "./products";
 import { replaceEntryTokens } from "./values";
@@ -31,11 +31,11 @@ const text = (row: Row | undefined, name: string) => toText(field(row, name)).tr
 export type SaveInput = Readonly<{
   /** Header and foot box values by lowercase control name (cmb_series, dtp_date, tbx_number ...). */
   values: Readonly<Record<string, string>>;
-  party: Readonly<{ code: number }>;
+  party: Readonly<{ code: number; addressId?: number }>;
   /** The filled product rows: cells by product grid column. The product is looked up from prodKey. */
   lines: readonly Readonly<{ prodKey: number; cells: Readonly<Record<string, string>> }>[];
   /** The slab grid, one entry per slab row in grid order: the % (or tax text) and amount as typed. */
-  slab: readonly Readonly<{ perc: string; amount: string }>[];
+  slab: readonly Readonly<{ perc: string; amount: string; manual?: boolean }>[];
   /** Entry addon values by addon key (the addon grid under the slab). */
   addon: Readonly<Record<number, string>>;
   taxGroup: "G" | "I" | "V";
@@ -51,7 +51,7 @@ export type Statement =
   | Readonly<{ kind: "sql"; sql: string; label: string }>
   | Readonly<{ kind: "set"; key: "pkval_1" | "pkval_2" | "pkval_3"; value: number; ilLine?: number; label: string }>;
 
-export type SavePlan = Readonly<{ statements: Statement[]; presetKeys: Record<string, number>; summary: Readonly<{ fullDocNo: string; finalAmount: number; bookAmount: number; party: number }>; warnings: string[] }>;
+export type SavePlan = Readonly<{ statements: Statement[]; presetKeys: Record<string, number>; summary: Readonly<{ fullDocNo: string; finalAmount: number; bookAmount: number; party: number; renumberedFrom?: string }>; warnings: string[] }>;
 
 const KEY_COLUMN: Record<string, string> = {
   ledger: "led_key", ledger_ext: "ledext_key", ledger_post: "post_key", prod_ledger: "il_key", outclear: "out_key",
@@ -199,7 +199,7 @@ function sysLiteral(ctx: Ctx, name: string, grid?: { il?: Record<string, number 
     case "doc_no": return quote(ctx.number);
     case "exp_code": return "null";
     case "il_div": return grid?.il?.il_div !== undefined && Number(grid.il.il_div) > 0 ? String(grid.il.il_div) : "null";
-    case "address_id": return "1";
+    case "address_id": return String(ctx.input.party.addressId && ctx.input.party.addressId > 0 ? Math.trunc(ctx.input.party.addressId) : 1);
     case "machine_name": return quote("WEB");
     case "bn_docno": return quote(text(ctx.bookNumber, "bn_docno"));
     case "bn_docno1": return quote(text(ctx.bookNumber, "bn_docno1"));
@@ -380,12 +380,12 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   const entryId = toInt(field(await entryProperties(loader, entryName), "entry_key"));
 
   const series = (input.values.cmb_series ?? "").trim();
-  const number = (input.values.tbx_number ?? "").trim();
+  let number = (input.values.tbx_number ?? "").trim();
   const docDate = parseDesktopDate(input.values.dtp_date);
   if (series === "" || number === "" || !docDate) throw new Error("Series, date and number are needed to save");
   if (input.party.code <= 0 && screen.party) throw new Error("Choose the party before saving");
   const chlnDate = parseDesktopDate(input.values.dtp_chlndate) ?? docDate;
-  const fullDocNo = `${series}/${number}`;
+  let fullDocNo = `${series}/${number}`;
 
   // Edit: the opened invoice, found by its unique_key; a locked one (doc_lock Y) cannot be changed.
   const mode: "A" | "E" = (input.editKey ?? 0) > 0 ? "E" : "A";
@@ -394,14 +394,26 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   if (mode === "E" && text(editLed, "doc_lock").toUpperCase() === "Y") throw new Error("Current Entry Lock...  Changes Save not Allowed....");
   const ledKey = mode === "E" ? toInt(field(editLed, "led_key")) : 0;
   // Duplicate guard: Save's "select @pkval_1=COUNT(*) ... where full_docno" check (the invoice being changed does not count).
-  const existing = await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE full_docno = $1 AND doc_pos = 'A' AND book = $2 AND doc_date BETWEEN $3 AND $4 AND led_key <> $5`, [fullDocNo, book.values.bookKey, session.tarikh1, session.tarikh2, ledKey]);
-  if (existing) throw new Error(`${fullDocNo} is already saved`);
+  const taken = async (docNo: string) => Boolean(await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE full_docno = $1 AND doc_pos = 'A' AND book = $2 AND doc_date BETWEEN $3 AND $4 AND led_key <> $5`, [docNo, book.values.bookKey, session.tarikh1, session.tarikh2, ledKey]));
+  // The save lock is already held (the route takes it first), so what is read here is what every earlier save committed.
+  // A new invoice whose number was taken meanwhile (another user saved it first) is given the next number after the highest.
+  let renumberedFrom = "";
+  if (await taken(fullDocNo)) {
+    if (mode === "E") throw new Error(`${fullDocNo} is already saved`);
+    let candidate = (await seriesDefaults(loader, entryName, book, series, now, formatDesktopDate(docDate))).number;
+    for (let tries = 0; /^\d+$/.test(candidate) && tries < 100 && (await taken(`${series}/${candidate}`)); tries += 1) candidate = String(BigInt(candidate) + BigInt(1));
+    if (!/^\d+$/.test(candidate) || (await taken(`${series}/${candidate}`))) throw new Error(`${fullDocNo} is already saved`);
+    renumberedFrom = number;
+    number = candidate;
+    fullDocNo = `${series}/${number}`;
+    warnings.push(`Number ${renumberedFrom} was already saved by another entry: this invoice takes ${number}`);
+  }
 
   // The product rows: units, uom keys and the recalculated figures (the desktop's grid arithmetic).
   const uomRows = (await loader.readTable(`SELECT uom_key, uom_short, uom_roundup FROM |sys.db|prod_uom`)) ?? [];
   const uomKey = (short: string) => toInt(field(uomRows.find((uom) => text(uom, "uom_short") === short.trim()), "uom_key"));
   const uomRound = (key: number) => toInt(field(uomRows.find((uom) => toInt(field(uom, "uom_key")) === key), "uom_roundup"));
-  const slabRows: SlabRow[] = screen.slabRows.map((row, index) => ({ ...row, perc: input.slab[index]?.perc ?? row.perc, amount: input.slab[index]?.amount ?? row.amount }));
+  const slabRows: SlabRow[] = screen.slabRows.map((row, index) => ({ ...row, perc: input.slab[index]?.perc ?? row.perc, amount: input.slab[index]?.amount ?? row.amount, manual: input.slab[index]?.manual === true }));
   const columns = screen.product.columns.filter((column) => column.visible);
   const context = { book: screen, columns };
   const lines: Ctx["lines"] = [];
@@ -478,6 +490,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     const trn = stockUnits(toNumber(cells.quantity), toNumber(cells.factor), entryUom, rateUom, line.product.units, uomRound(rateUom), copyBundle ? (cells.bundle ?? "0") : null);
     for (const [key, value] of Object.entries(trn)) cells[key] = String(value);
     line.il = trn;
+    if (toNumber(cells.il_div) > 0) line.il.il_div = toNumber(cells.il_div);
   });
 
   if (session.flags.productAccountPosting) warnings.push("Product account posting (s_code, i_posting = Y) is not ported: product accounts are not posted");
@@ -609,7 +622,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     const registerLabel = properCaption(text(await entryProperties(loader, entryName), "first_label_caption"));
     statements.push(specialLogStatement({ ctx, mode, registerLabel, displayCells, party: party?.name ?? "", partyAddon: party?.addon ?? [], columns, slabRows, ledKey }));
   }
-  return { statements, presetKeys, summary: { fullDocNo, finalAmount, bookAmount: round(bookAmount, 2), party: input.party.code }, warnings };
+  return { statements, presetKeys, summary: { fullDocNo, finalAmount, bookAmount: round(bookAmount, 2), party: input.party.code, ...(renumberedFrom ? { renumberedFrom } : {}) }, warnings };
 }
 
 const properCaption = (value: string) => value.trim().toLowerCase().replace(/(^|[\s/(-])([a-z])/g, (_all, lead: string, letter: string) => lead + letter.toUpperCase());

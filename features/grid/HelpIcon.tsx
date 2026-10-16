@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
  * The icon in a help window's title (Lucide, ISC licence): users for the account help, package for the product help, file-text for
  * the Find / Edit list, circle-help for every other help. The title text picks the icon.
  */
-export type HelpIconName = "users" | "package" | "file-text" | "circle-help";
+export type HelpIconName = "users" | "package" | "file-text" | "map-pin" | "circle-help";
 
 const PATHS: Readonly<Record<HelpIconName, ReactNode>> = {
   users: (
@@ -32,6 +32,12 @@ const PATHS: Readonly<Record<HelpIconName, ReactNode>> = {
       <path d="M16 17H8" />
     </>
   ),
+  "map-pin": (
+    <>
+      <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" />
+      <circle cx="12" cy="10" r="3" />
+    </>
+  ),
   "circle-help": (
     <>
       <circle cx="12" cy="12" r="10" />
@@ -46,6 +52,7 @@ export function helpIconFor(title: string | undefined): HelpIconName {
   if (name.includes("ACCOUNT")) return "users";
   if (name.includes("PRODUCT")) return "package";
   if (name.includes("FIND")) return "file-text";
+  if (name.includes("ADDRESS")) return "map-pin";
   return "circle-help";
 }
 
