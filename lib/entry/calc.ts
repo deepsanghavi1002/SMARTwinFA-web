@@ -80,6 +80,8 @@ export type SlabCalcRow = Readonly<{
   amount: number;
   /** The % is worked into the amount (perc editable, or a tax list). */
   fromPercent: boolean;
+  /** The round-off amount was typed over the worked-out one (slab_calc B). */
+  manual?: boolean;
 }>;
 
 /**
@@ -131,7 +133,7 @@ export function slabRunTotal(rows: readonly SlabCalcRow[], productTotal: number,
       amount = round(base * row.percent / 100, 2);
     }
     const last = index === rows.length - 1;
-    if (row.mathOp === "U" && last && (row.calc === "A" || (row.calc === "B" && row.roundPlaces === 0))) {
+    if (row.mathOp === "U" && last && (row.calc === "A" || (row.calc === "B" && row.roundPlaces === 0 && !row.manual))) {
       const rounded = round(running, 0);
       amount = round(rounded - running, 2);
       running = rounded;

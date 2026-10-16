@@ -88,6 +88,7 @@ export async function loadInvoice(loader: Loader, entryName: string, menuShortNa
   const setup = session.setup;
   const rights = await readRights(loader.client, session, `Menu-${menuShortName}`);
   const einvoice = toText(setup.einvoice_req).toUpperCase() === "Y";
+  const limits = (await loader.readTable(`SELECT within_state_amt, out_state_amt FROM ${SETUP_SCHEMA}.setup LIMIT 1`))?.[0];
   return {
     entryId,
     entryName,
@@ -103,6 +104,7 @@ export async function loadInvoice(loader: Loader, entryName: string, menuShortNa
     },
     tabs: { outstanding: session.licence !== 17, eway: style === "I" && session.coGstReq && session.licence !== 17 },
     ewayDates: !einvoice,
+    ewayLimits: { within: toDecimal(field(limits, "within_state_amt")), out: toDecimal(field(limits, "out_state_amt")) },
     licence: session.licence,
     unsupported,
   };
@@ -533,6 +535,8 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     taxPercs,
     productRules: {
       noDuplicate: toText(session.setup.i_duplichk).toUpperCase() === "Y",
+      // bl_Stock_compulsory (i_stock C) on a stock-posting issue book of the invoice style; an AD user is exempt unless SMARTWINFA_STOCK_CHECK_FOR_ADMIN=true (testing).
+      stockCheck: toText(session.setup.i_stock).toUpperCase() === "C" && text(book.row, "stkm_stkpost").toUpperCase() === "Y" && book.stockNat === "L" && (session.userType !== "AD" || process.env.SMARTWINFA_STOCK_CHECK_FOR_ADMIN === "true"),
       message: !(book.values.bookKey === BOOK.SALE && book.values.bookActual) && book.values.stkmShort !== "CHLN-OUT" ? "" : para(session.setup, "item_para", "PROD_LOCK,") ? "lock" : para(session.setup, "item_para", "PROD_WARN,") ? "warn" : "",
     },
     uoms,
@@ -669,7 +673,7 @@ function clampToYear(loader: Loader, now: Date): string {
  * period D, M, P) pick a query_condition row; its query gives the last date, or the last number
  * to add one to; a system value gives today or a blank.
  */
-export async function seriesDefaults(loader: Loader, entryName: string, book: BookContext, series: string, now = new Date()): Promise<SeriesDefaults> {
+export async function seriesDefaults(loader: Loader, entryName: string, book: BookContext, series: string, now = new Date(), numberDate = ""): Promise<SeriesDefaults> {
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
   const values: EntryValues = { ...book.values, series };
@@ -705,7 +709,7 @@ export async function seriesDefaults(loader: Loader, entryName: string, book: Bo
   for (const condition of conditions.filter((row) => text(row, "qc_bn_fieldname").toLowerCase() === "bn_docdefa" && text(row, "qc_fieldvalue") === numberSetting)) {
     const query = text(condition, "qc_fullquery");
     if (query !== "") {
-      const last = toText(displayValue(Object.values((await loader.readTable(replaceEntryTokens(query, { ...values, docDate: date })))?.[0] ?? {})[0])).trim();
+      const last = toText(displayValue(Object.values((await loader.readTable(replaceEntryTokens(query, { ...values, docDate: numberDate || date })))?.[0] ?? {})[0])).trim();
       number = /^\d+$/.test(last) ? String(BigInt(last) + BigInt(1)) : text(bookNumber, "bn_start");
     } else if (text(condition, "qc_systemvalue").toLowerCase().includes("sys.blank")) number = "";
   }
@@ -768,7 +772,7 @@ async function firstRowValues(loader: Loader, sql: string): Promise<string[]> {
   }
 }
 
-export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = ""): Promise<PartyDetails> {
+export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = "", addressId = 0): Promise<PartyDetails> {
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
   const book = await bookContext(loader, entryName, firstCombo, { acCode: code });
@@ -807,7 +811,14 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
   const outRows = outEvent ? (await loader.readTable(replaceEntryTokens(`Select ${toText(field(outEvent, "fill_control_query"))}`, book.values))) ?? [] : [];
   const outstanding = outRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
   const { stateCode, taxGroup } = await partyTaxGroup(loader, code, docDate);
-  return { code, name: text(account, "name"), address, addon, creditDays: toText(displayValue(field(account, "credit_days"))), stateCode, taxGroup, outstanding };
+  // HELP_ADDRESS: all the party's addresses; another than the first adds "Ship to" lines (Display_Address).
+  const addressRows = (await loader.readTable(`SELECT address_id, address_1, address_2, address_3, city, pin_code, tel_no, mobile_no, contact FROM |sys.db|address WHERE code = $1 AND a_pos <> 'D' ORDER BY address_id`, [code])) ?? [];
+  const addresses = addressRows.map((row) => Object.fromEntries(["address_id", "address_1", "address_2", "address_3", "city", "pin_code", "tel_no", "mobile_no", "contact"].map((key) => [key, toText(displayValue(field(row, key))).trim()])));
+  const chosen = addresses.find((row) => Number(row.address_id) === addressId) ?? addresses[0];
+  const shown = chosen && Number(chosen.address_id) > 1
+    ? [...address.slice(0, 1), `Ship to   : ${chosen.address_1}`, `                : ${chosen.address_2}`, `                : ${chosen.address_3}    City+PIN : ${chosen.city}- ${chosen.pin_code}`, ...address.slice(1)]
+    : address;
+  return { code, name: text(account, "name"), address: shown, addresses, addressId: chosen ? Number(chosen.address_id) : 1, addon, creditDays: toText(displayValue(field(account, "credit_days"))), stateCode, taxGroup, outstanding };
 }
 
 /**

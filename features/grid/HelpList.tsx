@@ -207,7 +207,8 @@ export function HelpList({
             onKeyDown={searchKeys}
           />
         </span>
-        <span className="mp-help-tip">{f1 ? "F1 master details · " : ""}type to search the marked column · ← → change column · Ctrl+F search box</span>
+        {f1 && <kbd className="mp-help-f1" title="F1 opens the whole master record of the highlighted entry"><b>F1</b> Master details</kbd>}
+        <span className="mp-help-tip">type to search the marked column · ← → change column · Ctrl+F search box</span>
         {onClose && <button type="button" onClick={onClose} aria-label="Close help">×</button>}
       </div>
       {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}

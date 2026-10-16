@@ -28,6 +28,8 @@ export type InvoiceDefinition = Readonly<{
   tabs: Readonly<{ outstanding: boolean; eway: boolean }>;
   /** E-invoice companies hide the E-Way date and validity boxes. */
   ewayDates: boolean;
+  /** smart_setup.setup within_state_amt / out_state_amt: a sale above this amount (same state / other state) takes the E-Way Bill tab. */
+  ewayLimits: Readonly<{ within: number; out: number }>;
   licence: number;
   /** Setup the web cannot run yet, named so the screen can say so. */
   unsupported: readonly string[];
@@ -79,6 +81,8 @@ export type SlabRow = Readonly<{
   roundPlaces: number;
   /** slab_link: the row (index in this list) whose running total a linked row (UTGST) works on; -1 for none. */
   link: number;
+  /** The amount was typed over the worked-out one (a slab_calc B round-off row: auto, then the operator may change it). */
+  manual?: boolean;
 }>;
 
 /** Choosing a register (Cmb_FirstCombo_Leave): everything the screen shows for that book. */
@@ -119,7 +123,7 @@ export type BookScreen = Readonly<{
   /** tax_master's tax_perc by tax_rec, for the tax lists of the slab and the item-wise columns. */
   taxPercs: Readonly<Record<string, number>>;
   /** Product_Selection's company switches: I_DUPLICHK (a product once per bill) and item_para PROD_LOCK / PROD_WARN (the product's master message stops, or asks). */
-  productRules: Readonly<{ noDuplicate: boolean; message: "" | "lock" | "warn" }>;
+  productRules: Readonly<{ noDuplicate: boolean; message: "" | "lock" | "warn"; /** setup i_stock C on a stock-posting issue book: a quantity above the stock is refused (not for an AD user). */ stockCheck: boolean }>;
   /** The UOM list (PROD_UOM_LIST_SRT): short name and key. */
   uoms: readonly EntryOption[];
   /** Decimals of quantity, factor, rate and value (i_decqty, i_decfact, i_decrate, decamount). */
@@ -147,6 +151,8 @@ export type ProductChoice = Readonly<{
   taxRec: number;
   taxPerc: number;
   units: ProductUnits;
+  /** The party-rate hit's discount %, by the 1st..4th item-wise discount column it fills. */
+  slabPercs?: Readonly<Record<number, number>>;
 }>;
 
 /** An entry opened from Find / Edit (Restore_Entry). */
@@ -155,6 +161,8 @@ export type RestoredEntry = Readonly<{
   /** Header and foot control values by control name. */
   values: Readonly<Record<string, string>>;
   partyCode: number;
+  /** ledger.ent_address_id: the party address the entry was saved with (0 when none). */
+  addressId: number;
   taxGroup: "G" | "I" | "V";
   /** Product rows: cells by product grid column, and the product. */
   lines: readonly Readonly<{ cells: Readonly<Record<string, string>>; product: ProductChoice }>[];
@@ -176,6 +184,8 @@ export type HelpList = Readonly<{
   rows: readonly Readonly<Record<string, string>>[];
   frozen: number;
   total: string;
+  /** Product help only (item_para PGFILT): the list the help is filtered by before it is read (row.pg_filter holds each product's value). */
+  filter?: Readonly<{ caption: string; options: readonly EntryOption[] }>;
 }>;
 
 /** Leaving the party (Tbx_PartyName_Leave): its address lines and its addon fields. */
@@ -183,6 +193,10 @@ export type PartyDetails = Readonly<{
   code: number;
   name: string;
   address: readonly string[];
+  /** Every address of the party (HELP_ADDRESS): the operator picks one when there are several. Keys: address_id, address_1..3, city, pin_code, tel_no, mobile_no, contact. */
+  addresses: readonly Readonly<Record<string, string>>[];
+  /** The address the lines above show (Entry_Add_Id): 1 unless the operator picked another. */
+  addressId: number;
   addon: readonly Readonly<{ key: number; label: string; value: string; options?: readonly EntryOption[]; /** fiel_mbal D: a date field (the date control, a date only). */ date?: boolean; compulsory?: boolean }>[];
   creditDays: string;
   /** The party's GST state code (address 1), and the tax group it gives: same state as the company CGST, else IGST. */

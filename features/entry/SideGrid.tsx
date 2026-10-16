@@ -61,6 +61,8 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
   };
   const align = (column: GridColumn) => (column.align === "R" ? "right" : column.align === "C" ? "center" : "left");
   return (
+    <>
+    {WATERMARKS[label] && <div className="ent-watermark" style={style} aria-hidden="true">{WATERMARKS[label]}</div>}
     <div ref={box} className="ent-grid" style={style} role="grid" aria-label={label} tabIndex={0} onKeyDown={keys}>
       <table style={fill ? { width: "100%", minWidth: tableWidth } : { width: tableWidth }}>
         <colgroup>{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>
@@ -81,5 +83,9 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
         </tbody>
       </table>
     </div>
+    </>
   );
 }
+
+/** The faint name behind a grid (Slab Grid, Addon Grid). */
+const WATERMARKS: Readonly<Record<string, string>> = { Slab: "Slab Grid", Addon: "Addon Grid" };

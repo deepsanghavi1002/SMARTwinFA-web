@@ -23,7 +23,7 @@ const SHOWN_ROWS = 7;
  * The totals line under the grid sums the field_total columns and scrolls sideways with it.
  */
 export function ProductGrid({
-  columns, frozen, lines, uoms, totals, decimals, style, totalsStyle, productText, locked, tools,
+  columns, frozen, lines, uoms, totals, decimals, style, totalsStyle, productText, locked, tools, amountOpen, beforeLeave,
   onCell, onProductText, onProductKeys, onProductFocus, onProductBlur, onDeleteRow,
 }: {
   columns: readonly EntryColumn[];
@@ -38,6 +38,10 @@ export function ProductGrid({
   productText: Readonly<{ row: number; text: string }> | null;
   locked: boolean;
   tools: ReturnType<typeof useEditorTools>;
+  /** An item-wise amount column: whether its cell takes input in the row (undefined for any other column). */
+  amountOpen?: (column: EntryColumn, row: number) => boolean | undefined;
+  /** Enter in the Qty cell: the screen may refuse to leave it (the stock check); resolves true to go on. */
+  beforeLeave?: (row: number, key: string) => Promise<boolean>;
   onCell: (row: number, key: string, value: string) => void;
   onProductText: (row: number, text: string) => void;
   /** Keys in a Product cell: the screen moves the help with them; returns true when it took the key. */
@@ -64,7 +68,13 @@ export function ProductGrid({
     if (key === "uomentry_id" || key === "rateuom_id") return uoms;
     return column.options;
   };
-  const openCell = (column: EntryColumn, row: number) => !locked && column.editable && (isProduct(column) ? row <= lines.length : Boolean(lines[row]?.product));
+  const openCell = (column: EntryColumn, row: number) => {
+    if (locked) return false;
+    // An item-wise amount opens (the keyboard stops there) while its % is left blank.
+    const special = lines[row]?.product ? amountOpen?.(column, row) : undefined;
+    if (special !== undefined) return special;
+    return column.editable && (isProduct(column) ? row <= lines.length : Boolean(lines[row]?.product));
+  };
   const align = (column: EntryColumn) => (column.align === "R" ? "right" : column.align === "C" ? "center" : "left");
 
   const focusCell = (row: number, key: string) => focusEntryCell(grid.current, `${row}:${key}`);
@@ -84,7 +94,12 @@ export function ProductGrid({
   /** Ctrl+Del removes the row; ↑ / ↓ go to the row above / below (Alt+↓ is the calendar or the list). */
   const cellKeys = (event: ReactKeyboardEvent<HTMLElement>, row: number, key: string): boolean => {
     if (event.key === "Delete" && event.ctrlKey) { event.preventDefault(); onDeleteRow(row); return true; }
-    if (event.key === "Enter") { event.preventDefault(); next(row, key); return true; }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (beforeLeave && key === "quantity") void beforeLeave(row, key).then((go) => { if (go) next(row, key); });
+      else next(row, key);
+      return true;
+    }
     if (event.altKey) return false;
     if (event.key === "ArrowDown" && row + 1 < rowCount) { event.preventDefault(); focusCell(row + 1, key); return true; }
     if (event.key === "ArrowUp" && row > 0) { event.preventDefault(); focusCell(row - 1, key); return true; }
@@ -133,7 +148,16 @@ export function ProductGrid({
   const colgroup = <colgroup>{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>;
   return (
     <>
-      <div ref={grid} className="ent-grid ent-product" style={style} role="grid" aria-label="Products" onScroll={(event) => { if (totalsBox.current) totalsBox.current.scrollLeft = event.currentTarget.scrollLeft; }}>
+      <div className="ent-watermark" style={style} aria-hidden="true">Product Grid</div>
+      <div ref={grid} className="ent-grid ent-product" style={style} role="grid" aria-label="Products"
+        // A cell in the last two columns (the tax % and its amount): the grid scrolls to its right edge so the last column shows.
+        onFocusCapture={(event) => {
+          const id = (event.target as HTMLElement).closest("[data-cell], [data-cell-wrap]");
+          const key = (id?.getAttribute("data-cell") ?? id?.getAttribute("data-cell-wrap") ?? "").split(":")[1];
+          const at = columns.findIndex((column) => column.key === key);
+          if (at >= 0 && at >= columns.length - 2 && grid.current) grid.current.scrollLeft = grid.current.scrollWidth;
+        }}
+        onScroll={(event) => { if (totalsBox.current) totalsBox.current.scrollLeft = event.currentTarget.scrollLeft; }}>
         <table style={{ width: tableWidth }}>
           {colgroup}
           <thead>

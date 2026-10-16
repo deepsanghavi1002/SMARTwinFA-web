@@ -2,8 +2,9 @@ import { displayValue, Loader } from "../master-program/load";
 import { formatDesktopDate, parseDesktopDate, toDecimal, toInt, toText } from "../master-program/legacy";
 import { SETUP_SCHEMA } from "../master-program/session";
 import { blankCoalesceAsText } from "../master-program/sql";
+import { queryOptions } from "../small-entry/load";
 import { bookContext, controlEvents, entryProperties, helpColumns, partyTaxGroup } from "./invoice";
-import { replaceEntryTokens } from "./values";
+import { BOOK, replaceEntryTokens } from "./values";
 import type { EntryValues } from "./values";
 import type { EntryOption, HelpList, ProductChoice, RestoredEntry } from "./types";
 import type { ProductUnits } from "./calc";
@@ -30,8 +31,14 @@ export async function productHelp(loader: Loader, entryName: string, firstCombo:
   if (!helpRow) throw new Error("HELP_PRODUCT is not in smart_setup.help_table");
   // |sys.replace_prodaddon|: the product addons marked for the help; |sys.help_stock_3| only with the bundle copy (not ported).
   const addons = (await loader.readTable(`SELECT fiel_save, fiel_short FROM |sys.db|addon_fld WHERE fiel_relate = 'P' AND fiel_pos <> 'D' AND account_help = B'1' ORDER BY fiel_key`)) ?? [];
+  // item_para PGFILT with a product addon marked PRDFILT: the product help is filtered by that addon's list (cmb_ProdFilter).
+  const filterAddon = toText(loader.session.setup.item_para).toUpperCase().includes("PGFILT,")
+    ? (await loader.readTable(`SELECT fiel_key, fiel_name, fiel_save FROM |sys.db|addon_fld WHERE fiel_relate = 'P' AND fiel_pos <> 'D' AND fiel_err ILIKE '%PRDFILT,%' ORDER BY fiel_key LIMIT 1`))?.[0]
+    : undefined;
+  const filterSave = filterAddon ? text(filterAddon, "fiel_save").trim() : "";
+  const filterColumn = /^[A-Za-z0-9_]+$/.test(filterSave) ? `adata.txt_${filterSave} AS "pg_filter",` : "";
   let sql = text(helpRow, "help_query")
-    .replace(/\|sys\.replace_prodaddon\|,/gi, addons.map((addon) => `txt_${text(addon, "fiel_save").trim()} as "${text(addon, "fiel_short").trim().replace(/"/g, "")}",`).join(""))
+    .replace(/\|sys\.replace_prodaddon\|,/gi, filterColumn + addons.map((addon) => `txt_${text(addon, "fiel_save").trim()} as "${text(addon, "fiel_short").trim().replace(/"/g, "")}",`).join(""))
     .replace(/,?\|sys\.help_stock_3\|,?/gi, ",");
   sql = replaceEntryTokens(blankCoalesceAsText(sql), book.values);
   const rows = (await loader.readTable(sql)) ?? [];
@@ -39,12 +46,16 @@ export async function productHelp(loader: Loader, entryName: string, firstCombo:
   const keys = Object.keys(rows[0]);
   const columns = await helpColumns(loader, "HELP_PRODUCT", "X", keys);
   // Only what the help shows and the key travel: 18,000 products with every column would be several megabytes.
-  const kept = ["prod_key", ...columns.map((column) => column.key)];
+  const kept = ["prod_key", ...(filterColumn ? ["pg_filter"] : []), ...columns.map((column) => column.key)];
+  const filter = filterColumn
+    ? { caption: text(filterAddon, "fiel_name").trim(), options: await queryOptions(loader, `select sub_name, sub_code from |sys.db|addon_sub where sub_pos <> 'D' and para_id = ${toInt(field(filterAddon, "fiel_key"))} order by sub_name`) }
+    : undefined;
   return {
     columns,
     rows: rows.map((row) => Object.fromEntries(kept.map((key) => [key, displayValue(row[key])]))),
     frozen: toInt(field(helpRow, "help_col_frozen")),
     total: `Total Help Record : ${rows.length}`,
+    ...(filter ? { filter } : {}),
   };
 }
 
@@ -90,7 +101,7 @@ function choiceFrom(row: Row, stockNat: string, extra: Partial<ProductChoice> = 
 
 /**
  * ProductChangeEffect "R" / "M": control_event input_rate's GF queries in order, as far as they
- * need no party-rate addon: the party's own rate for the product (party_rate), then the price
+ * the party-rate addons: the party's own rate for the product (party_rate), then the price
  * list (pricelist), whose row for the rate's unit gives the rate (sale or purchase) and the MRP.
  */
 export async function productChoice(loader: Loader, entryName: string, firstCombo: EntryOption, prodKey: number, acCode: number, docDate: string): Promise<ProductChoice> {
@@ -106,23 +117,62 @@ export async function productChoice(loader: Loader, entryName: string, firstComb
   const properties = await entryProperties(loader, entryName);
   const events = (await controlEvents(loader, toInt(field(properties, "entry_key"))))
     .filter((event) => text(event, "control_name").toLowerCase() === "input_rate" && text(event, "control_event").toUpperCase() === "GF")
-    .filter((event) => !/\|sys\.prate_addon_nm/i.test(toText(field(event, "fill_control_query"))));
+    .sort((a, b) => toInt(field(a, "control_query_sr")) - toInt(field(b, "control_query_sr")));
   const values: EntryValues = { ...book.values, acCode, docDate };
+
+  // The party-rate addons (addon_fld fiel_partyrate Y): the account's (its value for this party is |sys.prate_addon_nm|)
+  // and the product's (its key_ column on the product's addon_data is |sys.prate_addon_nm2|; a purchase book takes the PBRFN one).
+  const rateAddons = (await loader.readTable(`SELECT fiel_relate, fiel_save, fiel_err FROM |sys.db|addon_fld WHERE fiel_partyrate = 'Y' AND fiel_pos <> 'D' ORDER BY fiel_key`)) ?? [];
+  const safeName = (value: string) => (/^[A-Za-z0-9_]+$/.test(value.trim()) ? value.trim() : "");
+  const acAddon = safeName(text(rateAddons.find((addon) => text(addon, "fiel_relate") === "A"), "fiel_save"));
+  const prodAddon = safeName(text(rateAddons.find((addon) => text(addon, "fiel_relate") === "P"), "fiel_save"));
+  let prodColumn = prodAddon;
+  if (book.values.bookKey === BOOK.PURCH) {
+    const purchase = (await loader.readTable(`SELECT fiel_save FROM |sys.db|addon_fld WHERE fiel_pos <> 'D' AND fiel_err ILIKE '%PBRFN,%' ORDER BY fiel_key LIMIT 1`))?.[0];
+    if (purchase && safeName(text(purchase, "fiel_save"))) prodColumn = safeName(text(purchase, "fiel_save"));
+  }
+  const hasAc = acAddon !== "";
+  const hasProd = prodColumn !== "";
+  const partyName = hasAc && acCode > 0
+    ? toText(displayValue(Object.values((await loader.readTable(`SELECT txt_${acAddon} FROM |sys.db|addon_data WHERE code = $1 LIMIT 1`, [acCode]))?.[0] ?? {})[0])).trim()
+    : "";
+  const sql = (value: string) => value.replace(/'/g, "''");
+  // ProductChangeEffect "R": each party_rate query runs only while no rate is found, and only when the addons it needs exist
+  // (1 party + product; 2 party + a/c addon + product addon; 3 a/c addon; 4 product addon; 5 a/c addon; 6 both; 7 product addon).
+  const wanted: Record<number, boolean> = { 1: true, 2: hasAc && hasProd, 3: hasAc, 4: hasProd, 5: hasAc, 6: hasAc && hasProd, 7: hasProd };
+  const rateField = book.values.bookKey === BOOK.PURCH ? "pr_prate" : "pr_rate";
   let rate = 0;
   let mrp = 0;
+  let found = false;
+  /** pr_slabperc of the party-rate hit, by the item-wise discount column it fills (int_col_Item_LessSlab1..4). */
+  const slabPercs: Record<number, number> = {};
   for (const event of events) {
-    const query = `Select ${toText(field(event, "fill_control_query"))}`
+    const order = toInt(field(event, "control_query_sr"));
+    const raw = toText(field(event, "fill_control_query"));
+    const isPartyRate = /party_rate/i.test(raw);
+    if (isPartyRate && (found || !wanted[order])) continue;
+    if (!isPartyRate && /pricelist/i.test(raw) && rate > 0 && mrp > 0) continue;
+    if (!isPartyRate && !/pricelist/i.test(raw)) continue;
+    const query = `Select ${raw}`
+      .replace(/'\|sys\.prate_addon_nm2\|'/gi, hasProd ? `key_${prodColumn}` : "null")
+      .replace(/\|sys\.prate_addon_nm\|/gi, sql(partyName))
       .replace(/\|sys\.prod_key\|/gi, String(prodKey))
       .replace(/\|sys\.rate_stock_nat\|/gi, `'${stockNat}'`)
       .replace(/\|sys\.stock_nat\|/gi, `'${stockNat}'`);
     if (/\|sys\.ac_code\|/i.test(query) && acCode <= 0) continue;
+    if (/\|sys\.prate_addon_nm1\|/i.test(query)) continue;
     const rows = (await loader.readTable(replaceEntryTokens(query, values))) ?? [];
     if (rows.length === 0) continue;
-    if (query.toLowerCase().includes("party_rate")) {
-      const found = rows[0];
-      if (rate === 0 && toDecimal(field(found, "pr_rate")) > 0) rate = toDecimal(field(found, "pr_rate"));
-      if (mrp === 0 && toDecimal(field(found, "pr_masterrate")) > 0) mrp = toDecimal(field(found, "pr_masterrate"));
-    } else if (query.toLowerCase().includes("pricelist")) {
+    if (isPartyRate) {
+      const hit = rows[0];
+      const figure = toDecimal(field(hit, rateField));
+      if (figure > 0) { if (rate === 0) rate = figure; found = true; }
+      const percent = (name: string) => toDecimal(field(hit, name));
+      if (order === 4) { if (percent("pr_slabperc") > 0) slabPercs[1] = percent("pr_slabperc"); if (percent("pr_slabperc1") > 0) slabPercs[2] = percent("pr_slabperc1"); }
+      if (order === 5 && percent("pr_slabperc") > 0) slabPercs[3] = percent("pr_slabperc");
+      if (order === 6 && percent("pr_slabperc") > 0) slabPercs[4] = percent("pr_slabperc");
+      if (order === 7 && mrp === 0 && toDecimal(field(hit, "pr_masterrate")) > 0) { mrp = toDecimal(field(hit, "pr_masterrate")); found = true; }
+    } else {
       const rateColumn = stockNat === "A" ? "pl_prate" : "pl_srate";
       const uomColumn = stockNat === "A" ? "pl_puom" : "pl_suom";
       const ofUnit = rows.find((price) => toInt(field(price, uomColumn)) === rateUomKey && toDecimal(field(price, rateColumn)) > 0) ?? rows.find((price) => toDecimal(field(price, rateColumn)) > 0);
@@ -130,7 +180,6 @@ export async function productChoice(loader: Loader, entryName: string, firstComb
       const mrpRow = rows.find((price) => toInt(field(price, "pl_muom")) === rateUomKey && toDecimal(field(price, "pl_mrp")) > 0) ?? rows.find((price) => toDecimal(field(price, "pl_mrp")) > 0);
       if (mrp === 0 && mrpRow) mrp = toDecimal(field(mrpRow, "pl_mrp"));
     }
-    if (rate > 0 && mrp > 0) break;
   }
   return {
     ...choice,
@@ -138,6 +187,7 @@ export async function productChoice(loader: Loader, entryName: string, firstComb
     stock2: balance ? toText(displayValue(field(balance, "clsg_pack"))) : "",
     rate: rate > 0 ? String(rate) : "",
     mrp: mrp > 0 ? String(mrp) : "",
+    ...(Object.keys(slabPercs).length > 0 ? { slabPercs } : {}),
   };
 }
 
@@ -179,6 +229,7 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     values[name] = controlValue(field(header, column));
   }
   const partyCode = toInt(field(header, "code"));
+  const addressId = toInt(field((await loader.readTable(`SELECT ent_address_id FROM |sys.db|ledger WHERE unique_key = $1 LIMIT 1`, [uniqueKey]))?.[0], "ent_address_id"));
   values.tbx_partyname = text(header, "name").trim();
   const docDate = values.dtp_date ?? "";
   const { taxGroup } = partyCode > 0 ? await partyTaxGroup(loader, partyCode, docDate) : { taxGroup: (loader.session.coGstReq ? "G" : "V") as "G" | "I" | "V" };
@@ -224,7 +275,7 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
       if (value !== undefined && value !== null) addon[toInt(field(item, "fiel_key"))] = toText(displayValue(value)).trim();
     }
   }
-  return { uniqueKey, values, partyCode, taxGroup, lines, slab, addon, itemSlab, slabTax };
+  return { uniqueKey, values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax };
 }
 
 /**
