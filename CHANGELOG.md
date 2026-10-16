@@ -3,6 +3,9 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-16 (Partywise Stock: Summary For Period Selected)
+- Change: `lib/report/reportStandard.ts` `partyStockSummary` (report 16, SP_FRT_RPT_PWISESTOCK). The Summary format no longer says Not ported: one row per party and product with ADD_QTY, LESS_QTY, BOX_QTY (licence 21), the product-wise slab columns (DISCOUNT ... UTGST, NET_AMOUNT), PURCH_VALUE, SALE_VALUE and MRP_VALUE. With slabs it is a row per entry line, as the procedure groups on IL_KEY. Slab amounts are read in one query (a subquery per line took minutes). Tested on RISHABH PLASTIC 2025-26 with 40 parties: 734 rows in 5.7 s. Licence 37 and 51 still refused.
+
 ## 2026-10-16 (Stock Summary: Only Within Date Transaction Require)
 - Change: `lib/report/reportStandard.ts` `stockSummary`. The option (CHK_WITHDATE) now works instead of the Not ported message: only products with a transaction between From and Upto, with OPEN_QTY (opening plus movement before From), ADD_QTY, LESS_QTY, CLSG_QTY, and for licence 21 STD_PACK, CARTONS, LOOSE_QTY. Tested on RISHABH PLASTIC 2025-26 (7927 rows, 0.9 s).
 

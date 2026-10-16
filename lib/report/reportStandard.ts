@@ -3329,7 +3329,7 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
   const check = (name: string) => call.checkQuery.includes(`${name},`);
   const book = call.fcValue;
   const licence = call.licence;
-  if (call.formating.toUpperCase().includes("SUMM")) throw new ReportRefusal("The Summary format of the Partywise Stock is not available in the web version yet.", "Not ported yet");
+  if (call.formating.toUpperCase().includes("SUMM")) return partyStockSummary(loader, plan);
   if ([37, 51].includes(licence)) throw new ReportRefusal(`The licence ${licence} variant of the Partywise Stock is not available in the web version yet.`, "Not ported yet");
   void check;
 
@@ -3413,6 +3413,76 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
   }
   dropColumn(table, "line_book");
   sortRows(table, [(row) => textKey(table.get(row, "SORTING_COL"))]);
+  return table;
+}
+
+/**
+ * SP_FRT_RPT_PWISESTOCK, the "Summary For Period Selected" format: one row for each party and product (the product's description), with the quantity in and out
+ * (the entry's quantity less what was set against another), the purchase and sale value, and with product-wise slabs a column for each slab (a row for each entry
+ * line, as the procedure groups on IL_KEY then). The slabs that lessen the value are taken off, the others added, on the lines that have a value.
+ */
+async function partyStockSummary(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { session } = loader;
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, session.companySchema);
+  const book = call.fcValue;
+  const licence = call.licence;
+  if ([37, 51].includes(licence)) throw new ReportRefusal(`The licence ${licence} variant of the Partywise Stock is not available in the web version yet.`, "Not ported yet");
+  const slabs = num((await runReportSql(loader, frag(`Select COUNT(*) AS n FROM ${db}SLAB_MASTER WHERE SLAB_POS = 'P' and SLAB_FROMDT = '${desktopDate(call.tarikh1)}' AND SLAB_ACTIVE = 'Y' and BOOK = ${book}`))).rows[0]?.n) > 0
+    ? (await runReportSql(loader, frag(`SELECT slab_key, slab_short, slab_master, slab_mathop FROM ${db}SLAB_MASTER WHERE SLAB_POS = 'P' and SLAB_FROMDT = '${desktopDate(call.tarikh1)}' AND SLAB_ACTIVE = 'Y' and BOOK = ${book} ORDER BY SLAB_ORDER`))).rows
+    : [];
+  // The slab amounts of a line are read once for all the lines (a subquery for each line is slow); the first master slab also gives the net amount (the value less the discounts).
+  const slabColumns: string[] = [];
+  let tax = 0;
+  for (const slab of slabs) {
+    if (toText(slab.slab_master) === "Y") { if (tax === 0) slabColumns.push("NET_AMOUNT"); tax += 1; }
+    slabColumns.push(toText(slab.slab_short));
+  }
+  const lic21 = licence === 21;
+  const heads = call.headingAddon.filter((text) => text.trim() !== "");
+  const select = [`ac.Name AS "NAME"`, `PRODUCT.PROD_DESC AS "SELECTED_PRODUCT"`, `COALESCE(SUM(CASE PRODLED.STOCK_NAT WHEN 'A' THEN PRODLED.QUANTITY - PRODLED.AG_QTY ELSE 0.00 END),0.00) AS "ADD_QTY"`,
+    `COALESCE(SUM(CASE PRODLED.STOCK_NAT WHEN 'L' THEN PRODLED.QUANTITY - PRODLED.AG_QTY ELSE 0.00 END),0.00) AS "LESS_QTY"`,
+    ...(lic21 ? [`COALESCE(SUM(CASE PRODLED.STOCK_NAT WHEN 'L' THEN PRODLED.BUNDLE ELSE 0.00 END),0.00) AS "BOX_QTY"`] : []), ...(slabColumns.length > 0 ? [`PRODLED.IL_KEY AS "il_key"`, ...slabColumns.map((name) => `0::numeric AS "${name}"`)] : []),
+    `COALESCE(SUM(case PRODLED.STOCK_NAT WHEN 'A' then PRODLED.IL_VALUE else 0.00 end),0.00) AS "PURCH_VALUE"`, `COALESCE(SUM(case PRODLED.STOCK_NAT WHEN 'L' then PRODLED.IL_VALUE else 0.00 end),0.00) AS "SALE_VALUE"`, ...heads,
+    ...(num((await runReportSql(loader, frag(`Select CASE WHEN POSITION('X_MRP,' IN entry_para) = 0 THEN 1 ELSE 0 END AS n FROM ${db}SETUP`))).rows[0]?.n) === 1 ? [`ROUND(sum(PRODLED.MASTER_RATE*PRODLED.QUANTITY),2) AS "MRP_VALUE"`] : [])];
+  const inner = call.from_.slice(call.from_.indexOf("sys.ledext.bstart") + "sys.ledext.bstart".length, call.from_.indexOf("sys.ledext.join sys.ledext.bend"));
+  const from = licence === 21 || call.acAddonRepdefa.includes("E") ? ` from ((${inner}) left join ${db}ADDON_AENTRY aentry on aentry.AONA_LEDID = PRODLED.LED_ID)` : ` from (${inner})`;
+  let where = `${call.where.split("|sys.yearid|").join(call.yearId)} and PRODUCT.INVENTORY = 'Y' and PRODLED.INVENTORY = 'Y' AND PRODLED.IL_DATE >= '${desktopDate(call.from)}' AND PRODLED.IL_DATE <= '${desktopDate(call.upto)}'`;
+  if (book === 8) where += " and (PRODLED.BOOK = 13 or PRODLED.BOOK = 16 or PRODLED.BOOK = 8) and ac.book = 2";
+  else if (book === 9) where += " and PRODLED.BOOK = 9 and ac.book = 2";
+  else where += ` and (PRODLED.BOOK = 8 or PRODLED.BOOK = 11 or PRODLED.BOOK = ${book}) and ac.book = 3`;
+  const withoutName = (text: string) => text.split(",").map((part) => part.trim()).filter((part) => part !== "" && part.toUpperCase() !== "AC.NAME");
+  const groupBy = [...withoutName(call.groupBy), "AC.NAME", "PRODUCT.PROD_DESC", ...(slabColumns.length > 0 ? ["PRODLED.IL_KEY"] : [])];
+  const addonOrder = heads.map((text) => /as\s+"([^"]+)"/i.exec(text)?.[1] ?? "").filter((name) => name !== "").map((name) => `"${name}"`);
+  const result = await runReportSql(loader, frag(`SELECT ${select.join(", ")}${from} ${where} GROUP BY ${groupBy.join(", ")} ORDER BY ${[...addonOrder, `"NAME"`, `"SELECTED_PRODUCT"`].join(", ")}`));
+  const table = tableFromResult(result);
+  if (slabColumns.length > 0) {
+    const lines = [...new Set(table.rows.map((row) => num(table.get(row, "il_key"))))];
+    const amounts = new Map<string, { amount: number; net: number }>();
+    if (lines.length > 0) {
+      const slabKeys = slabs.map((slab) => num(slab.slab_key));
+      for (const row of (await runReportSql(loader, frag(`SELECT il_id AS "il_id", slab_id AS "slab_id", sum(slab_amt)::numeric AS "amount", sum(s_lastot::numeric - slab_amt::numeric) AS "net" FROM ${db}LEDGER_EXT WHERE il_id = ANY($1::int[]) AND slab_id = ANY($2::int[]) GROUP BY il_id, slab_id`), [lines, slabKeys])).rows) amounts.set(`${num(row.il_id)}|${num(row.slab_id)}`, { amount: num(row.amount), net: num(row.net) });
+    }
+    for (const row of table.rows) {
+      for (const slab of slabs) {
+        const found = amounts.get(`${num(table.get(row, "il_key"))}|${num(slab.slab_key)}`);
+        table.set(row, toText(slab.slab_short), found?.amount ?? 0);
+      }
+      const firstMaster = slabs.find((slab) => toText(slab.slab_master) === "Y");
+      if (firstMaster !== undefined) table.set(row, "NET_AMOUNT", amounts.get(`${num(table.get(row, "il_key"))}|${num(firstMaster.slab_key)}`)?.net ?? 0);
+    }
+    dropColumn(table, "il_key");
+  }
+  for (const column of ["ADD_QTY", "LESS_QTY", "BOX_QTY", "PURCH_VALUE", "SALE_VALUE", "NET_AMOUNT", "MRP_VALUE", ...slabs.map((slab) => toText(slab.slab_short))]) if (table.has(column)) table.setKind(column, "decimal");
+  // The slabs that lessen the value come off it, the others go on (only on the lines that have a value).
+  const adjust = slabs.map((slab) => `${toText(slab.slab_mathop) === "L" ? "-" : "+"}${toText(slab.slab_short)}`);
+  if (adjust.length > 0) {
+    for (const row of table.rows) {
+      const change = slabs.reduce((total, slab) => total + (toText(slab.slab_mathop) === "L" ? -1 : 1) * num(table.get(row, toText(slab.slab_short))), 0);
+      for (const column of ["SALE_VALUE", "PURCH_VALUE"]) if (num(table.get(row, column)) !== 0) table.set(row, column, Math.round((num(table.get(row, column)) + change) * 100) / 100);
+    }
+  }
   return table;
 }
 
