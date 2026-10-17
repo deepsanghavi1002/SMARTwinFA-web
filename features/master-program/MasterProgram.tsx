@@ -559,11 +559,13 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (row) return { field, values: [row.fieldInput] };
     return first ? { field, values: [first.value, first.text] } : null;
   }, [tab, addRows, addCursor, grids, cursor, records, first]);
-  /** An Update-grid column's help entries for a record: those of the record's group (duplichk_fldname2), else all. */
+  /** An Update-grid column's help entries for a record: the whole list, as the desktop shows it (the group only decides what counts as a duplicate). */
   const groupHelpRows = (setup: UpdateColumn["setup"], record: UpdateRecord | undefined) => {
     const field = toText(setup.duplichk_fldname2);
     const rows = help?.rows ?? [];
-    return field === "" ? rows : rows.filter((helpRecord) => sameGroup(cellOf(helpRecord, field), cellOf(record, field)));
+    // A group field that is a column of the grid (Bal-Sheet's Under B/S Head) does not cut the list; one that is not (the Account's book, from the first combo) does.
+    if (field === "" || grids?.columns.some((column) => lower(column.key) === lower(field))) return rows;
+    return rows.filter((helpRecord) => sameGroup(cellOf(helpRecord, field), cellOf(record, field)));
   };
   /** The help list as shown: only the current group's entries when the main field has one. */
   const shownHelp = useMemo(() => {
@@ -572,19 +574,41 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     return { ...help, rows, total: `Total Help Record : ${rows.length}` };
   }, [help, helpGroup]);
 
+  /** The list the help window shows: all entries, or only those of the first combo's group (the Account's book) when the group is not a field of the grid. */
+  const displayHelp = useMemo(() => {
+    if (!help) return help;
+    const setup = tab === "add" ? addRows[addCursor]?.setup : grids?.columns.find((column) => column.key === cursor.key)?.setup;
+    const field = toText(setup?.duplichk_fldname2);
+    if (!setup || field === "") return help;
+    let values: readonly string[] | null = null;
+    if (tab === "add") {
+      if (addRows.some((candidate) => lower(candidate.fieldName) === lower(field))) return help;
+      values = first ? [first.value, first.text] : null;
+    } else {
+      if (grids?.columns.some((column) => lower(column.key) === lower(field))) return help;
+      values = [cellOf(records[cursor.row], field)];
+    }
+    if (!values) return help;
+    const wanted = values;
+    const rows = help.rows.filter((helpRecord) => wanted.some((value) => sameGroup(cellOf(helpRecord, field), value)));
+    return { ...help, rows, total: `Total Help Record : ${rows.length}` };
+  }, [help, tab, addRows, addCursor, grids, cursor, records, first]);
+
   const addHelp = useMemo(() => {
     if (tab !== "add" || !shownHelp || shownHelp.columns.length === 0) return null;
     const row = addRows[addCursor];
     if (!row || !isMainField(row.setup)) return null;
     const f1 = toText(row.setup.duplichk_fldname1).toLowerCase();
     const typedText = (addEditing ? addText : row.fieldInput).trim().toUpperCase();
-    if (f1 === "" || typedText === "") return { row: -1, exact: false, typed: typedText };
+    if (f1 === "" || typedText === "") return { row: -1, listRow: -1, exact: false, typed: typedText };
+    // The New grid's list shows every entry (the desktop does); the duplicate check keeps to the group (`shownHelp`).
+    const listRow = (displayHelp ?? shownHelp).rows.findIndex((helpRecord) => (addEditing ? cellOf(helpRecord, f1).toUpperCase().startsWith(typedText) : cellOf(helpRecord, f1).toUpperCase() === typedText));
     const found = shownHelp.rows.findIndex((helpRecord) => (addEditing ? cellOf(helpRecord, f1).toUpperCase().startsWith(typedText) : cellOf(helpRecord, f1).toUpperCase() === typedText));
     // A restore shows the record being restored; with a group the list is filtered, so compare by value.
     const restoring = restore !== null && (helpGroup ? duplicateKey(cellOf(records[restore.row], f1)) === typedText : restore.row === found);
     const exact = found >= 0 && cellOf(shownHelp.rows[found], f1).trim().toUpperCase() === typedText && !restoring;
-    return { row: found, exact, typed: typedText };
-  }, [tab, shownHelp, helpGroup, addRows, addCursor, addEditing, addText, restore, records]);
+    return { row: found, listRow, exact, typed: typedText };
+  }, [tab, displayHelp, shownHelp, helpGroup, addRows, addCursor, addEditing, addText, restore, records]);
   /** A pick in the New Add help list holds only while the row and the typing stay as they were. */
   const addHelpKey = `${addCursor}|${addEditing ? 1 : 0}|${addText}`;
 
@@ -738,7 +762,9 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (!column || !records[at.row] || !isEditable(at.row, column)) return;
     if (!(await beforeEdit(at.row, column))) return;
     const value = cellOf(records[at.row], column.key);
-    setEditText(initial !== undefined ? initial : zeroAsBlank(column.setup, Boolean(column.options?.length), value));
+    // ADMIN sees the saved password in the editor (the server sends it only to ADMIN); others start from the mask.
+    const saved = column.setup.force_inputtype === "P" && value === "*********" ? cellOf(records[at.row], `__reveal_${column.key}`) : "";
+    setEditText(initial !== undefined ? initial : saved !== "" ? saved : zeroAsBlank(column.setup, Boolean(column.options?.length), value));
     if (initial !== undefined) followHelp(column.key, initial);
     if (column.options) {
       const box = activeScope().querySelector(`.mp-grid [data-cell="${at.row}:${CSS.escape(at.key)}"]`)?.getBoundingClientRect();
@@ -920,7 +946,9 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       }
       // AfterRowColChange: a typed password is kept aside and masked.
       if (oldColumn.setup.force_inputtype === "P" && cellOf(oldRecord, oldColumn.key) !== "*********") {
-        setBackupCell(oldRow, oldColumn.key, cellOf(oldRecord, oldColumn.key));
+        // The saved password shown to ADMIN and left as it was is no change.
+        const unchanged = cellOf(oldRecord, oldColumn.key) === cellOf(oldRecord, `__reveal_${oldColumn.key}`);
+        if (!unchanged) setBackupCell(oldRow, oldColumn.key, cellOf(oldRecord, oldColumn.key));
         setCell(oldRow, oldColumn.key, "*********");
       }
     }
@@ -1963,14 +1991,15 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   })();
   /** The help list window: centred on one entry, with a note under the title for the New Add grid. */
   const helpWindow = (focusRow: number, onFocusRow: (row: number) => void, searchKey: string, note: { text: string; warn: boolean } | null) => {
-    if (!shownHelp || shownHelp.columns.length === 0) return null;
+    const listHelp = displayHelp ?? shownHelp;
+    if (!listHelp || listHelp.columns.length === 0) return null;
     const backToGrid = () => {
       const editor = activeScope().querySelector<HTMLElement>(".mp-editor");
       (editor ?? (tab === "add" ? addFocus.current : gridFocus.current))?.focus({ preventScroll: true });
     };
     return (
       <HelpList
-        help={shownHelp}
+        help={listHelp}
         focusRow={focusRow}
         onFocusRow={onFocusRow}
         searchKey={searchKey}
@@ -1987,7 +2016,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   };
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
   return (
-    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.heading || title}>
+    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""} ${busy ? "mp-working" : ""}`} role="region" aria-label={def?.heading || title}>
+      {busy === "Saving" && <div className="mp-busy-overlay" role="status" aria-live="polite"><div className="mp-busy-card"><span className="mp-spinner" aria-hidden="true" /><b>Saving…</b><span>Please wait</span></div></div>}
       <div className="mp-combos">
         {firstCombo && (
           <div className="mp-combo">
@@ -2023,7 +2053,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         {!grids && <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>}
         {grids && (
           <div className="mp-views" role="tablist" aria-label="Master view">
-            {grids.addTabVisible && tab !== "add" && <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" role="tab" aria-selected={false} className="mp-btn mp-btn-green mp-btn-big" onClick={() => setTab("add")}><Icon name="plus" /><HotkeyLabel text="New Add" hotkey="n" /></button>}
+            {grids.addTabVisible && tab !== "add" && <button type="button" data-hotkey="n" aria-keyshortcuts="Alt+N" role="tab" aria-selected={false} className="mp-btn mp-btn-green mp-btn-big" disabled={programId === 12 && records.length > 0} title={programId === 12 && records.length > 0 ? "This book already has its setup: change it in the Update grid" : undefined} onClick={() => setTab("add")}><Icon name="plus" /><HotkeyLabel text="New Add" hotkey="n" /></button>}
             {grids.addTabVisible && tab === "add" && <span className="mp-view-now">{restore ? "View (Restore)" : "New Add"}</span>}
             {grids.updateTabVisible && tab !== "update" && <button type="button" data-hotkey="u" aria-keyshortcuts="Alt+U" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => { setTab("update"); setHotKeys(grids.addTabVisible ? "Press F4 Key For Update Grid Vertical Display" : ""); }}><Icon name="list" /><HotkeyLabel text="Update / Delete" hotkey="u" /></button>}
             {imageTab && tab !== "image" && <button type="button" data-hotkey="i" aria-keyshortcuts="Alt+I" role="tab" aria-selected={false} className="mp-btn mp-btn-blue mp-btn-big" onClick={() => setTab("image")}><Icon name="image" /><HotkeyLabel text="Image" hotkey="i" /></button>}
@@ -2079,7 +2109,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                         />
                       ) : (
                         <span className="mp-editor-wrap" role="presentation" onClick={(event) => event.stopPropagation()}>
-                          <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type={row.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(row.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(row.setup) ? "c" : undefined} value={addText} onChange={(event) => { if (typingAllowed(row.setup, addText, event.target.value)) setAddText(event.target.value); }} onKeyDown={(event) => void addKeys(event)} />
+                          <input ref={focusOnMount} className="mp-editor" style={{ textAlign: alignOf(row.setup.add_grid_align) }} type="text" autoComplete="off" data-password={row.setup.force_inputtype === "P" ? "typed" : undefined} inputMode={isNumberSetup(row.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(row.setup) ? "c" : undefined} value={addText} onChange={(event) => { if (typingAllowed(row.setup, addText, event.target.value)) setAddText(event.target.value); }} onKeyDown={(event) => void addKeys(event)} />
                           {tools.buttons(editorKindOf(row.setup.field_type), addText, setAddText, numberRules(row.setup))}
                         </span>
                       )
@@ -2096,11 +2126,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               <button type="button" disabled={!addOld.current.has(addCursor) || !addOpen(addRows[addCursor])} onClick={() => { setAddMenu(null); addRestore(); }}>Restore Old Value (Ctrl+Z)</button>
             </div>
           )}
-          {addHelp && helpWindow(addHelpPick?.key === addHelpKey ? addHelpPick.row : addHelp.row, (row) => setAddHelpPick({ row, key: addHelpKey }), toText(addRows[addCursor]?.setup.duplichk_fldname1).toLowerCase(), addHelp.typed === ""
+          {addHelp && helpWindow(addHelpPick?.key === addHelpKey ? addHelpPick.row : addHelp.listRow, (row) => setAddHelpPick({ row, key: addHelpKey }), toText(addRows[addCursor]?.setup.duplichk_fldname1).toLowerCase(), addHelp.typed === ""
             ? { text: "Existing entries (type to search)", warn: false }
             : addHelp.exact
               ? { text: `"${addHelp.typed}" already exists`, warn: true }
-              : addHelp.row >= 0
+              : addHelp.listRow >= 0
                 ? { text: `Nearest existing entry for "${addHelp.typed}"`, warn: false }
                 : { text: `No existing entry starts with "${addHelp.typed}"`, warn: false })}
         </div>
@@ -2219,13 +2249,13 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                               />
                             ) : (
                               <span className="mp-editor-wrap">
-                                <input ref={focusOnMount} className="mp-editor" type={column.setup.force_inputtype === "P" ? "password" : "text"} inputMode={isNumberSetup(column.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(column.setup) ? "c" : undefined} value={editText} onChange={(event) => { if (!typingAllowed(column.setup, editText, event.target.value)) return; setEditText(event.target.value); followHelp(column.key, event.target.value); }} onKeyDown={(event) => void editorKeys(event)} />
+                                <input ref={focusOnMount} className="mp-editor" type="text" autoComplete="off" data-password={column.setup.force_inputtype === "P" ? "typed" : undefined} inputMode={isNumberSetup(column.setup) ? "decimal" : undefined} data-own-alt-keys={isNumberSetup(column.setup) ? "c" : undefined} value={editText} onChange={(event) => { if (!typingAllowed(column.setup, editText, event.target.value)) return; setEditText(event.target.value); followHelp(column.key, event.target.value); }} onKeyDown={(event) => void editorKeys(event)} />
                                 {tools.buttons(editorKindOf(column.setup.field_type), editText, setEditText, numberRules(column.setup))}
                               </span>
                             )
                           ) : (
                             <>
-                              <FoundText text={column.comboKind === "M" ? shownText(record, column) : formatCell(cellOf(record, column.key), column.format)} typed={current ? typed : ""} />
+                              <FoundText text={column.comboKind === "M" ? shownText(record, column) : current && column.setup.force_inputtype === "P" && cellOf(record, column.key) === "*********" && cellOf(backup[row], column.key) !== "" && cellOf(backup[row], column.key) !== "*********" ? cellOf(backup[row], column.key) : current && column.setup.force_inputtype === "P" && cellOf(record, column.key) === "*********" && cellOf(record, `__reveal_${column.key}`) !== "" ? cellOf(record, `__reveal_${column.key}`) : formatCell(cellOf(record, column.key), column.format)} typed={current ? typed : ""} />
                               {editable && column.options?.length ? (
                                 <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
                                   onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); void openCombo(row, column.key); }}>

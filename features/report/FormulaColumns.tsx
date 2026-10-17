@@ -10,7 +10,9 @@ import type { ReportOutput } from "../../lib/report/types";
  * Add Column: a column added to the report's output at run time, with a spreadsheet-style formula (=QTY*RATE for each row,
  * =SUM(QTY*RATE) for one figure). Its cells follow the formula; Excel gets the same formula as a real one.
  */
-export function FormulaColumns({ output, shown, specs, onChange, onClose }: {
+export function FormulaColumns({ output, shown, specs, onChange, onClose, others }: {
+  /** The other open reports and their columns (for the easy lookup). */
+  others?: () => { title: string; columns: readonly string[] }[];
   /** The report's output without the added columns. */
   output: ReportOutput;
   /** The columns as the grid shows them, in order (their place is their Excel letter). */
@@ -25,9 +27,11 @@ export function FormulaColumns({ output, shown, specs, onChange, onClose }: {
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
+  const formulaInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { input.current?.focus(); }, []);
 
   useEffect(() => {
-    input.current?.focus();
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -66,6 +70,24 @@ export function FormulaColumns({ output, shown, specs, onChange, onClose }: {
       setError(failure instanceof FormulaError ? failure.message : "The formula could not be read");
     }
   };
+  // The easy lookup: a few choices write the VLOOKUP formula.
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [pick, setPick] = useState({ report: "", mine: "", theirs: "", bring: "", zero: true, exact: true });
+  const reports = lookupOpen ? (others?.() ?? []) : [];
+  const chosen = reports.find((report) => report.title === pick.report) ?? reports[0];
+  const putLookup = () => {
+    if (!chosen) return;
+    const mine = pick.mine || shown.find((column) => !column.key.startsWith(FORMULA_KEY))?.caption || "";
+    const theirs = chosen.columns.includes(pick.theirs) ? pick.theirs : chosen.columns[0];
+    const bring = chosen.columns.includes(pick.bring) ? pick.bring : (chosen.columns[1] ?? chosen.columns[0]);
+    const from = chosen.columns.indexOf(theirs), to = chosen.columns.indexOf(bring);
+    const quote = (text: string) => text.replace(/"/g, '""');
+    const core = `VLOOKUP([${mine}], "${quote(chosen.title)}!${quote(theirs)}:${quote(bring)}", ${Math.abs(to - from) + 1}, ${pick.exact ? 0 : 1})`;
+    setFormula(pick.zero ? `IFERROR(${core}, 0)` : core);
+    if (name.trim() === "") setName(bring.replace(/[.]+$/, ""));
+    setError("");
+    formulaInput.current?.focus();
+  };
   const edit = (spec: FormulaColumn) => { setEditing(spec.key); setName(spec.caption); setFormula(spec.formula); setDecimals(spec.decimals); setError(""); input.current?.focus(); };
 
   return (
@@ -78,16 +100,33 @@ export function FormulaColumns({ output, shown, specs, onChange, onClose }: {
             <label>Decimals<select value={decimals} onChange={(event) => setDecimals(Number(event.target.value))}>{[0, 1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
           </div>
           <label className="fc-formula">Formula
-            <input value={formula} placeholder="=QTY*RATE      =SUM(QTY*RATE)      =IF(C>0, C*D, 0)" onChange={(event) => setFormula(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save(); }} spellCheck={false} />
+            <input ref={formulaInput} value={formula} placeholder="=QTY*RATE      =SUM(QTY*RATE)      =IF(C>0, C*D, 0)" onChange={(event) => setFormula(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save(); }} spellCheck={false} />
           </label>
+          <div className="fc-lookup">
+            <button type="button" className="pc-btn pc-btn-outline" onClick={() => setLookupOpen((open) => !open)}>{lookupOpen ? "Hide the easy lookup" : "Fetch a figure from another open report (easy lookup)"}</button>
+            {lookupOpen && (reports.length === 0
+              ? <p className="fc-hint">No other report is open. Open the report you want to take the figure from (in its own window), then come back here.</p>
+              : (
+                <div className="fc-lookup-box">
+                  <label>1. Take it from report<select value={chosen?.title ?? ""} onChange={(event) => setPick({ ...pick, report: event.target.value, theirs: "", bring: "" })}>{reports.map((report) => <option key={report.title} value={report.title}>{report.title}</option>)}</select></label>
+                  <label>2. My column that has the same name / number<select value={pick.mine} onChange={(event) => setPick({ ...pick, mine: event.target.value })}>{shown.filter((column) => !column.key.startsWith(FORMULA_KEY)).map((column) => <option key={column.key} value={column.caption}>{column.caption}</option>)}</select></label>
+                  <label>3. Their column that has it too<select value={pick.theirs} onChange={(event) => setPick({ ...pick, theirs: event.target.value })}>{(chosen?.columns ?? []).map((caption, at) => <option key={`${caption}${at}`} value={caption}>{caption}</option>)}</select></label>
+                  <label>4. Bring me their column<select value={pick.bring} onChange={(event) => setPick({ ...pick, bring: event.target.value })}>{(chosen?.columns ?? []).map((caption, at) => <option key={`${caption}${at}`} value={caption}>{caption}</option>)}</select></label>
+                  <label className="fc-check"><input type="checkbox" checked={pick.exact} onChange={(event) => setPick({ ...pick, exact: event.target.checked })} /> Same name only (exact match)</label>
+                  <label className="fc-check"><input type="checkbox" checked={pick.zero} onChange={(event) => setPick({ ...pick, zero: event.target.checked })} /> Show 0 when it is not found</label>
+                  <button type="button" className="pc-btn pc-btn-primary" onClick={putLookup}>Write the formula for me</button>
+                  <p className="fc-hint">It fills the Formula box above (and the column name if empty); then press Add Column. If the other report has the name on many lines, you get the first line.</p>
+                </div>
+              ))}
+          </div>
           {error && <p className="fc-error" role="alert">{error}</p>}
           <p className="fc-hint">
             A column named on its own is the cell of the row; inside SUM, AVERAGE, MIN, MAX or COUNT it is the whole column, so <b>=SUM(QTY*RATE)</b> adds up each row&apos;s QTY times RATE (one figure, shown on the last row).
-            Also: + - * / ^ &amp; % ( ), = &lt;&gt; &lt; &gt; &lt;= &gt;=, IF, AND, OR, NOT, ROUND, ABS, INT, SQRT, MOD, IFERROR. In Excel the column is a real formula.
+            Also: + - * / ^ &amp; % ( ), = &lt;&gt; &lt; &gt; &lt;= &gt;=, IF, AND, OR, NOT, ROUND, ABS, INT, SQRT, MOD, IFERROR, VLOOKUP("value","Report!C:H",column,0) (another open report). In Excel the column is a real formula.
           </p>
           <div className="fc-columns" aria-label="Columns you can use">
             {shown.filter((column) => !column.key.startsWith(FORMULA_KEY)).map((column, index) => (
-              <button key={column.key} type="button" title={`Insert [${column.caption}]`} onClick={() => { setFormula((current) => `${current}[${column.caption}]`); input.current?.focus(); }}>
+              <button key={column.key} type="button" title={`Insert [${column.caption}]`} onClick={() => { setFormula((current) => `${current}[${column.caption}]`); formulaInput.current?.focus(); }}>
                 <b>{letterOf(shown.findIndex((entry) => entry.key === column.key) + 1 || index + 1)}</b> {column.caption}
               </button>
             ))}

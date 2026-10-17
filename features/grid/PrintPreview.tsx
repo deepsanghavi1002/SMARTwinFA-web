@@ -31,6 +31,17 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
   const [boxWidth, setBoxWidth] = useState(900);
   const scroller = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
+  // The window can be moved by dragging its title bar (the empty part of the toolbar).
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button, input, select, label, a")) return;
+    event.preventDefault();
+    const from = { x: event.clientX - offset.x, y: event.clientY - offset.y };
+    const move = (at: PointerEvent) => setOffset({ x: Math.max(-window.innerWidth + 120, Math.min(window.innerWidth - 120, at.clientX - from.x)), y: Math.max(-40, Math.min(window.innerHeight - 60, at.clientY - from.y)) });
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
 
   const pages = useMemo(() => previewPages(table, options), [table, options]);
   const hits = useMemo(() => pages.find(search), [pages, search]);
@@ -102,9 +113,9 @@ export function PrintPreview({ table, initialOptions, title, onClose, onOptionsC
 
   return (
     <div className="mp-dialog-backdrop" role="presentation">
-      <div ref={dialog} className="mp-dialog mp-preview" role="dialog" aria-modal="true" aria-label="Print preview" tabIndex={-1}>
+      <div ref={dialog} className="mp-dialog mp-preview" role="dialog" aria-modal="true" aria-label="Print preview" tabIndex={-1} style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
         <style>{PAGE_CSS}</style>
-        <div className="mp-preview-bar">
+        <div className="mp-preview-bar" onPointerDown={startDrag} style={{ cursor: "move" }} title="Drag to move the window">
           <strong>Print Preview</strong>
           <label title="List print: all records as a table. Vertical print: each record from a new page, every field's heading beside its value">Layout
             <select value={options.style ?? "list"} onChange={(event) => { const style = event.target.value as PrintStyle; setOptions({ ...options, style, orientation: style === "record" ? "portrait" : options.orientation }); goTo(0); }}>

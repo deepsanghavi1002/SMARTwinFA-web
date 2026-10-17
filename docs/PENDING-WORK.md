@@ -47,10 +47,10 @@ Everything is in `lib/report/` (one program: `reportCombine.ts` → `reportStand
   Month steps whole calendar months; Show Default Slabs with 2+ groups uses the pivoted rows. (2026-10-07)
 
 ### Outstanding Ageing (5)
-- [ ] Multi Company Report (CHK_MULTICO), With FIFO, With PDC, Outstanding With All Entries,
-  Only On Account Detail: refused. (2026-10-07)
-- [ ] Ageing Column Selection (columns from `DAYS_GAP`). (2026-10-07)
-- [ ] Interest Perc sorting: the desktop does nothing with it for this report; confirm it should stay so. (2026-10-07)
+- [x] Ported from Outstanding.txt (2026-10-17): With FIFO, With PDC, Outstanding With All Entries, Only On Account Detail, Days from system date, Ageing Column Selection (DAYS_GAP, up to 7 columns), and Multi Company Report for the Detail. Written from the procedure text, NOT yet compared with a desktop run or live data.
+- [x] 2026-10-17, from Outstanding.txt: Lock Date monthly (sale), Multi Company for Summary and Monthly, On Account To Settle as the procedure reads it (set against the bills when ticked, listed below zero when not), Print Advance (CHK_AD2PRN: without it parties in credit and rows below zero are dropped; the credit test is on the sale book only), Interest sorting (Int_Amount), Month Total, licence 21 Group Summary days and Hold status. NOT compared with a desktop run.
+- [x] 2026-10-17: Cash Only / Cheque Only (series filters and the address local-code opening; expense treated like purchase), typed-series opening, party heading with short name, credit days, limit, e-mail and the contact line, Overdue Only with All Entries (party chosen by an overdue bill, all bills listed). Not compared with a desktop run.
+- [ ] Not ported (they write to the master tables): Collection Plan, Update OS Message, Transfer Outstanding Data; also licence 14 Reference checks and addon groups in the Lock Date report.
 - [ ] Grace Days sorting: the desktop compares "Geace Days" (typo) so the typed days never applied;
   the web applies them. Confirm. (2026-10-07)
 - [ ] With an addon group (no party ticked) the parties are those that have bills, so a party with
@@ -421,3 +421,8 @@ One generic web master for all MASTER menus (`lib/master-program/`, `features/ma
   `.scratch/idx-all-schemas.mjs`. (2026-10)
 - [ ] Multi-client rule: company and year lists come live from `smart_system`, never hard-coded. Check
   new code for hard-coded company names or schemas. (2026-09)
+
+### Stock (17), from Stock.txt (2026-10-17)
+- [x] Challan Date Wise, Sale / Purchase Value and Opening Value in the Summary (not compared with a desktop run).
+- [x] 2026-10-17: Factor columns and Factor Value (Summary), With Expense, FG With Additional Value, the options the procedure adds by itself. Not compared with a desktop run.
+- [ ] Still not ported: With Slab / Without Tax / With CN slab value (the slab keys are not in Stock.txt), Update Master / Rate / Before GST (writes), Average Value, Godown and Batch / Expiry, licence 1 / 8 / 62 Actual, Factor Value in the Ledger, the Above / Below Days sorting in the Summary.

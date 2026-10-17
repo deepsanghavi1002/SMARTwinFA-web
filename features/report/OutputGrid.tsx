@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import type { ExportRowStyle } from "../../lib/export/table";
 import type { OutputColumn, OutputRow, ReportOutput } from "../../lib/report/types";
@@ -33,7 +33,8 @@ import { PivotPanel } from "./PivotPanel";
 import { applyPivot } from "../../lib/report/pivot";
 import type { PivotSpec } from "../../lib/report/pivot";
 import { FormulaColumns } from "./FormulaColumns";
-import { entryIndexes, excelFormulas, withFormulaColumns, workOut } from "../../lib/report/formulaColumns";
+import { cellValue, entryIndexes, excelFormulas, withFormulaColumns, workOut } from "../../lib/report/formulaColumns";
+import { listOpenReports, notifyOpenReports, openReportsVersion, registerOpenReport, subscribeOpenReports } from "../../lib/report/openReports";
 import type { FormulaColumn } from "../../lib/report/formulaColumns";
 import { xlsxHeadRow } from "../../lib/export/xlsx";
 import { ReportCompare } from "./ReportCompare";
@@ -144,10 +145,14 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [formulaCols, setFormulaCols] = useState<{ forBase: ReportOutput; list: readonly FormulaColumn[] }>({ forBase: base, list: [] });
   const formulaSpecs = formulaCols.forBase === base ? formulaCols.list : NO_FORMULAS;
   const [formulaOpen, setFormulaOpen] = useState(false);
-  const output = useMemo(() => withFormulaColumns(shaped, formulaSpecs), [shaped, formulaSpecs]);
+  // VLOOKUP reads the other open reports: the columns are worked out again when one opens, closes or changes.
+  const openReports = useSyncExternalStore(subscribeOpenReports, openReportsVersion, () => 0);
+  const output = useMemo(() => withFormulaColumns(shaped, formulaSpecs), [shaped, formulaSpecs, openReports]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
+  /** Freeze: the columns up to this one (by key) stay in sight while the grid scrolls sideways. */
+  const [frozenKey, setFrozenKey] = useState<string | null>(null);
   /** Closed tree nodes: indexes of subtotal rows in output.rows. */
   const [closed, setClosed] = useState<ReadonlySet<number>>(new Set());
   const [cursor, setCursor] = useState<Point>({ row: 0, col: 0 });
@@ -186,6 +191,21 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const layout = useColumnLayout(output.columns, 0, (column) => Math.max(30, Math.round(column.width * 1.2)));
   const columns = layout.columns;
   const widthOf = layout.widthOf;
+  // This report, as the other windows' VLOOKUP sees it: its names, its columns as shown, and the cells of its entry rows.
+  const lookupSource = useRef({ output, columns, fallbackTitle });
+  lookupSource.current = { output, columns, fallbackTitle };
+  const ownSnapshot = useRef(() => {
+    const { output: current, columns: shown, fallbackTitle: name } = lookupSource.current;
+    const entries = entryIndexes(current);
+    return {
+      titles: [name, current.title].filter((text) => text.trim() !== ""),
+      columns: shown.map((column) => ({ key: column.key, caption: column.caption })),
+      rows: entries.map((index) => shown.map((column) => cellValue(current.rows[index].values[column.key], column))),
+    };
+  }).current;
+  useEffect(() => registerOpenReport(ownSnapshot), [ownSnapshot]);
+  // The other windows work their formulas out again when this report changes (its added columns do not count: they follow this report).
+  useEffect(() => { notifyOpenReports(); }, [shaped]);
 
   /** Where each subtotal's group starts (BelowData: the rows after the previous subtotal of its level or an outer one). */
   const groupStart = useMemo(() => {
@@ -370,6 +390,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     return list;
   }, [columns, widthOf, tree]);
   const totalWidth = MARK + (tree ? TREE : 0) + columns.reduce((sum, column) => sum + widthOf(column), 0);
+  const frozenAt = frozenKey === null ? -1 : columns.findIndex((column) => column.key === frozenKey);
+  const frozenCount = frozenAt + 1;
 
   const reveal = (point: Point) => {
     const element = scroller.current;
@@ -382,7 +404,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       const left = lefts[point.col];
       const right = left + widthOf(column);
       if (right > element.scrollLeft + element.clientWidth) element.scrollLeft = right - element.clientWidth;
-      if (left < element.scrollLeft + MARK) element.scrollLeft = Math.max(0, left - MARK);
+      const clear = frozenCount > 0 ? lefts[frozenCount - 1] + widthOf(columns[frozenCount - 1]) : MARK;
+      if (point.col >= frozenCount && left < element.scrollLeft + clear) element.scrollLeft = Math.max(0, left - clear);
     }
     setScrollTop(element.scrollTop);
   };
@@ -790,6 +813,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         onClick: () => void copySelection(),
       });
     }
+    if (colIndex >= 0) items.push({ label: `Freeze Columns up to "${caption}"`, title: "These columns stay in sight while you scroll sideways", disabled: frozenKey === key, onClick: () => setFrozenKey(key) });
+    if (frozenKey !== null) items.push({ label: "Unfreeze Columns", onClick: () => setFrozenKey(null) });
     items.push(...columnMenuItems(layout, key, () => setArranging(true)));
     return items;
   };
@@ -885,7 +910,9 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       // always runs over every empty text column that follows, so all of them end in the same place (right side), whatever the length.
       const always = row.kind === "subtotal" || row.kind === "total";
       if (column.kind !== "number" && value !== "" && (always || value.length * 7 > width)) {
-        while (col + 1 < columns.length && columns[col + 1].kind !== "number" && (row.values[columns[col + 1].key] ?? "") === "" && (always || value.length * 7 > width)) {
+        // A group heading's text also runs over the empty number cells to its right when it is longer than the text cells before them.
+        const heading = isHeading(row);
+        while (col + 1 < columns.length && (columns[col + 1].kind !== "number" || heading) && (row.values[columns[col + 1].key] ?? "") === "" && (always || value.length * 7 > width)) {
           col += 1;
           width += widthOf(columns[col]);
         }
@@ -948,13 +975,13 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           <div className="mp-grid" style={{ height: (shown.length + 1) * ROW, minWidth: totalWidth + 20 }}>
             <div className="mp-row mp-head" style={{ top: 0 }}>
               <div className="mp-cell mp-rownum rp-count" aria-hidden="true" />
-              {tree && <div className="mp-cell rp-tree" aria-hidden="true" />}
+              {tree && <div className={`mp-cell rp-tree ${frozenCount > 0 ? "mp-frozen" : ""}`} style={frozenCount > 0 ? { left: MARK } : undefined} aria-hidden="true" />}
               {columns.map((column, col) => (
                 <div
                   key={column.key}
                   data-head={column.key}
-                  className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${isColSelected(col) ? "rp-head-sel" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""}`}
-                  style={{ width: widthOf(column), textAlign: align(column) }}
+                  className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${isColSelected(col) ? "rp-head-sel" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
+                  style={{ width: widthOf(column), textAlign: align(column), ...(col < frozenCount ? { left: lefts[col] } : {}) }}
                   data-tip={`${column.caption} · click to select column · ${filterable ? "▾ to filter · " : ""}right-click for options · drag right edge to size`}
                   onMouseDown={(event) => {
                     if (event.button !== 0) return;
@@ -983,21 +1010,22 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                 <div key={source} className={`mp-row ${position % 2 && row.rowType !== "GAP" ? "mp-alt" : ""} ${current ? "mp-current-row" : ""} rp-${row.kind}`} style={{ top: (position + 1) * ROW }} data-row={position}>
                   <div className="mp-cell mp-rownum" aria-hidden="true">{current ? "▶" : ""}</div>
                   {tree && (
-                    <div className="mp-cell rp-tree">
+                    <div className={`mp-cell rp-tree ${frozenCount > 0 ? "mp-frozen" : ""}`} style={frozenCount > 0 ? { left: MARK } : undefined}>
                       {row.kind === "subtotal" && <button type="button" tabIndex={-1} className="rp-tree-node" aria-label={closed.has(source) ? "Open group" : "Close group"} data-tip={closed.has(source) ? "Open group" : "Close group"} onClick={() => toggleNode(source)}>{closed.has(source) ? "⊞" : "⊟"}</button>}
                     </div>
                   )}
                   {spilled.map(({ column, col, width }, drawn) => {
                     const here = current && col === at.col;
                     const label = drawn === labelAt;
-                    const text = row.values[column.key] ?? "";
+                    // The oldest Days / longest CDays on a party's subtotal line show only once Create Tree is on or F6 has summarized.
+                    const text = row.treeOnly?.includes(column.key) && !tree && !collapsed ? "" : row.values[column.key] ?? "";
                     const selected = isSelected(position, col);
                     return (
                       <div
                         key={column.key}
                         data-col={col}
-                        className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""}`}
-                        style={{ width, textAlign: label && look.captionRight ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
+                        className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
+                        style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: label && look.captionRight ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
                         data-tip={text}
                       >
                         {label && kindOf(row) === "heading" && output.subtotals && (
@@ -1056,6 +1084,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className={`mp-btn mp-btn-plain ${drawing ? "rp-btn-on" : ""}`} onClick={borderOn} title="Border the selected cells, then click cells to border them (Esc stops)"><Icon name="border" /><HotkeyLabel text="Border On" hotkey="o" /></button>
               <button type="button" data-hotkey="b" aria-keyshortcuts="Alt+B" className="mp-btn mp-btn-plain" onClick={borderOff} title="Remove Border from the selected cells, and stop drawing"><Icon name="borderOff" /><HotkeyLabel text="Border Off" hotkey="b" /></button>
               <button type="button" data-hotkey="l" aria-keyshortcuts="Alt+L" className={`mp-btn mp-btn-plain ${formulaSpecs.length > 0 ? "rp-btn-on" : ""}`} onClick={() => setFormulaOpen(true)} title="Add a column with a spreadsheet-style formula (=QTY*RATE, =SUM(QTY*RATE)); Excel gets it as a real formula"><Icon name="plus" /><HotkeyLabel text="Add Column" hotkey="l" /></button>
+              <button type="button" className={`mp-btn mp-btn-plain ${frozenCount > 0 ? "rp-btn-on" : ""}`} onClick={() => setFrozenKey(frozenCount > 0 ? null : columns[at.col]?.key ?? null)} title={frozenCount > 0 ? "Unfreeze the columns" : "Freeze the columns up to the one the cursor is on: they stay in sight while you scroll sideways"}><Icon name="columns" />{frozenCount > 0 ? "Unfreeze" : "Freeze"}</button>
               <button type="button" data-hotkey="o" aria-keyshortcuts="Alt+O" className="mp-btn mp-btn-plain" onClick={() => setArranging(true)} title="Arrange columns: change their order, show or hide them"><Icon name="columns" /><HotkeyLabel text="Arrange Columns" hotkey="o" />{layout.hiddenColumns.length ? ` (${layout.hiddenColumns.length} hidden)` : ""}</button>
             </>
           ) },
@@ -1071,7 +1100,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         info={(
           <>
             <span className="rp-run-info"><span>{rowsText}</span><span>Time : {output.elapsed.replace(" Minutes ", " Min ").replace(" Seconds", " Sec")}</span></span>
-            {(search || activeFilters > 0) && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" onClick={() => { setSearch(""); clearAllFilters(); setChartFilter(null); }}><Icon name="clear" /><HotkeyLabel text="Clear filters" hotkey="a" /></button>}
+            {(search || activeFilters > 0) && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" title="Clear the search and every column filter" onClick={() => { setSearch(""); clearAllFilters(); setChartFilter(null); }}><Icon name="clear" /><HotkeyLabel text="Clear" hotkey="a" /></button>}
             <label className="mp-search"><Icon name="search" /><input id="rp-search" type="search" placeholder="Search all columns (Ctrl+F)" value={search} onChange={(event) => { setSearch(event.target.value); setCursor({ row: 0, col: at.col }); setSelEnd(null); }} /></label>
           </>
         )}
@@ -1089,7 +1118,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           onClose={() => { setArranging(false); scroller.current?.focus(); }}
         />
       )}
-      {formulaOpen && <FormulaColumns output={shaped} shown={columns.map((column) => ({ key: column.key, caption: column.caption }))} specs={formulaSpecs} onChange={(list) => setFormulaCols({ forBase: base, list })} onClose={() => { setFormulaOpen(false); scroller.current?.focus(); }} />}
+      {formulaOpen && <FormulaColumns others={() => listOpenReports(ownSnapshot)} output={shaped} shown={columns.map((column) => ({ key: column.key, caption: column.caption }))} specs={formulaSpecs} onChange={(list) => setFormulaCols({ forBase: base, list })} onClose={() => { setFormulaOpen(false); scroller.current?.focus(); }} />}
       {logTable && <LogViewer table={logTable} title={`${output.title || fallbackTitle} Log`} onClose={() => { setLogTable(null); scroller.current?.focus(); }} />}
     </div>
   );

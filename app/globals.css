@@ -243,6 +243,12 @@
 .mp-combos button,.mp-actions button,.mp-toolbar button,.mp-dialog-buttons button{height:23px;padding:0 12px;border:1px solid #687f7d;background:linear-gradient(#eef3f2,#cfd9d8);font-size:11px;cursor:pointer}
 .mp-combos button:disabled,.mp-actions button:disabled,.mp-toolbar button:disabled{opacity:.5;cursor:default}
 .mp-busy{color:#15779b;font-weight:600}
+.mp-working,.mp-working *{cursor:progress!important}
+.mp-busy-overlay{position:fixed;inset:0;z-index:900;display:grid;place-items:center;background:#0b1a2e33}
+.mp-busy-card{display:grid;justify-items:center;gap:8px;min-width:190px;padding:18px 26px;border:1px solid #1f64b8;border-radius:10px;background:#fff;box-shadow:0 8px 28px #0b1a2e55;color:#0d3a73;font-size:14px}
+.mp-busy-card span:last-child{color:#5b6b82;font-size:12px}
+.mp-spinner{width:34px;height:34px;border:4px solid #cfe0f5;border-top-color:#1f64b8;border-radius:50%;animation:mp-spin .8s linear infinite}
+@keyframes mp-spin{to{transform:rotate(360deg)}}
 .mp-tabs{display:flex;align-self:stretch;align-items:flex-end;gap:2px;margin-bottom:-5px}
 .mp-tabs button{height:24px;padding:0 14px;border:1px solid #8fa3a2;border-bottom:0;background:#c4cfce;font-size:11px;cursor:pointer}
 .mp-tabs button.active{background:#fff;font-weight:700}
@@ -511,6 +517,8 @@
 /* Excel / PDF buttons and the print preview window */
 .mp-screen .mp-btn-excel{background:linear-gradient(#2e9d5b,#1d6f3e);border-color:#185c33}
 .mp-screen .mp-btn-pdf{background:linear-gradient(#d9534f,#a8322f);border-color:#8f2926}
+/* The print preview stands above the menu bar (z-index 100), not under it. */
+.mp-dialog-backdrop:has(> .mp-preview){z-index:1300;place-items:start center;padding-top:4px}.mp-dialog-backdrop:has(> .mp-preview) > .mp-preview{height:calc(100vh - 12px);max-height:1100px}
 .mp-preview{width:min(1600px,98vw);height:min(900px,94vh);max-width:none;display:grid;grid-template-rows:auto minmax(0,1fr);gap:6px;padding:8px}
 .mp-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;white-space:nowrap}
 .mp-preview-bar strong{margin-right:8px;color:#0d3a73;font-size:13px}
@@ -556,6 +564,8 @@
 .mp-add .mp-help{top:8px;right:12px;bottom:auto;max-height:calc(100% - 16px)}
 .mp-help-note{padding:3px 8px;border-bottom:1px solid #c7d7ea;background:#eef4fb;color:#0d3a73;font-weight:600;white-space:nowrap}
 .mp-help-note.mp-help-warn{background:#fde2e4;color:#a8202e}
+/* The note under the help title changes with every key typed: it never widens or narrows the window (it is cut with an ellipsis instead). */
+.mp-help-note{min-width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis}
 
 /* ── Shared message box (features/ui/MessageBox) ──────────────────────────────
    Coloured title bar, an icon by kind, Yes/OK green like Save, No red like Cancel. */
@@ -639,6 +649,8 @@
 
 /* Combo cells (combo_value L / Q / X): a ▾ shows they hold a list; the list opens under the cell. */
 .mp-cell.mp-combo-cell{position:relative;padding-right:18px}
+/* A frozen cell that is also a list cell stays sticky: as relative, its left offset pushed it right (the blank gap after Sr No on Multi Address). */
+.mp-cell.mp-combo-cell.mp-frozen{position:sticky}
 .mp-combo-arrow{position:absolute;right:1px;top:1px;bottom:1px;width:15px;display:grid;place-items:center;border-left:1px solid #c7d7ea;background:#eef4fb;color:#1f64b8;font-size:10px;cursor:pointer}
 .mp-combo-arrow:hover{background:#1f64b8;color:#fff}
 .mp-cell select.mp-combo-list{z-index:50;min-height:0;padding:1px 0;border:1px solid #1f64b8;background:#fff;box-shadow:0 6px 16px #0b1a2e40;font-size:11px;overflow-y:auto}
@@ -1084,16 +1096,16 @@
 .mp-ribbon .mp-rtab:hover{background:rgba(255,255,255,.16);color:#fff}
 .mp-ribbon .mp-rtab-on,.mp-ribbon .mp-rtab-on:hover{background:#1f6fd1;color:#fff;border-color:#0f4f9e;box-shadow:inset 0 2px 0 #ffd54f}
 .mp-ribbon .mp-ractions{display:flex;align-items:center;gap:5px;padding-bottom:3px}
-.mp-ribbon .mp-rpanels{padding:5px 6px}
-.mp-ribbon .mp-rpanel{display:flex;flex-wrap:nowrap;align-items:center;gap:5px;min-width:0}
+.mp-ribbon .mp-rpanels{padding:5px 6px;flex-wrap:wrap;row-gap:4px}.mp-ribbon .mp-rpanels>.mp-spacer{flex:1 1 0;min-width:0}.mp-ribbon .mp-rpanels>.mp-rinfo{flex:0 0 auto;margin-left:auto}
+.mp-ribbon .mp-rpanel{display:flex;flex-wrap:nowrap;align-items:center;gap:3px;min-width:0}
 .mp-ribbon .mp-rpanel[hidden]{display:none}
 .mp-ribbon .mp-rinfo{display:flex;align-items:center;gap:5px;flex:0 1 auto;min-width:0}
-.mp-ribbon .mp-rinfo .mp-search input{width:150px}
+.mp-ribbon .mp-rinfo .mp-search input{width:104px}.mp-ribbon .mp-rinfo:has(> .mp-btn) .mp-search input{width:40px}
 
 /* Ribbon look: rounder buttons, an icon before each tab, a colour for each button of a tab */
-.mp-ribbon .mp-btn{border-radius:13px;padding:0 13px}
+.mp-ribbon .mp-btn{border-radius:13px;padding:0 7px}
 .mp-ribbon .mp-search{border-radius:13px}
-.mp-ribbon .rp-run-info{border-radius:13px}
+.mp-ribbon .rp-run-info{border-radius:13px;gap:8px;padding:3px 8px;margin-left:2px}
 .mp-ribbon .mp-rtab{display:inline-flex;align-items:center;gap:6px;border-radius:9px 9px 0 0}
 .mp-ribbon .mp-rtab-icon{display:inline-flex;width:14px;height:14px}
 .mp-ribbon .mp-rtab-icon .mp-icon{width:14px;height:14px}
@@ -1496,7 +1508,7 @@
 .fc-body input,.fc-body select{height:30px;padding:0 8px;border:1px solid #cfd6e0;border-radius:6px;font:13px "Segoe UI",Arial,sans-serif;color:#28324a}
 .fc-formula input{font-family:Consolas,monospace}
 .fc-error{margin:0;padding:6px 10px;border-radius:6px;background:#fdeaea;color:#b3261e;font-size:12px}
-.fc-hint{margin:0;font-size:11px;color:#6b7686;line-height:1.5}
+.rp-out-scroll .mp-cell.rp-frozen-edge{border-right:2px solid #1f64b8}.rp-out-scroll .mp-row.mp-head .mp-frozen,.rp-out-scroll .mp-cell.mp-frozen{z-index:2}.rp-out-scroll .mp-row.mp-head .mp-frozen{z-index:6}.fc-lookup{display:grid;gap:6px}.fc-lookup-box{display:grid;gap:6px;padding:8px;border:1px solid #c9d8ea;border-radius:8px;background:#f5f9ff}.fc-lookup-box label{display:grid;gap:2px;font-size:12px;font-weight:600}.fc-lookup-box select{padding:4px}.fc-lookup-box .fc-check{display:flex;align-items:center;gap:6px;font-weight:500}.fc-hint{margin:0;font-size:11px;color:#6b7686;line-height:1.5}
 .fc-columns{display:flex;flex-wrap:wrap;gap:6px;max-height:84px;overflow:auto}
 .fc-columns button{border:1px solid #d5dbe6;background:#f7f9fc;border-radius:14px;padding:2px 10px;font:11px "Segoe UI",Arial,sans-serif;color:#28324a;cursor:pointer}
 .fc-columns button:hover{background:#eef0ff;border-color:#4a5ff0}
@@ -1639,3 +1651,26 @@
 .ent-print-bar b{margin-right:auto}
 .ent-print-sheet{width:100%;height:100%;border:0;background:#fff}
 .ent-print-preview:active .ent-print-sheet{pointer-events:none}
+
+/* Setup > Security > Menu Book Rights */
+.sec-screen{display:flex;flex-direction:column;min-height:0}
+.sec-combos{display:flex;align-items:center;gap:18px;padding:8px 10px}
+.sec-combo{display:flex;align-items:center;gap:8px;font-weight:700;color:#0d3a73;font-size:12px}
+.sec-combo select{min-width:200px;height:26px;padding:0 6px;border:1px solid #8fb0d8;border-radius:4px;background:#fff;font:inherit;font-weight:500}
+.sec-body{flex:1;min-height:0;overflow:auto;margin:0 10px;border:1px solid #9fb8d6;background:#fff}
+.sec-empty{margin:24px;color:#4a6a92;font-size:13px}
+.sec-grid{border-collapse:separate;border-spacing:0;font-size:12px;min-width:100%}
+.sec-grid th,.sec-grid td{padding:2px 6px;border-right:1px solid #c7d7ea;border-bottom:1px solid #c7d7ea;white-space:nowrap;text-align:left}
+.sec-grid thead th{position:sticky;top:0;z-index:2;background:linear-gradient(#3d8fe0,#1f64b8);color:#fff;text-align:center;font-weight:700}
+.sec-grid thead tr.sec-sub th{top:22px;background:#c5d9f2;color:#0d3a73;font-weight:600;font-size:11px}
+.sec-grid tbody tr.sec-alt td{background:#eef4fc}
+.sec-grid tbody tr.sec-book td{background:#fff7dd}
+.sec-grid tbody tr.sec-current td{background:#cfe2fb}
+.sec-name{min-width:260px;font-weight:600}
+.sec-check{text-align:center!important;width:34px}
+.sec-pass{width:86px;padding:0!important}
+.sec-pass input{width:100%;height:21px;border:0;background:transparent;font:inherit;padding:0 4px}
+.sec-pass input:focus{outline:2px solid #1f64b8;background:#fff}
+.sec-buttons{display:flex;gap:8px;padding:8px 10px}
+.sec-all{text-align:center!important}.sec-all label{display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:700}.sec-all input{margin:0}
+.sec-all{display:inline-flex;align-items:center;gap:4px;cursor:pointer}

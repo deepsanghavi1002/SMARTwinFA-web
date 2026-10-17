@@ -6,7 +6,7 @@ import type { ProgramBodySetup } from "../master-rules";
 import { replaceSysValues } from "../sys-values";
 import type { SysValueContext } from "../sys-values";
 import { sysValueLookups } from "../sys-values-db";
-import { applyPermission, getPermission, toInt, toText } from "./legacy";
+import { applyPermission, getPermission, readPw, toInt, toText } from "./legacy";
 import { columnName, replaceSessionValues, setDataBaseName } from "./sql";
 import { GST_START_DATE, readRights, SETUP_SCHEMA } from "./session";
 import type { MasterSession } from "./session";
@@ -910,7 +910,13 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       if (passwordColumn) {
         const index = columns.indexOf(passwordColumn);
         const next = columns[index + 1];
+        // Only the ADMIN user is shown the saved passwords (as `__reveal_<column>`, for display); everyone else sees the mask.
+        const admin = session.loginName.trim().toUpperCase() === "ADMIN";
         for (let r = 0; r < records.length; r += 1) {
+          if (admin) {
+            records[r][`__reveal_${passwordColumn.key}`] = readPw(toText(records[r][passwordColumn.key]));
+            if (next) records[r][`__reveal_${next.key}`] = readPw(toText(records[r][next.key]));
+          }
           records[r][passwordColumn.key] = "*********";
           backup[r][passwordColumn.key] = "*********";
           if (next && toText(records[r][next.key]) !== "") { records[r][next.key] = "*********"; backup[r][next.key] = "*********"; }

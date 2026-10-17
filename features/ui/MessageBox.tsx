@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /**
  * The program's one message box (the desktop's CustomMessageBoxForm), for every screen.
@@ -110,6 +110,19 @@ export function MessageBoxHost() {
   const request = useSyncExternalStore(subscribe, current, () => null);
   const box = useRef<HTMLDivElement>(null);
   const text = useRef<HTMLInputElement>(null);
+  // The message can be moved by dragging its title bar; each new message opens in the middle again.
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const requestId = request?.id;
+  useEffect(() => { setOffset({ x: 0, y: 0 }); }, [requestId]);
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const from = { x: event.clientX - offset.x, y: event.clientY - offset.y };
+    const move = (at: PointerEvent) => setOffset({ x: Math.max(-window.innerWidth + 140, Math.min(window.innerWidth - 140, at.clientX - from.x)), y: Math.max(-window.innerHeight + 60, Math.min(window.innerHeight - 60, at.clientY - from.y)) });
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
 
   // Focus the text box, else the first button, each time a new message shows; and take its
   // keys directly on the box, so none of them reaches the screen behind it (whose Esc asks to leave).
@@ -150,8 +163,8 @@ export function MessageBoxHost() {
 
   return (
     <div className="msgbox-backdrop" role="presentation">
-      <div ref={box} className={`msgbox msgbox-${request.kind}`} role="alertdialog" aria-modal="true" aria-labelledby={`msgbox-title-${request.id}`} aria-describedby={`msgbox-text-${request.id}`}>
-        <div className="msgbox-title" id={`msgbox-title-${request.id}`}>{request.title}</div>
+      <div ref={box} className={`msgbox msgbox-${request.kind}`} role="alertdialog" aria-modal="true" aria-labelledby={`msgbox-title-${request.id}`} aria-describedby={`msgbox-text-${request.id}`} style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
+        <div className="msgbox-title" id={`msgbox-title-${request.id}`} onPointerDown={startDrag} style={{ cursor: "move" }} title="Drag to move this message">{request.title}</div>
         <div className="msgbox-body">
           <svg className="msgbox-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[request.kind]} /></svg>
           <div className="msgbox-text">

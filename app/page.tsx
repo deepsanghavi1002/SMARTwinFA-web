@@ -10,6 +10,10 @@ import type { ZoomTarget } from "../features/report/zoom";
 import { PieChart } from "../features/piechart/PieChart";
 import { YearChart } from "../features/yearchart/YearChart";
 import { Dashboard } from "../features/dashboard/Dashboard";
+import { SecurityRights } from "../features/security/SecurityRights";
+import { UserCompanyRights } from "../features/security/UserCompanyRights";
+import { UserYearRights } from "../features/security/UserYearRights";
+import { UserDashboardRights } from "../features/security/UserDashboardRights";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
@@ -53,7 +57,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "pending";
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
@@ -89,6 +93,7 @@ function screenOf(node: MenuNode | null): Screen {
   if (code === "SMALL_ENTRY" && node.actionMenu) return "small-entry";
   if (code === "ENTRY" && ["INVOICE", "VOUCHER"].includes(node.actionMenu?.toUpperCase() ?? "")) return "entry";
   if (code === "REPORT" && node.actionMenu) return "report";
+  if ((code === "SECURITY_MENU" || code === "USER_COMPANY_RIGHTS" || code === "USER_YEAR_RIGHTS" || code === "USER_DASHBOARD_RIGHTS") && node.actionMenu) return "security";
   if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
   if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";
   if ((code === "REP_DASHBOARD" || code === "YEAR_DASHBOARD") && node.actionMenu) return "dashboard";
@@ -562,6 +567,13 @@ function MainMenu() {
       case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} />;
       case "pie-chart": return <PieChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "year-chart": return <YearChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "security": return node.actionCode?.toUpperCase() === "USER_DASHBOARD_RIGHTS"
+        ? <UserDashboardRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />
+        : node.actionCode?.toUpperCase() === "USER_YEAR_RIGHTS"
+        ? <UserYearRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />
+        : node.actionCode?.toUpperCase() === "USER_COMPANY_RIGHTS"
+        ? <UserCompanyRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />
+        : <SecurityRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "dashboard": return <Dashboard reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       default: return <NotBuiltYet node={node} />;
     }
@@ -585,7 +597,7 @@ function MainMenu() {
 
   return (
     <ZoomContext.Provider value={openZoom}>
-    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
         {windows.length > 0 && (
@@ -668,7 +680,7 @@ function MainMenu() {
         </div>
       </section>
 
-      <section className={`work-area ${screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
+      <section className={`work-area ${screen === "security" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
         <div className="window-stack">
           {windows.map((node) => {
             const on = node.id === activeId;

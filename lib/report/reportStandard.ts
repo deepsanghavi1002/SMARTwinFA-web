@@ -461,15 +461,22 @@ async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const AGEING_BUCKETS: readonly [string, number, number][] = [["Days_0_30", 0, 30], ["Days_31_60", 31, 60], ["Days_61_90", 61, 90], ["Days_91_180", 91, 180], ["Days_181_Above", 181, 99999]];
 
-async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+async function ageing(loader: Loader, plan: ReportPlan, company?: { short: string }): Promise<ResultTable> {
   const { call } = plan;
   const db = call.database;
   const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
   const checks = (name: string) => call.checkQuery.includes(`${name},`);
   const unsupported = (what: string) => new ReportRefusal(`${what} is not available in the web version of the ageing yet.`, "Not ported yet");
-  for (const [name, caption] of [["CHK_MULTICO", "Multi Company Report"], ["CHK_FIFO", "Outstanding With FIFO"], ["CHK_WITHALLENT", "Outstanding With All Entries"], ["CHK_PDC", "With PDC"], ["CHK_ONACCSTL", "Only On Account Detail"], ["CHK_AGCOLSEL", "Ageing Column Selection"]] as const) {
-    if (checks(name)) throw unsupported(caption);
-  }
+  if (checks("CHK_MULTICO") && company === undefined) return ageingCompanies(loader, plan);
+  const fifo = checks("CHK_FIFO");
+  const withAllEntries = checks("CHK_WITHALLENT");
+  const onAccountOnly = checks("CHK_ONACCSTL");
+  const pdc = checks("CHK_PDC");
+  // On Account To Settle (always for licence 15): the advances are set against the bills; without it they are rows of their own, below zero.
+  const accstl = checks("CHK_ACCSTL") || loader.session.licence === 15;
+  // Print Advance: without it the parties in credit and the rows below zero are taken out.
+  const printAdvance = checks("CHK_AD2PRN");
+  if (checks("CHK_LOCKDATE") && Number(call.fcValue) === 8) return lockDateOutstanding(loader, plan);
   const summary = call.filterText === "Summary";
   const monthly = call.filterText === "Monthly";
   const licence21 = loader.session.licence === 21;
@@ -491,14 +498,43 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const yearStart = desktopDate(call.tarikh1);
 
   // The bills: the setup's own select, from and where, with the setoffs up to the Upto date.
-  const start = call.queryStart.split("ac.co_short").join("''").split("'|SYS.FROMDT|'").join(`'${upto}'`).split("|SYS.FROMDT|").join(`'${upto}'`);
-  const from = `${call.from_.replace("|sys.aente|", "")} left join (select OUT_AG_OUTID, SUM(out_setoff::numeric) as OUTSETOF from ${db}OUTCLEAR where out_date<='${upto}' group by OUT_AG_OUTID) outsetoff on outsetoff.OUT_AG_OUTID=outclr.OUT_KEY`;
-  const where = `${call.where.split("|sys.yearid|").join(call.yearId)} and outclr.out_dbcode=${billSide} and ac.book=${partyBook} and ac.os_flag<>'N' and ((led.doc_posting='L' and outclr.OUT_ENTRYAMT-outclr.OUT_LY_SETOFF<>0) or led.doc_posting<>'L') and (outclr.OUT_ENTRYAMT-coalesce(OUTSETOF,0.00)-outclr.out_ly_setoff) > 0`;
+  // With PDC the setup's |sys.stpds| ... |sys.endpds| pair also takes in the receipts (payments) dated after Upto; without it the pair is nothing.
+  const pdcText = (text: string) => text.split("|sys.stpds|").join(pdc ? "(" : "").split("|sys.endpds|").join(pdc ? ` or (out_date>='${upto}' and out_dbcode=${sale ? 2 : 1}))` : "");
+  const start = pdcText(call.queryStart).split("ac.co_short").join(`'${(company?.short ?? "").replace(/'/g, "''")}'`).split("'|SYS.FROMDT|'").join(`'${upto}'`).split("|SYS.FROMDT|").join(`'${upto}'`);
+  const from = `${pdcText(call.from_).replace("|sys.aente|", "")} left join (select OUT_AG_OUTID, SUM(out_setoff::numeric) as OUTSETOF from ${db}OUTCLEAR where out_date<='${upto}' group by OUT_AG_OUTID) outsetoff on outsetoff.OUT_AG_OUTID=outclr.OUT_KEY`;
+  // With FIFO the bills are not cut to those still pending: the closing balance is laid on the newest bills (below).
+  // Cash Only: the vouchers whose series is not a cheque / bank one; Cheque Only: those that are. Both leave out the lines with nothing left of them.
+  const chequeSeries = ["SH", "MS", "RD", "AL", "AI", "RG", "VA", "MD", "HC"];
+  const cashSeries = ["DP", "KR", "RM", "SJ", ...chequeSeries];
+  const cashOnly = checks("CHK_CASH");
+  const chequeOnly = !cashOnly && checks("CHK_CHQONLY");
+  const seriesList = (names: string[]) => names.map((name) => "'" + name + "'").join(",");
+  const seriesTest = cashOnly ? ` and left(led.doc_series,2) not in (${seriesList(cashSeries)})` : chequeOnly ? ` and left(led.doc_series,2) in (${seriesList(chequeSeries)})` : "";
+  const amountLeft = " and led.amount::numeric-coalesce(led.ly_clearamt::numeric,0)<>0";
+  const seriesWhere = cashOnly ? seriesTest + amountLeft + " and (led.doc_posting<>'L' or (led.doc_posting='L' and led.book<>6))" : chequeOnly ? seriesTest + amountLeft : "";
+  const where = `${pdcText(call.where).split("|sys.yearid|").join(call.yearId)} and outclr.out_dbcode=${billSide} and ac.book=${partyBook} and ac.os_flag<>'N' and ((led.doc_posting='L' and outclr.OUT_ENTRYAMT-outclr.OUT_LY_SETOFF<>0) or led.doc_posting<>'L')${fifo ? "" : " and (outclr.OUT_ENTRYAMT-coalesce(OUTSETOF,0.00)-outclr.out_ly_setoff) > 0"}${seriesWhere}`;
+  // Ageing Column Selection: the age columns are the ranges of DAYS_GAP (up to seven); the last one runs to 99999.
+  let buckets: readonly [string, number, number][] = AGEING_BUCKETS;
+  if (checks("CHK_AGCOLSEL") && checks("CHK_AGECOL")) {
+    const gaps = (await runReportSql(loader, frag(`SELECT days_gap_key AS k, days_from AS f, days_upto AS u FROM ${db}DAYS_GAP WHERE days_from<>'' AND days_upto<>'' ORDER BY days_gap_key`))).rows.slice(0, 7);
+    if (gaps.length > 0) buckets = gaps.map((gap, at) => [`Days_${toText(gap.f).trim()}_${toText(gap.u).trim()}`, num(gap.f), at === gaps.length - 1 ? 99999 : num(gap.u)] as [string, number, number]);
+  }
   const series = call.seriesText.trim() !== "" && call.seriesText.trim().toUpperCase() !== "ALL" ? ` and rtrim(led.doc_series) = '${call.seriesText.trim().replace(/'/g, "''")}'` : "";
   const bills = await runReportSql(loader, frag(`SELECT ${start},coalesce(led.credit_days,0) AS "_LEDDAYS",to_char(led.doc_date,'YYYYMMDD') AS "_SORTDATE"${from}${where}${series}`));
   const table = tableFromFields(bills.fields.filter((field) => field.name !== "_LEDDAYS" && field.name !== "_SORTDATE"));
   for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "SMART_AC_CODE", "SORTING_DATE"]) if (!table.has(name)) table.addColumn(name);
-  const col = (name: string) => table.name(name) ?? name;
+  if (buckets !== AGEING_BUCKETS) {
+    // The picked ranges take the place of the five fixed age columns.
+    const fixed = new Set(AGEING_BUCKETS.map((bucket) => bucket[0].toLowerCase()));
+    const present = table.columns.map((name, at) => ({ name, at })).filter(({ name }) => fixed.has(name.toLowerCase()));
+    const first = present.length > 0 ? present[0].at : table.columns.length;
+    for (let at = present.length - 1; at >= 0; at -= 1) { table.numberKinds.delete(present[at].name); table.columns.splice(present[at].at, 1); }
+    table.columns.splice(first, 0, ...buckets.map((bucket) => bucket[0]));
+    for (const bucket of buckets) table.setKind(bucket[0], "decimal");
+  }
+  const interest = sorting.includes("Interest");
+  if (interest && !summary && !monthly) table.setKind("Int_Amount", "decimal");
+  const col =(name: string) => table.name(name) ?? name;
 
   // The parties: those ticked (or, with an addon group, those that have bills).
   const ticked = call.selectKey[4].replace(/[()]/g, "").split(",").map((code) => Number(code.trim())).filter((code) => Number.isFinite(code) && code > 0);
@@ -519,9 +555,23 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const setAddon = (row: ResultRow, code: number) => { const values = addonOf.get(code); addonColumns.forEach((name, at) => { row[col(name)] = values?.[at] ?? ""; }); };
 
   // Closing balance of each party at the Upto date, and its name and credit days.
-  const sums = await runReportSql(loader, frag(`SELECT ac.code AS code, ac.name AS name, ac.credit_days AS credit_days, ac.grace_days AS grace_days, coalesce(MAX(acbal.opening::numeric),0.00) AS opening,`
-    + ` coalesce((select sum(case when led.ac_dbcode=1 then led.amount::numeric else 0.00 end) - sum(case when led.ac_dbcode=2 then led.amount::numeric else 0.00 end) from ${db}LEDGER led where led.code=ac.code and led.doc_pos<>'D' and led.doc_date<='${upto}' and led.doc_posting='P' and led.book_code in (select code from ${db}ACCOUNT where a_pos<>'D')),0.00) AS movement`
-    + ` FROM ${db}ACCOUNT ac left join ${db}AC_BALANCE acbal on acbal.code=ac.code and acbal.year_id='${call.yearId}' WHERE ac.a_pos<>'D' and ac.book=${partyBook} and ac.os_flag<>'N' and ac.code in (${list}) GROUP BY ac.code,ac.name,ac.credit_days,ac.grace_days`));
+  // Cash Only / Cheque Only start from the address's local code (the cash opening) instead of the year's opening; a typed series from its own opening bills.
+  const localCode = "max(case when nullif(btrim(addr.local_code::text),'') ~ '^-?[0-9.]+$' and btrim(addr.local_code::text)<>'0' then btrim(addr.local_code::text)::numeric end)";
+  const yearOpening = "coalesce(MAX(acbal.opening::numeric),0.00)";
+  const flipped = `(case when ${yearOpening}<0 then abs(${yearOpening}) else ${yearOpening}*-1 end)`;
+  let openingExpression = yearOpening;
+  if (cashOnly) openingExpression = `coalesce(${localCode},0.00)`;
+  else if (chequeOnly) openingExpression = sale ? `(case when ${localCode} is null then ${yearOpening} when ${yearOpening}=0 then ${yearOpening} else ${yearOpening}-${localCode} end)` : `(case when ${localCode} is null then ${flipped} when ${yearOpening}=0 then ${flipped} else ${flipped}-abs(${localCode}) end)`;
+  if (call.seriesText.trim() !== "" && call.seriesText.trim().toUpperCase() !== "ALL") openingExpression = `coalesce((select sum(case when led.ac_dbcode=1 then led.amount::numeric-coalesce(led.ly_clearamt::numeric,0) else led.amount::numeric*-1 end) from ${db}LEDGER led where (rtrim(led.doc_series)='${call.seriesText.trim().replace(/'/g, "''")}' or led.ac_dbcode=2) and led.doc_pos='A' and led.doc_posting='L' and led.code=ac.code),0.00)`;
+  const sums = await runReportSql(loader, frag(`SELECT ac.code AS code, ac.name AS name, ac.credit_days AS credit_days, ac.grace_days AS grace_days, ${openingExpression} AS opening,`
+    + ` coalesce((select sum(case when led.ac_dbcode=1 then led.amount::numeric else 0.00 end) - sum(case when led.ac_dbcode=2 then led.amount::numeric else 0.00 end) from ${db}LEDGER led where led.code=ac.code and led.doc_pos<>'D' and ${pdc ? `(led.doc_date<='${upto}' or (led.doc_date>='${upto}' and led.ac_dbcode=2))` : `led.doc_date<='${upto}'`} and led.doc_posting='P'${seriesWhere.replace(" and (led.doc_posting<>'L' or (led.doc_posting='L' and led.book<>6))", "")} and led.book_code in (select code from ${db}ACCOUNT where a_pos<>'D')),0.00) AS movement`
+    + ` FROM ${db}ACCOUNT ac left join ${db}AC_BALANCE acbal on acbal.code=ac.code and acbal.year_id='${call.yearId}' left join ${db}ADDRESS addr on addr.code=ac.code and addr.address_id=1 WHERE ac.a_pos<>'D' and ac.book=${partyBook} and ac.os_flag<>'N' and ac.code in (${list}) GROUP BY ac.code,ac.name,ac.credit_days,ac.grace_days`));
+  // What the party's heading shows (the procedure joins the first address; a party without one keeps its plain name).
+  const licence = loader.session.licence;
+  const heads = new Map<number, { short: string; credit: string; limit: number; email: string; contact: string; tel: string; std: string; mobile: string }>();
+  for (const row of (await runReportSql(loader, frag(`SELECT ac.code AS code, ac.a_short AS a_short, ac.credit_days AS credit_days, ac."LIMIT"::numeric AS lim, addr.e_mail AS e_mail, addr.contact AS contact, addr.tel_no AS tel_no, addr.std_code AS std_code, addr.mobile_no AS mobile_no FROM ${db}ACCOUNT ac JOIN ${db}ADDRESS addr ON addr.code=ac.code AND addr.address_id=1 WHERE ac.code IN (${list})`))).rows) {
+    heads.set(Number(row.code), { short: toText(row.a_short).trim(), credit: toText(row.credit_days).trim(), limit: num(row.lim), email: toText(row.e_mail).trim(), contact: toText(row.contact).trim(), tel: toText(row.tel_no).trim(), std: toText(row.std_code).trim(), mobile: toText(row.mobile_no).trim() });
+  }
   const parties = new Map<number, { name: string; closing: number }>();
   for (const row of sums.rows) parties.set(Number(row.code), { name: toText(row.name), closing: money(num(row.opening) + num(row.movement)) });
 
@@ -561,10 +611,15 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
     const graceDays = graceTyped ? limit : graceAdd ? num(sumRow.grace_days) : 0;
     const credit = num(sumRow.credit_days) + graceDays;
     const advance = advanceOf.get(code) ?? [];
-    const advanceTotal = money(advance.reduce((sum, row) => sum + num(row.amount), 0));
+    // Without On Account To Settle the advances are added back to the closing (they are listed on their own below).
+    const advanceTotal = accstl ? 0 : money(advance.reduce((sum, row) => sum + num(row.amount), 0));
     // What is owed on the bills (positive): the closing plus the advances (sale), or the closing's other side (purchase).
     let open = sale ? money(party.closing + advanceTotal) : money(-(party.closing - advanceTotal));
+    // Without Print Advance the parties in credit are left out altogether (the procedure tests the sale book's closing; the others are not cut here).
+    if (!printAdvance && sale && open < 0) continue;
     const rows: ResultRow[] = [];
+    // Overdue Only with All Entries: the party is chosen by having an overdue bill, then all its bills are listed.
+    let overdueSeen = false;
     // The newest bill first (date, then voucher number, both falling).
     const docNo = (row: ResultRow) => Number(toText(row[col("DOC_NO")]).replace(/\D/g, "")) || 0;
     const mine = (billsOf.get(code) ?? []).slice().sort((a, b) => toText(b._SORTDATE).localeCompare(toText(a._SORTDATE)) || docNo(b) - docNo(a));
@@ -577,11 +632,13 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       open = 0;
     } else {
       for (const bill of mine) {
-        const pending = num(bill[col("PENDING")]);
+        // FIFO: a bill counts for its whole amount, whatever was set off against it; the closing fills the newest bills first.
+        const pending = fifo ? num(bill[col("INVOICE_AMT")]) : num(bill[col("PENDING")]);
         const current = Math.min(open, pending);
         if (current <= 0) continue;
         const copy: ResultRow = { ...bill };
         delete copy._LEDDAYS; delete copy._SORTDATE;
+        if (buckets !== AGEING_BUCKETS) for (const fixed of AGEING_BUCKETS) delete copy[fixed[0]];
         const days = num(bill[col("Days")]);
         const entryDays = checks("CHK_ENTCDAY") && num(bill._LEDDAYS) > 0 ? num(bill._LEDDAYS) + graceDays : credit;
         copy[col("PENDING")] = current;
@@ -592,7 +649,10 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
         setAddon(copy, code);
         // The setup's sort key starts with the addon's text; the groups are ordered on their own columns now, so the key is the party's, like the rows added below.
         if (addonColumns.length > 0) copy[col("SORTING_COL")] = sortingCol(party.name, code, `${toText(bill._SORTDATE)}   P`);
-        if (checks("CHK_OVERDUE") && entryDays >= days) { open = money(open - current); continue; }
+        if (checks("CHK_OVERDUE")) {
+          if (entryDays < days) overdueSeen = true;
+          else if (!withAllEntries) { open = money(open - current); continue; }
+        }
         open = money(open - current);
         rows.push(copy);
       }
@@ -600,15 +660,43 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
         rows.push(baseRow(code, party.name, { SORTING_COL: sortingCol(party.name, code, `${dateStyle112(call.tarikh1)} OP`), FULL_DOCNO: "Opening", selected_date: dateText(call.tarikh1), INVOICE_AMT: open, CLEAR_AMOUNT: 0, PENDING: open, MONTH_TOTAL: open, Days: openingDays, CDays: credit, ROW_DATA_TYPE: "LED", SORTING_DATE: dateStyle112(call.tarikh1), _MD: dateStyle112(call.tarikh1) }));
       }
     }
-    // The advances, below zero (On Account To Settle).
-    if (checks("CHK_ACCSTL")) {
+    if (checks("CHK_OVERDUE") && withAllEntries && !overdueSeen) continue;
+    // The advances, below zero (On Account To Settle; Only On Account Detail lists nothing else).
+    if (!accstl) {
       for (const row of advance) {
         const amount = -num(row.amount);
         rows.push(baseRow(code, party.name, { SORTING_COL: sortingCol(party.name, code, `${toText(row.sortdate)}   P`), LED_KEY: row.led_key, FULL_DOCNO: toText(row.full_docno), selected_date: dateText(row.out_date as Date), INVOICE_AMT: amount, CLEAR_AMOUNT: 0, PENDING: amount, MONTH_TOTAL: amount, Days: 0, CDays: credit, a_short: toText(row.a_short), BOOK: row.book, ROW_DATA_TYPE: "LED", SORTING_DATE: toText(row.sortdate), _MD: dateStyle112(row.out_date as Date) }));
       }
     }
+    // Days from the system date: each row's age is counted from its date to today, not to Upto.
+    if (checks("CHK_DAYSSYSCALC")) {
+      const now = new Date();
+      const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+      for (const row of rows) {
+        const day = toText(row._MD);
+        if (/^\d{8}$/.test(day)) row[col("Days")] = Math.round((today - Date.UTC(Number(day.slice(0, 4)), Number(day.slice(4, 6)) - 1, Number(day.slice(6, 8)))) / 86400000) + 1;
+      }
+    }
+    // Licence 21 purchase / expense with Group Summary: the age is counted from the challan date to Upto.
+    if (licence21 && !sale && checks("CHK_GRPSUM") && table.has("CHLN_DATE")) {
+      for (const row of rows) {
+        const chln = parseRowDate(toText(row[col("CHLN_DATE")]));
+        if (chln) row[col("Days")] = Math.round((Date.UTC(upToDate.getFullYear(), upToDate.getMonth(), upToDate.getDate()) - Date.UTC(chln.getFullYear(), chln.getMonth(), chln.getDate())) / 86400000) + 1;
+      }
+    }
     // Above / Below Days and Amount: rows past the limit are left out.
-    if (limitText !== "") {
+    if (limitText !== "" && withAllEntries && ["Above Days", "Below Days", "Above Amount", "Below Amount"].includes(sorting)) {
+      // With All Entries the test is on the party: it keeps every row if any one of its rows is past the limit, else none.
+      const hit = (row: ResultRow) => {
+        const days = num(row[col("Days")]);
+        const pending = num(row[col("PENDING")]);
+        if (sorting === "Above Days") return days > limit;
+        if (sorting === "Below Days") return days < limit;
+        if (sorting === "Above Amount") return pending > limit;
+        return pending < limit;
+      };
+      if (!rows.some(hit)) rows.length = 0;
+    } else if (limitText !== "") {
       const keep = (row: ResultRow) => {
         const days = num(row[col("Days")]);
         const pending = num(row[col("PENDING")]);
@@ -620,14 +708,55 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       };
       for (let at = rows.length - 1; at >= 0; at -= 1) if (!keep(rows[at])) rows.splice(at, 1);
     }
-    if (rows.length === 0) continue;
     // The ageing columns: the pending amount in the bucket its days fall in.
     for (const row of rows) {
       const days = num(row[col("Days")]);
       const pending = num(row[col("PENDING")]);
-      for (const [name, low, high] of AGEING_BUCKETS) row[col(name)] = days >= low && days <= high ? pending : 0;
+      for (const [name, low, high] of buckets) row[col(name)] = days >= low && days <= high ? pending : 0;
     }
-    if (partyWise) out.push(baseRow(code, party.name, { SORTING_COL: `${party.name.trim()}${code}   H`, FULL_DOCNO: party.name, ROW_DATA_TYPE: "AC" }));
+    // Without Print Advance the rows below zero are taken out.
+    if (!printAdvance) for (let at = rows.length - 1; at >= 0; at -= 1) if (num(rows[at][col("PENDING")]) < 0) rows.splice(at, 1);
+    // Interest sorting: the typed rate (24 when blank) as a percentage rounded to two places, on what is pending, for the days beyond the credit days (the procedure tests Days-CDays > CDays, so a bill 177 days old on 120 credit days got nothing; the web charges from the first overdue day).
+    if (interest) {
+      const rate = Math.round((limitText === "" ? 24 : limit) / 100 * 100) / 100;
+      for (const row of rows) {
+        const pending = num(row[col("PENDING")]);
+        const over = num(row[col("Days")]) - num(row[col("CDays")]);
+        row.Int_Amount = pending > 0 && over > 0 ? Math.round(pending * rate / 365 * over * 100) / 100 : null;
+      }
+    }
+    // Month Total: each month's pending of the party, on the party's newest row of that month (the procedure adds month and year to match, as kept here).
+    if (checks("CHK_MONTHTOTAL") && partyWise) {
+      const monthOf = (row: ResultRow) => { const day = toText(row[col("SORTING_DATE")]); return /^\d{8}$/.test(day) ? { month: Number(day.slice(4, 6)), year: Number(day.slice(0, 4)), day } : null; };
+      const totals = new Map<number, number>();
+      for (const row of rows) { const when = monthOf(row); if (when) totals.set(when.month + when.year, money((totals.get(when.month + when.year) ?? 0) + num(row[col("PENDING")]))); }
+      const newest = new Map<number, string>();
+      for (const row of rows) { const when = monthOf(row); if (when && when.day > (newest.get(when.month) ?? "")) newest.set(when.month, when.day); }
+      const used = new Set<number>();
+      for (const row of rows) {
+        const when = monthOf(row);
+        const first = when !== null && when.day === newest.get(when.month) && !used.has(when.month);
+        if (when && first) used.add(when.month);
+        row[col("MONTH_TOTAL")] = when && first ? totals.get(when.month + when.year) ?? 0 : 0;
+      }
+    }
+    // Only On Account Detail: the advances alone, shown as positive amounts.
+    if (onAccountOnly) {
+      for (let at = rows.length - 1; at >= 0; at -= 1) {
+        const pending = num(rows[at][col("PENDING")]);
+        if (pending > 0) rows.splice(at, 1);
+        else if (pending < 0) { rows[at][col("INVOICE_AMT")] = Math.abs(num(rows[at][col("INVOICE_AMT")])); rows[at][col("PENDING")] = Math.abs(pending); }
+      }
+    }
+    if (rows.length === 0) continue;
+    if (partyWise) {
+      // The party's heading: name, short name, credit days and limit (not for licences 29 and 73); then, when it has any, a line of contact, telephone and mobile.
+      const head = heads.get(code);
+      const title = head && licence !== 29 && licence !== 73 ? `${party.name}${head.short !== "" ? ` ${head.short}` : ""}${head.credit !== "0" && head.credit !== "" ? ` Cr.Days : ${head.credit}` : ""}${head.limit !== 0 ? ` Limit : ${head.limit}` : ""}${checks("CHK_EMAIL") && head.email !== "" ? ` Email : ${head.email}` : ""}` : party.name;
+      out.push(baseRow(code, party.name, { SORTING_COL: `${party.name.trim()}${code}   H`, FULL_DOCNO: title, ROW_DATA_TYPE: "AC" }));
+      const contact = head ? `${head.contact !== "" ? `Contact : ${head.contact}` : ""}${head.tel !== "" ? ` Tel No. ${head.std} ${head.tel}` : ""}${head.mobile !== "" ? ` Mobile No. ${head.mobile}` : ""}` : "";
+      if (contact !== "") out.push(baseRow(code, party.name, { SORTING_COL: `${party.name.trim()}${code}   H1`, FULL_DOCNO: contact, ROW_DATA_TYPE: "AC" }));
+    }
     pushAll(out, rows);
   }
   if (out.length === 0) throw new ReportRefusal("No Records Found", "No Data");
@@ -650,8 +779,8 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   if (summary) {
     const result = new ResultTable();
     const mobile = checks("CHK_MOBILE");
-    for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "NAME", ...(mobile ? ["MOBILE_NO"] : []), "INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", ...(licence21 ? ["TOTAL_ABOVE_90"] : []), "CDays", "Days", ...AGEING_BUCKETS.map((bucket) => bucket[0]), "SORTING_COL", "LAST_" + (sale ? "RECD" : "PAY") + "_DATE", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_DATE", "LAST_INV_AMT"]) result.addColumn(name);
-    for (const name of ["INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", ...(licence21 ? ["TOTAL_ABOVE_90"] : []), "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_AMT", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) result.setKind(name, "decimal");
+    for (const name of ["ROW_DATA_TYPE", "SMART_NAME", "NAME", ...(mobile ? ["MOBILE_NO"] : []), "INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", ...(licence21 ? ["TOTAL_ABOVE_90"] : []), "CDays", "Days", ...buckets.map((bucket) => bucket[0]), "SORTING_COL", "LAST_" + (sale ? "RECD" : "PAY") + "_DATE", "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_DATE", "LAST_INV_AMT"]) result.addColumn(name);
+    for (const name of ["INVOICE_AMT", "CLEAR_AMOUNT", "PENDING", ...(licence21 ? ["TOTAL_ABOVE_90"] : []), "LAST_" + (sale ? "RECD" : "PAY") + "_AMT", "LAST_INV_AMT", ...buckets.map((bucket) => bucket[0])]) result.setKind(name, "decimal");
     // Licence 21: TOTAL_ABOVE_90, the party's pending on its bills more than 90 days old (every credit days row of the party).
     const above90 = new Map<number, number>();
     if (licence21) for (const row of out) if (toText(row[col("ROW_DATA_TYPE")]) === "LED" && num(row[col("Days")]) > 90) { const code = Number(row[col("SMART_AC_CODE")]); above90.set(code, money((above90.get(code) ?? 0) + num(row[col("PENDING")]))); }
@@ -667,13 +796,13 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       let sum = grouped.get(key);
       if (!sum) {
         sum = { ROW_DATA_TYPE: "LED", SMART_NAME: row[col("SMART_NAME")], NAME: row[col("SMART_NAME")], ...(mobile ? { MOBILE_NO: row[col("MOBILE_NO")] } : {}), INVOICE_AMT: 0, CLEAR_AMOUNT: 0, PENDING: 0, ...(licence21 ? { TOTAL_ABOVE_90: above90.get(code) ?? 0 } : {}), CDays: num(row[col("CDays")]), Days: oldest.get(code) ?? 0, SORTING_COL: toText(row[col("SMART_NAME")]), _code: code };
-        for (const [name] of AGEING_BUCKETS) sum[name] = 0;
+        for (const [name] of buckets) sum[name] = 0;
         grouped.set(key, sum);
       }
       sum.INVOICE_AMT = money(num(sum.INVOICE_AMT) + num(row[col("INVOICE_AMT")]));
       sum.CLEAR_AMOUNT = money(num(sum.CLEAR_AMOUNT) + num(row[col("Clear_Amount")]));
       sum.PENDING = money(num(sum.PENDING) + num(row[col("PENDING")]));
-      for (const [name] of AGEING_BUCKETS) sum[name] = money(num(sum[name]) + num(row[col(name)]));
+      for (const [name] of buckets) sum[name] = money(num(sum[name]) + num(row[col(name)]));
     }
     const setLast = await lastReceipts();
     for (const sum of grouped.values()) { const code = Number(sum._code); delete sum._code; setLast(sum, code); }
@@ -726,7 +855,7 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
     sortRows(result, [(row) => textKey(row.SORTING_COL), (row) => numberKey(row.CDays)]);
     return result;
   }
-  for (const name of ["INVOICE_AMT", "Clear_Amount", "PENDING", "MONTH_TOTAL", ...AGEING_BUCKETS.map((bucket) => bucket[0])]) if (table.has(name)) table.setKind(name, "decimal");
+  for (const name of ["INVOICE_AMT", "Clear_Amount", "PENDING", "MONTH_TOTAL", ...buckets.map((bucket) => bucket[0])]) if (table.has(name)) table.setKind(name, "decimal");
   for (const name of ["CDays", "Days"]) if (table.has(name)) table.setKind(name, "int");
   table.rows = out;
   // Licence 21: NET_AMOUNT, each bill's amount before tax: the register's master slab total (S_LASTOT) less its own amount (SLAB_AMT), found by the bill's number.
@@ -742,6 +871,14 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       for (const row of found.rows) nets.set(toText(row.full_docno), num(row.net));
     }
     for (const row of out) if (toText(row[col("ROW_DATA_TYPE")]) === "LED") row.NET_AMOUNT = nets.has(toText(row[col("FULL_DOCNO")])) ? money(nets.get(toText(row[col("FULL_DOCNO")]))!) : null;
+  }
+  // Licence 21 purchase / expense: STATUS is Hold on the bills whose form is received.
+  if (licence21 && !sale) {
+    table.addColumn("STATUS");
+    const keys = [...new Set(out.filter((row) => toText(row[col("ROW_DATA_TYPE")]) === "LED").map((row) => Number(row[col("LED_KEY")])).filter((key) => Number.isFinite(key) && key > 0))];
+    const held = new Set<number>();
+    if (keys.length > 0) for (const row of (await runReportSql(loader, `SELECT led_key FROM ${db}LEDGER WHERE led_key = ANY($1::bigint[]) AND form_recd = 'Y'`, [keys])).rows) held.add(Number(row.led_key));
+    for (const row of out) if (toText(row[col("ROW_DATA_TYPE")]) === "LED") row.STATUS = held.has(Number(row[col("LED_KEY")])) ? "Hold" : "";
   }
   // Due date of each bill: its date plus the credit days.
   if (checks("CHK_PRINTDUEDATE")) {
@@ -787,6 +924,124 @@ async function ageing(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
       row[col("RUNNING_BAL")] = running;
     }
   }
+  return table;
+}
+
+/**
+ * Multi Company Report (CHK_MULTICO) of the ageing: the procedure walks the companies of the group that have the year (a short name
+ * each, by short name), takes in each the parties of the same names as those ticked (the account book's active accounts) and runs the same
+ * clearing for them, every row carrying its company's short name (CO_SHORT). Here each company is one ordinary run of the ageing, on its own
+ * schema and its own party codes, and the rows are put together in the procedure's order (party, date, voucher; or date, voucher).
+ * Summary and Monthly give a row for each party and company (the Monthly columns are the union of the companies' months).
+ */
+async function ageingCompanies(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const partyBook = Number(call.fcValue) === 8 ? 2 : Number(call.fcValue) === 13 ? 3 : 1;
+  const picked = call.selectKey[4].replace(/[()]/g, "").split(",").map((code) => Number(code.trim())).filter((code) => Number.isFinite(code) && code > 0);
+  if (picked.length === 0) throw new ReportRefusal("No Records Found", "No Data");
+  const names = (await runReportSql(loader, `SELECT DISTINCT btrim(name) AS name FROM ${call.database}ACCOUNT WHERE code = ANY($1::int[])`, [picked])).rows.map((row) => toText(row.name));
+  const companies = (await runReportSql(loader, `SELECT lower(btrim(c.co_dataname)) AS schema_name, btrim(c.co_short) AS short FROM ${SYSTEM_SCHEMA}.cname n LEFT JOIN ${SYSTEM_SCHEMA}.company c ON c.co_key = n.c_id`
+    + ` WHERE n.c_tarikh1::date = $1::date AND n.c_tarikh2::date = $2::date AND coalesce(btrim(c.co_short), '') <> ''`
+    + ` AND c.co_group_name = (SELECT co_group_name FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $3) ORDER BY c.co_short`, [desktopDate(call.tarikh1), desktopDate(call.tarikh2), call.companyKey])).rows;
+  const parts: ResultTable[] = [];
+  for (const company of companies) {
+    const schema = toText(company.schema_name);
+    const short = toText(company.short);
+    if (!/^[a-z0-9_]+$/.test(schema)) continue;
+    const found = await runReportSql(loader, `SELECT code FROM ${schema}.account WHERE book = ${partyBook} AND a_pos = 'A' AND btrim(name) = ANY($1::text[])`, [names]);
+    const codes = found.rows.map((row) => Number(row.code));
+    if (codes.length === 0) continue;
+    const own = Object.create(loader, { session: { value: { ...loader.session, companySchema: schema } } }) as Loader;
+    const ownPlan: ReportPlan = { ...plan, call: { ...call, database: `${schema}.`, checkQuery: call.checkQuery.replace("CHK_MULTICO,", ""), selectKey: [call.selectKey[0], call.selectKey[1], call.selectKey[2], call.selectKey[3], `(${codes.join(",")})`] } };
+    let part: ResultTable;
+    try { part = await ageing(own, ownPlan, { short }); } catch (failure) { if (failure instanceof ReportRefusal && failure.message === "No Records Found") continue; throw failure; }
+    // Summary and Monthly are built without the short name; it goes in after the party's name, as the procedure selects it.
+    if (!part.has("CO_SHORT")) { const at = part.columns.findIndex((name) => name.toUpperCase() === "SMART_NAME"); part.columns.splice(at >= 0 ? at + 1 : part.columns.length, 0, "CO_SHORT"); }
+    const shortColumn = part.name("CO_SHORT")!;
+    for (const row of part.rows) row[shortColumn] = short;
+    parts.push(part);
+  }
+  if (parts.length === 0 || parts.every((part) => part.rows.length === 0)) throw new ReportRefusal("No Records Found", "No Data");
+  const table = parts[0];
+  // Monthly: the companies may have different first months; the month columns are the union, in date order, a company without a month has 0 there.
+  const monthOrder = (name: string) => { const hit = /^([A-Z][a-z]{2})_(dd)_AMT$/.exec(name); return hit ? (2000 + Number(hit[2])) * 12 + MONTH_SHORT.indexOf(hit[1]) : -1; };
+  const monthNames = [...new Set(parts.flatMap((part) => part.columns.filter((name) => monthOrder(name) >= 0)))].sort((a, b) => monthOrder(a) - monthOrder(b));
+  if (monthNames.length > 0) {
+    const first = table.columns.findIndex((name) => monthOrder(name) >= 0);
+    for (let at = table.columns.length - 1; at >= 0; at -= 1) if (monthOrder(table.columns[at]) >= 0) { table.numberKinds.delete(table.columns[at]); table.columns.splice(at, 1); }
+    table.columns.splice(first, 0, ...monthNames);
+    for (const name of monthNames) table.setKind(name, "decimal");
+    for (const part of parts) for (const row of part.rows) for (const name of monthNames) row[name] = row[name] ?? 0;
+  }
+  for (const part of parts.slice(1)) table.rows.push(...part.rows);
+  const col = (name: string) => table.name(name) ?? name;
+  if (call.filterText !== "Detail") sortRows(table, [(row) => textKey(row[col("SORTING_COL")]), (row) => numberKey(row[col("CDays")])]);
+  else if (call.sortingText === "Date Wise") sortRows(table, [(row) => textKey(row[col("SORTING_DATE")]), (row) => textKey(row[col("FULL_DOCNO")])]);
+  else sortRows(table, [(row) => textKey(row[col("SORTING_COL")]), (row) => textKey(row[col("SORTING_DATE")]), (row) => textKey(row[col("FULL_DOCNO")])]);
+  // Date Wise: the pending added up down the whole list, not company by company.
+  if (table.has("RUNNING_BAL")) {
+    let running = 0;
+    for (const row of table.rows) {
+      if (toText(row[col("ROW_DATA_TYPE")]) !== "LED") continue;
+      running = Math.round((running + num(row[col("PENDING")])) * 100) / 100;
+      row[col("RUNNING_BAL")] = running;
+    }
+  }
+  return table;
+}
+
+/**
+ * Lock Date (CHK_LOCKDATE, sale book): a month by month list of what the debtors owe from the company's lock date (GST_REGDATE of the
+ * company it carries on from): OPEN_AMT, the debit (sales, cash, bank, credit notes ...) of each month up to Upto, and BALANCE_AMT. A party is
+ * listed only while its opening, its debits and its balance are all above zero. The month columns follow the procedure's walk: the lock
+ * month (to its last day), then each month, the last stopping at Upto.
+ */
+async function lockDateOutstanding(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
+  const { call } = plan;
+  const db = call.database;
+  const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
+  if (call.unionGroups.split(",").some((text) => text.trim() !== "" && text.trim().toLowerCase() !== "ac.name")) throw new ReportRefusal("An addon group is not available in the web version of the Lock Date report yet.", "Not ported yet");
+  const lockRow = (await runReportSql(loader, `SELECT gst_regdate AS d FROM ${SYSTEM_SCHEMA}.company WHERE lower(btrim(co_dataname)) = (SELECT lower(btrim(co_from_dataname)) FROM ${SYSTEM_SCHEMA}.company WHERE co_key = $1)`, [call.companyKey])).rows[0];
+  const lock = lockRow?.d instanceof Date ? lockRow.d : null;
+  if (lock === null) throw new ReportRefusal("The lock date (GST registration date) of the company is not set.", "Report Generation Failed");
+  const iso = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  const upto = call.upto;
+  const lockMonthEnd = new Date(lock.getFullYear(), lock.getMonth() + 1, 0);
+  const picked = call.selectKey[4].replace(/[()]/g, "").split(",").map((code) => Number(code.trim())).filter((code) => Number.isFinite(code) && code > 0);
+  const table = new ResultTable();
+  const names = ["SORTING_COL", "NAME", "MOBILE_NO", "Lock_Date", "OPEN_AMT"];
+  const debit = (condition: string) => `coalesce((select SUM(case when led.ac_dbcode=1 then led.amount::numeric else 0.00 end) from ${db}ledger led where ${condition} and led.doc_pos='A' and led.doc_posting='P' and led.code=ac.code and led.book in (4,5,6,8,19)),0.00)`;
+  const columns: string[] = [`ac.name AS name`, `addr.mobile_no AS mobile_no`, `'${ddMmYyyy(lock)}' AS lock_date`,
+    `acbal.opening::numeric + coalesce((select SUM(case when led.ac_dbcode=1 then led.amount::numeric else led.amount::numeric*-1 end) from ${db}ledger led where led.doc_date<='${iso(lock)}' and led.doc_pos='A' and led.doc_posting='P' and led.code=ac.code),0.00) AS open_amt`];
+  const months: string[] = [];
+  for (let at = lock, first = true; at <= upto; first = false) {
+    const label = `${MONTH_SHORT[at.getMonth()]}_${String(at.getFullYear()).slice(-2)}_AMT`;
+    months.push(label);
+    columns.push(`${debit(first ? `led.doc_date>'${iso(lock)}' and led.doc_date<='${iso(lockMonthEnd)}'` : `extract(month from led.doc_date)=${at.getMonth() + 1} and extract(year from led.doc_date)=${at.getFullYear()}`)} AS "${label}"`);
+    let next = new Date(at.getFullYear(), at.getMonth() + 1, Math.min(at.getDate(), new Date(at.getFullYear(), at.getMonth() + 2, 0).getDate()));
+    if (next.getMonth() === upto.getMonth() && next.getFullYear() === upto.getFullYear()) next = upto;
+    if (next.getTime() === at.getTime()) break;
+    at = next;
+  }
+  columns.push(debit(`((led.doc_date between '${iso(lock)}' and '${iso(upto)}') or (led.doc_date between '${iso(lock)}' and '${iso(lockMonthEnd)}'))`) + ` AS total_amt`);
+  columns.push(`coalesce((select SUM(case when led.ac_dbcode=2 then led.amount::numeric else 0.00 end) from ${db}ledger led where ((led.doc_date between '${iso(lock)}' and '${iso(upto)}') or led.doc_date>='${iso(upto)}') and led.doc_pos='A' and led.code=ac.code and led.book in (4,5,6,16,19)),0.00) AS received_amt`);
+  const found = picked.length === 0 ? [] : (await runReportSql(loader, frag(`SELECT ${columns.join(",")} FROM ${db}ACCOUNT ac LEFT JOIN ${db}ADDRESS addr ON addr.code=ac.code LEFT JOIN ${db}AC_BALANCE acbal ON acbal.code=ac.code`
+    + ` WHERE ac.a_pos<>'D' AND addr.address_id=1 AND ac.code IN (${picked.join(",")}) GROUP BY ac.code, ac.name, acbal.opening, addr.mobile_no ORDER BY ac.name`))).rows;
+  for (const name of [...names, ...months, "BALANCE_AMT", "ROW_DATA_TYPE"]) table.addColumn(name);
+  for (const name of ["OPEN_AMT", ...months, "BALANCE_AMT"]) table.setKind(name, "decimal");
+  for (const row of found) {
+    const opening = num(row.open_amt);
+    if (opening === 0) continue;
+    const total = opening + num(row.total_amt);
+    const received = num(row.received_amt);
+    const balance = money(total - received);
+    const lockBalance = money(opening - received);
+    if (lockBalance <= 0 || total <= 0 || balance <= 0) continue;
+    const out: ResultRow = { SORTING_COL: toText(row.name), NAME: toText(row.name), MOBILE_NO: row.mobile_no ?? null, Lock_Date: toText(row.lock_date), OPEN_AMT: lockBalance, BALANCE_AMT: balance, ROW_DATA_TYPE: "LED" };
+    for (const month of months) out[month] = money(num(row[month]));
+    table.rows.push(out);
+  }
+  if (table.rows.length === 0) throw new ReportRefusal("No Records Found", "No Data");
   return table;
 }
 
@@ -2822,12 +3077,27 @@ async function priceList(loader: Loader, plan: ReportPlan): Promise<ResultTable>
 // master (CHK_UPD_MASTER, CHK_UPD_RATE), godown and batch / expiry reports, Folder and Challan-date
 // options, ageing columns, factor columns and the Above / Below Days sorting.
 
+/**
+ * The options the procedure adds by itself (its first lines): Stock Add Entry (CHK_STKADJCALC) for licences 8, 5, 18 and 30 with the Actual valuation; With Slab (CHK_SLABVAL) for licence 8 with Actual
+* (not the ARTS_LLP company); Opening Value (CHK_OPEN_VALUE) for licences 8, 5, 18, 19, 29, 30 and 73 with Actual or Report Rate. (It also adds Update Master for some licences; that write is not carried out here.)
+ */
+function stockChecks(call: ReportPlan["call"], schemaName: string): (name: string) => boolean {
+  const has = (name: string) => call.checkQuery.includes(`${name},`);
+  const filter = call.filterText.trim().toUpperCase();
+  const licence = call.licence;
+  const added = new Set<string>();
+  if (!has("CHK_STKADJCALC") && [8, 5, 18, 30].includes(licence) && filter === "ACTUAL") added.add("CHK_STKADJCALC");
+  if (!has("CHK_SLABVAL") && licence === 8 && filter === "ACTUAL" && !schemaName.toUpperCase().includes("ARTS_LLP")) added.add("CHK_SLABVAL");
+  if (!has("CHK_OPEN_VALUE") && [8, 5, 18, 19, 29, 30, 73].includes(licence) && (filter === "ACTUAL" || filter === "REPORT RATE")) added.add("CHK_OPEN_VALUE");
+  return (name) => has(name) || added.has(name);
+}
+
 async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { session } = loader;
   const { call } = plan;
   const db = call.database;
   const frag = (sql: string) => pgFragment(sql, plan, session.companySchema);
-  const check = (name: string) => call.checkQuery.includes(`${name},`);
+  const check = stockChecks(call, session.companySchema);
   const summary = call.fcText.toUpperCase() === "SUMMARY" || call.fcValue === 2;
   const filter = call.filterText.toUpperCase();
   const notPorted = (what: string) => new ReportRefusal(`${what} of the Stock report is not available in the web version yet.`, "Not ported yet");
@@ -2838,10 +3108,12 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
       if (check(option)) throw new ReportRefusal(message, "Report Generation Failed");
     }
   }
+  if (!summary && check("CHK_FACTVAL") && check("CHK_FACTOR") && filter !== "NONE" && filter !== "") throw notPorted("Factor Value in the Ledger (its running value by the factor balance)");
   if (filter === "AVERAGE VALUE") throw notPorted("The Average Value valuation (the procedure compares the closing quantity with a variable that is empty in this run and keeps a running count across products, so its figures are not reproducible)");
   if (!["NONE", "REPORT RATE", "", ...VALUATIONS].includes(filter)) throw notPorted(`The "${call.filterText}" valuation`);
-  for (const [option, caption] of [["CHK_UPD_MASTER", "Update Value In Master"], ["CHK_UPD_RATE", "Update Rate In Master"], ["CHK_CHLNCOL", "Challan date"], ["CHK_FG_VALADD", "FG value add"], ["CHK_EXP", "Valuation with expense"]] as const) {
-    if (check(option)) throw notPorted(`The ${caption} option`);
+  // These three write the closing value or rate into the account and product masters; the web reports run read-only, so they are not carried out.
+  for (const [option, caption] of [["CHK_UPD_MASTER", "Update Value In Master"], ["CHK_UPD_RATE", "Update Rate In Master"], ["CHK_GST_OPEN", "Update Rate as Before GST"]] as const) {
+    if (check(option)) throw new ReportRefusal(`${caption} writes to the master tables, and the web reports are read-only: untick it, or run it from the desktop.`, "Not ported yet");
   }
   if (check("CHK_AGECOL") && !summary) throw notPorted("The Age columns option of the Ledger first combo (it is in the Summary)");
   // Above Days / Below Days (Ledger): the additions older (or newer) than the typed number of days are taken out; the issues have no days. The balances still run over every line.
@@ -2860,11 +3132,11 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
 
   /** The movement of a stock line in the product's first report unit (receipts and issues of job work count whole). */
   // `share`: the Summary's opening before From takes, for the other units than pieces, the entry's part of the quantity (the unit amount less AG_QTY / QUANTITY of it).
-  const qtyOf = (l: string, p: string, whole: string, share = false) => {
+  const qtyOf = (l: string, p: string, whole: string, share = false, rep = "REP1_UOM") => {
     const units: [string, string][] = [["QTY1_UOM", "TRN_QTY1"], ["QTY2_UOM", "TRN_QTY2"], ["QTY3_UOM", "TRN_QTY3"], ["PACK_UOM", "TRN_PACK"], ["WEIGHT_UOM", "TRN_WEIGHT"]];
     const rest = (column: string) => (share ? `${l}.${column}-round((${l}.AG_QTY/nullif(${l}.QUANTITY,0)*${l}.${column}),4)` : `${l}.${column}-${l}.AG_QTY`);
-    return `(case when ${p}.REP1_UOM=${p}.PCS_UOM then (case when ${l}.TRN_MODULE='${whole}' then ${l}.TRN_PCS else ${l}.TRN_PCS-${l}.AG_QTY end)`
-      + units.map(([uom, column]) => ` when ${p}.REP1_UOM=${p}.${uom} then (case when ${l}.TRN_MODULE='${whole}' then ${l}.${column} else ${rest(column)} end)`).join("")
+    return `(case when ${p}.${rep}=${p}.PCS_UOM then (case when ${l}.TRN_MODULE='${whole}' then ${l}.TRN_PCS else ${l}.TRN_PCS-${l}.AG_QTY end)`
+      + units.map(([uom, column]) => ` when ${p}.${rep}=${p}.${uom} then (case when ${l}.TRN_MODULE='${whole}' then ${l}.${column} else ${rest(column)} end)`).join("")
       + ` else ${l}.TRN_PCS-${l}.AG_QTY end)`;
   };
   // The licence and option filters of the procedure's line query (and of the opening before From): licence 22 leaves out the stock vouchers; with some licences and no
@@ -2899,6 +3171,22 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
     for (const row of (await runReportSql(loader, frag(`SELECT pl.PROD_ID AS "pid", (SUM(CASE pl.STOCK_NAT WHEN 'A' THEN ${qtyOf("pl", "p1", "JOB-IN", summary)} ELSE 0 END) - SUM(CASE pl.STOCK_NAT WHEN 'L' THEN ${qtyOf("pl", "p1", "JOB-OUT", summary)} ELSE 0 END))::numeric AS "moved"`
       + ` FROM ${db}PROD_LEDGER pl join ${db}PRODUCT_MASTER p1 on p1.PROD_KEY = pl.PROD_ID WHERE ${lineWhere("pl", true)} AND pl.IL_DATE BETWEEN '${yearStart}' AND '${dayBeforeFrom}' GROUP BY pl.PROD_ID`))).rows) movedBefore.set(num(row.pid), num(row.moved));
   }
+  // Factor columns (CHK_FACTOR, Summary): the same lines in the product's second report unit: OPEN_FACT (the year's opening and what moved before From), ADD_FACT, LESS_FACT and BAL_FACT.
+  const factor = summary && check("CHK_FACTOR");
+  const factorValue = factor && check("CHK_FACTVAL");
+  const movedFact = new Map<number, number>();
+  const periodFact = new Map<number, { add: number; less: number }>();
+  if (factor) {
+    if (between) {
+      for (const row of (await runReportSql(loader, frag(`SELECT pl.PROD_ID AS "pid", (SUM(CASE pl.STOCK_NAT WHEN 'A' THEN ${qtyOf("pl", "p1", "JOB-IN", true, "REP2_UOM")} ELSE 0 END) - SUM(CASE pl.STOCK_NAT WHEN 'L' THEN ${qtyOf("pl", "p1", "JOB-OUT", true, "REP2_UOM")} ELSE 0 END))::numeric AS "moved"`
+        + ` FROM ${db}PROD_LEDGER pl join ${db}PRODUCT_MASTER p1 on p1.PROD_KEY = pl.PROD_ID WHERE ${lineWhere("pl", true)} AND pl.IL_DATE BETWEEN '${yearStart}' AND '${dayBeforeFrom}' GROUP BY pl.PROD_ID`))).rows) movedFact.set(num(row.pid), num(row.moved));
+    }
+    const inPeriod = check("CHK_CHLNCOL")
+      ? `((fl.CHLN_DATE BETWEEN '${fromText}' AND '${uptoText}' and fl.book in (8,13)) or (fl.DOC_DATE BETWEEN '${fromText}' AND '${uptoText}' and fl.book not in (8,13)) or (fp.P_DATE BETWEEN '${fromText}' AND '${uptoText}'))`
+      : `pl.IL_DATE BETWEEN '${fromText}' AND '${uptoText}'`;
+    for (const row of (await runReportSql(loader, frag(`SELECT pl.PROD_ID AS "pid", SUM(CASE pl.STOCK_NAT WHEN 'A' THEN ${qtyOf("pl", "p1", "JOB-IN", false, "REP2_UOM")} ELSE 0 END)::numeric AS "a", SUM(CASE pl.STOCK_NAT WHEN 'L' THEN ${qtyOf("pl", "p1", "JOB-OUT", false, "REP2_UOM")} ELSE 0 END)::numeric AS "l"`
+      + ` FROM ${db}PROD_LEDGER pl join ${db}PRODUCT_MASTER p1 on p1.PROD_KEY = pl.PROD_ID${check("CHK_CHLNCOL") ? ` left join ${db}LEDGER fl on fl.led_key = pl.led_id left join ${db}PROCESS fp on fp.process_key = pl.process_id` : ""} WHERE ${lineWhere("pl")} AND ${inPeriod} GROUP BY pl.PROD_ID`))).rows) periodFact.set(num(row.pid), { add: num(row.a), less: num(row.l) });
+  }
   // The ticked addon groups (the Summary groups and sorts on them): the value of each (SMART_SELECTED_ADDONn) and its heading column.
   const addonAlias = (text: string) => /as\s+"([^"]+)"/i.exec(text)?.[1] ?? "";
   const addonLevels = [0, 1, 2, 3].filter((at) => call.addon[at].trim() !== "" && call.headingAddon[at].trim() !== "" && !/godown/i.test(call.addon[at]));
@@ -2906,10 +3194,10 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   const headingAliases = addonLevels.map((at) => addonAlias(call.headingAddon[at])).filter((alias) => alias !== "");
   const products = (await runReportSql(loader, frag(`SELECT product.PROD_KEY AS "prod_key"${addonSelect}, product.PROD_SHORT AS "prod_short", product.hsn_code AS "hsn_code", product.bar_code AS "bar_code", product.prod_message AS "prod_message", product.min_qty::numeric AS "min_qty", product.max_qty::numeric AS "max_qty", (SELECT mu.UOM_SHORT FROM ${db}PROD_UOM mu WHERE mu.UOM_KEY = product.minuom_id) AS "min_uom", (SELECT xu.UOM_SHORT FROM ${db}PROD_UOM xu WHERE xu.UOM_KEY = product.maxuom_id) AS "max_uom",`
     + ` case when LEVEL.DIV_MAXLVL=LEVEL.STOCK_LEVEL then PRODUCT.PROD_DESC when LEVEL.STOCK_LEVEL=1 then PRODUCT.DESC_1 when LEVEL.STOCK_LEVEL=2 then PRODUCT.DESC_1 || ' ' || PRODUCT.DESC_2 when LEVEL.STOCK_LEVEL=3 then PRODUCT.DESC_1 || ' ' || PRODUCT.DESC_2 || ' ' || PRODUCT.DESC_3 when LEVEL.STOCK_LEVEL=4 then PRODUCT.DESC_1 || ' ' || PRODUCT.DESC_2 || ' ' || PRODUCT.DESC_3 || ' ' || PRODUCT.DESC_4 else ' ' end AS "prod_desc",`
-    + ` (SELECT PUOM.UOM_SHORT FROM ${db}PROD_UOM PUOM WHERE PUOM.UOM_KEY = PRODUCT.REP1_UOM) AS "uom1", prodbal.rep_rate::numeric AS "rep_rate",`
+    + ` (SELECT PUOM.UOM_SHORT FROM ${db}PROD_UOM PUOM WHERE PUOM.UOM_KEY = PRODUCT.REP1_UOM) AS "uom1", prodbal.rep_rate::numeric AS "rep_rate", prodbal.open_rate::numeric AS "open_rate", (SELECT p2.UOM_SHORT FROM ${db}PROD_UOM p2 WHERE p2.UOM_KEY = PRODUCT.REP2_UOM) AS "uom2", product.fg_costing_rate::numeric AS "fg_rate", (case when product.rep2_uom=product.pcs_uom then prodbal.OPEN_PCS when product.rep2_uom=product.qty1_uom then prodbal.open_qty1 when product.rep2_uom=product.qty2_uom then prodbal.open_qty2 when product.rep2_uom=product.qty3_uom then prodbal.open_qty3 when product.rep2_uom=product.pack_uom then prodbal.open_pack when product.rep2_uom=product.weight_uom then prodbal.open_weight else prodbal.OPEN_PCS end) AS "open_fact", product.toll_perc::numeric AS "toll_perc",`
     + ` (case when ${openingCase("pcs")} then prodbal.OPEN_PCS when ${openingCase("qty1")} then prodbal.open_qty1 when ${openingCase("qty2")} then prodbal.open_qty2 when ${openingCase("qty3")} then prodbal.open_qty3 when ${openingCase("pack")} then prodbal.open_pack when ${openingCase("weight")} then prodbal.open_weight else prodbal.OPEN_PCS end) AS "opening"`
     + ` FROM ${db}PRODUCT_MASTER PRODUCT left join ${db}LEVEL_MASTER LEVEL on PRODUCT.PROD_GROUP = LEVEL.PROD_GROUP left join ${db}addon_data adata on PRODUCT.PROD_KEY = adata.PROD_ID left join ${db}prod_balance prodbal on prodbal.PROD_ID = PRODUCT.PROD_KEY ${productFilter} AND prodbal.prec_flag='RP'${folder ? " AND PRODUCT.PROD_GROUP=27" : noProcess ? " AND PRODUCT.PROD_GROUP<>27" : ""} ORDER BY PRODUCT.PROD_SHORT`))).rows
-    .map((row) => ({ raw: row, key: num(row.prod_key), short: toText(row.prod_short), desc: toText(row.prod_desc), uom: row.uom1 === null ? null : toText(row.uom1), rate: num(row.rep_rate), opening: decimalRound(num(row.opening) + (movedBefore.get(num(row.prod_key)) ?? 0), 4),
+    .map((row) => ({ raw: row, key: num(row.prod_key), short: toText(row.prod_short), desc: toText(row.prod_desc), uom: row.uom1 === null ? null : toText(row.uom1), rate: num(row.rep_rate), openRate: num(row.open_rate), toll: num(row.toll_perc), uom2: row.uom2 === null ? null : toText(row.uom2), fgRate: num(row.fg_rate), openFact: num(row.open_fact), opening: decimalRound(num(row.opening) + (movedBefore.get(num(row.prod_key)) ?? 0), 4),
       hsn: row.hsn_code === null ? null : toText(row.hsn_code).trim(), barcode: row.bar_code === null ? null : toText(row.bar_code).trim(), message: row.prod_message === null ? null : toText(row.prod_message).trim(), min: row.min_qty === null || num(row.min_qty) === 0 ? null : num(row.min_qty), max: row.max_qty === null || num(row.max_qty) === 0 ? null : num(row.max_qty),
       minUom: row.min_uom === null ? null : toText(row.min_uom).trim(), maxUom: row.max_uom === null ? null : toText(row.max_uom).trim() }));
   const addonValue = (product: (typeof products)[number], at: number) => toText(product.raw[`SMART_SELECTED_ADDON${at + 1}`]);
@@ -2920,8 +3208,8 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   const start = call.queryStart.split("|SYS.FROMDT|").join(fromText);
   const lineSql = frag(`SELECT ${fixCols},${start}`
     + ` FROM ${db}PROD_LEDGER PRODLED right join ${db}PRODUCT_MASTER PRODUCT on PRODLED.PROD_ID = PRODUCT.PROD_KEY left join ${db}PROD_UOM PUOM on PUOM.UOM_KEY = PRODUCT.REP1_UOM left join ${db}PROD_UOM PUOM1 on PUOM1.UOM_KEY = PRODUCT.REP2_UOM`
-    + ` left join ${db}ACCOUNT AC on PRODLED.CODE = AC.Code left join ${db}LEVEL_MASTER LEVEL on PRODUCT.PROD_GROUP = LEVEL.PROD_GROUP left join ${db}addon_data adata on PRODLED.PROD_ID = adata.PROD_ID left join ${db}LEDGER led on PRODLED.LED_ID = led.LED_KEY`
-    + ` ${productFilter.split("prodbal").join("prodled")} AND ${lineWhere("PRODLED")} AND (PRODLED.IL_DATE BETWEEN '${fromText}' AND '${uptoText}') ORDER BY PRODUCT.PROD_SHORT, PRODLED.IL_DATE, PRODLED.STOCK_NAT, PRODLED.IL_KEY`);
+    + ` left join ${db}ACCOUNT AC on PRODLED.CODE = AC.Code left join ${db}LEVEL_MASTER LEVEL on PRODUCT.PROD_GROUP = LEVEL.PROD_GROUP left join ${db}addon_data adata on PRODLED.PROD_ID = adata.PROD_ID left join ${db}LEDGER led on PRODLED.LED_ID = led.LED_KEY${check("CHK_CHLNCOL") ? ` left join ${db}PROCESS pr on pr.process_key = PRODLED.PROCESS_ID` : ""}`
+    + ` ${productFilter.split("prodbal").join("prodled")} AND ${lineWhere("PRODLED")} AND ${check("CHK_CHLNCOL") ? `((led.CHLN_DATE BETWEEN '${fromText}' AND '${uptoText}' and led.book in (8,13)) or (led.DOC_DATE BETWEEN '${fromText}' AND '${uptoText}' and led.book not in (8,13)) or (pr.P_DATE BETWEEN '${fromText}' AND '${uptoText}'))` : `(PRODLED.IL_DATE BETWEEN '${fromText}' AND '${uptoText}')`} ORDER BY PRODUCT.PROD_SHORT, PRODLED.IL_DATE, PRODLED.STOCK_NAT, PRODLED.IL_KEY`);
   // The Summary needs only each product's totals: the server adds the lines up (a row for each product, not for each line), and the columns come from a query that returns nothing.
   const orderAt = lineSql.lastIndexOf(" ORDER BY PRODUCT.PROD_SHORT");
   const lineBody = lineSql.slice(0, orderAt);
@@ -2940,6 +3228,7 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   for (const column of ["ADD_QTY", "LESS_QTY", "CLSG_QTY", "ADD_FACT", "LESS_FACT", "BAL_FACT"]) table.setKind(column, "decimal");
   for (const column of ["NAME", "SORTING_COL", "SMART_SELECTED_PRODUCT", "ROW_DATA_TYPE", "PROD_SHORT", "SELECTED_PRODUCT", "FULL_DOCNO", "UOM1"]) table.addColumn(column);
   if (summary) table.setKind("OPENING", "decimal");
+  if (summary && check("CHK_FACTOR")) { table.setKind("OPEN_FACT", "decimal"); table.addColumn("UOM_1"); }
   if (summary) { for (const at of addonLevels) table.addColumn(`SMART_SELECTED_ADDON${at + 1}`); for (const alias of headingAliases) table.addColumn(alias); }
   else for (const at of addonLevels) table.addColumn(`SMART_SELECTED_ADDON${at + 1}`);
   // Ledger with addon groups: a heading row (ADDON_1 ..) where a group's value changes, and every row of the product carries the values of its groups so the subtotals follow them.
@@ -2999,6 +3288,10 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
     return [{ product, rows, added, less, closing }];
   });
   const r2 = (value: number) => decimalRound(value, 2);
+  /** Each product's factor figures (Summary with the Factor columns). */
+  const factorOf = (product: (typeof products)[number], added: number, less: number) => { void added; void less; const moved = periodFact.get(product.key); const open = decimalRound(product.openFact + (movedFact.get(product.key) ?? 0), 4); const add = decimalRound(moved?.add ?? 0, 4); const lessFact = decimalRound(moved?.less ?? 0, 4); return { open, add, less: lessFact, balance: decimalRound(open + add - lessFact, 4) }; };
+  /** What the valuations multiply the rate by: the closing quantity, or with Factor Value the factor balance. */
+  const valuedQty = (entry: { product: (typeof products)[number]; closing: number; added: number; less: number }) => (factorValue ? factorOf(entry.product, entry.added, entry.less).balance : entry.closing);
   const valued = new Map<number, { rate: number; value: number }>();
   // Stock With Ageing / Print Days Column (Summary): the closing against the year's additions, newest first, in the age columns, and the age of the oldest lot used.
   const ageing = summary && check("CHK_AGECOL") ? await stockLots(loader, db, call.upto, call.tarikh1, typeKey, new Map(shown.map(({ product, closing }) => [product.key, closing] as const))) : null;
@@ -3020,8 +3313,69 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
       }
     }
   }
-  if (filter === "REPORT RATE") for (const { product, closing } of shown) valued.set(product.key, { rate: product.rate, value: r2(closing * product.rate) });
-  else if (VALUATIONS.includes(filter)) for (const [key, entry] of await stockValuation(loader, plan, filter, new Map(shown.map(({ product, closing }) => [product.key, closing] as const)), typeKey)) valued.set(key, entry);
+  if (filter === "REPORT RATE") for (const entry of shown) valued.set(entry.product.key, { rate: entry.product.rate, value: r2(valuedQty(entry) * entry.product.rate) });
+  else if (VALUATIONS.includes(filter)) for (const [key, entry] of await stockValuation(loader, plan, filter, new Map(shown.map((entry) => [entry.product.key, valuedQty(entry)] as const)), typeKey, factorValue)) valued.set(key, entry);
+  // Closing Stock FG With Additional Value (Summary): the product's FG costing rate is added to its rate, and the value is the closing times that rate.
+  if (summary && check("CHK_FG_VALADD") && withRate) {
+    for (const entry of shown) {
+      const found = valued.get(entry.product.key) ?? { rate: 0, value: 0 };
+      const rate = entry.product.fgRate > 0 ? found.rate + entry.product.fgRate : found.rate;
+      valued.set(entry.product.key, { rate, value: entry.closing !== 0 && rate !== 0 ? r2(rate * entry.closing) : found.value });
+    }
+  }
+  // Summary options of the procedure that add columns:
+  //  - Sale / Purchase Value (CHK_SALEPURCHVAL): PURCH_AMOUNT and SALE_AMOUNT, the taxable value of the period's purchases and sales (the tax master's taxable total less its slab amount, shared by the entry's
+  //    product value; product by product when the slabs are product-wise; licence 5 takes the line value less 18%), and PURCH_RATE and SALE_RATE, each over the quantity added / less, to 2 places.
+  //  - Opening Value (CHK_OPEN_VALUE, with a valuation): OPEN_RATE and OPEN_VALUE; with From after the year's start the opening quantity is valued as the closing of the day before From,
+  //    otherwise (Sale / Purchase Value) it is the product's opening rate times the opening (licence 5: its toll percentage).
+  const salePurch = summary && check("CHK_SALEPURCHVAL");
+  const openValue = summary && filter !== "NONE" && filter !== "" && (between ? check("CHK_OPEN_VALUE") : salePurch);
+  const purchAmount = new Map<string, number>();
+  const saleAmount = new Map<string, number>();
+  if (salePurch) {
+    const period = `'${fromText}' AND '${uptoText}'`;
+    const taxable = async (kind: "purchase" | "sale") => {
+      const buy = kind === "purchase";
+      if (call.licence === 5) {
+        const own = buy ? "A" : "L";
+        return (await runReportSql(loader, frag(`SELECT btrim(k.prod_short) AS "short", coalesce(sum(CASE WHEN a.stock_nat = '${own}' THEN (a.il_value::numeric - coalesce(b.slab_amt::numeric,0) - (a.il_value::numeric - coalesce(b.slab_amt::numeric,0)) * 0.18) + coalesce(b.slab_amt::numeric,0) ELSE 0.00 END),0) AS "v"`
+          + ` FROM ${db}prod_ledger a LEFT JOIN ${db}ledger_ext b ON b.il_id = a.il_key${buy ? " AND b.led_id IS NOT NULL AND b.il_id IS NOT NULL" : ""} LEFT JOIN ${db}product_master k ON k.prod_key = a.prod_id`
+          + ` WHERE a.il_date BETWEEN ${period} AND a.il_pos <> 'D' AND a.led_id > 0 AND k.prod_pos <> 'D' GROUP BY k.prod_short`))).rows;
+      }
+      const productWise = num((await runReportSql(loader, frag(`SELECT COUNT(*) AS n FROM ${db}SLAB_MASTER WHERE SLAB_ACTIVE = 'Y' AND SLAB_MASTER = 'Y' AND SLAB_POS = 'P' AND BOOK IN (${buy ? 13 : 8})`))).rows[0]?.n) > 0;
+      const share = productWise ? "(b.s_lastot::numeric - b.slab_amt::numeric)" : `round(c.il_value::numeric / nullif(a.prod_amt::numeric,0) * (b.s_lastot::numeric - b.slab_amt::numeric), 2)`;
+      const [plus, minus] = buy ? ["A", "L"] : ["L", "A"];
+      return (await runReportSql(loader, frag(`SELECT btrim(k.prod_short) AS "short", coalesce(sum(${buy ? "" : productWise ? "" : "CASE WHEN c.rate = 0 THEN 0 ELSE "}CASE WHEN c.stock_nat = '${plus}' AND d.slab_link = 0 THEN ${share} WHEN c.stock_nat = '${minus}' AND d.slab_link = 0 THEN -(${share}) ELSE 0.00 END${buy || productWise ? "" : " END"}),0) AS "v"`
+        + ` FROM ${db}ledger a LEFT JOIN ${db}ledger_ext b ON b.led_id = a.led_key LEFT JOIN ${db}prod_ledger c ON ${productWise ? "c.il_key = b.il_id" : "c.led_id = a.led_key"}`
+        + ` LEFT JOIN ${db}slab_master d ON d.slab_key = b.slab_id LEFT JOIN ${db}product_master k ON k.prod_key = c.prod_id`
+        + ` WHERE a.doc_date BETWEEN ${period} AND a.doc_pos <> 'D' AND b.tax_id > 0 AND k.prod_pos <> 'D' AND c.il_pos = 'A' AND a.book IN (${buy ? "13,15,16,11" : "8,16,11"}) AND (a.ag_book = ${buy ? 13 : 8} OR coalesce(a.ag_book,0) = 0)`
+        + ` AND b.led_id IS NOT NULL AND b.il_id IS ${productWise ? "NOT NULL" : "NULL"} GROUP BY k.prod_short`))).rows;
+    };
+    for (const row of await taxable("purchase")) purchAmount.set(toText(row.short), num(row.v));
+    for (const row of await taxable("sale")) saleAmount.set(toText(row.short), num(row.v));
+  }
+  const openValued = new Map<number, { rate: number; value: number }>();
+  if (openValue) {
+    if (between) {
+      const before: ReportPlan = { ...plan, call: { ...call, upto: dayBefore(call.from) } };
+      const opening = new Map(shown.map(({ product }) => [product.key, product.opening] as const));
+      if (filter === "REPORT RATE") for (const { product } of shown) openValued.set(product.key, { rate: product.rate, value: r2(product.opening * product.rate) });
+      else if (VALUATIONS.includes(filter)) for (const [key, entry] of await stockValuation(loader, before, filter, opening, typeKey, false)) openValued.set(key, entry);
+    } else for (const { product } of shown) { const rate = call.licence === 5 ? product.toll : product.openRate; openValued.set(product.key, { rate, value: r2(rate * product.opening) }); }
+  }
+  const placeAfter = (column: string, after: string[]) => { table.addColumn(column); table.setKind(column, "decimal"); const from = table.columns.indexOf(column); const anchor = after.map((name) => table.columns.findIndex((candidate) => candidate.toUpperCase() === name)).find((at) => at >= 0); if (anchor === undefined || anchor < 0) return; table.columns.splice(from, 1); table.columns.splice(table.columns.indexOf(table.columns[anchor]) + 1, 0, column); };
+  if (openValue) { placeAfter("OPEN_VALUE", ["OPENING", "OPEN_QTY"]); placeAfter("OPEN_RATE", ["OPENING", "OPEN_QTY"]); }
+  if (salePurch) { placeAfter("PURCH_AMOUNT", ["ADD_QTY"]); placeAfter("PURCH_RATE", ["ADD_QTY"]); placeAfter("SALE_AMOUNT", ["LESS_QTY"]); placeAfter("SALE_RATE", ["LESS_QTY"]); }
+  const optionValues = (product: (typeof products)[number], added: number, less: number): Record<string, number> => {
+    const values: Record<string, number> = {};
+    if (salePurch) {
+      const purch = purchAmount.get(product.short) ?? 0, sale = saleAmount.get(product.short) ?? 0;
+      Object.assign(values, { PURCH_AMOUNT: purch, SALE_AMOUNT: sale, PURCH_RATE: purch !== 0 && added !== 0 ? decimalRound(purch / added, 2) : 0, SALE_RATE: sale !== 0 && less !== 0 ? decimalRound(sale / less, 2) : 0 });
+    }
+    const opened = openValued.get(product.key);
+    if (openValue && opened) Object.assign(values, { OPEN_VALUE: opened.value, OPEN_RATE: opened.value !== 0 && product.opening !== 0 ? decimalRound(opened.value / product.opening, 2) : opened.rate });
+    return values;
+  };
   for (const { product, rows, added, less, closing } of shown) {
     const entry = valued.get(product.key) ?? { rate: 0, value: 0 };
     const rateValues = withRate ? { RATE: entry.rate, VALUE: entry.value } : {};
@@ -3033,7 +3387,7 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
         ...(withRate ? AGE_VALUE_COLUMNS.map((column, at) => [column, decimalRound(rate * (found ? found.buckets[at] : 0), 2)]) : [])]);
     };
     if (summary) {
-      table.insert({ ...Object.fromEntries(addonLevels.map((at) => [`SMART_SELECTED_ADDON${at + 1}`, addonValue(product, at)])), ...Object.fromEntries(headingAliases.map((alias) => [alias, product.raw[alias]])), ROW_DATA_TYPE: "LED", SORTING_COL: `${product.short}   P`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, NAME: product.desc, Prod_key: product.key, UOM1: product.uom, OPENING: product.opening, ADD_QTY: added, LESS_QTY: less, CLSG_QTY: closing, ...rateValues, ...ageValues(product.key), ...masterValues(product) });
+      table.insert({ ...Object.fromEntries(addonLevels.map((at) => [`SMART_SELECTED_ADDON${at + 1}`, addonValue(product, at)])), ...Object.fromEntries(headingAliases.map((alias) => [alias, product.raw[alias]])), ROW_DATA_TYPE: "LED", SORTING_COL: `${product.short}   P`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, NAME: product.desc, Prod_key: product.key, UOM1: product.uom, OPENING: product.opening, ADD_QTY: added, LESS_QTY: less, CLSG_QTY: closing, ...(factor ? (() => { const f = factorOf(product, added, less); return { OPEN_FACT: f.open, ADD_FACT: f.add, LESS_FACT: f.less, BAL_FACT: f.balance, UOM_1: product.uom2 }; })() : {}), ...optionValues(product, added, less), ...rateValues, ...ageValues(product.key), ...masterValues(product) });
       continue;
     }
     const currentAddons = addonLevels.map((at) => addonValue(product, at));
@@ -3048,14 +3402,14 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
     // On a product's last row the value is the one worked out for its closing; before it, the running quantity at the rate.
     if (product.opening !== 0) table.insert({ ...ledgerAddons(product), ROW_DATA_TYPE: "OPENINGS", SORTING_COL: `${product.short}${desktopDate(call.from)}   O`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, NAME: "Opening", Prod_key: product.key, ADD_QTY: product.opening > 0 ? product.opening : 0, LESS_QTY: product.opening < 0 ? -product.opening : 0, CLSG_QTY: product.opening, ...(withRate ? { RATE: entry.rate, VALUE: rows.length === 0 ? entry.value : r2(product.opening * entry.rate) } : {}) });
     let running = product.opening;
-    let factor = 0;
+    let factorRun = 0;
     rows.forEach((row, at) => {
       for (const [column, value] of Object.entries(ledgerAddons(product))) table.set(row, column, value);
       running = decimalRound((running + num(table.get(row, "ADD_QTY")) - num(table.get(row, "LESS_QTY"))), 4);
       table.set(row, "CLSG_QTY", running);
       // Factor: the balance of the second unit, running down the product's lines.
-      factor = decimalRound(factor + num(table.get(row, "ADD_FACT")) - num(table.get(row, "LESS_FACT")), 4);
-      table.set(row, "BAL_FACT", factor);
+      factorRun = decimalRound(factorRun + num(table.get(row, "ADD_FACT")) - num(table.get(row, "LESS_FACT")), 4);
+      table.set(row, "BAL_FACT", factorRun);
       if (daysFilter !== "") {
         const isIssue = toText(table.get(row, "stock_nat")).toUpperCase() === "L";
         if (isIssue) table.set(row, "Days", 0);
@@ -3099,13 +3453,13 @@ const AGE_VALUE_COLUMNS = ["Days30_AMT", "Days60_AMT", "Days90_AMT", "Days120_AM
 /** The Filter choices worked out by stockValuation (REPORT RATE is the product's own report rate). */
 const VALUATIONS = ["ACTUAL", "AVERAGE RATE", "AVERAGE C.YEAR", "LAST PURCHASE", "LAST SALE", "MRP"];
 
-async function stockValuation(loader: Loader, plan: ReportPlan, filter: string, closings: ReadonlyMap<number, number>, typeKey: number): Promise<Map<number, Valuation>> {
+async function stockValuation(loader: Loader, plan: ReportPlan, filter: string, closings: ReadonlyMap<number, number>, typeKey: number, factorValue = false): Promise<Map<number, Valuation>> {
   const { session } = loader;
   const { call } = plan;
   const db = call.database;
   const licence = call.licence;
   const frag = (sql: string) => pgFragment(sql, plan, session.companySchema);
-  const check = (name: string) => call.checkQuery.includes(`${name},`);
+  const check = stockChecks(call, session.companySchema);
   const notPorted = (what: string) => new ReportRefusal(`${what} of the Stock report is not available in the web version yet.`, "Not ported yet");
   const r2 = (value: number) => decimalRound(value, 2);
   const found = new Map<number, Valuation>();
@@ -3120,10 +3474,12 @@ async function stockValuation(loader: Loader, plan: ReportPlan, filter: string, 
   const notFinished = (type: unknown) => type !== null && type !== undefined && toText(type).toUpperCase() !== "FINISH GOODS";
 
   /** A line's quantity in the product's first report unit (less what was set against another entry when `ag`). */
+  // With Factor Value (and Factor columns) the valuation works in the product's second report unit.
+  const repUnit = factorValue ? "REP2_UOM" : "REP1_UOM";
   const qtyCase = (l: string, p: string, ag: boolean) => {
     const columns: [string, string][] = [["PCS_UOM", "TRN_PCS"], ["QTY1_UOM", "TRN_QTY1"], ["QTY2_UOM", "TRN_QTY2"], ["QTY3_UOM", "TRN_QTY3"], ["PACK_UOM", "TRN_PACK"], ["WEIGHT_UOM", "TRN_WEIGHT"]];
     const minus = ag ? `-${l}.AG_QTY` : "";
-    return `(case ${columns.map(([uom, column]) => `when ${p}.REP1_UOM=${p}.${uom} then ${l}.${column}${minus}`).join(" ")} else ${l}.TRN_PCS${minus} end)`;
+    return `(case ${columns.map(([uom, column]) => `when ${p}.${repUnit}=${p}.${uom} then ${l}.${column}${minus}`).join(" ")} else ${l}.TRN_PCS${minus} end)`;
   };
   const hideBook = [19, 29, 68, 73].includes(licence)
     && num((await runReportSql(loader, frag(`SELECT COUNT(*) AS n FROM ${db}ACCOUNT WHERE A_POS <> 'D' AND POSITION('CA_ENT' IN A_SHORT) > 0`))).rows[0]?.n) === 0;
@@ -3135,17 +3491,46 @@ async function stockValuation(loader: Loader, plan: ReportPlan, filter: string, 
       ? "(pl.BOOK=13 OR pl.BOOK=16) AND pl.STOCK_NAT='A' AND pl.process_id IS NULL"
       : `pl.BOOK=13 AND pl.STOCK_NAT='A' AND pl.process_id IS NULL${bookCode}`;
   const purchaseLines = async (ids: number[]) => {
-    const lines = new Map<number, { date: string; key: number; rate: number; amount: number; quantity: number; qty: number }[]>();
+    const lines = new Map<number, { date: string; key: number; rate: number; amount: number; quantity: number; qty: number; led: number; mode: string }[]>();
     if (ids.length === 0) return lines;
-    const rows = (await runReportSql(loader, frag(`SELECT pl.PROD_ID AS "pid", pl.IL_KEY AS "ilkey", to_char(pl.IL_DATE,'YYYYMMDD') AS "d", pl.RATE::numeric AS "rate", pl.IL_VALUE::numeric AS "amount", pl.QUANTITY::numeric AS "quantity", ${qtyCase("pl", "p", true)}::numeric AS "qty"`
+    const rows = (await runReportSql(loader, frag(`SELECT pl.PROD_ID AS "pid", pl.IL_KEY AS "ilkey", to_char(pl.IL_DATE,'YYYYMMDD') AS "d", pl.RATE::numeric AS "rate", pl.IL_VALUE::numeric AS "amount", pl.QUANTITY::numeric AS "quantity", pl.LED_ID AS "led", pl.TRN_STKMID AS "mode", ${qtyCase("pl", "p", true)}::numeric AS "qty"`
       + ` FROM ${db}PROD_LEDGER pl join ${db}PRODUCT_MASTER p ON p.PROD_KEY = pl.PROD_ID WHERE pl.PROD_ID = ANY($1::int[]) AND p.PROD_POS <> 'D' AND pl.IL_POS='A' AND pl.INVENTORY='Y' AND ${purchaseCondition}`
       + ` AND pl.IL_DATE BETWEEN '${yearStart}' AND '${uptoText}' ORDER BY pl.PROD_ID, pl.IL_DATE DESC, pl.IL_KEY DESC`), [ids])).rows;
     for (const row of rows) {
       const list = lines.get(num(row.pid)) ?? [];
-      list.push({ date: toText(row.d), key: num(row.ilkey), rate: num(row.rate), amount: num(row.amount), quantity: num(row.quantity), qty: num(row.qty) });
+      list.push({ date: toText(row.d), key: num(row.ilkey), rate: num(row.rate), amount: num(row.amount), quantity: num(row.quantity), qty: num(row.qty), led: num(row.led), mode: toText(row.mode) });
       lines.set(num(row.pid), list);
     }
     return lines;
+  };
+  /**
+   * With Expense (CHK_EXP): the purchase line's value is the line's value plus its share of the expense entries linked to the purchase (ELINK book 15 add, book 11 less):
+   * for each expense entry, its ledger amount times the purchase's amount over what the purchases linked to that entry total (rounded to 2); the sum, over the purchase's
+   * product amount (PROD_AMT), times the line's value. Lines of stock add / stock transfer entries (SA, ST) keep their value.
+   */
+  const expenseCost = async (all: ReadonlyMap<number, { led: number; mode: string; amount: number }[]>): Promise<(line: { led: number; mode: string; amount: number }) => number> => {
+    const ledIds = [...new Set([...all.values()].flatMap((lines) => lines.filter((line) => line.led > 0 && line.mode !== "SA" && line.mode !== "ST").map((line) => line.led)))];
+    if (!check("CHK_EXP") || ledIds.length === 0) return (line) => line.amount;
+    const links = (await runReportSql(loader, frag(`SELECT DISTINCT elink_ledid AS "led", elink_ag_ledid AS "exp", elink_entrybook AS "book" FROM ${db}EXPENSE_LINK WHERE elink_entrybook = 15 AND elink_ledid = ANY($1::int[])`), [ledIds])).rows;
+    const expIds = [...new Set(links.map((row) => num(row.exp)))];
+    const totals = new Map<number, number>();
+    const amounts = new Map<number, number>();
+    if (expIds.length > 0) {
+      for (const row of (await runReportSql(loader, frag(`SELECT exp.elink_ag_ledid AS "k", SUM(led.amount::numeric) AS "t" FROM ${db}LEDGER led LEFT JOIN ${db}EXPENSE_LINK exp ON exp.elink_ledid = led.led_key WHERE led.doc_pos <> 'D' AND exp.elink_ag_ledid = ANY($1::int[]) GROUP BY exp.elink_ag_ledid`), [expIds])).rows) totals.set(num(row.k), num(row.t));
+    }
+    for (const row of (await runReportSql(loader, frag(`SELECT led_key AS "k", coalesce(amount::numeric,0) AS "a", coalesce(prod_amt::numeric,0) AS "p" FROM ${db}LEDGER WHERE led_key = ANY($1::int[])`), [[...new Set([...ledIds, ...expIds])]])).rows) amounts.set(num(row.k), num(row.a));
+    const productAmounts = new Map((await runReportSql(loader, frag(`SELECT led_key AS "k", coalesce(prod_amt::numeric,0) AS "p" FROM ${db}LEDGER WHERE led_key = ANY($1::int[])`), [ledIds])).rows.map((row) => [num(row.k), num(row.p)] as const));
+    const cost = new Map<number, number>();
+    for (const row of links) {
+      const led = num(row.led), exp = num(row.exp);
+      const total = totals.get(exp) ?? 0;
+      cost.set(led, (cost.get(led) ?? 0) + (total === 0 ? 0 : decimalRound((amounts.get(exp) ?? 0) * ((amounts.get(led) ?? 0) / total), 2)));
+    }
+    return (line) => {
+      if (line.led <= 0 || line.mode === "SA" || line.mode === "ST") return line.amount;
+      const product = productAmounts.get(line.led) ?? 0;
+      return product > 0 ? line.amount + decimalRound(((cost.get(line.led) ?? 0) / product) * line.amount, 2) : line.amount;
+    };
   };
   /** The year's opening of each product (its first report unit), its opening and report rates, and its type. */
   const openingInfo = async (ids: number[]) => {
@@ -3195,23 +3580,25 @@ async function stockValuation(loader: Loader, plan: ReportPlan, filter: string, 
     }
   } else if (filter === "ACTUAL") {
     if ([1, 8, 62].includes(licence)) throw notPorted(`The Actual valuation of licence ${licence}`);
-    if (check("CHK_SLABVAL")) throw notPorted("The Actual valuation with slabs");
+    if (check("CHK_SLABVAL")) throw notPorted("The Actual valuation with slabs (the procedure supplied does not define the slab keys it uses - tax, sale tax, product amount, total bill and item discount slabs - so the figures cannot be reproduced)");
     const ids = keys.filter((key) => closing(key) > 0);
     const info = await openingInfo(keys);
-    if (licence !== 21) {
+    if (licence !== 21 || check("CHK_EXP")) {
       // First in first out: whole purchase values from the latest back, the rest at the opening rate.
       const lines = await purchaseLines(ids);
+      const costOf = await expenseCost(lines);
       for (const key of ids) {
         let remaining = closing(key);
         let total = 0;
         for (const line of lines.get(key) ?? []) {
-          if (remaining >= line.qty) { total += line.amount; remaining -= line.qty; } else { total += (line.amount / line.qty) * remaining; remaining = 0; }
+          const worth = costOf(line);
+          if (remaining >= line.qty) { total += worth; remaining -= line.qty; } else { total += (worth / line.qty) * remaining; remaining = 0; }
           if (remaining === 0) break;
         }
         const openRate = info.get(key)?.openRate ?? 0;
         if (openRate > 0 && remaining > 0) total += openRate * remaining;
         total = r2(total);
-        found.set(key, { rate: total > 0 ? r2(total / closing(key)) : 0, value: total });
+        found.set(key, { rate: total > 0 ? decimalRound(total / closing(key), factorValue ? 3 : 2) : 0, value: total });
       }
     } else {
       const fifoIds = ids.filter((key) => notFinished(info.get(key)?.type));

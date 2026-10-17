@@ -1,6 +1,7 @@
 import type { OutputColumn, OutputRow, ReportOutput } from "./types";
 import { FormulaError, evaluate, isError, isRowFormula, letterOf, parseFormula, toExcel } from "./sheetFormula.ts";
-import type { Node, Value } from "./sheetFormula.ts";
+import type { ExternalTable, Node, Value } from "./sheetFormula.ts";
+import { resolveOpenReport } from "./openReports.ts";
 
 /**
  * Columns a user adds to a report's output, each with a spreadsheet-style formula (see sheetFormula.ts). The column goes at the end of
@@ -46,6 +47,9 @@ export function workOut(output: ReportOutput, specs: readonly FormulaColumn[]): 
   const columns: OutputColumn[] = [...output.columns];
   const stored = new Map<string, Value[]>();
   const worked: Worked[] = [];
+  // The other open reports a VLOOKUP names, looked up once for this working out.
+  const tables = new Map<string, ExternalTable | string>();
+  const table = (reference: string) => { let found = tables.get(reference); if (found === undefined) { found = resolveOpenReport(reference); tables.set(reference, found); } return found; };
   for (const spec of specs) {
     let node: Node | null = null;
     let error = "";
@@ -54,6 +58,7 @@ export function workOut(output: ReportOutput, specs: readonly FormulaColumn[]): 
       node = parseFormula(spec.formula);
       result = evaluate(node, {
         rows: entries.length,
+        table,
         cell: (name, row) => {
           const column = findColumn(columns, name);
           if (!column) return undefined;

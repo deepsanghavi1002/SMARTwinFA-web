@@ -338,6 +338,12 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       headingColumn = "HEADING_COLUMN_BY_SYSTEM";
     } else headingColumn = columns[at].name;
   }
+  // Ageing (5): the document column is wide enough that a party's "* Subtotal For : name" line (it runs over the date cell too, but stops at the first figure) reads whole.
+  if (reportKey === 5) {
+    const documents = columns.find((column) => column.name.toUpperCase() === "FULL_DOCNO");
+    const nameColumn = table.name("SMART_NAME");
+    if (documents && nameColumn) documents.width = Math.max(documents.width, Math.min(240, (Math.max(0, ...table.rows.slice(0, 3000).map((row) => cellString(row[nameColumn]).length)) + 18) * 7 - 90));
+  }
   // Stock (17) Summary: a wide Particulars column, for the product descriptions.
   if (reportKey === 17 && stockSummaryFormat) for (const column of columns) if (column.name === "HEADING_COLUMN_BY_SYSTEM") column.width = Math.max(column.width, 380);
   // Stock (17): the Opening column stands right after Particulars (it is not in the setup's output columns, so it would come last).
@@ -364,13 +370,22 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // Outstanding Age Wise, Date Wise Detail: one list by date, with a running balance, and no party subtotals.
   const dateWiseList = reportKey === 5 && call.sortingText === "Date Wise" && call.filterText === "Detail";
   const allowSubtotal = reportKey !== 210 && !dateWiseList && !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
-  const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string }[] = [];
+  const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string; treeOnly?: string[] }[] = [];
   const subtotalsWanted = (flag(properties, "subtotal_req") || scheduleSubtotals || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
   // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
   const oneRowAParty = (reportKey === 5 && ["SUMMARY", "MONTHLY"].includes(plan.call.filterText.toUpperCase()));
   if (subtotalsWanted && groupColumns.length > 0 && (flag(properties, "subtotal_req") || scheduleSubtotals) && !oneRowAParty) {
     const sums = groupColumns.map(() => new Map<string, number>());
-    const reset = (level: number) => { for (const column of sumColumns) sums[level].set(column, 0); };
+    // Ageing (5): a party's line shows its oldest Days and its longest CDays (a figure that is not added).
+    const oldest = reportKey === 5 ? ["Days", "CDays"].map((name) => table.name(name)).filter((name): name is string => name !== undefined) : [];
+    // Partywise Stock (16): a subtotal line's RATE is its average, SALE_VALUE over LESS (shown with the tree or F6, like the ageing's days).
+    const averageRate = (values: Record<string, unknown>): string[] => {
+      const rate = table.name("RATE"), sale = table.name("SALE_VALUE"), less = table.name("LESS_QTY") ?? table.name("LESS");
+      if (reportKey !== 16 || !rate || !sale || !less || num(values[less]) === 0) return [];
+      values[rate] = Math.round(num(values[sale]) / num(values[less]) * 100) / 100;
+      return [rate];
+    };
+    const reset = (level: number) => { for (const column of [...sumColumns, ...oldest]) sums[level].set(column, 0); };
     groupColumns.forEach((_, level) => reset(level));
     const key = (row: ResultRow, level: number) => groupColumns.slice(0, level + 1).map((column) => cellString(row[column])).join("\u0001");
     const rows = table.rows;
@@ -390,15 +405,19 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
         }
       }
       out.push({ kind: "data", level: -2, rowType: toText(table.get(row, "ROW_DATA_TYPE")), values: row });
-      for (let level = 0; level < groupColumns.length; level += 1) for (const column of sumColumns) sums[level].set(column, money((sums[level].get(column) ?? 0) + num(row[column])));
+      for (let level = 0; level < groupColumns.length; level += 1) {
+        for (const column of sumColumns) sums[level].set(column, money((sums[level].get(column) ?? 0) + num(row[column])));
+        for (const column of oldest) sums[level].set(column, Math.max(sums[level].get(column) ?? 0, num(row[column])));
+      }
       const next = rows[index + 1];
       for (let level = groupColumns.length - 1; level >= 0; level -= 1) {
         if (next !== undefined && key(next, level) === key(row, level)) continue;
         // A group's heading row has no value for the groups inside it yet: nothing to subtotal there (it showed as "Subtotal For :" of nothing, 0.00).
         if (/^(ADDON_[0-9]|BOOK|SCHEDULE)$/.test(toText(table.get(row, "ROW_DATA_TYPE")).toUpperCase()) && cellString(row[groupColumns[level]]) === "") continue;
         const values: Record<string, unknown> = {};
-        for (const column of sumColumns) values[column] = sums[level].get(column) ?? 0;
-        out.push({ kind: "subtotal", level, rowType: "", values, caption: `${"*".repeat(level + 1)} Subtotal For : ${cellString(row[groupColumns[level]])} ` });
+        for (const column of [...sumColumns, ...oldest]) values[column] = sums[level].get(column) ?? 0;
+        const treeOnly = [...oldest, ...averageRate(values)];
+        out.push({ kind: "subtotal", level, rowType: "", values, caption: `${"*".repeat(level + 1)} Subtotal For : ${cellString(row[groupColumns[level]])} `, ...(treeOnly.length > 0 ? { treeOnly } : {}) });
         reset(level);
       }
     }
@@ -415,7 +434,11 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   if (finalTotal && subtotalsWanted && !(reportKey === 4 && call.formating === "MONTHLY")) {
     const values: Record<string, unknown> = {};
     for (const column of sumColumns) values[column] = money(table.rows.reduce((sum, row) => sum + num(row[column]), 0));
-    out.push({ kind: "total", level: -1, rowType: "", values, caption: `${"*".repeat(groupColumns.length)}* Final Total : ` });
+    // Partywise Stock (16): the final line's RATE is the average too, shown with the tree or F6.
+    const rateName = reportKey === 16 ? table.name("RATE") : undefined, saleName = table.name("SALE_VALUE"), lessName = table.name("LESS_QTY") ?? table.name("LESS");
+    const averaged = rateName && saleName && lessName && num(values[lessName]) !== 0;
+    if (averaged) values[rateName] = Math.round(num(values[saleName]) / num(values[lessName]) * 100) / 100;
+    out.push({ kind: "total", level: -1, rowType: "", values, caption: `${"*".repeat(groupColumns.length)}* Final Total : `, ...(averaged ? { treeOnly: [rateName] } : {}) });
   }
   void formattedReport;
   // Day book and register (no format): a last line "Total Entries : n" in the date column.
@@ -441,7 +464,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   for (let at = out.length - 1; at > 0; at -= 1) {
     const type = out[at].rowType.toUpperCase();
     const main = out[at].kind === "data" && (headingLevel[type] === 0 || (reportKey === 4 && type === "AC"));
-    if (main && out[at - 1].rowType !== "GAP") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
+    // The ageing's contact line is a second AC heading under the party's own: no gap between the two.
+    if (main && out[at - 1].rowType !== "GAP" && !(reportKey === 5 && type === "AC" && out[at - 1].rowType.toUpperCase() === "AC")) out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   }
   // Bank Reconciliation (15): its heading and total lines (H0 .. H2, T0 .. T2) are drawn as the desktop's coloured level lines: the bank book's balance and the pass book's
   // balance (level 0), the cheques issued and their total (1), the cheques deposited and their total (2).
@@ -519,7 +543,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     // Trial Balance (an account above the schedule codes) and Sales with Expense: Enter zooms into the account's Ledger.
     const zoomCode = (reportKey === 6 || reportKey === 280) && !node ? keyOf("SMART_AC_CODE") : 0;
     const acCode = zoomCode > (reportKey === 6 ? 27 : 0) ? zoomCode : 0;
-    return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY"), ...(cellColours ? { cellColours } : {}), ...(acCode ? { acCode } : {}) };
+    return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY"), ...(cellColours ? { cellColours } : {}), ...(acCode ? { acCode } : {}), ...(entry.treeOnly ? { treeOnly: entry.treeOnly } : {}) };
   });
 
   // Subtotal and heading colours (report_style, and Update_Subtotal's colour for a grouping column).

@@ -79,7 +79,8 @@ export function HelpList({
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    const measure = () => { setBar(element.offsetHeight - element.clientHeight); setSideBar(element.offsetWidth - element.clientWidth); };
+    // The scroll bars' room only ever grows: the box is sized from it, and a bar that came and went with the box's own size made the list flash.
+    const measure = () => { setBar((current) => Math.max(current, element.offsetHeight - element.clientHeight)); setSideBar((current) => Math.max(current, element.offsetWidth - element.clientWidth)); };
     measure();
     const observe = new ResizeObserver(measure);
     observe.observe(element);

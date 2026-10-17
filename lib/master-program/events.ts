@@ -322,6 +322,15 @@ export async function helpGrid(loader: Loader, request: Omit<EventRequest, "row"
     sql = toText(field((await loader.readTable(`SELECT help_query FROM ${SETUP_SCHEMA}.help_table WHERE help_prog_id = $1`, [target]))?.[0], "help_query")) || sql;
   }
   sql = replaceSessionValues(sql, session);
+  // |sys.replace_acaddon|: the account addons marked for the help (account_help), each as its own column.
+  if (sql.includes("|sys.replace_acaddon|")) {
+    const addons = (await loader.readTable(`SELECT fiel_save FROM ${session.companySchema}.addon_fld WHERE UPPER(BTRIM(COALESCE(account_help::text, ''))) IN ('TRUE', '1', 'Y') AND fiel_relate = 'A' AND fiel_type = 'M' AND fiel_pos <> 'D'`)) ?? [];
+    const columns = addons.map((addon) => { const name = toText(field(addon, "fiel_save")).trim(); return `CASE WHEN ADATA.TXT_${name} IS NULL THEN '' ELSE LTRIM(RTRIM(ADATA.TXT_${name})) END AS "${name.replace(/_/g, " ")}"`; }).join(",");
+    sql = columns !== "" ? sql.split("|sys.replace_acaddon|").join(columns) : sql.split(",|sys.replace_acaddon|").join("");
+  }
+  // |sys.achelpbook|: the books of the first combo (General Ledger is book 1, Sundry Debtors 2 ...), so the help lists the accounts the grid lists; every book when the combo is not a book number.
+  const comboBook = request.group.firstCombo.value.trim();
+  sql = sql.split("|sys.achelpbook|").join(/^\d+$/.test(comboBook) ? ` ${comboBook}` : " 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19");
   if (list.toUpperCase() === "HELP_ADDONSUB") sql = sql.toUpperCase().replace("ORDER BY", "and addon.fiel_key=|sys.firstcombovalue| ORDER BY");
   sql = await replaceSysValues(sql, loadContext(session, prepared.programId, request.group), sysValueLookups(loader.client, session.companySchema));
   sql = blankCoalesceAsText(sql.split("|sys.help_stock_3|,").join(""));

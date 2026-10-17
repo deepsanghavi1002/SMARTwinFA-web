@@ -187,6 +187,8 @@ export type OutputRow = Readonly<{
   cellColours?: Readonly<Record<string, string>>;
   /** The account of the row where Enter zooms into its Ledger (Trial Balance, Sales with Expense). */
   acCode?: number;
+  /** Cells of a subtotal line that show only while the tree is on (the ageing's oldest Days and longest CDays), by column key. */
+  treeOnly?: readonly string[];
 }>;
 
 export type ReportOutput = Readonly<{

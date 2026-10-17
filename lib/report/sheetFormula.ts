@@ -60,7 +60,7 @@ export type Node =
 
 export const REDUCERS = new Set(["SUM", "AVERAGE", "MIN", "MAX", "COUNT"]);
 const ALIASES: Record<string, string> = { AVG: "AVERAGE" };
-const ELEMENTWISE = new Set(["ROUND", "ABS", "INT", "SQRT", "MOD", "IF", "AND", "OR", "NOT", "IFERROR"]);
+const ELEMENTWISE = new Set(["ROUND", "ABS", "INT", "SQRT", "MOD", "IF", "AND", "OR", "NOT", "IFERROR", "VLOOKUP"]);
 
 export function parseFormula(source: string): Node {
   const text = source.trim().replace(/^=/, "");
@@ -192,7 +192,12 @@ export type Sheet = Readonly<{
   rows: number;
   /** Cell of entry row `row` in the column named `name` (a caption or a key), or undefined when there is no such column. */
   cell: (name: string, row: number) => Value | undefined;
+  /** The table of another open report that a VLOOKUP names (see openReports.ts), or the error Excel gives for it. */
+  table?: (reference: string) => ExternalTable | string;
 }>;
+
+/** The cells of another report's columns, one array for each row; the first column is the one VLOOKUP searches. */
+export type ExternalTable = { rows: readonly (readonly Value[])[]; index?: Map<string, number> };
 
 const ERR_DIV = "#DIV/0!";
 const ERR_VALUE = "#VALUE!";
@@ -245,7 +250,45 @@ function reduce(fn: string, values: Value[]): Value {
   return ERR_VALUE;
 }
 
-function elementwise(fn: string, a: Value[]): Value {
+/** How a cell is compared in a lookup: as a number when it is one, else as text without case or spaces at the ends. */
+const lookupKey = (value: Value): string => { const n = typeof value === "number" ? value : value === null || value === "" ? null : numberOf(value); return n !== null ? `n:${n}` : `s:${String(value ?? "").trim().toUpperCase()}`; };
+
+/**
+ * VLOOKUP(value, "Report!C:H", column, [exact]) as Excel works it: the first column of the named range of another open report is searched for
+ * the value, and the cell of that row in the range's `column`th column is the answer. Left out or TRUE / 1 it is the approximate match (the
+ * last row whose first cell is not above the value, the first column read as sorted); FALSE / 0 wants the value itself. A value not found is
+ * #N/A, a column number below 1 is #VALUE!, one past the range is #REF!, and a report that is not open is #REF!.
+ */
+function vlookup(a: Value[], sheet?: Sheet): Value {
+  const [value, reference, column, mode] = [a[0] ?? null, a[1] ?? null, a[2] ?? null, a.length > 3 ? a[3] : null];
+  if (typeof reference !== "string" || reference.trim() === "" || isError(reference)) return ERR_VALUE;
+  const index = numberOf(column);
+  if (index === null || Math.trunc(index) < 1) return ERR_VALUE;
+  const found = sheet?.table?.(reference);
+  if (found === undefined) return "#REF!";
+  if (typeof found === "string") return found;
+  const exact = a.length > 3 && mode !== null && mode !== "" && (numberOf(mode) ?? (String(mode).toUpperCase() === "FALSE" ? 0 : 1)) === 0;
+  const wanted = lookupKey(value);
+  let at = -1;
+  if (exact) {
+    if (!found.index) { found.index = new Map(); found.rows.forEach((row, position) => { const key = lookupKey(row[0] ?? null); if (!found.index!.has(key)) found.index!.set(key, position); }); }
+    at = found.index.get(wanted) ?? -1;
+  } else {
+    const x = numberOf(value);
+    for (let position = 0; position < found.rows.length; position += 1) {
+      const key = found.rows[position][0] ?? null;
+      const y = numberOf(key);
+      const below = x !== null && y !== null ? y <= x : String(key ?? "").trim().toUpperCase() <= String(value ?? "").trim().toUpperCase();
+      if (below) at = position; else if (x !== null && y !== null) break;
+    }
+  }
+  if (at < 0) return "#N/A";
+  const width = found.rows[at].length;
+  if (Math.trunc(index) > width) return "#REF!";
+  return found.rows[at][Math.trunc(index) - 1] ?? 0;
+}
+
+function elementwise(fn: string, a: Value[], sheet?: Sheet): Value {
   const n = (at: number) => numberOf(a[at] ?? null);
   const bad = a.find(isError);
   if (bad !== undefined && fn !== "IFERROR") return bad;
@@ -260,6 +303,7 @@ function elementwise(fn: string, a: Value[]): Value {
     case "OR": return a.some((v) => (numberOf(v) ?? (v ? 1 : 0)) !== 0) ? 1 : 0;
     case "NOT": return (numberOf(a[0] ?? null) ?? 0) === 0 ? 1 : 0;
     case "IFERROR": return isError(a[0] ?? null) ? (a[1] ?? 0) : (a[0] ?? null);
+    case "VLOOKUP": return vlookup(a, sheet);
   }
   return ERR_VALUE;
 }
@@ -320,9 +364,9 @@ export function evaluate(node: Node, sheet: Sheet): { perRow: boolean; values: V
         const args = n.args.map((arg) => ev(arg, row));
         if (args.some(Array.isArray)) {
           const size = Math.max(...args.map((arg) => (Array.isArray(arg) ? arg.length : 0)));
-          return Array.from({ length: size }, (_, i) => elementwise(n.fn, args.map((arg) => (Array.isArray(arg) ? (arg[i] ?? null) : (arg as Value)))));
+          return Array.from({ length: size }, (_, i) => elementwise(n.fn, args.map((arg) => (Array.isArray(arg) ? (arg[i] ?? null) : (arg as Value))), sheet));
         }
-        return elementwise(n.fn, args as Value[]);
+        return elementwise(n.fn, args as Value[], sheet);
       }
     }
   };
@@ -346,7 +390,7 @@ export type ExcelSheet = Readonly<{
   segments: readonly (readonly [number, number])[];
 }>;
 
-const unsupportedInArray = new Set(["IF", "AND", "OR", "NOT", "IFERROR"]);
+const unsupportedInArray = new Set(["IF", "AND", "OR", "NOT", "IFERROR", "VLOOKUP"]);
 
 /**
  * The formula as Excel writes it, with cell references for the sheet, or null when Excel's own functions cannot say it (the cell
@@ -396,6 +440,8 @@ export function toExcel(node: Node, sheet: ExcelSheet): string | null {
           }
           return null;
         }
+        // VLOOKUP reads another open report, which the exported sheet does not have: its cells hold the worked-out values.
+        if (n.fn === "VLOOKUP") return null;
         const args = n.args.map(tx);
         return args.some((arg) => arg === null) ? null : `${n.fn}(${args.join(",")})`;
       }
