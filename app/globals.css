@@ -1636,7 +1636,6 @@
 /* Invoice Print: format choice and the bill preview */
 .ent-print-back{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:rgba(10,30,60,.45)}
 .ent-print-choose{width:360px;display:grid;gap:8px;padding:12px;border:2px solid #1f64b8;border-radius:6px;background:#f5fffa;box-shadow:0 8px 28px rgba(0,0,0,.4)}
-.ent-print-title,.ent-print-bar{cursor:move}
 .ent-print-title{display:flex;align-items:center;gap:6px;font-weight:700;color:#16365f}
 .ent-print-option{display:grid;gap:2px;padding:8px 10px;border:1px solid #8fb0d8;border-radius:5px;background:#fff;text-align:left;font:inherit;cursor:pointer}
 .ent-print-option b{color:#1f64b8;font-size:14px}
@@ -1674,3 +1673,37 @@
 .sec-buttons{display:flex;gap:8px;padding:8px 10px}
 .sec-all{text-align:center!important}.sec-all label{display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:700}.sec-all input{margin:0}
 .sec-all{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+
+/* Entry: Outstanding grid totals bar and O/s Bal. box (desktop tbx_OS_* / tbx_Os_Balance) */
+
+.ent-print-title{cursor:move}
+
+/* Entry: the Returns panel of a debit / credit note (what it is against) */
+.ent-returns{width:420px}
+.ent-returns-row{display:grid;grid-template-columns:70px 1fr;align-items:start;gap:8px;font-weight:700;color:#16365f}
+.ent-returns-row select{height:24px;border:1px solid #6d93c4;font:inherit}
+.ent-returns-row ul{margin:0;padding:0;list-style:none;max-height:130px;overflow:auto;border:1px solid #6d93c4;background:#fff;font-weight:400}
+.ent-returns-row li{padding:3px 8px;cursor:pointer}
+.ent-returns-row li.ent-returns-on{background:#1f64b8;color:#fff}
+.ent-returns .ent-print-actions{gap:8px}
+/* Entry: lbl_AgainstNature / lbl_AgainstBook of a debit / credit note (ivory labels at the foot, right) */
+.ent-against{position:absolute;height:20px;display:flex;align-items:center;padding:0 4px;box-sizing:border-box;background:ivory;color:#000;font-family:Calibri,Segoe UI,sans-serif;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ent-against-nature{font-size:11px;font-style:italic;text-decoration:underline}
+.ent-against-book{font-size:12px;font-weight:700;font-style:italic}
+/* Entry: Outstanding grid - totals under their columns, outside the grid; the O/s Bal. boxes; a watermark 10% fainter */
+.ent-watermark-faint{color:rgba(31,100,184,.13)}
+.ent-totals{position:absolute;display:flex;height:22px}
+.ent-total-box{display:block;box-sizing:border-box;height:22px;padding:2px 5px;background:#f5f5f5;border:1px solid #9cb9e0;font:700 11px/16px Tahoma,sans-serif;color:#000}
+.ent-totals-below{position:absolute;display:flex;justify-content:flex-end;gap:12px;height:22px}
+.ent-total-label{display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#16365f}
+.ent-total-label output{min-width:105px;box-sizing:border-box;height:22px;padding:2px 5px;text-align:right;background:#fff0f5;border:1px solid #9cb9e0;border-radius:3px;font:700 11px/16px Tahoma,sans-serif}
+.ent-total-box.ent-total-none{background:transparent;border-color:transparent}
+/* Outstanding grid: the set-off cell always shows its calculator and cancel buttons; a heading keeps clear of its filter arrow */
+.ent-grid td.ent-always-tools .mp-mini{display:inline-grid}
+.ent-grid th.ent-th-filterable{padding-right:22px}
+.ent-grid th.ent-th-filterable .mp-filter-button{right:5px}
+.ent-grid th button.ent-sortable{padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.ent-grid th .ent-sortable:hover{text-decoration:underline}
+.ent-grid td.ent-always-tools>span.ent-cell-wrap{display:flex;align-items:center;gap:1px;overflow:visible}
+.ent-grid td.ent-always-tools .ent-cell-input{min-width:0}
+.ent-grid tr.ent-grid-current{scroll-margin-top:22px;scroll-margin-bottom:2px}

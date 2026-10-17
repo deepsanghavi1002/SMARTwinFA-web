@@ -24,6 +24,8 @@ export type EntryValues = Readonly<{
   bkDbcode: number;
   acDbcode: number;
   agBook: number;
+  /** int_ag_bookcode: the account a debit / credit note is against (0: none). */
+  agCode: number;
   bookActual: boolean;
   /** dtbl_FirstCombo stkm_forbook (|sys.slab_book| of a stock module). */
   forBook: number;
@@ -77,7 +79,7 @@ export function replaceEntryTokens(source: string | null | undefined, values: En
   const has = (token: string) => sql.toLowerCase().includes(token.toLowerCase());
   const swap = (token: string, value: string) => {
     if (!has(token)) return;
-    sql = sql.replace(new RegExp(token.replace(/[|.]/g, (c) => `\\${c}`), "gi"), () => value);
+    sql = sql.replace(new RegExp(token.replace(/[|.()]/g, (c) => `\\${c}`), "gi"), () => value);
   };
   const docDate = parseDesktopDate(values.docDate);
   swap("|sys.complic|", String(values.session.licence));
@@ -98,7 +100,7 @@ export function replaceEntryTokens(source: string | null | undefined, values: En
   swap("|sys.bk_dbcode|", String(values.bkDbcode));
   swap("|sys.ac_dbcode|", String(values.acDbcode === 0 ? 1 : values.acDbcode));
   swap("|sys.book_code|", values.bookCode === 0 ? "Null" : String(values.bookCode));
-  swap("|sys.ag_bkcode|", "Null");
+  swap("|sys.ag_bkcode|", values.agCode === 0 ? "Null" : String(values.agCode));
   // A quoted placeholder takes the bare text; an unquoted one gets the quotes.
   if (has("'|sys.doc_series|'")) swap("|sys.doc_series|", values.series.replace(/'/g, "''"));
   swap("|sys.doc_series|", quote(values.series));
@@ -116,6 +118,6 @@ export function replaceEntryTokens(source: string | null | undefined, values: En
   swap("|sys.blank|", "''");
   swap("|sys.null|", "null");
   // Invoice_Tab_Find_Edit_Enter: "and |para.ag_bkcode|" names the book-against only when one is chosen.
-  swap("and |para.ag_bkcode|", values.agBook > 0 ? `and led.ag_bkcode=${values.agBook}` : "");
+  swap("and |para.ag_bkcode|", values.agCode > 0 ? `and led.ag_bkcode=${values.agCode}` : "");
   return entryDialect(pgFragment(quotedAliases(sql), { moneyColumns: values.moneyColumns ?? [] }, values.session.companySchema));
 }
