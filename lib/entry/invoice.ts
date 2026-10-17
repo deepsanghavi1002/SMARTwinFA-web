@@ -139,7 +139,7 @@ export async function bookContext(loader: Loader, entryName: string, firstCombo:
   const { session } = loader;
   const properties = await entryProperties(loader, entryName);
   const blank: EntryValues = {
-    session, firstCombo, bookKey: 0, type: 0, bookCode: 0, bkDbcode: 0, acDbcode: 0, agBook: 0, bookActual: true, forBook: 0,
+    session, firstCombo, bookKey: 0, type: 0, bookCode: 0, bkDbcode: 0, acDbcode: 0, agBook: 0, agCode: 0, bookActual: true, forBook: 0,
     stkmShort: "", stkmFromShort: "", acHelp: "", series: "", docNo: "", docDate: "", acCode: 0, entryNat: "A",
     moneyColumns: await moneyColumnNames(loader),
   };
@@ -198,13 +198,20 @@ export async function bookContext(loader: Loader, entryName: string, firstCombo:
     else if (id.startsWith("FR")) entryFor = "Formula";
     else if (id.startsWith("DY")) entryFor = "Dryer";
   }
-  if (returnFor !== "") warnings.push("A debit / credit note asks for the book it is against (the Returns panel); that panel is not ported yet.");
+  // Lbx_Ag_Nature_Leave: the account the note is against gives byte_ag_book (its book), the nature is int_type; |sys.slab_book| follows the book against.
+  const against = returnFor !== "" && bookActual ? firstCombo.against : undefined;
+  let agBook = 0;
+  if (against && against.code > 0) {
+    agBook = toInt(field((await loader.readTable(`SELECT book FROM |sys.db|account WHERE code = $1`, [against.code]))?.[0], "book"));
+    if (agBook > 0) type = against.nature;
+  }
   if (stkmFromShort !== "" && (stkmToShort !== "" || session.licence === 71)) warnings.push("A link register lists the entries to link first (the link panel); that panel is not ported yet.");
 
   const values: EntryValues = {
     ...blank,
     bookKey, type, bookCode: toInt(field(row, "code")), bkDbcode, acDbcode, bookActual, forBook: toInt(field(row, "stkm_forbook")),
     stkmShort, stkmFromShort,
+    ...(agBook > 0 && against ? { agBook, agCode: against.code } : {}),
     ...extra,
   };
   return {
@@ -511,6 +518,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
   const taxPercs = Object.fromEntries(((await loader.readTable(`SELECT tax_rec, tax_perc FROM |sys.db|tax_master WHERE tax_pos <> 'D'`)) ?? []).map((row) => [toText(displayValue(field(row, "tax_rec"))), toDecimal(field(row, "tax_perc"))]));
   const uomQuery = text((await loader.readTable(`SELECT query_string FROM ${SETUP_SCHEMA}.query_table WHERE BTRIM(query_prog_id) = 'PROD_UOM_LIST_SRT'`))?.[0], "query_string");
   const uoms = uomQuery !== "" ? await queryOptions(loader, replace(uomQuery)) : [];
+  const setoffBooks = ((await loader.readTable(`SELECT save_only_forbook FROM ${SETUP_SCHEMA}.entry_save_properties WHERE entrykey_id = $1 AND record_active AND LOWER(grid_name) = 'c1dg_outclear' AND multiple_save`, [entryId])) ?? []).map((row) => text(row, "save_only_forbook"));
   return {
     bookCode: book.values.bookCode,
     bookKey: book.values.bookKey,
@@ -522,6 +530,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     party: book.party,
     inventory,
     slab: book.slab,
+    setoff: setoffBooks.some((list) => list.replace(/ /g, "").split(",").includes(String(book.values.bookKey))),
     balance,
     taxGroup,
     controls: controls.map((control) => (control.name === "cmb_series" ? { ...control, options: seriesOptions, initial: series } : control.name === "cmb_side" ? { ...control, options: sides.map((side) => ({ text: side.text, value: side.value })), initial: sides[0]?.text ?? "" } : control)),
@@ -772,7 +781,7 @@ async function firstRowValues(loader: Loader, sql: string): Promise<string[]> {
   }
 }
 
-export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = "", addressId = 0): Promise<PartyDetails> {
+export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = "", addressId = 0, editKey = 0): Promise<PartyDetails> {
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
   const book = await bookContext(loader, entryName, firstCombo, { acCode: code });
@@ -808,7 +817,21 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
   }
   // C1dg_Slab_Leave fills c1dg_OutClear: the party's pending bills on the side the book posts to.
   const outEvent = eventFilling(await controlEvents(loader, entryId), "c1dg_outclear");
-  const outRows = outEvent ? (await loader.readTable(replaceEntryTokens(`Select ${toText(field(outEvent, "fill_control_query"))}`, book.values))) ?? [] : [];
+  let outSql = outEvent ? `Select ${toText(field(outEvent, "fill_control_query"))}` : "";
+  if (outSql !== "" && editKey > 0) {
+    // An entry being changed: what it set off against a bill counts as pending again and shows as typed (the bill stays listed even when it is settled).
+    const ledKey = toInt(field((await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [editKey]))?.[0], "led_key"));
+    // The entry's own set-offs, read first (a few rows) and written into the query as figures: a subquery per bill scans the whole outstanding table.
+    const own = (await loader.readTable(`SELECT out_ag_outid, SUM(out_setoff::numeric) AS setoff FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) > 0 GROUP BY out_ag_outid`, [ledKey])) ?? [];
+    const mine = own.length === 0 ? "0" : `(CASE out.out_key ${own.map((row) => `WHEN ${toInt(field(row, "out_ag_outid"))} THEN ${toDecimal(field(row, "setoff"))}`).join(" ")} ELSE 0 END)`;
+    const pending = `(out.out_entryamt::numeric-out.out_setoff::numeric-out.out_ly_setoff::numeric+${mine})`;
+    outSql = outSql.split("(out.out_entryamt-out.out_setoff-out.out_ly_setoff)>0").join(`${pending}>0`)
+      .split("(out.out_entryamt-out.out_setoff-out.out_ly_setoff) as \"out_pending\"").join(`${pending} as "out_pending"`)
+      .split("CAST(0 AS DECIMAL(18,4)) as \"out_setoff\"").join(`CAST(${mine} AS DECIMAL(18,4)) as "out_setoff"`)
+      .split("CAST(0 AS DECIMAL(18,4)) as \"out_setoff_old\"").join(`CAST(${mine} AS DECIMAL(18,4)) as "out_setoff_old"`)
+      .split("CAST(0 AS DECIMAL(18,4)) as \"out_setoff_file\"").join(`CAST(${mine} AS DECIMAL(18,4)) as "out_setoff_file"`);
+  }
+  const outRows = outSql !== "" ? (await loader.readTable(replaceEntryTokens(outSql, book.values))) ?? [] : [];
   const outstanding = outRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
   const { stateCode, taxGroup } = await partyTaxGroup(loader, code, docDate);
   // HELP_ADDRESS: all the party's addresses; another than the first adds "Ship to" lines (Display_Address).
@@ -838,6 +861,15 @@ export async function partyTaxGroup(loader: Loader, code: number, docDate = ""):
 // ---------------------------------------------------------------------------------------
 // Invoice_Tab_Find_Edit_Enter: the entries of the register and series
 
+/** The names of the book a debit / credit note is against (ledger.ag_bkcode: an account) and its nature (ledger type: a book_properties book_key). */
+export async function againstNames(loader: Loader, codes: readonly number[], natures: readonly number[]) {
+  const accounts = new Map<number, string>();
+  const kinds = new Map<number, string>();
+  if (codes.length > 0) for (const row of (await loader.readTable(`SELECT code, name FROM |sys.db|account WHERE code = ANY($1::int[])`, [codes as number[]])) ?? []) accounts.set(toInt(field(row, "code")), toText(field(row, "name")).trim());
+  if (natures.length > 0) for (const row of (await loader.readTable(`SELECT book_key, book_desc FROM |sys.db|book_properties WHERE book_key = ANY($1::int[]) AND BTRIM(stkm_pos) = 'A'`, [natures as number[]])) ?? []) kinds.set(toInt(field(row, "book_key")), toText(field(row, "book_desc")).trim());
+  return { accounts, kinds };
+}
+
 export async function entryPreview(loader: Loader, entryName: string, firstCombo: EntryOption, series: string): Promise<HelpList> {
   const properties = await entryProperties(loader, entryName);
   const helpName = text(properties, "help_preview_queryname");
@@ -846,10 +878,46 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
   const book = await bookContext(loader, entryName, firstCombo, { series });
   const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(text(helpRow, "help_query")), book.values))) ?? [];
   const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const shown = rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
+  const columns = keys.length > 0 ? await helpColumns(loader, helpName, "E", keys) : [];
+  // A debit / credit note's list also shows the book each entry is against and its nature.
+  if (book.entryFor === "DrCr" && shown.length > 0) {
+    const own = (await loader.readTable(`SELECT unique_key, ag_bkcode, "TYPE" AS nature FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [shown.map((row) => toInt(row.unique_key))])) ?? [];
+    const byKey = new Map(own.map((row) => [toInt(field(row, "unique_key")), row]));
+    const names = await againstNames(loader, [...new Set(own.map((row) => toInt(field(row, "ag_bkcode"))).filter((code) => code > 0))], [...new Set(own.map((row) => toInt(field(row, "nature"))).filter((kind) => kind > 0))]);
+    for (const row of shown) {
+      const mine = byKey.get(toInt(row.unique_key));
+      (row as Record<string, string>).against_book = names.accounts.get(toInt(field(mine, "ag_bkcode"))) ?? "";
+      (row as Record<string, string>).against_nature = names.kinds.get(toInt(field(mine, "nature"))) ?? "";
+    }
+    columns.push({ key: "against_book", caption: "Against Book", width: 130, align: "L", format: "" }, { key: "against_nature", caption: "Nature", width: 130, align: "L", format: "" });
+  }
   return {
-    columns: keys.length > 0 ? await helpColumns(loader, helpName, "E", keys) : [],
-    rows: rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)]))),
+    columns,
+    rows: shown,
     frozen: toInt(field(helpRow, "help_col_frozen")),
     total: `Total Records : ${rows.length}`,
   };
+}
+
+// ---------------------------------------------------------------------------------------
+// Fill_ReturnsPanel: what a debit / credit note is against
+
+export type ReturnsChoices = Readonly<{
+  /** cmb_Ag_Book: the sale and purchase accounts (account books 8 and 13). */
+  accounts: readonly Readonly<{ name: string; code: number; book: number }>[];
+  /** lbx_Ag_Nature: the books that have a note nature (stkm_fornote), as book_desc / book_key. */
+  natures: readonly Readonly<{ text: string; value: number }>[];
+  /** The account selected first: the purchase account (21) when the note's account is on the debit side, else the sale account (16). */
+  defaultCode: number;
+}>;
+
+export async function returnsChoices(loader: Loader, entryName: string, firstCombo: EntryOption): Promise<ReturnsChoices> {
+  const book = await bookContext(loader, entryName, firstCombo);
+  const accounts = ((await loader.readTable(`SELECT name, code, book FROM |sys.db|account WHERE book IN (8, 13) AND a_pos <> 'D' ORDER BY book, name`)) ?? [])
+    .map((row) => ({ name: toText(field(row, "name")).trim(), code: toInt(field(row, "code")), book: toInt(field(row, "book")) }));
+  const natures = ((await loader.readTable(`SELECT book_desc, book_key FROM |sys.db|book_properties WHERE BTRIM(book_actual) = 'X' AND BTRIM(stkm_pos) = 'A' AND COALESCE(BTRIM(stkm_fornote), '') <> '' ORDER BY book_desc`)) ?? [])
+    .map((row) => ({ text: toText(field(row, "book_desc")).trim(), value: toInt(field(row, "book_key")) }));
+  const wanted = book.values.acDbcode === 1 ? 21 : 16;
+  return { accounts, natures, defaultCode: accounts.find((account) => account.code === wanted)?.code ?? accounts[0]?.code ?? 0 };
 }

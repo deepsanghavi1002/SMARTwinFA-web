@@ -5,7 +5,7 @@ import { Loader } from "@/lib/master-program/load";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
-import { bookContext, entryPreview, loadBook, loadInvoice, partyDetails, partyHelp, seriesDefaults } from "@/lib/entry/invoice";
+import { bookContext, entryPreview, loadBook, loadInvoice, partyDetails, partyHelp, returnsChoices, seriesDefaults } from "@/lib/entry/invoice";
 import { headerProblems } from "@/lib/entry/checks";
 import { entryLog } from "@/lib/entry/log";
 import { entryAll } from "@/lib/entry/all";
@@ -32,6 +32,9 @@ const headers = { "cache-control": "no-store" };
 function chosenRegister(def: InvoiceDefinition, chosen: EntryOption | undefined): EntryOption {
   const option = def.firstCombo.options.find((candidate) => candidate.text === chosen?.text && candidate.value === chosen?.value);
   if (!option) throw new Error(`Choose a ${def.firstCombo.label} entry from its list`);
+  // A debit / credit note's Returns panel choice travels with the register.
+  const against = chosen?.against;
+  if (against && Number.isInteger(against.code) && against.code > 0 && Number.isInteger(against.nature) && against.nature >= 0) return { ...option, against: { code: against.code, nature: against.nature } };
   return option;
 }
 
@@ -141,9 +144,14 @@ export async function POST(request: Request) {
           return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         case "book": {
           const group = body.taxGroup === "G" || body.taxGroup === "I" || body.taxGroup === "V" ? body.taxGroup : undefined;
-          const book = await loadBook(loader, body.entryName, chosenRegister(def, body.firstCombo), group);
+          const register = chosenRegister(def, body.firstCombo);
+          // A debit / credit note asks what it is against (the Returns panel) before its slab can be filled.
+          if (!register.against && (await bookContext(loader, body.entryName, register)).entryFor === "DrCr") return { asksAgainst: true, warnings: loader.warnings };
+          const book = await loadBook(loader, body.entryName, register, group);
           return { book, warnings: loader.warnings };
         }
+        case "returns":
+          return { returns: await returnsChoices(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
         case "series": {
           const register = chosenRegister(def, body.firstCombo);
           const book = await bookContext(loader, body.entryName, register);
@@ -154,7 +162,7 @@ export async function POST(request: Request) {
         case "party": {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
-          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0), warnings: loader.warnings };
+          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0, Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0), warnings: loader.warnings };
         }
         case "product-help":
           return { help: await productHelp(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
@@ -209,7 +217,7 @@ export async function POST(request: Request) {
         }
         case "preview-all":
           // Find / Edit with every field of each entry: read only when the operator asks for it.
-          return { preview: await entryAll(loader, body.entryName, chosenRegister(def, body.firstCombo), String(body.series ?? "").slice(0, 40)), warnings: loader.warnings };
+          return { preview: await entryAll(loader, body.entryName, chosenRegister(def, body.firstCombo), String(body.series ?? "").slice(0, 40), body.withProducts !== false), warnings: loader.warnings };
         default:
           throw new Error(`Unknown action ${body.action}`);
       }

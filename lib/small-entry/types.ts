@@ -6,7 +6,12 @@ import type { PublicProgramBodySetup } from "../master-rules";
  * menumaster.actionmenu, the entry_properties.entry_name.
  */
 
-export type EntryOption = Readonly<{ text: string; value: string }>;
+export type EntryOption = Readonly<{
+  text: string;
+  value: string;
+  /** Entry (invoice) only: what a debit / credit note is against - the account (int_ag_bookcode) and the nature book (int_type) chosen on the Returns panel. */
+  against?: Readonly<{ code: number; nature: number }>;
+}>;
 
 /** A header control from entry_control (cmb_SmallEntry1-3, dtp_Date1-3, tbx_Text1-3). */
 export type EntryControl = Readonly<{

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { EntryColumn, EntryOption } from "../../lib/entry/types";
 import type { useEditorTools } from "../grid/EditorTools";
@@ -13,6 +13,11 @@ import type { Line } from "./lines";
 
 /** Rows the grid always shows, filled or not. */
 const SHOWN_ROWS = 7;
+/** The desktop's grid holds Field_LastValue.Count() = 2000 rows (1999 numbered rows, the ones after the entered ones blank). */
+const TOTAL_ROWS = 1999;
+const ROW_HEIGHT = 20;
+/** Blank rows drawn at a time (the others are only room, so 1999 rows stay light). */
+const BLANK_WINDOW = 30;
 
 /**
  * c1dg_Inputdata: the product rows. Columns up to Product stay put (Cols.Frozen); a heading's
@@ -61,6 +66,9 @@ export function ProductGrid({
     return out;
   }, [columns, frozen, layout]);
   const rowCount = Math.max(SHOWN_ROWS, lines.length + 1);
+  const [topRow, setTopRow] = useState(0);
+  const blankFrom = Math.min(TOTAL_ROWS, Math.max(rowCount, topRow - 5));
+  const blankUpto = Math.min(TOTAL_ROWS, Math.max(rowCount, blankFrom + BLANK_WINDOW));
   const tableWidth = columns.reduce((sum, column) => sum + layout.widthOf(column), 0);
   const isProduct = (column: EntryColumn) => column.key.toLowerCase() === "prod_key";
   const listOf = (column: EntryColumn): readonly EntryOption[] | undefined => {
@@ -157,7 +165,7 @@ export function ProductGrid({
           const at = columns.findIndex((column) => column.key === key);
           if (at >= 0 && at >= columns.length - 2 && grid.current) grid.current.scrollLeft = grid.current.scrollWidth;
         }}
-        onScroll={(event) => { if (totalsBox.current) totalsBox.current.scrollLeft = event.currentTarget.scrollLeft; }}>
+        onScroll={(event) => { if (totalsBox.current) totalsBox.current.scrollLeft = event.currentTarget.scrollLeft; setTopRow(Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT)); }}>
         <table style={{ width: tableWidth }}>
           {colgroup}
           <thead>
@@ -177,6 +185,18 @@ export function ProductGrid({
                 ))}
               </tr>
             ))}
+            {rowCount < TOTAL_ROWS && blankFrom > rowCount && <tr aria-hidden="true" style={{ height: (blankFrom - rowCount) * ROW_HEIGHT }}><td colSpan={columns.length} style={{ padding: 0, border: 0 }} /></tr>}
+            {Array.from({ length: Math.max(0, blankUpto - blankFrom) }, (_unused, at) => {
+              const row = blankFrom + at;
+              return (
+                <tr key={row} aria-hidden="true" className={row % 2 ? "ent-alt" : ""}>
+                  {columns.map((column, index) => (
+                    <td key={column.key} className={index < frozen ? "ent-frozen" : ""} style={{ left: lefts[index], textAlign: align(column) }}>{column.key.toLowerCase() === "il_serial" ? row + 1 : ""}</td>
+                  ))}
+                </tr>
+              );
+            })}
+            {blankUpto < TOTAL_ROWS && <tr aria-hidden="true" style={{ height: (TOTAL_ROWS - blankUpto) * ROW_HEIGHT }}><td colSpan={columns.length} style={{ padding: 0, border: 0 }} /></tr>}
           </tbody>
         </table>
       </div>
