@@ -4,14 +4,14 @@
 /* eslint-disable jsx-a11y/no-noninteractive-element-interactions */
 
 import { useEffect, useRef, useState } from "react";
-import { HotkeyLabel } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
-import { printHtmlDocument } from "../grid/printFrame";
+import { HtmlPreview } from "../grid/HtmlPreview";
 import { useDraggable } from "../grid/useDraggable";
 
 /**
- * The invoice's Print button: first the format (Standard, or Special, which is kept for later), then - for Standard - the bill drawn
- * on screen exactly as it prints, with its own Print button. Esc closes (the preview goes back to the format choice).
+ * The invoice's Print button: first the format (Standard, or Special, which is kept for later), then - for Standard - the bill in the
+ * report's print preview window (features/grid/HtmlPreview: its bar, pages, zoom and Print) with the bill in its own format. Esc closes the choice; the preview's own
+ * Close returns to it.
  */
 export function InvoicePrint({ load, onClose }: { load: () => Promise<string>; onClose: () => void }) {
   const [stage, setStage] = useState<"choose" | "loading" | "preview">("choose");
@@ -34,8 +34,7 @@ export function InvoicePrint({ load, onClose }: { load: () => Promise<string>; o
     }
   };
   const keys = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (stage === "preview") setStage("choose"); else onClose(); }
-    else if (stage === "preview" && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") { event.preventDefault(); event.stopPropagation(); printHtmlDocument(html); }
+    if (event.key === "Escape" && stage !== "preview") { event.preventDefault(); event.stopPropagation(); onClose(); }
   };
 
   return (
@@ -54,15 +53,7 @@ export function InvoicePrint({ load, onClose }: { load: () => Promise<string>; o
           <div className="ent-print-actions"><button type="button" className="mp-btn mp-btn-red" onClick={onClose}>Cancel</button></div>
         </div>
       ) : (
-        <div className="ent-print-preview" style={drag.style}>
-          <div className="ent-print-bar mp-drag-handle" {...drag.handle} onDoubleClick={drag.reset} title="Drag to move · double-click to put back">
-            <b>Standard bill · preview</b>
-            <button type="button" data-first className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" onClick={() => printHtmlDocument(html)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
-            <button type="button" className="mp-btn mp-btn-blue" data-hotkey="b" onClick={() => setStage("choose")}><HotkeyLabel text="Back" hotkey="b" /></button>
-            <button type="button" className="mp-btn mp-btn-red" data-hotkey="c" onClick={onClose}><HotkeyLabel text="Close" hotkey="c" /></button>
-          </div>
-          <iframe className="ent-print-sheet" title="Bill preview" srcDoc={html} />
-        </div>
+        <HtmlPreview html={html} title="Standard bill" onClose={() => setStage("choose")} />
       )}
     </div>
   );

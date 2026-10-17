@@ -41,6 +41,8 @@ export type SaveInput = Readonly<{
   taxGroup: "G" | "I" | "V";
   /** The unique_key of the opened invoice when this save changes it (Edit); absent for a new invoice. */
   editKey?: number;
+  /** The Outstanding tab's set-offs (c1dg_OutClear): the pending bill (its outclear key) and the amount set off against it. */
+  setoffs?: readonly Readonly<{ outKey: number; amount: string }>[];
   /** The final amount the screen shows: the server works the figure out again and must agree. */
   finalAmount: string;
 }>;
@@ -162,7 +164,7 @@ function sysLiteral(ctx: Ctx, name: string, grid?: { il?: Record<string, number 
     case "book": return String(values.bookKey);
     case "book_code": return values.bookCode === 0 ? "null" : String(values.bookCode);
     case "ag_book": return String(values.agBook);
-    case "ag_bkcode": return "null";
+    case "ag_bkcode": return values.agCode === 0 ? "null" : String(values.agCode);
     case "entry_book_code": return String(values.bookCode);
     case "type": return String(values.type);
     case "blank": return "''";
@@ -326,6 +328,8 @@ function gridValue(ctx: Ctx, rule: Rule, cells: Record<string, string>, il?: Rec
     value = cell(column) === "" ? "null" : numeric(cell(column));
   }
   if (value === "") value = type === "T" ? "''" : type === "I" ? "null" : type === "D" ? "null" : "0";
+  // out_setoff is a money column here: arithmetic on it is done as numeric.
+  value = value.replace(/\bout_setoff(?=\s*[+-])/gi, "out_setoff::numeric");
   return value;
 }
 
@@ -432,7 +436,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   if (Math.abs(finalAmount - toNumber(input.finalAmount)) > 0.005) throw new Error(`The final amount ${input.finalAmount} differs from the ${finalAmount} the server works out`);
   const prodAmount = result.amounts[0] ?? 0;
   if (mode === "E") {
-    const own = (await loader.readTable(`SELECT out_setoff::numeric AS setoff, out_ly_setoff::numeric AS ly FROM |sys.db|outclear WHERE out_ledid = $1 ORDER BY out_key LIMIT 1`, [ledKey]))?.[0];
+    const own = (await loader.readTable(`SELECT out_setoff::numeric AS setoff, out_ly_setoff::numeric AS ly FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) = 0 ORDER BY out_key LIMIT 1`, [ledKey]))?.[0];
     const settled = toDecimal(field(own, "setoff")) + toDecimal(field(own, "ly"));
     if (own && finalAmount < settled) throw new Error(`The amount cannot be below what is already set off against this bill (${settled})`);
   }
@@ -510,6 +514,36 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
       if (key > 0 && !oldIl.has(key)) throw new Error("A product row does not belong to this invoice");
     }
   }
+  // ---- The Outstanding tab: what this entry sets off against the party's pending bills (c1dg_OutClear, save_order 8)
+  const wanted = (input.setoffs ?? []).map((item) => ({ outKey: Number(item.outKey), amount: String(round(toNumber(item.amount), 2)) })).filter((item) => toNumber(item.amount) > 0);
+  if (wanted.some((item) => !Number.isInteger(item.outKey) || item.outKey <= 0)) throw new Error("A set-off bill is not valid");
+  const setoffRule = rules.some((rule) => text(rule, "grid_name").toLowerCase() === "c1dg_outclear" && field(rule, "multiple_save") === true && savedForBook(rule, book.values.bookKey));
+  if (wanted.length > 0 && !setoffRule) throw new Error("This register does not set off outstanding bills");
+  const oldSetoff = new Map<number, number>();
+  if (mode === "E") {
+    // The old set-offs come off the bills they were set against, and their rows go; the typed ones are written afresh below.
+    for (const row of (await loader.readTable(`SELECT out_key, out_ag_outid, out_setoff::numeric AS setoff FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) > 0`, [ledKey])) ?? []) {
+      const bill = toInt(field(row, "out_ag_outid"));
+      const amount = toDecimal(field(row, "setoff"));
+      oldSetoff.set(bill, (oldSetoff.get(bill) ?? 0) + amount);
+      statements.push({ kind: "sql", label: `set-off of bill ${bill} taken back`, sql: `UPDATE |sys.db|outclear SET out_setoff = out_setoff::numeric - ${amount}, clear_pos = (case when out_setoff::numeric - ${amount} + out_ly_setoff::numeric = 0 then 'P' else 'C' end) WHERE out_key = ${bill}` });
+    }
+    statements.push({ kind: "sql", label: "old set-off rows", sql: `DELETE FROM |sys.db|outclear WHERE out_ledid = ${ledKey} AND COALESCE(out_ag_outid, 0) > 0` });
+  }
+  if (wanted.length > 0) {
+    if (new Set(wanted.map((item) => item.outKey)).size !== wanted.length) throw new Error("A bill is set off twice");
+    const bills = (await loader.readTable(`SELECT out_key, out_fulldocno, code, (out_entryamt::numeric - out_setoff::numeric - out_ly_setoff::numeric) AS pending FROM |sys.db|outclear WHERE out_key = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) = 0`, [wanted.map((item) => item.outKey)])) ?? [];
+    let total = 0;
+    for (const item of wanted) {
+      const bill = bills.find((row) => toInt(field(row, "out_key")) === item.outKey);
+      if (!bill || toInt(field(bill, "code")) !== input.party.code) throw new Error("A set-off bill does not belong to this party");
+      const amount = toNumber(item.amount);
+      const pending = toDecimal(field(bill, "pending")) + (oldSetoff.get(item.outKey) ?? 0);
+      if (amount > pending + 0.005) throw new Error(`Outstanding Setoff Amount can not be greater than Balance Pending Amount... (${text(bill, "out_fulldocno")}: ${round(pending, 2)})`);
+      total += amount;
+    }
+    if (total > finalAmount + 0.005) throw new Error("Outstanding Setoff Amount can not be greater than Entry Amount...");
+  }
   const logfileOff = toText(session.setup.logfile).toUpperCase() === "N";
   const orders = [...new Set(rules.map((rule) => toInt(field(rule, "save_order"))))].sort((a, b) => a - b);
   let bookAmount = finalAmount;
@@ -548,6 +582,14 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
             pushPostAccount(ctx, statements, row.accode, side, row.amount, 1, String(book.values.bookCode), `slab ${row.desc}`);
           }
         }
+        continue;
+      }
+      if (gridName === "c1dg_outclear") {
+        // One row per bill: this entry's set-off row (insert) and the bill's own row (out_setoff up, clear_pos), by the setup's rules.
+        wanted.forEach((item, index) => {
+          const cells: Record<string, string> = { out_key: String(item.outKey), out_setoff: String(toNumber(item.amount)), out_setoff_file: "0" };
+          for (const group of groups(set)) runGroup({ ...ctx, mode: "A" }, statements, group, cells, undefined, `set-off ${index + 1}`);
+        });
         continue;
       }
       if (gridName === "c1dg_inputdata") {
@@ -692,7 +734,7 @@ function specialLogStatement(input: { ctx: Ctx; mode: "A" | "E"; registerLabel: 
     ? `[{${[["cmb_supplytype", "Supply Type"], ["cmb_subsupplytype", "Sub Supply Type"], ["cmb_documenttype", "Document Type"], ["cmb_transportmode", "Transport Mode"], ["cmb_vehicletype", "Vehicle Type"], ["tbx_distancekm", "Distance KM"], ["tbx_ewaybillno", "E-Way Bill No."], ["dtp_ewaydate", "E-Way Date"], ["tbx_ewayvalid", "Valid Upto"]].map(([name, fallback]) => pair(label(name, fallback), typed(name))).join(",")}}]`
     : "";
   const fields = `{${[
-    pair("book", String(ctx.values.bookKey)), pair("book_code", String(ctx.values.bookCode)), pair("ag_bkcode", "0"), pair("ag_book", String(ctx.values.agBook)),
+    pair("book", String(ctx.values.bookKey)), pair("book_code", String(ctx.values.bookCode)), pair("ag_bkcode", String(ctx.values.agCode)), pair("ag_book", String(ctx.values.agBook)),
     pair("stkm_short", ctx.values.stkmShort), pair("full_docno", ctx.fullDocNo), pair("ac_dbcode", String(ctx.acDbcode)),
     pair("productkey", ctx.lines.map((line) => line.product.key).join(",")), pair("slabkey", ctx.slab.map((row) => row.key).join(",")),
     pair("outstandkey", ""), pair("type", String(ctx.values.type)), pair("year_id", loader.session.yearId),
@@ -881,7 +923,7 @@ export async function buildDelete(loader: Loader, entryName: string, firstCombo:
   if (!led) throw new Error("The invoice to delete was not found: it may be deleted already");
   if (text(led, "doc_lock").toUpperCase() === "Y") throw new Error("Current Entry Lock...  Changes Save not Allowed....");
   const ledKey = toInt(field(led, "led_key"));
-  const out = (await loader.readTable(`SELECT out_key, out_setoff::numeric AS setoff, out_ly_setoff::numeric AS ly FROM |sys.db|outclear WHERE out_ledid = $1`, [ledKey])) ?? [];
+  const out = (await loader.readTable(`SELECT out_key, out_setoff::numeric AS setoff, out_ly_setoff::numeric AS ly FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) = 0`, [ledKey])) ?? [];
   const settled = out.reduce((sum, row) => sum + toDecimal(field(row, "setoff")) + toDecimal(field(row, "ly")), 0);
   const linked = out.length > 0 ? await loader.readTable(`SELECT out_key FROM |sys.db|outclear WHERE out_ag_outid = ANY($1)`, [out.map((row) => toInt(field(row, "out_key")))]) : null;
   if (settled > 0 || linked) throw new Error("Delete not allowed: receipts or notes are set off against this bill. Remove those set-offs first.");
@@ -892,6 +934,12 @@ export async function buildDelete(loader: Loader, entryName: string, firstCombo:
   const rows = (await loader.readTable(`SELECT * FROM |sys.db|prod_ledger WHERE led_id = $1 AND il_pos = 'A' ORDER BY il_key`, [ledKey])) ?? [];
   statements.push({ kind: "sql", label: "slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE led_id = ${ledKey}` });
   statements.push({ kind: "sql", label: "addon row", sql: `DELETE FROM |sys.db|addon_aentry WHERE aona_ledid = ${ledKey}` });
+  // What this entry set off against bills comes off them before its outstanding rows go.
+  for (const row of (await loader.readTable(`SELECT out_ag_outid, out_setoff::numeric AS setoff FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) > 0`, [ledKey])) ?? []) {
+    const bill = toInt(field(row, "out_ag_outid"));
+    const amount = toDecimal(field(row, "setoff"));
+    statements.push({ kind: "sql", label: `set-off of bill ${bill} taken back`, sql: `UPDATE |sys.db|outclear SET out_setoff = out_setoff::numeric - ${amount}, clear_pos = (case when out_setoff::numeric - ${amount} + out_ly_setoff::numeric = 0 then 'P' else 'C' end) WHERE out_key = ${bill}` });
+  }
   statements.push({ kind: "sql", label: "outstanding row", sql: `DELETE FROM |sys.db|outclear WHERE out_ledid = ${ledKey}` });
   const today = dateLiteral(now);
   const time = quote(timeText(now));

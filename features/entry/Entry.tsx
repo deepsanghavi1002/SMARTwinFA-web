@@ -20,6 +20,9 @@ import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { SearchCombo } from "../ui/SearchCombo";
 import { FindList } from "./FindList";
+import type { FindMode } from "./FindList";
+import { ReturnsPanel } from "./ReturnsPanel";
+import type { ReturnsChoices } from "../../lib/entry/invoice";
 import { EntryLog } from "./EntryLog";
 import { MasterDetails } from "./MasterDetails";
 import type { MasterDetails as MasterDetailsData } from "../../lib/entry/details";
@@ -57,7 +60,7 @@ import { addressFields } from "./addressLines";
 
 type Tab = "all" | "outstanding" | "find" | "eway";
 type EntryReply = { entry: InvoiceDefinition; warnings: string[]; companyName: string; userName: string; yearStart: string; yearEnd: string };
-type BookReply = { book: BookScreen & { asksTaxGroup: boolean }; warnings: string[] };
+type BookReply = { book: BookScreen & { asksTaxGroup: boolean }; warnings: string[]; asksAgainst?: boolean };
 type Restored = RestoredEntry & { itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>>; slabTax: Record<number, number> };
 type HelpKind = "account" | "product";
 
@@ -95,6 +98,9 @@ const PRODUCT_HELP_ROWS = 9;
 /** A slab %: up to three places, never below nought; a slab amount: two places, a round-off or add / less may be negative. */
 const PERCENT_RULES = { decimals: 3, positiveOnly: true, rangeFrom: 0, rangeUpto: 0 };
 const AMOUNT_RULES = { decimals: 2, positiveOnly: false, rangeFrom: 0, rangeUpto: 0 };
+/** The Outstanding grid's set-off amount: positive, two decimals. */
+const NO_SETOFF: Record<number, string> = {};
+const SETOFF_RULES = { decimals: 2, positiveOnly: true, rangeFrom: 0, rangeUpto: 0 };
 /** Licences whose bills may have products worth nothing (the desktop's zero-total check skips them). */
 const ZERO_TOTAL_LICENCES = [6, 9, 19, 25, 27, 29, 68];
 
@@ -186,8 +192,11 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const filterAsked = useRef<number | null>(null);
   const [preview, setPreview] = useState<HelpData | null>(null);
   /** Find / Edit with every field of each entry: read only when "All fields" is pressed; shown while allFields is on. */
-  const [previewAll, setPreviewAll] = useState<HelpData | null>(null);
-  const [allFields, setAllFields] = useState(false);
+  const [previewAll, setPreviewAll] = useState<{ fields: HelpData | null; products: HelpData | null }>({ fields: null, products: null });
+  const [findMode, setFindMode] = useState<FindMode>("");
+  /** The Returns panel of a debit / credit note while it asks, and what the note is against once answered (lbl_AgainstBook / lbl_AgainstNature). */
+  const [returnsAsk, setReturnsAsk] = useState<{ choices: ReturnsChoices; resolve: (choice: { code: number; nature: number; accountName: string; natureText: string } | null) => void } | null>(null);
+  const [against, setAgainst] = useState<{ book: string; nature: string } | null>(null);
   /** The Print button: the format choice and the bill preview are open. */
   const [printing, setPrinting] = useState(false);
   /** The entry opened from Find / Edit (its unique key), or null for a new entry. */
@@ -242,7 +251,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   }, [selection, entryName, menuShortName, onClose]);
 
   /** Blank_FullEntry: everything the entry holds goes (the register stays chosen unless `all`). */
-  const blankEntry = useCallback(() => {
+  const blankEntry = useCallback((keepList = false) => {
     setSlab([]);
     setLines([]);
     setVlines([]);
@@ -255,14 +264,27 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     filterAsked.current = null;
     setHelpKind(null);
     setProductText(null);
-    setPreview(null); setPreviewAll(null); setAllFields(false);
+    // The Find / Edit list (and the All fields / With product choice) stays until the register or series changes or an entry is saved.
+    if (!keepList) { setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); }
     setRestored(null);
     setTab("all");
   }, []);
 
   /** The register's book (for a tax group: Fill_Slab_and_Addon again with CGST, IGST or VAT). */
-  const loadBook = useCallback(async (option: EntryOption, taxGroup?: BookScreen["taxGroup"]): Promise<BookReply> => {
+  const loadBook = useCallback(async (given: EntryOption, taxGroup?: BookScreen["taxGroup"]): Promise<BookReply> => {
+    let option = given;
     let body = await call<BookReply>("book", { firstCombo: option, ...(taxGroup ? { taxGroup } : {}) });
+    if (body.asksAgainst) {
+      // A debit / credit note first asks what it is against (the Returns panel); the slab follows the book chosen.
+      const { returns } = await call<{ returns: ReturnsChoices }>("returns", { firstCombo: option });
+      const choice = await new Promise<{ code: number; nature: number; accountName: string; natureText: string } | null>((resolve) => setReturnsAsk({ choices: returns, resolve }));
+      setReturnsAsk(null);
+      if (!choice) throw new Error("The note was not started: choose the book it is against");
+      option = { ...option, against: { code: choice.code, nature: choice.nature } };
+      setRegister(option);
+      setAgainst({ book: `Ag: ${choice.accountName}`, nature: choice.natureText });
+      body = await call<BookReply>("book", { firstCombo: option, ...(taxGroup ? { taxGroup } : {}) });
+    }
     if (!taxGroup && body.book.asksTaxGroup) {
       // "CGST [Yes] / IGST [No] / VAT [Cancel] Entry...": the desktop asks before the slab grid is filled.
       const answer = await messageBox.ask("CGST [Yes] / IGST [No] / VAT [Cancel] Entry...", "GST Entry Type", ["Yes", "No", "Cancel"], { defaultButton: "Yes" });
@@ -274,6 +296,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // ---- Cmb_FirstCombo_Leave: the register sets the screen up
   const chooseRegister = useCallback(async (option: EntryOption) => {
     setRegister(option);
+    setAgainst(null);
     setBusy("Setting the screen");
     try {
       const body = await loadBook(option);
@@ -302,7 +325,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // ---- Cmb_Series_Leave: another series has its own last date and number
   const chooseSeries = useCallback(async (series: string) => {
     setValues((current) => ({ ...current, cmb_series: series }));
-    setPreview(null); setPreviewAll(null); setAllFields(false);
+    setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode("");
     if (!register) return;
     try {
       const body = await call<{ defaults: SeriesDefaults }>("series", { firstCombo: register, series });
@@ -793,6 +816,32 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
 
   // ---- Slab_RunTotal: from the product rows and the slab rows' own % / amounts
   const slabResult = useMemo(() => (book ? slabFromLines(book, slab, lines) : { amounts: [], runTotals: [], final: 0 }), [book, slab, lines]);
+  // ---- Outstanding tab (c1dg_OutClear): the set-off amount of each pending bill is typed, and Total_Outstanding adds the columns up
+  const [setoffState, setSetoffState] = useState<{ party: PartyDetails | null; values: Record<number, string> }>({ party: null, values: {} });
+  const money = (value: string | undefined) => Number((value ?? "").replace(/,/g, "")) || 0;
+  /** What was typed for the party read last (reading a party again, as opening an entry does, starts afresh). */
+  const typedSetoff = setoffState.party === party ? setoffState.values : NO_SETOFF;
+  const setSetoff = (change: (current: Record<number, string>) => Record<number, string>) => setSetoffState((now) => ({ party, values: change(now.party === party ? now.values : NO_SETOFF) }));
+  /** The set-off of each pending bill (by its row number): as typed, else what the opened entry had set off (the row's own figure). */
+  const setoff = useMemo(() => {
+    const out: Record<number, string> = {};
+    (party?.outstanding ?? []).forEach((row, index) => {
+      const value = typedSetoff[index] ?? (money(row.out_setoff) > 0 ? fixed(money(row.out_setoff), 2) : "");
+      if (value !== "") out[index] = value;
+    });
+    return out;
+  }, [party, typedSetoff]);
+  const outstandingSetoff = Object.values(setoff).reduce((all, value) => all + money(value), 0);
+  /** The totals of the rows the grid shows: how many (under Sr.), and the bill, pending and set-off amounts. */
+  const outstandingTotals = (shown: readonly number[]) => {
+    const sum = (key: string) => shown.reduce((all, row) => all + money(party?.outstanding[row]?.[key]), 0);
+    return {
+      serial: String(shown.length),
+      out_entryamt: amountText(fixed(sum("out_entryamt"), 2), 2),
+      out_pending: amountText(fixed(sum("out_pending"), 2), 2),
+      out_setoff: amountText(fixed(shown.reduce((all, row) => all + money(setoff[row]), 0), 2), 2),
+    };
+  };
   const totals = useMemo(() => lineTotals(lines, book?.product.totals ?? [], (key) => (key === "il_value" ? 2 : key === "factor" ? book?.decimals.factor ?? 3 : book?.decimals.qty ?? 3)), [lines, book]);
   const decimalsOf = useCallback((key: string) => {
     if (!book) return 2;
@@ -818,15 +867,15 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setBusy("");
     }
   }, [preview, register, call, values.cmb_series, failed]);
-  /** "All fields": the list with the slab amounts, addons and every product line of each entry (one server read, only when asked). */
-  const toggleAllFields = async () => {
-    if (allFields) { setAllFields(false); return; }
-    if (!previewAll) {
+  /** "All fields" (slab amounts and addons of each entry) and "With product" (and every product line): one server read each, only when asked. */
+  const chooseFindMode = async (next: FindMode) => {
+    if (next === "") { setFindMode(""); return; }
+    if (!previewAll[next]) {
       if (!register) return;
-      setBusy("All fields");
+      setBusy(next === "products" ? "All fields with product" : "All fields");
       try {
-        const body = await call<{ preview: HelpData }>("preview-all", { firstCombo: register, series: values.cmb_series ?? "" });
-        setPreviewAll(body.preview);
+        const body = await call<{ preview: HelpData }>("preview-all", { firstCombo: register, series: values.cmb_series ?? "", withProducts: next === "products" });
+        setPreviewAll((now) => ({ ...now, [next]: body.preview }));
       } catch (error) {
         await failed(error);
         return;
@@ -834,7 +883,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         setBusy("");
       }
     }
-    setAllFields(true);
+    setFindMode(next);
   };
 
   // ---- C1Help_EntryPreview_DoubleClick → Restore_Entry: the entry opens, ready to edit
@@ -849,7 +898,14 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     try {
       const { entry } = await call<{ entry: Restored }>("restore", { firstCombo: register, uniqueKey: Number(row.unique_key) });
       let screenBook = book;
-      if (book.slab && entry.taxGroup !== book.taxGroup) screenBook = (await loadBook(register, entry.taxGroup)).book;
+      // A debit / credit note opens against the book it was saved with: its slab follows that book, and the two labels show it.
+      let reg = register;
+      if (entry.against) {
+        const saved = entry.against;
+        if (register.against?.code !== saved.code || register.against?.nature !== saved.nature) { reg = { ...register, against: { code: saved.code, nature: saved.nature } }; setRegister(reg); }
+        setAgainst({ book: `Ag: ${saved.accountName}`, nature: saved.natureText });
+      }
+      if (book.slab && (entry.taxGroup !== book.taxGroup || reg !== register)) screenBook = (await loadBook(reg, entry.taxGroup)).book;
       // Header and foot: a list box's saved key shows as its text.
       const next: Record<string, string> = {};
       for (const control of screenBook.controls) {
@@ -859,7 +915,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         next[control.name] = option ? option.text : saved;
       }
       let partyDetails: PartyDetails | null = null;
-      if (entry.partyCode > 0 && screenBook.party) partyDetails = (await call<{ party: PartyDetails }>("party", { firstCombo: register, code: entry.partyCode, date: next.dtp_date ?? "", addressId: entry.addressId })).party;
+      if (entry.partyCode > 0 && screenBook.party) partyDetails = (await call<{ party: PartyDetails }>("party", { firstCombo: reg, editKey: Number(row.unique_key), code: entry.partyCode, date: next.dtp_date ?? "", addressId: entry.addressId })).party;
       // The slab rows' own % and amounts (the item-wise ones come from the product rows).
       const slabRows = screenBook.slabRows.map((slabRow) => {
         const saved = entry.slab[slabRow.key];
@@ -886,7 +942,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         cells._orig_qty = cells.quantity ?? "";
         return { cells, product: line.product };
       });
-      blankEntry();
+      blankEntry(true);
       setBook(screenBook);
       setSlab(slabRows);
       setValues(next);
@@ -992,7 +1048,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (!book) return;
     const answer = await messageBox.ask("Are You Sure Want To Cancel Entry ? ", "Entry Cancel", ["Yes", "No"], { defaultButton: "No" });
     if (answer !== "Yes") return;
-    blankEntry();
+    blankEntry(true);
     setBook(null);
     setValues({});
     setAccountHelp(null);
@@ -1025,6 +1081,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
           lines: filledLines(lines).map((line) => ({ prodKey: line.product!.key, cells: line.cells })),
           slab: slab.map((row) => ({ perc: row.perc, amount: row.amount, manual: row.manual === true })),
           addon,
+          setoffs: (party?.outstanding ?? []).flatMap((row, index) => (money(setoff[index]) > 0 ? [{ outKey: Number(row.out_key), amount: fixed(money(setoff[index]), 2) }] : [])),
           taxGroup: book.taxGroup,
           finalAmount: fixed(slabResult.final, 2),
           editKey: restored ?? 0,
@@ -1202,9 +1259,40 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
    * Enter in the slab or addon grid: the next open cell (row by row, so the end of a row goes to
    * the next row); after the grid's last one, the addon grid (from the slab) or the narration.
    */
-  const nextSideCell = (grid: "Slab" | "Addon", cellId: string) => {
+  /** C1dg_OutClear_AfterEdit: a set-off cannot pass the bill's pending amount, nor the sum of them the entry's amount. */
+  const checkSetoff = async (row: number) => {
+    const pending = money(party?.outstanding[row]?.out_pending);
+    const mine = money(setoff[row]);
+    const others = outstandingSetoff - mine;
+    const left = Math.max(0, slabResult.final - others);
+    let fixedTo: number | null = null;
+    if (mine > pending) { await say("Outstanding Setoff Amount can not be greater than Balance Pending Amount...", "Entry Warning"); fixedTo = Math.min(pending, left); }
+    else if (others + mine > slabResult.final + 0.005) { await say("Outstanding Setoff Amount can not be greater than Entry Amount...", "Entry Warning"); fixedTo = left; }
+    if (fixedTo !== null) { setSetoff((current) => ({ ...current, [row]: fixedTo > 0 ? fixed(fixedTo, 2) : "" })); return false; }
+    return true;
+  };
+  /** F4 / F8 on an empty set-off: the row's pending amount, or what is left of the entry amount. */
+  /** Enter in a set-off box: when the set-offs add up to the entry amount (or no bill is left) the set-off is over; else the next bill's box. */
+  const nextSetoffCell = (cellId: string) => {
     const form = formRef.current;
-    const box = form?.querySelector(`[aria-label=${grid}]`);
+    const box = form?.querySelector(`.ent-grid[aria-label=Outstanding]`);
+    const cells = [...(box?.querySelectorAll<HTMLElement>("[data-cell]") ?? [])];
+    const at = cells.findIndex((cell) => cell.getAttribute("data-cell") === cellId);
+    const tallied = slabResult.final > 0 && Math.abs(outstandingSetoff - slabResult.final) < 0.005;
+    const next = cells[at + 1];
+    if (tallied || !next) { finishSetoff(); return; }
+    next.focus();
+  };
+  const fillSetoff = (row: number) => {
+    if (money(setoff[row]) !== 0) return;
+    const pending = money(party?.outstanding[row]?.out_pending);
+    const left = slabResult.final - outstandingSetoff;
+    const amount = Math.min(pending, left);
+    if (amount > 0) setSetoff((current) => ({ ...current, [row]: fixed(amount, 2) }));
+  };
+  const nextSideCell = (grid: "Slab" | "Addon" | "Outstanding", cellId: string) => {
+    const form = formRef.current;
+    const box = form?.querySelector(`.ent-grid[aria-label=${grid}]`);
     const cells = [...(box?.querySelectorAll<HTMLElement>("[data-cell], [data-cell-wrap]") ?? [])];
     const at = cells.findIndex((cell) => (cell.getAttribute("data-cell") ?? cell.getAttribute("data-cell-wrap")) === cellId);
     const next = cells[at + 1];
@@ -1245,7 +1333,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
    * After the last grid: a sale whose final amount is above the E-Way limit (within the company state, or out of it) on or after the E-Way start date
    * takes the E-Way Bill tab, the keyboard on its first box; any other entry goes on to the narration (Invoice_Tab_EwayBill.Show()).
    */
-  const afterGrids = () => {
+  const afterOutstanding = () => {
     const limit = party?.taxGroup === "G" ? def?.ewayLimits.within ?? 0 : party?.taxGroup === "I" ? def?.ewayLimits.out ?? 0 : 0;
     const date = parseDesktopDate(values.dtp_date);
     const due = Boolean(def?.tabs.eway && book?.stockNat === "L" && book.bookActual !== false && limit > 0 && slabResult.final > limit && date && date >= EWAY_START && !/^(LQTN-ORD|ORD-IN)$/i.test(register?.text ?? ""));
@@ -1256,6 +1344,39 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     }
     formRef.current?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus();
   };
+  /**
+   * After the last grid (Fill_Display_OutstandingScreen): a debit / credit note goes on to the Outstanding tab, the keyboard on the first set-off box;
+   * anything else carries on as afterOutstanding does.
+   */
+  const afterGrids = () => {
+    if (book?.setoff && (party?.outstanding.length ?? 0) > 0) {
+      setTab("outstanding");
+      setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-grid[aria-label=Outstanding] input[data-cell^=os]")?.focus(), 80);
+      return;
+    }
+    afterOutstanding();
+  };
+  /** Narration_Generate (O): "Setoff for Bill: <bill numbers>" from the bills that have a set-off, when the narration is still empty. */
+  const generateSetoffNarration = () => {
+    const rows = party?.outstanding ?? [];
+    let text = "";
+    rows.forEach((row, index) => {
+      if (money(setoff[index]) <= 0) return;
+      const full = (row.out_fulldocno ?? "").trim();
+      const series = (row.doc_series ?? "").trim();
+      const number = (row.doc_no ?? "").trim();
+      const own = (row.doc_no1 ?? "").trim();
+      const seen = text.includes(series);
+      let shown: string;
+      if (def?.licence === 21) shown = !seen ? (own === "" ? full : own) : own === "" ? number : own;
+      else shown = !seen ? full : number;
+      if (def?.licence === 20) shown += ` DATED: ${row.out_date ?? ""}`;
+      text += (text.trim() === "" ? "" : ",") + shown;
+    });
+    if (text !== "") setValues((current) => ((current.tbx_narration ?? "").trim() === "" ? { ...current, tbx_narration: `${def?.licence === 20 ? "SETOFF FOR BILL" : "Setoff for Bill"}: ${text}` } : current));
+  };
+  /** Run_Outclear_f5: the set-off is over - the narration is made and the keyboard goes on (E-Way Bill or narration). */
+  const finishSetoff = () => { generateSetoffNarration(); afterOutstanding(); };
   /**
    * Compulsory stock checking (C1dg_Inputdata_ValidateEdit): leaving Qty, a quantity above the product's stock is refused ("Quantity Greater than N not allowed")
    * and put back to the stock; with no stock the quantity is cleared and the keyboard goes back to the Product. An opened bill counts what it already holds.
@@ -1511,9 +1632,41 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                   </>
                 )}
                 {tab === "outstanding" && (
-                  <SideGrid label="Outstanding" style={{ left: 11, top: 15, width: 582, height: Math.min(249, PAGE_HEIGHT - 20) }} columns={view.grids.outstanding} rows={party?.outstanding ?? []} empty={party ? "No pending entries for this party" : "Choose the party first"} />
+                  <>
+                    <SideGrid
+                      label="Outstanding"
+                      style={{ left: 11, top: 6, width: view.grids.outstanding.reduce((sum, column) => sum + column.width, 0) + 20, height: ROW * 10 + 22 }}
+                      columns={view.grids.outstanding}
+                      rows={party?.outstanding ?? []}
+                      anyColumn sortable filterable
+                      onF5={finishSetoff}
+                      cellClass={(_row, column) => (column.key === "out_setoff" ? "ent-open ent-always-tools" : column.editable ? "ent-open" : "")}
+                      totals={outstandingTotals}
+                      empty={party ? "No pending entries for this party" : "Choose the party first"}
+                      cell={(row, column) => {
+                        const given = party?.outstanding[row]?.[column.key] ?? "";
+                        if (column.key === "out_setoff" && !book?.setoff) return amountText(setoff[row] ?? "", column.decimals);
+                        if (column.key !== "out_setoff") return column.align === "R" && column.decimals > 0 ? amountText(given, column.decimals) : given;
+                        const cellId = `os${row}`;
+                        return (
+                          <EntryCell
+                            kind="number" clearable cellId={cellId} value={setoff[row] ?? ""} align="right" rules={SETOFF_RULES} tools={tools} ariaLabel="Setoff amount"
+                            onChange={(next) => setSetoff((current) => ({ ...current, [row]: next }))}
+                            onKeys={(event) => { if (event.key === "F4" || event.key === "F8") { event.preventDefault(); fillSetoff(row); return true; } if (event.key === "F5") { event.preventDefault(); finishSetoff(); return true; } return false; }}
+                            onEnter={() => void checkSetoff(row).then((ok) => { if (ok) nextSetoffCell(cellId); })}
+                          />
+                        );
+                      }}
+                      below={(
+                        <>
+                          <label className="ent-total-label">Entry Amount<output>{amountText(fixed(slabResult.final, 2), 2)}</output></label>
+                          <label className="ent-total-label">O/s Bal.<output>{amountText(fixed(slabResult.final - outstandingSetoff, 2), 2)}</output></label>
+                        </>
+                      )}
+                    />
+                  </>
                 )}
-                {tab === "find" && <FindList preview={allFields && previewAll ? previewAll : preview} allFields={allFields} onAllFields={() => void toggleAllFields()} style={{ left: 3, right: 3, top: 3, bottom: 3 }} onOpen={(row) => void openEntry(row)} />}
+                {(tab === "find" || preview) && <FindList preview={(findMode && previewAll[findMode]) || preview} mode={findMode} onMode={(next) => void chooseFindMode(next)} style={{ left: 3, right: 3, top: 3, bottom: 3, ...(tab === "find" ? {} : { display: "none" }) }} onOpen={(row) => void openEntry(row)} />}
                 {tab === "eway" && <div className="ent-eway">{ewayControls.flatMap(control)}</div>}
               </div>
             </div>
@@ -1521,6 +1674,12 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
 
           {view && (
             <div className="ent-foot" inert={!book}>
+              {against && (book ?? ghost)?.entryFor === "DrCr" && (
+                <>
+                  <span className="ent-against ent-against-nature" style={{ left: 873, top: FOOT_TOP, width: 188 }} title="Nature of the entry">{against.nature}</span>
+                  <span className="ent-against ent-against-book" style={{ left: 873, top: FOOT_TOP + 20, width: 188 }} title="The book the entry is against">{against.book}</span>
+                </>
+              )}
               <span className="ent-label ent-final-label" style={{ left: 2, top: FOOT_TOP, width: 130 }}>Entry Final Amt.:</span>
               <output className="ent-final" style={{ left: 138, top: FOOT_TOP, width: 101 }} aria-label="Entry final amount">{amountText(String(voucher ? voucherTotals.final : slabResult.final), 2) || "0.00"}</output>
               {footControls.flatMap(control)}
@@ -1534,7 +1693,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="c" aria-keyshortcuts="Alt+C" onClick={() => void cancelEntry()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="d" aria-keyshortcuts="Alt+D" disabled={!isRestored} title="Delete the opened invoice" onClick={() => void deleteEntry()}><Icon name="clear" /><HotkeyLabel text="Delete" hotkey="d" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored} title="Print the opened invoice: Standard (bill preview with a Print button) or Special (later)" onClick={() => setPrinting(true)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll(null); setAllFields(false); setHelpKind(null); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setHelpKind(null); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!isRestored} title="Range print is not ported yet" onClick={notPorted("Range print")}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
         {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="Upload document is not ported yet" onClick={notPorted("Upload document")}><Icon name="image" />Upload Document</button>}
         {def?.buttons.einvoice && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="E-invoice is not ported yet" onClick={notPorted("E-invoice")}><Icon name="export" />E-Invoice</button>}
@@ -1552,6 +1711,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           load={async () => standardBillHtml((await call<{ bill: Bill }>("bill", { firstCombo: register, uniqueKey: restored })).bill)}
         />
       )}
+      {returnsAsk && <ReturnsPanel choices={returnsAsk.choices} onDone={returnsAsk.resolve} />}
       {tools.popups}
     </div>
   );

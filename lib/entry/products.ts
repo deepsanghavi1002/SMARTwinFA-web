@@ -3,7 +3,7 @@ import { formatDesktopDate, parseDesktopDate, toDecimal, toInt, toText } from ".
 import { SETUP_SCHEMA } from "../master-program/session";
 import { blankCoalesceAsText } from "../master-program/sql";
 import { queryOptions } from "../small-entry/load";
-import { bookContext, controlEvents, entryProperties, helpColumns, partyTaxGroup } from "./invoice";
+import { againstNames, bookContext, controlEvents, entryProperties, helpColumns, partyTaxGroup } from "./invoice";
 import { BOOK, replaceEntryTokens } from "./values";
 import type { EntryValues } from "./values";
 import type { EntryOption, HelpList, ProductChoice, RestoredEntry } from "./types";
@@ -25,12 +25,28 @@ const text = (row: Row | undefined, name: string) => toText(field(row, name));
 // ---------------------------------------------------------------------------------------
 // Refresh_HelpGrid("P"): the product help
 
+/**
+ * HELP_PRODUCT runs two per-product subqueries (the latest MRP of the price list, the product's first addon row). Company tables carry
+ * only their primary key, so each one scans the whole table once per product (18,000 products: 30 s). The same answer read in one pass.
+ */
+function helpOnePass(sql: string): string {
+  const loose = (piece: string) => new RegExp(piece.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+  const mrp = loose("(select pl_mrp from |sys.db|pricelist where prod_id=product.prod_key and pl_pos<>'D' and pl_mrp > 0 order by pl_wefrom desc limit 1) as prod_MRP");
+  const addon = loose("left join |sys.db|ADDON_DATA adata on adata.prod_id=product.prod_key and adata.aon_key in (select a.aon_key from |sys.db|addon_data a where a.prod_id=product.prod_key limit 1)");
+  const where = loose(") WHERE product.prod_pos<>'D'");
+  if (!mrp.test(sql) || !addon.test(sql) || !where.test(sql)) return sql;
+  return sql
+    .replace(mrp, "mrp.pl_mrp as prod_MRP")
+    .replace(addon, "left join (SELECT DISTINCT ON (prod_id) * FROM |sys.db|addon_data ORDER BY prod_id, aon_key) adata on adata.prod_id=product.prod_key")
+    .replace(where, () => ") left join (SELECT DISTINCT ON (prod_id) prod_id, pl_mrp FROM |sys.db|pricelist WHERE pl_pos<>'D' AND pl_mrp > 0 ORDER BY prod_id, pl_wefrom DESC) mrp ON mrp.prod_id=product.prod_key WHERE product.prod_pos<>'D'");
+}
+
 export async function productHelp(loader: Loader, entryName: string, firstCombo: EntryOption): Promise<HelpList> {
   const book = await bookContext(loader, entryName, firstCombo);
   const helpRow = (await loader.readTable(`SELECT help_query, help_col_frozen FROM ${SETUP_SCHEMA}.help_table WHERE help_prog_id = 'HELP_PRODUCT'`))?.[0];
   if (!helpRow) throw new Error("HELP_PRODUCT is not in smart_setup.help_table");
   // |sys.replace_prodaddon|: the product addons marked for the help; |sys.help_stock_3| only with the bundle copy (not ported).
-  const addons = (await loader.readTable(`SELECT fiel_save, fiel_short FROM |sys.db|addon_fld WHERE fiel_relate = 'P' AND fiel_pos <> 'D' AND account_help = B'1' ORDER BY fiel_key`)) ?? [];
+  const addons = (await loader.readTable(`SELECT fiel_save, fiel_short FROM |sys.db|addon_fld WHERE fiel_relate = 'P' AND fiel_pos <> 'D' AND account_help::int = 1 ORDER BY fiel_key`)) ?? [];
   // item_para PGFILT with a product addon marked PRDFILT: the product help is filtered by that addon's list (cmb_ProdFilter).
   const filterAddon = toText(loader.session.setup.item_para).toUpperCase().includes("PGFILT,")
     ? (await loader.readTable(`SELECT fiel_key, fiel_name, fiel_save FROM |sys.db|addon_fld WHERE fiel_relate = 'P' AND fiel_pos <> 'D' AND fiel_err ILIKE '%PRDFILT,%' ORDER BY fiel_key LIMIT 1`))?.[0]
@@ -40,7 +56,7 @@ export async function productHelp(loader: Loader, entryName: string, firstCombo:
   let sql = text(helpRow, "help_query")
     .replace(/\|sys\.replace_prodaddon\|,/gi, filterColumn + addons.map((addon) => `txt_${text(addon, "fiel_save").trim()} as "${text(addon, "fiel_short").trim().replace(/"/g, "")}",`).join(""))
     .replace(/,?\|sys\.help_stock_3\|,?/gi, ",");
-  sql = replaceEntryTokens(blankCoalesceAsText(sql), book.values);
+  sql = replaceEntryTokens(blankCoalesceAsText(helpOnePass(sql)), book.values);
   const rows = (await loader.readTable(sql)) ?? [];
   if (rows.length === 0) return { columns: [], rows: [], frozen: 0, total: "Product Master not found..." };
   const keys = Object.keys(rows[0]);
@@ -212,7 +228,20 @@ function controlValue(value: unknown): string {
  * field_restore_queryid does.
  */
 export async function restoreEntry(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number): Promise<RestoredEntry & { itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>>; slabTax: Record<number, number> }> {
-  const book = await bookContext(loader, entryName, firstCombo);
+  let book = await bookContext(loader, entryName, firstCombo);
+  // A debit / credit note opens against the book it was saved with.
+  let against: RestoredEntry["against"];
+  if (book.entryFor === "DrCr") {
+    const own = (await loader.readTable(`SELECT ag_bkcode, "TYPE" AS nature FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [uniqueKey]))?.[0];
+    const code = toInt(field(own, "ag_bkcode"));
+    if (code > 0) {
+      const nature = toInt(field(own, "nature"));
+      const names = await againstNames(loader, [code], [nature]);
+      against = { code, nature, accountName: names.accounts.get(code) ?? "", natureText: names.kinds.get(nature) ?? "" };
+      firstCombo = { ...firstCombo, against: { code, nature } };
+      book = await bookContext(loader, entryName, firstCombo);
+    }
+  }
   if (!book.values.bookActual) throw new Error("Opening a stock register's entry (process) is not ported yet; only account books (sale, purchase ...) open.");
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
@@ -275,7 +304,7 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
       if (value !== undefined && value !== null) addon[toInt(field(item, "fiel_key"))] = toText(displayValue(value)).trim();
     }
   }
-  return { uniqueKey, values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax };
+  return { uniqueKey, ...(against ? { against } : {}), values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax };
 }
 
 /**

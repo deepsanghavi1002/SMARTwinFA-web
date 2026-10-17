@@ -20,19 +20,20 @@ const text = (row: Row | undefined, name: string) => toText(field(row, name)).tr
 const money = (value: number) => fixed(value, 2);
 const SAFE_NAME = /^[A-Za-z0-9_]+$/;
 
-export async function entryAll(loader: Loader, entryName: string, firstCombo: EntryOption, series: string): Promise<HelpList> {
+export async function entryAll(loader: Loader, entryName: string, firstCombo: EntryOption, series: string, withProducts = true): Promise<HelpList> {
   const base = await entryPreview(loader, entryName, firstCombo, series);
   const columns = base.columns.filter((column) => column.key.toLowerCase() !== "tick");
   const keys = base.rows.map((row) => toInt(row.unique_key)).filter((key) => key > 0);
   if (keys.length === 0) return { ...base, columns };
 
-  const lines = (await loader.readTable(
+  // "All fields" alone stops here: the product lines (and their units, addons and item-wise text) are what make the read long.
+  const lines = !withProducts ? [] : (await loader.readTable(
     `SELECT l.unique_key AS uk, p.il_key, p.il_serial, BTRIM(pm.prod_short) AS short, BTRIM(pm.prod_desc) AS descr, p.quantity::numeric AS qty, qu.uom_short AS qty_uom, p.rate::numeric AS rate, ru.uom_short AS rate_uom, p.il_value::numeric AS value
        FROM |sys.db|ledger l JOIN |sys.db|prod_ledger p ON p.led_id = l.led_key AND p.il_pos <> 'D'
        JOIN |sys.db|product_master pm ON pm.prod_key = p.prod_id
        LEFT JOIN |sys.db|prod_uom qu ON qu.uom_key = p.uomentry_id LEFT JOIN |sys.db|prod_uom ru ON ru.uom_key = p.rateuom_id
        WHERE l.unique_key = ANY($1::int[]) ORDER BY l.unique_key, p.il_serial`, [keys])) ?? [];
-  const itemSlabRows = (await loader.readTable(
+  const itemSlabRows = !withProducts ? [] : (await loader.readTable(
     `SELECT e.il_id, e.slab_id, e.slab_perc::numeric AS perc, e.slab_amt::numeric AS amount
        FROM |sys.db|ledger_ext e JOIN |sys.db|prod_ledger p ON p.il_key = e.il_id JOIN |sys.db|ledger l ON l.led_key = p.led_id
        WHERE l.unique_key = ANY($1::int[])`, [keys])) ?? [];
@@ -40,6 +41,12 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     `SELECT l.unique_key AS uk, e.slab_id, e.slab_perc::numeric AS perc, e.slab_amt::numeric AS amount
        FROM |sys.db|ledger_ext e JOIN |sys.db|ledger l ON l.led_key = e.led_id
        WHERE l.unique_key = ANY($1::int[])`, [keys])) ?? [];
+  // Item-wise slab rows summed per entry in the database, when the lines themselves are not wanted.
+  const itemSlabSums = withProducts ? [] : (await loader.readTable(
+    `SELECT l.unique_key AS uk, e.slab_id, SUM(e.slab_amt::numeric) AS amount
+       FROM |sys.db|ledger l JOIN |sys.db|prod_ledger p ON p.led_id = l.led_key AND p.il_pos <> 'D'
+       JOIN |sys.db|ledger_ext e ON e.il_id = p.il_key
+       WHERE l.unique_key = ANY($1::int[]) GROUP BY l.unique_key, e.slab_id`, [keys])) ?? [];
   const addonRows = (await loader.readTable(
     `SELECT l.unique_key AS uk, a.* FROM |sys.db|addon_aentry a JOIN |sys.db|ledger l ON l.led_key = a.aona_ledid
        WHERE a.aona_recid = 'L' AND l.unique_key = ANY($1::int[])`, [keys])) ?? [];
@@ -63,6 +70,7 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     slabAmounts.set(entry, per);
     slabUsed.add(slab);
   };
+  for (const row of itemSlabSums) addAmount(toInt(field(row, "uk")), toInt(field(row, "slab_id")), toDecimal(field(row, "amount")));
   for (const row of entrySlabRows) addAmount(toInt(field(row, "uk")), toInt(field(row, "slab_id")), toDecimal(field(row, "amount")));
   const itemSlab = new Map<number, string[]>();
   for (const row of itemSlabRows) {
@@ -127,7 +135,7 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     ...columns,
     ...slabColumns.map((slab) => ({ key: slabKey(slab), caption: properHeading(slabInfo.get(slab)?.desc ?? `Slab ${slab}`), width: 90, align: "R", format: "N2" })),
     ...addonColumns.map((item) => ({ key: addonKey(item), caption: properHeading(text(item, "fiel_name")), width: 120, align: "L", format: "" })),
-    { key: "products_all", caption: "Products (product, qty, rate, value, discount, tax, addons)", width: 1100, align: "L", format: "" },
+    ...(withProducts ? [{ key: "products_all", caption: "Products (product, qty, rate, value, discount, tax, addons)", width: 1100, align: "L", format: "" }] : []),
   ];
   const rows = base.rows.map((row) => {
     const entry = toInt(row.unique_key);
@@ -135,8 +143,8 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     const per = slabAmounts.get(entry);
     for (const slab of slabColumns) out[slabKey(slab)] = per?.has(slab) ? money(per.get(slab) ?? 0) : "";
     for (const item of addonColumns) out[addonKey(item)] = valueOf(addonByEntry.get(entry), item);
-    out.products_all = (linesByEntry.get(entry) ?? []).join("   ‖   ");
+    if (withProducts) out.products_all = (linesByEntry.get(entry) ?? []).join("   ‖   ");
     return out;
   });
-  return { ...base, columns: outColumns, rows, total: `Total Records : ${rows.length} · all fields` };
+  return { ...base, columns: outColumns, rows, total: `Total Records : ${rows.length} · ${withProducts ? "with product" : "all fields"}` };
 }

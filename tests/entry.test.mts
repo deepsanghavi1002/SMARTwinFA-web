@@ -17,7 +17,7 @@ const session = {
   flags: { imageReq: false, barcodeEntry: false, barcodeReport: false, productAccountPosting: false, productChildParent: false, partyAccode: false, colMrpActive: true, productCode: false, logFileSpecial: false },
 };
 const values = {
-  session, firstCombo: { text: "SALE", value: "16" }, bookKey: 8, type: 0, bookCode: 16, bkDbcode: 2, acDbcode: 1, agBook: 0, bookActual: true, forBook: 0,
+  session, firstCombo: { text: "SALE", value: "16" }, bookKey: 8, type: 0, bookCode: 16, bkDbcode: 2, acDbcode: 1, agBook: 0, agCode: 0, bookActual: true, forBook: 0,
   stkmShort: "", stkmFromShort: "", acHelp: " 2, 3,", series: "DSAL/26-27", docNo: "828", docDate: "29/May/2026", acCode: 10599, entryNat: "A" as const,
   moneyColumns: ["closing", "amount"],
 };

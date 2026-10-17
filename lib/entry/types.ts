@@ -102,6 +102,8 @@ export type BookScreen = Readonly<{
   party: boolean;
   /** str_Inventory: product rows are entered (else only the slab's first row takes the amount). */
   inventory: boolean;
+  /** The book sets bills off on the Outstanding tab (the setup's c1dg_OutClear save rules name it): the set-off column can be typed. */
+  setoff: boolean;
   /** stkm_slab: the slab grid is shown. */
   slab: boolean;
   /** lbl_Book_Balance, or "" when hidden (HIDEBAL, a_posting N). */
@@ -158,6 +160,8 @@ export type ProductChoice = Readonly<{
 /** An entry opened from Find / Edit (Restore_Entry). */
 export type RestoredEntry = Readonly<{
   uniqueKey: number;
+  /** A debit / credit note: the book it is against and its nature, as saved (shown while it is edited). */
+  against?: Readonly<{ code: number; nature: number; accountName: string; natureText: string }>;
   /** Header and foot control values by control name. */
   values: Readonly<Record<string, string>>;
   partyCode: number;
