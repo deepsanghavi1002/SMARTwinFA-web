@@ -15,6 +15,7 @@ import { UserCompanyRights } from "../features/security/UserCompanyRights";
 import { UserYearRights } from "../features/security/UserYearRights";
 import { UserDashboardRights } from "../features/security/UserDashboardRights";
 import { TransportEntry } from "../features/transport/TransportEntry";
+import { Notepad } from "../features/utility/Notepad";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
@@ -58,7 +59,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "pending";
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
@@ -87,6 +88,18 @@ function getNextWindowLabel(windows: WindowInstance[], baseLabel: string): strin
  * REPORT row the one Report_Combine screen; other rows are answered honestly rather than dropped, so a menu that does nothing
  * can be told apart from one that is broken.
  */
+const APP_LINKS: Readonly<Record<string, string>> = { U_CALCULATOR: "calculator:", U_EXCEL: "ms-excel:nft|u|/blank.xlsx", U_WINWORD: "ms-word:nft|u|/blank.docx" };
+
+function launchApp(link: string) {
+  const anchor = document.createElement("a");
+  // ms-excel: / ms-word: need a command: "nft|u|<url>" opens a new document made from the file at the address (a blank one served by this program).
+  anchor.href = link.replace("|u|/", `|u|${window.location.origin}/`);
+  anchor.rel = "noreferrer";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 function screenOf(node: MenuNode | null): Screen {
   if (node === null) return "home";
   const code = node.actionCode?.toUpperCase();
@@ -96,6 +109,7 @@ function screenOf(node: MenuNode | null): Screen {
   if (code === "REPORT" && node.actionMenu) return "report";
   if ((code === "SECURITY_MENU" || code === "USER_COMPANY_RIGHTS" || code === "USER_YEAR_RIGHTS" || code === "USER_DASHBOARD_RIGHTS") && node.actionMenu) return "security";
   if (code === "TRANSPORT_ENTRY" && node.actionMenu) return "transport";
+  if (code === "U_NOTEPAD") return "notepad";
   if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
   if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";
   if ((code === "REP_DASHBOARD" || code === "YEAR_DASHBOARD") && node.actionMenu) return "dashboard";
@@ -235,6 +249,14 @@ function MainMenu() {
   };
 
   const choose = (node: MenuNode) => {
+    // UTILITY > Calculator / Excel / Word (Main_Menu_New U_CALCULATOR, U_EXCEL, U_WINWORD start calc.exe, excel.exe, winword.exe): the PC's own
+    // program, opened through its Windows app link (the browser asks once to allow it).
+    const appLink = APP_LINKS[node.actionCode?.toUpperCase() ?? ""];
+    if (appLink) {
+      closeMenus();
+      launchApp(appLink);
+      return;
+    }
     // SETUP > COMPANY > SELECT: the company and accounting year selection, as after the login.
     if (node.actionCode?.toUpperCase() === "COMPANY_SELECT" && startup) {
       closeMenus();
@@ -576,6 +598,7 @@ function MainMenu() {
         : node.actionCode?.toUpperCase() === "USER_COMPANY_RIGHTS"
         ? <UserCompanyRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />
         : <SecurityRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "notepad": return <Notepad title={node.label} onClose={close} />;
       case "transport": return <TransportEntry menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "dashboard": return <Dashboard reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       default: return <NotBuiltYet node={node} />;
@@ -600,7 +623,7 @@ function MainMenu() {
 
   return (
     <ZoomContext.Provider value={openZoom}>
-    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
+    <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
         {windows.length > 0 && (
@@ -683,7 +706,7 @@ function MainMenu() {
         </div>
       </section>
 
-      <section className={`work-area ${screen === "security" || screen === "transport" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
+      <section className={`work-area ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
         <div className="window-stack">
           {windows.map((node) => {
             const on = node.id === activeId;

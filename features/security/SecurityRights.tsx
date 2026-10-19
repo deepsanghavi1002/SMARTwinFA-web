@@ -148,12 +148,27 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
   /** The rows shown (the search and the filters), as indexes into rows. */
   const [search, setSearch] = useState("");
   const [headingFilter, setHeadingFilter] = useState("all");
+  const [sectionFilter, setSectionFilter] = useState("all");
   const [rightFilter, setRightFilter] = useState("all");
+  /** The top menu (TRANSACTION, REPORT, INVENTORY ...) each row sits under: a menu row with no dots starts one; the books are their own section. */
+  const sections = useMemo(() => {
+    const of: string[] = [];
+    const names: string[] = [];
+    let current = "";
+    (rows ?? []).forEach((row, i) => {
+      if (row.heading === "Book") current = "Book";
+      else if (!row.name.startsWith(".")) current = row.name.trim();
+      of[i] = current;
+      if (current !== "" && !names.includes(current)) names.push(current);
+    });
+    return { of, names };
+  }, [rows]);
   const visible = useMemo(() => {
     const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const out: number[] = [];
     (rows ?? []).forEach((row, i) => {
       if (headingFilter !== "all" && row.heading !== headingFilter) return;
+      if (sectionFilter !== "all" && sections.of[i] !== sectionFilter) return;
       if (rightFilter === "ticked" && !row.rightsNow.some(Boolean)) return;
       if (rightFilter === "unticked" && row.rightsNow.some(Boolean)) return;
       if (rightFilter === "pass" && !row.passwordNow.some((cell) => (cell.typed !== null ? cell.typed !== "" : cell.had))) return;
@@ -161,9 +176,9 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
       if (words.every((word) => text.includes(word))) out.push(i);
     });
     return out;
-  }, [rows, search, headingFilter, rightFilter]);
-  useEffect(() => { setPicked(new Set()); }, [search, headingFilter, rightFilter]);
-  const filtered = search.trim() !== "" || headingFilter !== "all" || rightFilter !== "all";
+  }, [rows, search, headingFilter, sectionFilter, sections, rightFilter]);
+  useEffect(() => { setPicked(new Set()); }, [search, headingFilter, sectionFilter, rightFilter]);
+  const filtered = search.trim() !== "" || headingFilter !== "all" || sectionFilter !== "all" || rightFilter !== "all";
   const between = (a: number, b: number) => {
     const pa = visible.indexOf(a);
     const pb = visible.indexOf(b);
@@ -224,13 +239,17 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
             setCursor(next);
             root.current?.querySelector(`[data-row="${next}"]`)?.scrollIntoView({ block: "nearest" });
           }} /></label>
+        <select className="sec-filter" aria-label="Filter by menu" value={sectionFilter} disabled={rows === null} onChange={(event) => setSectionFilter(event.target.value)}>
+          <option value="all">All menus</option>
+          {sections.names.map((name) => <option key={name} value={name}>{name === "Book" ? "Books" : name}</option>)}
+        </select>
         <select className="sec-filter" aria-label="Filter by heading" value={headingFilter} disabled={rows === null} onChange={(event) => setHeadingFilter(event.target.value)}>
           <option value="all">All headings</option><option value="Menu">Menu</option><option value="Book">Book</option>
         </select>
         <select className="sec-filter" aria-label="Filter by rights" value={rightFilter} disabled={rows === null} onChange={(event) => setRightFilter(event.target.value)}>
           <option value="all">All rights</option><option value="ticked">With any right ticked</option><option value="unticked">With no right ticked</option><option value="pass">With a password</option>
         </select>
-        {filtered && <button type="button" className="mp-btn mp-btn-blue" onClick={() => { setSearch(""); setHeadingFilter("all"); setRightFilter("all"); }}>Clear filter</button>}
+        {filtered && <button type="button" className="mp-btn mp-btn-blue" onClick={() => { setSearch(""); setHeadingFilter("all"); setSectionFilter("all"); setRightFilter("all"); }}>Clear filter</button>}
         {rows !== null && <span className="sec-count">{visible.length} of {rows.length} rows</span>}
         {busy !== "" && <span className="mp-busy">{busy}…</span>}
         <span className="mp-heading">{title.toUpperCase()}</span>

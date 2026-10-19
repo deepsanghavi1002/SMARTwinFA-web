@@ -196,6 +196,11 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   if (reportKey === 118 && plan.subtotalColumns.length < 2 && table.has("DEBIT") && table.has("CREDIT")) plan.subtotalColumns.splice(0, plan.subtotalColumns.length, "DEBIT", "CREDIT");
   const subtotalColumns = [...plan.subtotalColumns];
   const grouping = [...plan.grouping];
+  // Query (111): a subtotal of the amounts (or the quantity) under each book name.
+  if (reportKey === 111 && table.has("BOOK_NAME")) {
+    if (!grouping.includes("BOOK_NAME")) grouping.push("BOOK_NAME");
+    if (subtotalColumns.length === 0) for (const column of ["DR_AMOUNT", "CR_AMOUNT", "QUANTITY"]) if (table.has(column)) subtotalColumns.push(column);
+  }
   // Sales V/S Expense subtotals on the side (SALES / EXPENSE / EXP %), then the balance sheet head inside it (the desktop's grid).
   if (reportKey === 280 || reportKey === 281) for (const column of ["SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2"]) if (!grouping.includes(column)) grouping.push(column);
   // The multi year balance sheet subtotals on its side (LIABILITY / ASSET), the Difference row apart.
