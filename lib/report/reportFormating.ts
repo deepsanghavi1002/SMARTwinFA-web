@@ -53,6 +53,8 @@ import { productionPlanDetail } from "./productionPlanDetail";
 import { patiya } from "./patiya";
 import { incomeTaxFormats } from "./incomeTax";
 import { multiCompanyDayBook } from "./multiCompanyDayBook";
+import { missingNumber } from "./missingNumber";
+import { logReport } from "./logReport";
 import { SYSTEM_SCHEMA } from "../master-program/session";
 
 /**
@@ -154,6 +156,8 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 119: return checklistInvoice(loader, plan);
     case 120: return checklistDaybook(loader, plan);
     case 258: return monthlyClosingStock(loader, plan);
+    case 98: return missingNumber(loader, plan);
+    case 50: return logReport(loader, plan);
     case 11: return challanSummary(loader, plan);
     case 19: return challanPendingSummary(loader, plan);
     case 20: return orderPendingSummary(loader, plan);

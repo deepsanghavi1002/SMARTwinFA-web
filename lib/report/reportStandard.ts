@@ -1,6 +1,8 @@
 import type { Loader } from "../master-program/load";
 import { multiCompanyAccountSummary, multiCompanyProfitLoss } from "./multiCompanyAccountSummary";
 import { multiCompanyLedger } from "./multiCompanyLedger";
+import { missingNumber } from "./missingNumber";
+import { logReport } from "./logReport";
 import { multiCompanyProduct } from "./multiCompanyProduct";
 import { packingPlan } from "./packingPlan";
 import { productionInquiry } from "./productionInquiry";
@@ -154,6 +156,8 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 136: return multiCompanyBalanceSheet(loader, plan);
     case 138: return multiYearBalanceSheet(loader, plan);
     case 24: return annexure(loader, plan);
+    case 50: return logReport(loader, plan);
+    case 98: return missingNumber(loader, plan);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey} is not available in the web version yet.`, "Not ported yet");
   }
 }

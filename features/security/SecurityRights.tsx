@@ -5,6 +5,7 @@ import { useStartupSelection } from "../startup/StartupGate";
 import { useWindowActive, useWindowCloser } from "../ui/activeWindow";
 import { Icon } from "../ui/Icon";
 import { messageBox } from "../ui/MessageBox";
+import { MarkedText } from "../grid/FoundText";
 import type { SecurityRow, SecurityUser } from "../../lib/security-rights";
 
 /** The seven rights of a row, in the order the server keeps them (lib/security-rights.ts). */
@@ -118,11 +119,20 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
     }
   };
 
+  const searchBox = useRef<HTMLInputElement>(null);
+
   // Esc returns to the main menu (asked), in the window in front only.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!active.current || event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector(".msgbox-backdrop")) return;
+      if (!active.current || document.querySelector(".msgbox-backdrop")) return;
+      // Ctrl+F: to the search box, as in the reports' output grid.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchBox.current?.focus();
+        searchBox.current?.select();
+        return;
+      }
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
       void ask("Returning To Main Menu ?", "Return", ["Yes", "No"]).then((answer) => { if (answer === "Yes") onClose(); });
     };
@@ -135,11 +145,35 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
   const anchor = useRef(0);
   const several = picked.size > 1;
   const targets = (index?: number) => (several && (index === undefined || picked.has(index)) ? picked : index === undefined ? null : new Set([index]));
+  /** The rows shown (the search and the filters), as indexes into rows. */
+  const [search, setSearch] = useState("");
+  const [headingFilter, setHeadingFilter] = useState("all");
+  const [rightFilter, setRightFilter] = useState("all");
+  const visible = useMemo(() => {
+    const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const out: number[] = [];
+    (rows ?? []).forEach((row, i) => {
+      if (headingFilter !== "all" && row.heading !== headingFilter) return;
+      if (rightFilter === "ticked" && !row.rightsNow.some(Boolean)) return;
+      if (rightFilter === "unticked" && row.rightsNow.some(Boolean)) return;
+      if (rightFilter === "pass" && !row.passwordNow.some((cell) => (cell.typed !== null ? cell.typed !== "" : cell.had))) return;
+      const text = `${row.name} ${row.heading}`.toLowerCase();
+      if (words.every((word) => text.includes(word))) out.push(i);
+    });
+    return out;
+  }, [rows, search, headingFilter, rightFilter]);
+  useEffect(() => { setPicked(new Set()); }, [search, headingFilter, rightFilter]);
+  const filtered = search.trim() !== "" || headingFilter !== "all" || rightFilter !== "all";
+  const between = (a: number, b: number) => {
+    const pa = visible.indexOf(a);
+    const pb = visible.indexOf(b);
+    if (pa < 0 || pb < 0) return new Set([b]);
+    return new Set(visible.slice(Math.min(pa, pb), Math.max(pa, pb) + 1));
+  };
   const pickRow = (event: React.MouseEvent, index: number) => {
     if ((event.target as HTMLElement).closest("input")) return;
     if (event.shiftKey) {
-      const [from, to] = [Math.min(anchor.current, index), Math.max(anchor.current, index)];
-      setPicked(new Set(Array.from({ length: to - from + 1 }, (_, n) => from + n)));
+      setPicked(between(anchor.current, index));
       event.preventDefault();
     } else if (event.ctrlKey || event.metaKey) {
       setPicked((current) => { const next = new Set(current.size === 0 ? [cursor] : current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
@@ -151,8 +185,7 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
   };
   const dragRow = (event: React.MouseEvent, index: number) => {
     if (event.buttons !== 1 || (event.target as HTMLElement).closest("input")) return;
-    const [from, to] = [Math.min(anchor.current, index), Math.max(anchor.current, index)];
-    setPicked(new Set(Array.from({ length: to - from + 1 }, (_, n) => from + n)));
+    setPicked(between(anchor.current, index));
   };
   const setRight = (index: number, at: number, value: boolean) => setRows((current) => {
     const on = targets(index);
@@ -160,8 +193,8 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
   });
   const setPassword = (index: number, at: number, value: string) => setRows((current) => current && current.map((row, i) => (i === index ? { ...row, passwordNow: row.passwordNow.map((old, j) => (j === at ? { ...old, typed: value } : old)) } : row)));
   /** Ticks (or unticks) one right of every row, or with `at` null every right of every row. */
-  const tickAll = (at: number | null, value: boolean) => setRows((current) => current && current.map((row, i) => (several && !picked.has(i) ? row : { ...row, rightsNow: row.rightsNow.map((old, j) => (at === null || j === at ? value : old)) })));
-  const scope = (rows ?? []).filter((_, i) => !several || picked.has(i));
+  const tickAll = (at: number | null, value: boolean) => setRows((current) => current && current.map((row, i) => ((several ? !picked.has(i) : filtered && !visible.includes(i)) ? row : { ...row, rightsNow: row.rightsNow.map((old, j) => (at === null || j === at ? value : old)) })));
+  const scope = (rows ?? []).filter((_, i) => (several ? picked.has(i) : !filtered || visible.includes(i)));
   const columnState = (at: number) => { const ticked = scope.filter((row) => row.rightsNow[at]).length; return ticked === 0 ? "none" : ticked === scope.length ? "all" : "some"; };
   const everyTicked = rows !== null && scope.length > 0 && scope.every((row) => row.rightsNow.every(Boolean));
   const others = useMemo(() => users.filter((user) => user.no !== userNo), [users, userNo]);
@@ -182,6 +215,23 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
           </select>
         </label>
         <button type="button" className="mp-btn mp-btn-blue" disabled={rows === null || busy !== ""} onClick={() => tickAll(null, !everyTicked)} title="Tick every right of every menu and book, or take all the ticks off">{everyTicked ? "Untick All" : "Tick All"}</button>
+        <label className="mp-search"><Icon name="search" /><input id="sec-search" ref={searchBox} type="search" placeholder="Search all columns (Ctrl+F)" aria-label="Search" value={search} disabled={rows === null} onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== "F3") return;
+            event.preventDefault();
+            if (visible.length === 0) return;
+            const next = visible[(visible.indexOf(cursor) + (event.shiftKey ? visible.length - 1 : 1)) % visible.length] ?? visible[0];
+            setCursor(next);
+            root.current?.querySelector(`[data-row="${next}"]`)?.scrollIntoView({ block: "nearest" });
+          }} /></label>
+        <select className="sec-filter" aria-label="Filter by heading" value={headingFilter} disabled={rows === null} onChange={(event) => setHeadingFilter(event.target.value)}>
+          <option value="all">All headings</option><option value="Menu">Menu</option><option value="Book">Book</option>
+        </select>
+        <select className="sec-filter" aria-label="Filter by rights" value={rightFilter} disabled={rows === null} onChange={(event) => setRightFilter(event.target.value)}>
+          <option value="all">All rights</option><option value="ticked">With any right ticked</option><option value="unticked">With no right ticked</option><option value="pass">With a password</option>
+        </select>
+        {filtered && <button type="button" className="mp-btn mp-btn-blue" onClick={() => { setSearch(""); setHeadingFilter("all"); setRightFilter("all"); }}>Clear filter</button>}
+        {rows !== null && <span className="sec-count">{visible.length} of {rows.length} rows</span>}
         {busy !== "" && <span className="mp-busy">{busy}…</span>}
         <span className="mp-heading">{title.toUpperCase()}</span>
       </div>
@@ -198,10 +248,10 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
               <tr className="sec-sub"><th /><th />{RIGHTS.map((right, at) => [<th key={`${right}a`} className="sec-all"><label title={`Tick or untick ${right} for every row`}><input type="checkbox" aria-label={`Tick every ${right}`} title={`Tick or untick ${right} for ${several ? "the selected rows" : "every row"}`} checked={columnState(at) === "all"} ref={(box) => { if (box) box.indeterminate = columnState(at) === "some"; }} onChange={(event) => tickAll(at, event.target.checked)} /> All</label></th>, <th key={`${right}p`}>Password</th>])}</tr>
             </thead>
             <tbody>
-              {rows.map((row, index) => (
-                <tr key={row.module + index} className={`${index % 2 ? "sec-alt" : ""} ${index === cursor ? "sec-current" : ""} ${picked.has(index) ? "sec-picked" : ""} ${row.heading === "Book" ? "sec-book" : ""}`} onMouseDown={(event) => { setCursor(index); pickRow(event, index); }} onMouseEnter={(event) => dragRow(event, index)}>
+              {visible.map((index) => { const row = rows[index]; return (
+                <tr key={row.module + index} data-row={index} className={`${index % 2 ? "sec-alt" : ""} ${index === cursor ? "sec-current" : ""} ${picked.has(index) ? "sec-picked" : ""} ${row.heading === "Book" ? "sec-book" : ""}`} onMouseDown={(event) => { setCursor(index); pickRow(event, index); }} onMouseEnter={(event) => dragRow(event, index)}>
                   <td>{row.heading}</td>
-                  <td className="sec-name" title={row.module}>{row.name}</td>
+                  <td className="sec-name" title={row.module}><MarkedText text={row.name} query={search} /></td>
                   {RIGHTS.map((right, at) => {
                     const cell = row.passwordNow[at];
                     const shown = cell.typed !== null ? cell.typed : cell.had ? MASK : "";
@@ -213,7 +263,7 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
                     ];
                   })}
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         )}

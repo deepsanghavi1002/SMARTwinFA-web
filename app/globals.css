@@ -1731,3 +1731,7 @@
 .te-cal-native{position:absolute;right:0;bottom:0;width:1px!important;height:1px!important;padding:0!important;border:0!important;opacity:0;pointer-events:none}
 .sec-grid tbody tr{user-select:none}
 .sec-grid tbody tr.sec-picked td,.sec-grid tbody tr.sec-picked.sec-alt td,.sec-grid tbody tr.sec-picked.sec-book td,.sec-grid tbody tr.sec-picked.sec-current td{background:#8fbdf0!important;color:#06264d}
+.sec-search{width:220px;height:26px;padding:0 8px;border:1px solid #8fb0d8;border-radius:4px;background:#fff;font:inherit}
+.sec-filter{height:26px;padding:0 6px;border:1px solid #8fb0d8;border-radius:4px;background:#fff;font:inherit}
+.sec-count{font-size:11px;color:#0d3a73;font-weight:600}
+.te-doc-remove{flex:0 0 auto;height:24px;padding:0 10px}

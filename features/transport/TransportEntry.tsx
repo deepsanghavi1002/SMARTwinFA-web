@@ -71,8 +71,8 @@ function DmyField({ value, onChange, onCommit, disabled, label }: { value: strin
   );
 }
 
-type Document = { file: File | null; remark: string };
-const emptyDocuments = (): Document[] => Array.from({ length: MAX_DOCUMENTS }, () => ({ file: null, remark: "" }));
+type Document = { file: File | null; remark: string; reset: number };
+const emptyDocuments = (): Document[] => Array.from({ length: MAX_DOCUMENTS }, () => ({ file: null, remark: "", reset: 0 }));
 
 function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -341,9 +341,10 @@ export function TransportEntry({ menuShortName, title, onClose }: { menuShortNam
       <details className="te-docs">
         <summary>Upload Documents (optional)</summary>
         {documents.map((document, index) => (
-          <div key={index} className="te-doc">
+          <div key={`${index}-${document.reset}`} className="te-doc">
             <input type="file" accept="image/*,application/pdf" aria-label={`Document ${index + 1}`} onChange={(event) => { const file = event.target.files?.[0] ?? null; setDocuments((current) => current.map((item, at) => (at === index ? { ...item, file } : item))); }} />
             <input placeholder="Remark" value={document.remark} onChange={(event) => { const remark = event.target.value; setDocuments((current) => current.map((item, at) => (at === index ? { ...item, remark } : item))); }} />
+            <button type="button" className="mp-btn mp-btn-red te-doc-remove" disabled={document.file === null && document.remark === ""} title="Remove this file" onClick={() => setDocuments((current) => current.map((item, at) => (at === index ? { file: null, remark: "", reset: item.reset + 1 } : item)))}>✕ Remove</button>
           </div>
         ))}
       </details>

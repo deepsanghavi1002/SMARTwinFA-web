@@ -424,10 +424,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   } else {
     for (const row of table.rows) out.push({ kind: "data", level: -2, rowType: toText(table.get(row, "ROW_DATA_TYPE")), values: row });
   }
-  // Stock Summary and the Stock report's Summary format: with an addon ticked only the addon subtotals are shown (the products stay out); without one, every product.
-  if (stockSummaryFormat && reportKey !== 17 && subtotalsWanted && groupColumns.length > 0 && !oneRowAParty) {
-    for (let at = out.length - 1; at >= 0; at -= 1) if (out[at].kind === "data") out.splice(at, 1);
-  }
+  // Stock Summary and the Stock report's Summary format: with an addon ticked the products stay under their addon, each addon block ending in its subtotal (as the Stock report's own list does).
   // A blank line between a group's subtotal and the next addon heading (web only), so one addon's block stands apart from the next.
   for (let at = out.length - 1; at > 0; at -= 1) if ((/^ADDON_[0-9]$/.test(out[at].rowType) || (reportKey === 17 && out[at].rowType === "PRODUCT")) && out[at - 1].kind === "subtotal") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   const finalTotal = ![18, 22, 57, 136, 138, 156, 279, 280, 281].includes(reportKey) || reportKey === 80;
