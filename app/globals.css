@@ -1707,3 +1707,21 @@
 .ent-grid td.ent-always-tools>span.ent-cell-wrap{display:flex;align-items:center;gap:1px;overflow:visible}
 .ent-grid td.ent-always-tools .ent-cell-input{min-width:0}
 .ent-grid tr.ent-grid-current{scroll-margin-top:22px;scroll-margin-bottom:2px}
+
+/* Transaction > Transport Entry */
+.te-screen{display:flex;flex-direction:column;min-height:0}
+.te-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px 14px;padding:8px 10px;align-items:center}
+.te-form label{display:flex;align-items:center;gap:8px;font-weight:700;color:#0d3a73;font-size:12px;white-space:nowrap}
+.te-form select,.te-form input,.te-form textarea{flex:1;min-width:0;height:26px;padding:0 6px;border:1px solid #8fb0d8;border-radius:4px;background:#fff;font:inherit;font-weight:500}
+.te-form textarea{height:auto;padding:4px 6px;resize:vertical}
+.te-form .te-wide{grid-column:1/-1}
+.te-num{text-align:right}
+.te-right{text-align:right!important}
+.te-grid-body{min-height:120px}
+.te-grid-body .sec-pass{width:120px}
+.te-grid-body .sec-pass input{height:23px;text-align:right}
+.sec-grid tfoot td{position:sticky;bottom:0;background:#e6eefa;border-top:2px solid #9fb8d6}
+.te-docs{margin:6px 10px;font-size:12px;color:#0d3a73}
+.te-doc{display:flex;gap:8px;margin:3px 0}
+.te-doc input[type=file]{flex:0 0 300px}
+.te-doc input:not([type=file]){flex:1;height:24px;border:1px solid #8fb0d8;border-radius:4px;padding:0 6px}
