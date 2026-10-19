@@ -465,7 +465,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // A blank line before each main group's heading (the first group, level 0; the ledger's account), so where one group ends stands out. The grid draws it white.
   for (let at = out.length - 1; at > 0; at -= 1) {
     const type = out[at].rowType.toUpperCase();
-    const main = out[at].kind === "data" && (headingLevel[type] === 0 || (reportKey === 4 && type === "AC"));
+    const main = out[at].kind === "data" && (headingLevel[type] === 0 || ([4, 105, 125].includes(reportKey) && type === "AC"));
     // The ageing's contact line is a second AC heading under the party's own: no gap between the two.
     if (main && out[at - 1].rowType !== "GAP" && !(reportKey === 5 && type === "AC" && out[at - 1].rowType.toUpperCase() === "AC")) out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   }

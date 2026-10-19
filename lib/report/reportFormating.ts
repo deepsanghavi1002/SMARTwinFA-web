@@ -2745,7 +2745,7 @@ async function multiYearStock(loader: Loader, plan: ReportPlan): Promise<ResultT
 // 105: MULTI YEAR LEDGER (SP_FRT_RPT_MULTI_YEAR_ACCOUNT_LEDGER_REP; ANALYSIS REP. > Multi Year > Ledger)
 // ======================================================================================
 //
-// One account (the Account group's single pick) through the company's years that meet From .. Upto: in each year's database the account of
+// One account (or each account picked in the Account group, the desktop allows one only) through the company's years that meet From .. Upto: in each year's database the account of
 // the same name and book, its postings between From and Upto (not the year's dates), one ledger line each; then the account's heading, the
 // opening (the first year's) and the closing row, in the SORTING_COL order. The running balance is the output layer's (closing_bal).
 //  - UNION in the procedure drops identical rows: the same here, over the lines of all the years.
@@ -2755,21 +2755,21 @@ async function multiYearStock(loader: Loader, plan: ReportPlan): Promise<ResultT
 async function multiYearLedger(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { call } = plan;
   const key = call.selectKey[4];
-  if (key.includes(",")) throw new ReportRefusal("Multiple Account Selection Not Allowed", "INTERNAL PROGRAM FAILURE");
   if (key === "") throw new ReportRefusal("Select an account (Account group)", "INTERNAL PROGRAM FAILURE");
   const db = call.database;
-  const picked = (await runReportSql(loader, `SELECT btrim(name) AS name, coalesce(book,0) AS book FROM ${db}ACCOUNT WHERE a_pos <> 'D' AND code IN ${key} ORDER BY (a_pos = 'A') DESC, code`)).rows[0];
-  if (!picked) return new ResultTable();
-  const name = toText(picked.name);
-  const book = num(picked.book);
+  // Each picked account (the procedure allows one: here the picks are done one after the other, each with its own heading, lines, opening and closing).
+  const picked = (await runReportSql(loader, `SELECT DISTINCT ON (btrim(name), coalesce(book,0)) btrim(name) AS name, coalesce(book,0) AS book FROM ${db}ACCOUNT WHERE a_pos <> 'D' AND code IN ${key} ORDER BY btrim(name), coalesce(book,0), (a_pos = 'A') DESC, code`)).rows;
+  if (picked.length === 0) return new ResultTable();
   const narration = call.checkQuery.includes("CHK_NARRATION,");
   const columns = ["SORTING_COL", "ROW_DATA_TYPE", "SMART_NAME", "selected_date", "FULL_DOCNO", "NAME", "Debit", "Credit", "closing_bal", "DR_CR", "doc_no1", ...(narration ? ["NARRATION"] : [])];
   const table = new ResultTable();
   for (const column of columns) table.addColumn(column);
   for (const column of ["Debit", "Credit", "closing_bal"]) table.setKind(column, "decimal");
 
+  const years = await companyYears(loader, plan);
+  const oneAccount = async (name: string, book: number): Promise<{ rows: ResultRow[]; open: ResultRow[] }> => {
   const found: { schema: string; code: number }[] = [];
-  for (const year of await companyYears(loader, plan)) {
+  for (const year of years) {
     const schema = toText(year.schema_name);
     if (!/^[a-z0-9_]+$/.test(schema)) continue;
     const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','ac_balance','ledger','ledger_post')", [schema])).rows[0];
@@ -2777,7 +2777,7 @@ async function multiYearLedger(loader: Loader, plan: ReportPlan): Promise<Result
     const account = (await runReportSql(loader, `SELECT code FROM ${schema}.account WHERE btrim(name) = $1 AND a_pos <> 'D' AND coalesce(book,0) = $2 ORDER BY code DESC LIMIT 1`, [name, book])).rows[0];
     found.push({ schema, code: num(account?.code) });
   }
-  if (found.length === 0) return table;
+  if (found.length === 0) return { rows: [], open: [] };
 
   // Licences 19, 29, 68 and 73 leave out the vouchers of the CA_ENT books when the first year has none of them.
   const hideBooks = [19, 29, 68, 73].includes(call.licence)
@@ -2800,6 +2800,15 @@ async function multiYearLedger(loader: Loader, plan: ReportPlan): Promise<Result
   const first = found[0];
   const open = (await runReportSql(loader, `SELECT btrim(ac.name) AS name, acbal.opening::numeric AS opening, coalesce((SELECT sum(CASE WHEN post_dbcode = 1 THEN post_amt::numeric ELSE 0.00 END) - sum(CASE WHEN post_dbcode = 2 THEN post_amt::numeric ELSE 0.00 END)`
     + ` FROM ${first.schema}.ledger_post WHERE post_date < $1 AND post_code = ac.code), 0) AS before FROM ${first.schema}.account ac LEFT JOIN ${first.schema}.ac_balance acbal ON acbal.code = ac.code WHERE ac.a_pos <> 'D' AND ac.code = $2`, [desktopDate(call.from), first.code])).rows;
+  return { rows, open };
+  };
+  const rows: ResultRow[] = [];
+  const open: ResultRow[] = [];
+  for (const account of picked) {
+    const one = await oneAccount(toText(account.name), num(account.book));
+    rows.push(...one.rows);
+    open.push(...one.open);
+  }
   const blank = (values: ResultRow): ResultRow => { const row: ResultRow = {}; for (const column of columns) row[column] = ""; return Object.assign(row, { Debit: 0, Credit: 0, closing_bal: 0 }, values); };
   const seen = new Set<string>();
   const unique = (row: ResultRow) => { const text = JSON.stringify(columns.map((column) => row[column])); if (seen.has(text)) return false; seen.add(text); return true; };
@@ -2877,7 +2886,7 @@ async function multiYearExpense(loader: Loader, plan: ReportPlan): Promise<Resul
 // 125: MULTI YEAR STOCK LEDGER (SP_FRT_RPT_MULTI_YEAR_STOCK_LEDGER_REP; ANALYSIS REP. > Multi Year > Stock Ledger)
 // ======================================================================================
 //
-// One product (the Product group's single pick) through the company's years meeting From .. Upto: in each year's database the product of the
+// One product (or each product picked in the Product group, the desktop allows one only) through the company's years meeting From .. Upto: in each year's database the product of the
 // same short code, its stock lines between From and Upto (not the year's dates) in the product's first report unit, then the product's heading
 // and the first year's opening, the lines in date order with the running CLSG_QTY (what the procedure's UPDATE sums over OCOL1). As the
 // single-year stock ledger (reportStandard.ts) takes its lines. The procedure looks up each line's tax name with a sub-query that reads all of
@@ -2887,18 +2896,19 @@ async function multiYearExpense(loader: Loader, plan: ReportPlan): Promise<Resul
 async function multiYearStockLedger(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { call } = plan;
   const key = call.selectKey[4];
-  if (key.includes(",")) throw new ReportRefusal("Multiple Product Selection Not Allowed", "INTERNAL PROGRAM FAILURE");
   if (key === "") throw new ReportRefusal("Select a product (Product group)", "INTERNAL PROGRAM FAILURE");
   const db = call.database;
   const factor = call.checkQuery.includes("CHK_FACTCOL,");
   const bundles = call.licence === 2;
-  const short = toText((await runReportSql(loader, `SELECT prod_short FROM ${db}PRODUCT_MASTER WHERE prod_pos = 'A' AND prod_key IN ${key} ORDER BY prod_key DESC LIMIT 1`)).rows[0]?.prod_short);
+  // Each product picked (the procedure allows one): worked one after the other, each with its own heading, opening, lines and running balance.
+  const shorts = (await runReportSql(loader, `SELECT DISTINCT prod_short FROM ${db}PRODUCT_MASTER WHERE prod_pos = 'A' AND prod_key IN ${key} ORDER BY prod_short`)).rows.map((row) => toText(row.prod_short)).filter((text) => text !== "");
   const columns = ["SORTING_COL", "ROW_DATA_TYPE", "SELECTED_DATE", "FULL_DOCNO", "NAME", "PROD_SHORT", "SELECTED_PRODUCT", "ADD_QTY", "LESS_QTY", "CLSG_QTY", "UOM1", "STOCK_NAT",
     ...(factor ? ["ADD_FACT", "LESS_FACT", "BAL_FACT"] : []), "Rate", ...(factor ? ["UOM2"] : []), "TAX", "DOC_NO1", ...(bundles ? ["ADD_BUNDLE", "LESS_BUNDLE", "BAL_BUNDLE", "PACKING"] : [])];
   const table = new ResultTable();
   for (const column of columns) table.addColumn(column);
   for (const column of ["ADD_QTY", "LESS_QTY", "CLSG_QTY", "Rate", ...(factor ? ["ADD_FACT", "LESS_FACT", "BAL_FACT"] : []), ...(bundles ? ["ADD_BUNDLE", "LESS_BUNDLE", "BAL_BUNDLE", "PACKING"] : [])]) table.setKind(column, "decimal");
-  if (short === "") return table;
+  if (shorts.length === 0) return table;
+  const oneProduct = async (short: string): Promise<ResultRow[]> => {
 
   const years: { schema: string; code: number }[] = [];
   for (const year of await companyYears(loader, plan)) {
@@ -2909,7 +2919,7 @@ async function multiYearStockLedger(loader: Loader, plan: ReportPlan): Promise<R
     const product = (await runReportSql(loader, `SELECT prod_key FROM ${schema}.product_master WHERE prod_short = $1 AND prod_pos <> 'D' ORDER BY prod_key DESC LIMIT 1`, [short])).rows[0];
     years.push({ schema, code: num(product?.prod_key) });
   }
-  if (years.length === 0) return table;
+  if (years.length === 0) return [];
   const first = years[0];
   const typeKey = num((await runReportSql(loader, `SELECT book_key FROM ${first.schema}.book_properties WHERE stkm_pos = 'A' AND stkm_id = 'NR' ORDER BY stkmodule LIMIT 1`)).rows[0]?.book_key);
   const hideBooks = [19, 29, 68, 73].includes(call.licence)
@@ -2997,7 +3007,9 @@ async function multiYearStockLedger(loader: Loader, plan: ReportPlan): Promise<R
     if (factor) row.BAL_FACT = balanceFact;
     if (bundles) row.BAL_BUNDLE = balanceBundle;
   }
-  table.rows = out;
+  return out;
+  };
+  for (const short of shorts) table.rows.push(...await oneProduct(short));
   return table;
 }
 

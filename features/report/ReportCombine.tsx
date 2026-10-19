@@ -476,11 +476,11 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     }
   }, [call]);
   /** Compare periods: the same selection for other dates of the year. A period with nothing in it compares as zero. */
-  const loadCompare = useCallback(async (from: string, upto: string): Promise<CompareResult> => {
+  const loadCompare = useCallback(async (from: string, upto: string, lastYear = false): Promise<CompareResult> => {
     if (!generatedWith.current) return { output: null, error: "Generate the report first." };
     setBusy("Comparing periods");
     try {
-      const reply = await call<{ output: ReportOutput }>("generate", { selection: { ...generatedWith.current, from, upto } });
+      const reply = await call<{ output: ReportOutput }>("generate", { selection: { ...generatedWith.current, from, upto }, ...(lastYear ? { compareYear: "previous" } : {}) });
       if (reply.refusal) return /No Records/i.test(reply.refusal.caption) ? { output: null, empty: true } : { output: null, error: reply.refusal.message };
       return { output: reply.output };
     } catch (error) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { CompareLine } from "../../lib/report/compare";
 import { addDays, changePercent, compareLines, compareRows, formatDate, monthBefore, parseDate, periodBefore } from "../../lib/report/compare";
 import type { ReportOutput } from "../../lib/report/types";
 import { useEscapeClose } from "../grid/useEscapeClose";
@@ -22,23 +23,38 @@ const isoOf = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 
 const fromIso = (text: string) => { const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text); return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null; };
 const money = (value: number, places: number) => value.toLocaleString("en-IN", { minimumFractionDigits: places, maximumFractionDigits: places });
 
+/** The groups of several parts of one period added together (a group is found by its level and label). */
+function addLines(parts: readonly (readonly CompareLine[])[]): CompareLine[] | null {
+  if (parts.length === 0) return null;
+  const merged = new Map<string, CompareLine>();
+  for (const part of parts) {
+    for (const line of part) {
+      const known = merged.get(line.key);
+      if (!known) { merged.set(line.key, { ...line, values: { ...line.values } }); continue; }
+      for (const [column, value] of Object.entries(line.values)) known.values[column] = (known.values[column] ?? 0) + value;
+    }
+  }
+  const lines = [...merged.values()];
+  return [...lines.filter((line) => line.kind !== "total"), ...lines.filter((line) => line.kind === "total")];
+}
+
 export function ReportCompare({ output, period, yearStart, yearEnd, load, onClose }: {
   output: ReportOutput;
   /** The dates the output was generated for (dd/MMM/yyyy). */
   period: Readonly<{ from: string; upto: string }>;
   yearStart: string;
   yearEnd: string;
-  load: (from: string, upto: string) => Promise<CompareResult>;
+  load: (from: string, upto: string, lastYear?: boolean) => Promise<CompareResult>;
   onClose: () => void;
 }) {
   useEscapeClose(onClose);
-  const [mode, setMode] = useState<"period" | "month" | "custom">("period");
+  const [mode, setMode] = useState<"period" | "month" | "lastyear" | "custom">("period");
   const now = { from: parseDate(period.from), upto: parseDate(period.upto) };
   const [customFrom, setCustomFrom] = useState(now.from ? isoOf(addDays(now.from, -30)) : "");
   const [customUpto, setCustomUpto] = useState(now.from ? isoOf(addDays(now.from, -1)) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [before, setBefore] = useState<{ output: ReportOutput | null; from: string; upto: string } | null>(null);
+  const [before, setBefore] = useState<{ lines: CompareLine[] | null; from: string; upto: string } | null>(null);
   const [valueKey, setValueKey] = useState("");
   const [biggest, setBiggest] = useState(false);
 
@@ -52,6 +68,7 @@ export function ReportCompare({ output, period, yearStart, yearEnd, load, onClos
     const upto = parseDate(period.upto);
     if (!from || !upto) return "The report's dates are not known.";
     if (mode === "month") return { from: monthBefore(from), upto: monthBefore(upto) };
+    if (mode === "lastyear") return { from: new Date(from.getFullYear() - 1, from.getMonth(), from.getDate()), upto: new Date(upto.getFullYear() - 1, upto.getMonth(), upto.getDate()) };
     if (mode === "custom") {
       const a = fromIso(customFrom);
       const b = fromIso(customUpto);
@@ -66,20 +83,44 @@ export function ReportCompare({ output, period, yearStart, yearEnd, load, onClos
     if (typeof dates === "string") { setError(dates); return; }
     const start = parseDate(yearStart);
     const end = parseDate(yearEnd);
-    if ((start && dates.from < start) || (end && dates.upto > end)) { setError(`That period (${formatDate(dates.from)} – ${formatDate(dates.upto)}) is outside the accounting year ${yearStart} – ${yearEnd}. Choose other dates.`); return; }
+    // This year's database holds only this year. A period wholly in last year (the first days of the year compared with the days before it, or
+    // dates of one's own) is read from last year's database; one that crosses the year's start, or goes back further than last year, cannot be.
+    let lastYear = mode === "lastyear";
+    // A period that begins in last year and ends in this one is read in two parts (each from its own year's database) and added together.
+    let split: Date | null = null;
+    if (!lastYear && start && end) {
+      const priorStart = new Date(start.getFullYear() - 1, start.getMonth(), start.getDate());
+      if (dates.from < priorStart) { setError(`That period (${formatDate(dates.from)} – ${formatDate(dates.upto)}) goes back further than last year. Choose dates inside last year or this year (${yearStart} – ${yearEnd}).`); return; }
+      if (dates.upto < start) lastYear = true;
+      else if (dates.upto > end) { setError(`That period (${formatDate(dates.from)} – ${formatDate(dates.upto)}) goes past the end of the accounting year ${yearStart} – ${yearEnd}. Choose dates up to ${yearEnd}.`); return; }
+      else if (dates.from < start) split = start;
+    }
     setError("");
     setBusy(true);
     try {
-      const result = await load(formatDate(dates.from), formatDate(dates.upto));
-      if (result.error) { setError(result.error); return; }
-      setBefore({ output: result.output, from: formatDate(dates.from), upto: formatDate(dates.upto) });
+      const read = async (from: Date, upto: Date, year: boolean) => {
+        const result = await load(formatDate(from), formatDate(upto), year);
+        return result.error ? result.error : result.output ? compareLines(result.output) : null;
+      };
+      let lines: CompareLine[] | null;
+      if (split) {
+        const parts = [await read(dates.from, addDays(split, -1), true), await read(split, dates.upto, false)];
+        const failed = parts.find((part) => typeof part === "string");
+        if (typeof failed === "string") { setError(failed); return; }
+        lines = addLines(parts.filter((part): part is CompareLine[] => Array.isArray(part)));
+      } else {
+        const part = await read(dates.from, dates.upto, lastYear);
+        if (typeof part === "string") { setError(part); return; }
+        lines = part;
+      }
+      setBefore({ lines, from: formatDate(dates.from), upto: formatDate(dates.upto) });
     } finally {
       setBusy(false);
     }
   };
 
   const places = column?.decimals ?? 2;
-  const previous = useMemo(() => (before?.output ? compareLines(before.output) : []), [before]);
+  const previous = useMemo(() => before?.lines ?? [], [before]);
   const table = (() => {
     if (!column || !before) return [];
     const rows = compareRows(current, previous, column.key);
@@ -105,6 +146,7 @@ export function ReportCompare({ output, period, yearStart, yearEnd, load, onClos
           <select value={mode} onChange={(event) => { setMode(event.target.value as typeof mode); setBefore(null); setError(""); }}>
             <option value="period">The period just before</option>
             <option value="month">Same dates, a month earlier</option>
+            <option value="lastyear">Same period, last year</option>
             <option value="custom">Dates of my own</option>
           </select>
         </label>
@@ -128,7 +170,7 @@ export function ReportCompare({ output, period, yearStart, yearEnd, load, onClos
 
       {before && column && (
         <>
-          <p className="rp-chart-note">Before: {before.from} – {before.upto}{before.output === null ? " · nothing was recorded in it" : ""}</p>
+          <p className="rp-chart-note">Before: {before.from} – {before.upto}{before.lines === null ? " · nothing was recorded in it" : ""}</p>
           {totalRow && (
             <div className="rp-cards">
               <div className="rp-card"><span>{column.caption} now</span><b>{money(totalRow.now, places)}</b></div>

@@ -18,7 +18,7 @@ import { packedOutputStream } from "@/lib/report/wire";
  * REPORT row of the company's visible menu can be opened, and everything runs read-only.
  */
 
-type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; acCode?: number; name?: string; fields?: string[] }>;
+type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; acCode?: number; name?: string; fields?: string[]; compareYear?: string }>;
 
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
 const headers = { "cache-control": "no-store" };
@@ -29,6 +29,15 @@ const record = <T>(value: unknown, map: (entry: unknown) => T): Record<string, T
   : {});
 
 /** The selection as sent, reduced to plain strings, lists and flags (planReport checks every value against setup). */
+/** The year before the open one: the company of the same name and group whose year ends the day before this one starts. */
+async function previousYear(client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> }, session: { companyKey: number; companyName: string; companyGroup: string; tarikh1: Date }): Promise<{ companyId: number; yearKey: number } | null> {
+  const start = `${session.tarikh1.getFullYear()}-${String(session.tarikh1.getMonth() + 1).padStart(2, "0")}-${String(session.tarikh1.getDate()).padStart(2, "0")}`;
+  const row = (await client.query(
+    `SELECT n.c_id, n.c_yearid FROM smart_system.cname n JOIN smart_system.company c ON c.co_key = n.c_id WHERE btrim(c.name) = $1 AND btrim(coalesce(c.co_group, '')) = $2 AND c.co_pos = 'A' AND n.c_tarikh2::date = $3::date - 1 ORDER BY n.c_id DESC LIMIT 1`,
+    [session.companyName.trim(), session.companyGroup.trim(), start])).rows[0];
+  return row ? { companyId: Number(row.c_id), yearKey: Number(row.c_yearid) } : null;
+}
+
 function cleanSelection(value: ReportSelection | undefined): ReportSelection {
   const source = (value ?? {}) as Record<string, unknown>;
   return {
@@ -83,8 +92,15 @@ export async function POST(request: Request) {
           const report = await loadReport(loader, body.reportName, moduleName);
           return { report, warnings: loader.warnings, companyName: session.companyName, userName: session.loginName, version: await winfaVersion(client) };
         }
-        case "generate":
+        case "generate": {
+          // Compare periods > Same period last year: the same report read from the company's previous year database.
+          if (body.compareYear === "previous") {
+            const previous = await previousYear(client, session);
+            if (!previous) throw new ReportRefusal("The company has no previous year database to compare with.", "Compare periods");
+            return { output: await runReport(new Loader(client, await readSession(client, { companyId: previous.companyId, yearKey: previous.yearKey, loginName: session.loginName })), body.reportName, cleanSelection(body.selection)) };
+          }
           return { output: await runReport(loader, body.reportName, cleanSelection(body.selection)) };
+        }
         case "group": return { output: await runGroupedReport(loader, body.reportName, cleanSelection(body.selection), strings(body.fields).slice(0, 10)) };
         case "lostfocus": { const refilled = await lostFocusItems(loader, body.reportName, String(body.selection?.firstCombo ?? "")); return { ...refilled, warnings: loader.warnings }; }
         case "against": return await againstBookItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""));

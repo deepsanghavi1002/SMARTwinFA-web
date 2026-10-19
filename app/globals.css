@@ -1738,3 +1738,79 @@
 .np-body{display:flex;overflow:hidden}
 .np-area{flex:1;width:100%;height:100%;min-height:300px;margin:0;padding:8px;border:0;outline:0;background:#fff;font:13px Consolas,"Courier New",monospace;resize:none}
 .np-name{width:260px;height:26px;padding:0 8px;border:1px solid #8fb0d8;border-radius:4px;background:#fff;font:inherit;font-weight:500}
+
+/* Report side panels (Growth, Budget, Compare, Chart, Planning): the modern look of the Pie Chart screens - soft cards, pill fields, indigo accent. */
+.rp-chart{width:420px;gap:12px;padding:14px 16px;border-left:1px solid #e3e8f4;background:linear-gradient(180deg,#f3f6fd 0%,#f8f9fd 55%);color:#1f2a4d;font:12.5px "Segoe UI",Arial,sans-serif}
+.rp-chart-head{padding:2px 2px 4px}
+.rp-chart-head b{gap:9px;font-size:15px;font-weight:800;letter-spacing:.01em;color:#1f2a4d}
+.rp-chart-head b::before{content:"";width:5px;height:18px;border-radius:3px;background:linear-gradient(180deg,#4a5ff0,#7c4dff)}
+.rp-chart-head .mp-icon{width:17px;height:17px;color:#4a5ff0}
+.rp-chart-close{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;font-size:18px;color:#8a95b0;transition:background .15s,color .15s}
+.rp-chart-close:hover{background:#e9edfb;color:#4a5ff0}
+.rp-chart-controls{gap:12px}
+.rp-chart-controls label{gap:5px;font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8a95b0}
+.rp-chart-controls select,.rp-chart-controls input[type=date],.rp-groupby-level select{height:34px;padding:0 12px;border:1px solid #dfe4f0;border-radius:12px;background:#f6f8fd;color:#1f2a4d;font:600 12.5px "Segoe UI",Arial,sans-serif;text-transform:none;letter-spacing:0}
+.rp-chart-controls select:hover,.rp-chart-controls input[type=date]:hover{border-color:#c4cdea}
+.rp-chart-controls select:focus,.rp-chart-controls input[type=date]:focus,.rp-groupby-level select:focus{outline:0;border-color:#4a5ff0;background:#fff;box-shadow:0 0 0 3px rgba(74,95,240,.15)}
+.rp-growth-tabs{gap:8px}
+.rp-growth-tabs button{height:36px;border:1px solid #dfe4f0;border-radius:999px;background:#fff;color:#4a5ff0;font:700 12px "Segoe UI",Arial,sans-serif;transition:background .15s,color .15s,box-shadow .15s}
+.rp-growth-tabs button:hover{background:#eef0ff}
+.rp-growth-tabs button.on,.rp-growth-tabs button[aria-pressed=true],.rp-growth-tabs button.active,.rp-growth-tabs button[aria-selected=true]{border-color:#4a5ff0;background:#4a5ff0;color:#fff;box-shadow:0 2px 6px rgba(74,95,240,.35)}
+.rp-chart .mp-btn,.rp-compare-run{height:36px;border-radius:999px;padding:0 20px;border:1px solid #4a5ff0;background:#fff;color:#4a5ff0;font:700 12px "Segoe UI",Arial,sans-serif;box-shadow:none;transition:background .15s,color .15s}
+.rp-chart .mp-btn:hover:not(:disabled),.rp-compare-run:hover:not(:disabled){background:#eef0ff}
+.rp-compare-run{background:#4a5ff0;color:#fff;box-shadow:0 2px 6px rgba(74,95,240,.35)}
+.rp-compare-run:hover:not(:disabled){background:#3a4fe0;color:#fff}
+.rp-cards{gap:10px}
+.rp-card{gap:3px;padding:10px 14px;border:1px solid #e6eaf3;border-radius:16px;background:#fff;box-shadow:0 1px 2px rgba(20,35,80,.05),0 6px 20px rgba(20,35,80,.06)}
+.rp-card span{font-size:10.5px;font-weight:700;letter-spacing:.04em;color:#8a95b0}
+.rp-card b{font-size:20px;font-weight:800;color:#4a3fd0}
+.rp-card small{font-size:10.5px;color:#8a95b0}
+.rp-donut-block,.rp-trend{border-top:0;padding:12px 14px;border:1px solid #e6eaf3;border-radius:16px;background:#fff;box-shadow:0 1px 2px rgba(20,35,80,.05),0 6px 20px rgba(20,35,80,.06)}
+.rp-donut figcaption,.rp-trend figcaption{margin-bottom:6px;font-size:13px;font-weight:800;color:#1f2a4d}
+.rp-donut-big{font-weight:800;fill:#1f2a4d}
+.rp-donut-small{fill:#8a95b0}
+.rp-donut-tip,.rp-trend-tip,.rp-trend-legend{color:#28324a}
+.rp-donut-tip i,.rp-legend i,.rp-trend-legend i,.rp-gauge-legend i{border-radius:50%;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 0%,transparent)}
+.rp-trend-tip b{color:#4a3fd0}
+.rp-legend{border-collapse:separate;border-spacing:0 4px}
+.rp-legend td{padding:7px 8px;border-bottom:0;background:#f8f9fd;font-size:12px;color:#28324a}
+.rp-legend td:first-child{border-radius:12px 0 0 12px}
+.rp-legend td:last-child{border-radius:0 12px 12px 0}
+.rp-legend th{padding:4px 8px;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#8a95b0;text-align:right}
+.rp-legend th:nth-child(-n+2){text-align:left}
+.rp-legend-num{font-weight:700;color:#1f2a4d}
+.rp-legend-pick:hover td{background:#eef0ff}
+.rp-legend-on td{background:#e6eaff;font-weight:800;color:#3a3fb0}
+.rp-growth-table td,.rp-growth-table th{font-size:11.5px}
+.rp-growth-bar{top:4px;bottom:4px;background:rgba(74,95,240,.14);border-radius:6px}
+.rp-growth-pick:hover{background:#eef0ff}
+.rp-growth-grade{color:#4a5ff0}
+.rp-chart-empty{color:#8a95b0;font-weight:600}
+.rp-chart-note{font-size:11px;color:#8a95b0}
+.rp-budget-list{gap:12px}
+.rp-budget-row{font-size:12px;color:#1f2a4d}
+.rp-budget-row b{font-weight:700}
+.rp-budget-row span{color:#8a95b0}
+.rp-budget-bar{height:10px;border-radius:999px;background:#e9edfb}
+.rp-budget-bar i{border-radius:999px}
+.rp-compare-table th{padding:4px 8px;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#8a95b0;border-bottom:1px solid #e6eaf3}
+.rp-compare-table td{padding:6px 8px;border-bottom:1px solid #eef1f8}
+.rp-compare-total td{font-weight:800;border-top:2px solid #dfe4f0;background:#f1f3ff;color:#1f2a4d}
+.rp-compare-pct{font-weight:800;color:#4a5ff0}
+.rp-compare-error{border-radius:12px;background:#fdecec;color:#b3261e;font-weight:600}
+.rp-plan{padding:12px 14px;border:1px solid #e6eaf3;border-radius:16px;background:#fff;box-shadow:0 1px 2px rgba(20,35,80,.05),0 6px 20px rgba(20,35,80,.06)}
+.rp-plan h4{font-size:13px;font-weight:800;color:#1f2a4d}
+.rp-gauge-bar{height:12px;border-radius:999px;background:#e9edfb}
+.rp-gauge-bar i{border-right-color:#fff}
+.rp-gauge-head{color:#1f2a4d;font-weight:600}
+.rp-gauge-head span,.rp-gauge-legend{color:#8a95b0}
+.rp-card{padding:10px 12px;overflow:hidden}
+.rp-card b{font-size:15.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* Side panel host: the panels stay mounted when minimized (their results are kept); a thin strip with a toggle is left. */
+.rp-panel-host{display:contents}
+.rp-panel-host.rp-panel-on{display:flex;flex:none;min-height:0;align-items:stretch}
+.rp-panel-toggle{flex:none;width:18px;border:0;border-left:1px solid #e3e8f4;background:#eef2fb;color:#4a5ff0;font-size:11px;cursor:pointer;padding:0}
+.rp-panel-toggle:hover{background:#e0e6fb}
+.rp-panel-host:not(.rp-panel-on) .rp-panel-toggle{display:none}
+.rp-panel-min>:not(.rp-panel-toggle){display:none!important}

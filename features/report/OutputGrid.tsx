@@ -111,7 +111,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** Create Group: the report's entries grouped on these fields (none: the final total only). */
   loadGroup: (fields: readonly string[]) => Promise<ReportOutput | null>;
   /** Compare periods: the report for other dates of the year, and the dates this one is for. */
-  loadCompare: (from: string, upto: string) => Promise<CompareResult>;
+  loadCompare: (from: string, upto: string, lastYear?: boolean) => Promise<CompareResult>;
   comparePeriod: Readonly<{ from: string; upto: string }>;
   yearStart: string;
   yearEnd: string;
@@ -171,6 +171,9 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [arranging, setArranging] = useState(false);
   /** The side panel: the chart, or the comparison with another period. */
   const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | "pivot" | null>(null);
+  /** The side panel (Growth, Budget, Compare, Chart ...) shrunk to a strip so the grid has the room; opening another panel shows it again. */
+  const [panelMin, setPanelMin] = useState(false);
+  useEffect(() => { setPanelMin(false); }, [panel]);
   const charting = panel === "chart";
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
@@ -1043,12 +1046,15 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           </div>
         </div>
       </div>
+      <div className={`rp-panel-host${(charting || panel !== null) ? " rp-panel-on" : ""}${panelMin ? " rp-panel-min" : ""}`}>
+      {(charting || panel !== null) && <button type="button" className="rp-panel-toggle" aria-label={panelMin ? "Show the side panel" : "Minimize the side panel"} title={panelMin ? "Show the side panel" : "Minimize the side panel (the grid gets the room)"} onClick={() => setPanelMin((value) => !value)}>{panelMin ? "◀" : "▶"}</button>}
       {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={served} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterTo(columnKey, party) : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto) => { const result = await loadCompare(from, upto); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto, lastYear) => { const result = await loadCompare(from, upto, lastYear); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      </div>
       </div>
       <GridRibbon
         source="report"
