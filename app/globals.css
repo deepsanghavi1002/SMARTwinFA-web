@@ -1725,3 +1725,9 @@
 .te-doc{display:flex;gap:8px;margin:3px 0}
 .te-doc input[type=file]{flex:0 0 300px}
 .te-doc input:not([type=file]){flex:1;height:24px;border:1px solid #8fb0d8;border-radius:4px;padding:0 6px}
+.te-date{position:relative;display:flex;flex:1;min-width:0;align-items:center}
+.te-date>input:not(.te-cal-native){width:100%;padding-right:26px}
+.te-cal{position:absolute;right:2px;top:2px;height:22px;width:22px;padding:0;border:0;background:transparent;cursor:pointer;font-size:13px;line-height:1}
+.te-cal-native{position:absolute;right:0;bottom:0;width:1px!important;height:1px!important;padding:0!important;border:0!important;opacity:0;pointer-events:none}
+.sec-grid tbody tr{user-select:none}
+.sec-grid tbody tr.sec-picked td,.sec-grid tbody tr.sec-picked.sec-alt td,.sec-grid tbody tr.sec-picked.sec-book td,.sec-grid tbody tr.sec-picked.sec-current td{background:#8fbdf0!important;color:#06264d}

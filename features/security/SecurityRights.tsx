@@ -67,6 +67,7 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
       const result = await securityCall<{ rows: SecurityRow[] }>(selection, menuShortName, "rows", { userNo: value });
       setRows(result.rows.map((row) => ({ ...row, rightsNow: [...row.rights], passwordNow: row.passwords.map((had) => ({ typed: null, had })) })));
       setCursor(0);
+      setPicked(new Set());
     } catch (error) {
       setRows(null);
       await say(error instanceof Error ? error.message : String(error), "INTERNAL PROGRAM FAILURE");
@@ -75,7 +76,7 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
     }
   };
 
-  const clear = () => { setRows(null); setUserNo(0); setCopyNo(NONE); requestAnimationFrame(() => combo.current?.focus()); };
+  const clear = () => { setPicked(new Set()); setRows(null); setUserNo(0); setCopyNo(NONE); requestAnimationFrame(() => combo.current?.focus()); };
 
   const quit = useCallback(async () => {
     if ((await ask("Are You Sure Want TO Quit Security Entry ?", "Security Entry Quit", ["Yes", "No"], "No")) === "Yes") onClose();
@@ -129,12 +130,40 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
     return () => window.removeEventListener("keydown", onKey);
   }, [active, ask, onClose]);
 
-  const setRight = (index: number, at: number, value: boolean) => setRows((current) => current && current.map((row, i) => (i === index ? { ...row, rightsNow: row.rightsNow.map((old, j) => (j === at ? value : old)) } : row)));
+  /** Rows picked with the mouse (click, Ctrl+click, Shift+click or drag). With two or more picked, the ticks work on those rows only. */
+  const [picked, setPicked] = useState<ReadonlySet<number>>(new Set());
+  const anchor = useRef(0);
+  const several = picked.size > 1;
+  const targets = (index?: number) => (several && (index === undefined || picked.has(index)) ? picked : index === undefined ? null : new Set([index]));
+  const pickRow = (event: React.MouseEvent, index: number) => {
+    if ((event.target as HTMLElement).closest("input")) return;
+    if (event.shiftKey) {
+      const [from, to] = [Math.min(anchor.current, index), Math.max(anchor.current, index)];
+      setPicked(new Set(Array.from({ length: to - from + 1 }, (_, n) => from + n)));
+      event.preventDefault();
+    } else if (event.ctrlKey || event.metaKey) {
+      setPicked((current) => { const next = new Set(current.size === 0 ? [cursor] : current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
+      anchor.current = index;
+    } else {
+      anchor.current = index;
+      setPicked(new Set([index]));
+    }
+  };
+  const dragRow = (event: React.MouseEvent, index: number) => {
+    if (event.buttons !== 1 || (event.target as HTMLElement).closest("input")) return;
+    const [from, to] = [Math.min(anchor.current, index), Math.max(anchor.current, index)];
+    setPicked(new Set(Array.from({ length: to - from + 1 }, (_, n) => from + n)));
+  };
+  const setRight = (index: number, at: number, value: boolean) => setRows((current) => {
+    const on = targets(index);
+    return current && current.map((row, i) => (on?.has(i) ? { ...row, rightsNow: row.rightsNow.map((old, j) => (j === at ? value : old)) } : row));
+  });
   const setPassword = (index: number, at: number, value: string) => setRows((current) => current && current.map((row, i) => (i === index ? { ...row, passwordNow: row.passwordNow.map((old, j) => (j === at ? { ...old, typed: value } : old)) } : row)));
   /** Ticks (or unticks) one right of every row, or with `at` null every right of every row. */
-  const tickAll = (at: number | null, value: boolean) => setRows((current) => current && current.map((row) => ({ ...row, rightsNow: row.rightsNow.map((old, j) => (at === null || j === at ? value : old)) })));
-  const columnState = (at: number) => { const ticked = (rows ?? []).filter((row) => row.rightsNow[at]).length; return ticked === 0 ? "none" : ticked === (rows ?? []).length ? "all" : "some"; };
-  const everyTicked = rows !== null && rows.length > 0 && rows.every((row) => row.rightsNow.every(Boolean));
+  const tickAll = (at: number | null, value: boolean) => setRows((current) => current && current.map((row, i) => (several && !picked.has(i) ? row : { ...row, rightsNow: row.rightsNow.map((old, j) => (at === null || j === at ? value : old)) })));
+  const scope = (rows ?? []).filter((_, i) => !several || picked.has(i));
+  const columnState = (at: number) => { const ticked = scope.filter((row) => row.rightsNow[at]).length; return ticked === 0 ? "none" : ticked === scope.length ? "all" : "some"; };
+  const everyTicked = rows !== null && scope.length > 0 && scope.every((row) => row.rightsNow.every(Boolean));
   const others = useMemo(() => users.filter((user) => user.no !== userNo), [users, userNo]);
 
   return (
@@ -166,11 +195,11 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
                 <th>Heading</th><th>Name</th>
                 {RIGHTS.map((right) => <th key={right} colSpan={2}>{right}</th>)}
               </tr>
-              <tr className="sec-sub"><th /><th />{RIGHTS.map((right, at) => [<th key={`${right}a`} className="sec-all"><label title={`Tick or untick ${right} for every row`}><input type="checkbox" aria-label={`Tick every ${right}`} title={`Tick or untick ${right} for every row`} checked={columnState(at) === "all"} ref={(box) => { if (box) box.indeterminate = columnState(at) === "some"; }} onChange={(event) => tickAll(at, event.target.checked)} /> All</label></th>, <th key={`${right}p`}>Password</th>])}</tr>
+              <tr className="sec-sub"><th /><th />{RIGHTS.map((right, at) => [<th key={`${right}a`} className="sec-all"><label title={`Tick or untick ${right} for every row`}><input type="checkbox" aria-label={`Tick every ${right}`} title={`Tick or untick ${right} for ${several ? "the selected rows" : "every row"}`} checked={columnState(at) === "all"} ref={(box) => { if (box) box.indeterminate = columnState(at) === "some"; }} onChange={(event) => tickAll(at, event.target.checked)} /> All</label></th>, <th key={`${right}p`}>Password</th>])}</tr>
             </thead>
             <tbody>
               {rows.map((row, index) => (
-                <tr key={row.module + index} className={`${index % 2 ? "sec-alt" : ""} ${index === cursor ? "sec-current" : ""} ${row.heading === "Book" ? "sec-book" : ""}`} onMouseDown={() => setCursor(index)}>
+                <tr key={row.module + index} className={`${index % 2 ? "sec-alt" : ""} ${index === cursor ? "sec-current" : ""} ${picked.has(index) ? "sec-picked" : ""} ${row.heading === "Book" ? "sec-book" : ""}`} onMouseDown={(event) => { setCursor(index); pickRow(event, index); }} onMouseEnter={(event) => dragRow(event, index)}>
                   <td>{row.heading}</td>
                   <td className="sec-name" title={row.module}>{row.name}</td>
                   {RIGHTS.map((right, at) => {

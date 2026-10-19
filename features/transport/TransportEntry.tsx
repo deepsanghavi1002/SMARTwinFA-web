@@ -33,6 +33,44 @@ const number = (text: string) => { const parsed = Number(text.replace(/,/g, "").
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 const MAX_DOCUMENTS = 5;
 
+
+/** yyyy-mm-dd shown and typed as dd/mm/yyyy (ddmmyyyy, dd-mm-yy and dd.mm.yyyy are taken too); text that is no date goes back. */
+const showDmy = (iso: string) => (/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
+function parseDmy(text: string): string | null {
+  const parts = text.trim().match(/^(\d{1,2})[/\-. ]?(\d{1,2})[/\-. ]?(\d{2}|\d{4})$/);
+  if (!parts) return null;
+  const day = Number(parts[1]);
+  const month = Number(parts[2]);
+  const year = parts[3].length === 2 ? 2000 + Number(parts[3]) : Number(parts[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return isoOf(date);
+}
+function DmyField({ value, onChange, onCommit, disabled, label }: { value: string; onChange: (iso: string) => void; onCommit?: (iso: string) => void; disabled?: boolean; label: string }) {
+  const [typing, setTyping] = useState<string | null>(null);
+  const take = () => {
+    if (typing === null) return;
+    const iso = parseDmy(typing);
+    setTyping(null);
+    if (iso) onChange(iso);
+    onCommit?.(iso ?? value);
+  };
+  const picker = useRef<HTMLInputElement>(null);
+  const pick = (iso: string) => { if (iso === "") return; setTyping(null); onChange(iso); onCommit?.(iso); };
+  return (
+    <span className="te-date">
+      <input data-te-field aria-label={label} placeholder="dd/mm/yyyy" inputMode="numeric" maxLength={10} disabled={disabled} value={typing ?? showDmy(value)}
+        onChange={(event) => setTyping(event.target.value)} onFocus={(event) => event.target.select()} onBlur={take}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && typing !== null) take();
+          if (event.altKey && event.key === "ArrowDown") { event.preventDefault(); picker.current?.showPicker?.(); }
+        }} />
+      <button type="button" tabIndex={-1} className="te-cal" disabled={disabled} aria-label={`${label} calendar`} title="Calendar (Alt+Down)" onMouseDown={(event) => event.preventDefault()} onClick={() => picker.current?.showPicker?.()}>📅</button>
+      <input ref={picker} className="te-cal-native" type="date" tabIndex={-1} aria-hidden="true" value={/^\d{4}-\d{2}-\d{2}$/.test(value) ? value : ""} onChange={(event) => pick(event.target.value)} />
+    </span>
+  );
+}
+
 type Document = { file: File | null; remark: string };
 const emptyDocuments = (): Document[] => Array.from({ length: MAX_DOCUMENTS }, () => ({ file: null, remark: "" }));
 
@@ -135,9 +173,9 @@ export function TransportEntry({ menuShortName, title, onClose }: { menuShortNam
       set(validToday(options));
     }
   };
-  const checkEntry = async () => {
-    if (!options || entryDate === "") return;
-    const problem = checkEntryDate(options, entryDate);
+  const checkEntry = async (day: string) => {
+    if (!options || day === "") return;
+    const problem = checkEntryDate(options, day);
     if (problem === "") return;
     await say(problem, problem.startsWith("Period") ? "Entry Date Lock Warning" : "Warning");
     setEntryDate(options.openFrom !== null && options.openFrom <= options.yearTo ? options.openFrom : options.yearFrom);
@@ -165,17 +203,18 @@ export function TransportEntry({ menuShortName, title, onClose }: { menuShortNam
     }
   };
 
-  // txt_Amount_Leave: the TDS of the amount.
-  const amountLeft = async () => {
+  // txt_Amount_Leave: the TDS of the amount, worked out as the amount is typed (and when the transport changes); it can still be typed over.
+  useEffect(() => {
     const value = number(amount);
-    if (!selection || value <= 0 || transportKey <= 0) return;
-    try {
-      const result = await transportCall<{ rate: number; tds: number }>(selection, menuShortName, "tds", { transportKey, amount: value });
-      if (result.tds > 0) setTds(String(result.tds));
-    } catch (error) {
-      await fail(error);
-    }
-  };
+    if (!selection || value <= 0 || transportKey <= 0) { setTds(""); return; }
+    let live = true;
+    const timer = setTimeout(() => {
+      transportCall<{ rate: number; tds: number }>(selection, menuShortName, "tds", { transportKey, amount: value })
+        .then((result) => { if (live) setTds(result.tds > 0 ? String(result.tds) : ""); })
+        .catch(() => { if (live) setTds(""); });
+    }, 300);
+    return () => { live = false; clearTimeout(timer); };
+  }, [amount, transportKey, selection, menuShortName]);
 
   // txt_InvoiceNo_Leave: the same transport cannot have the number twice in the year.
   const invoiceLeft = async () => {
@@ -259,16 +298,16 @@ export function TransportEntry({ menuShortName, title, onClose }: { menuShortNam
             {options.transports.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
           </select>
         </label>
-        <label>From Date »»<input data-te-field type="date" min={dateMin} max={dateMax} value={fromDate} disabled={bills !== null} onChange={(event) => setFromDate(event.target.value)} onBlur={() => void checkYearDate(fromDate, setFromDate)} /></label>
-        <label>Upto Date »»<input data-te-field type="date" min={dateMin} max={dateMax} value={uptoDate} disabled={bills !== null} onChange={(event) => setUptoDate(event.target.value)} onBlur={() => void checkYearDate(uptoDate, setUptoDate)} /></label>
-        <label>Inv Date »»<input data-te-field type="date" min={dateMin} max={dateMax} value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} onBlur={() => void checkYearDate(invoiceDate, setInvoiceDate)} /></label>
+        <label>From Date »»<DmyField label="From Date" value={fromDate} onChange={setFromDate} disabled={bills !== null} onCommit={(day) => void checkYearDate(day, setFromDate)} /></label>
+        <label>Upto Date »»<DmyField label="Upto Date" value={uptoDate} onChange={setUptoDate} disabled={bills !== null} onCommit={(day) => void checkYearDate(day, setUptoDate)} /></label>
+        <label>Inv Date »»<DmyField label="Inv Date" value={invoiceDate} onChange={setInvoiceDate} onCommit={(day) => void checkYearDate(day, setInvoiceDate)} /></label>
         <label>Invoice No »»<input data-te-field ref={invoiceBox} value={invoiceNo} maxLength={20} onChange={(event) => setInvoiceNo(event.target.value)} onBlur={() => void invoiceLeft()} /></label>
         <label>RCM »»<select data-te-field value={reverse ? "Yes" : "No"} onChange={(event) => setReverse(event.target.value === "Yes")}><option value="No">No</option><option value="Yes">Yes</option></select></label>
-        <label>Entry Date »»<input data-te-field type="date" min={dateMin} max={dateMax} value={entryDate} onChange={(event) => setEntryDate(event.target.value)} onBlur={() => void checkEntry()} /></label>
+        <label>Entry Date »»<DmyField label="Entry Date" value={entryDate} onChange={setEntryDate} onCommit={(day) => void checkEntry(day)} /></label>
         <label>Exp Name »»{choose(expNameCode, setExpNameCode, options.expNames)}</label>
         <label>Sub Ledger »»{choose(subLedgerKey, setSubLedgerKey, options.subLedgers)}</label>
         <label>Exp Nature »»{choose(expNatureKey, setExpNatureKey, options.expNatures)}</label>
-        <label>Amount »»<input data-te-field ref={amountBox} className="te-num" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} onBlur={() => void amountLeft()} /></label>
+        <label>Amount »»<input data-te-field ref={amountBox} className="te-num" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></label>
         <label>TDS Amt »»<input data-te-field className="te-num" inputMode="decimal" value={tds} onChange={(event) => setTds(event.target.value)} /></label>
         <label className="te-wide">Narration »»<textarea data-te-field rows={2} value={narration} onChange={(event) => setNarration(event.target.value)} onBlur={() => void loadBills()} /></label>
         {busy !== "" && <span className="mp-busy">{busy}…</span>}
