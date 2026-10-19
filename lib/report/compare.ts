@@ -92,3 +92,25 @@ export function compareRows(now: readonly CompareLine[], before: readonly Compar
 export function changePercent(now: number, then: number): string {
   return then === 0 ? (now === 0 ? "—" : "new") : `${(((now - then) / Math.abs(then)) * 100).toFixed(1)}%`;
 }
+
+/**
+ * Where the days of a period to compare are read from. The open year's database holds only that year; last year's is a database of its own.
+ * A period inside the open year is one read; one wholly in last year is one read of last year's database; one that begins in last year and ends in
+ * this one is two reads, added together. A period going back further than last year, or past the year's end, cannot be read: `error` says so.
+ * `lastYear` (the "same period, last year" choice) reads the dates as they are from last year's database.
+ */
+export type PeriodPart = Readonly<{ from: Date; upto: Date; lastYear: boolean }>;
+export type PeriodPlan = Readonly<{ error: string }> | Readonly<{ parts: readonly PeriodPart[] }>;
+
+export function planPeriod(dates: Readonly<{ from: Date; upto: Date }>, yearStart: string, yearEnd: string, lastYear = false): PeriodPlan {
+  const start = parseDate(yearStart);
+  const end = parseDate(yearEnd);
+  if (lastYear || !start || !end) return { parts: [{ ...dates, lastYear }] };
+  const text = `${formatDate(dates.from)} – ${formatDate(dates.upto)}`;
+  const priorStart = new Date(start.getFullYear() - 1, start.getMonth(), start.getDate());
+  if (dates.from < priorStart) return { error: `That period (${text}) goes back further than last year. Choose dates inside last year or this year (${yearStart} – ${yearEnd}).` };
+  if (dates.upto > end) return { error: `That period (${text}) goes past the end of the accounting year ${yearStart} – ${yearEnd}. Choose dates up to ${yearEnd}.` };
+  if (dates.upto < start) return { parts: [{ ...dates, lastYear: true }] };
+  if (dates.from < start) return { parts: [{ from: dates.from, upto: addDays(start, -1), lastYear: true }, { from: start, upto: dates.upto, lastYear: false }] };
+  return { parts: [{ ...dates, lastYear: false }] };
+}

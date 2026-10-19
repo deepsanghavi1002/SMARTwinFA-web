@@ -1,5 +1,6 @@
 "use client";
 
+import { GROUP_PREFIX, withGroups } from "../../lib/report/growth";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import type { ExportRowStyle } from "../../lib/export/table";
@@ -170,6 +171,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [menu, setMenu] = useState<(GridMenuPlace & { key: string }) | null>(null);
   const [arranging, setArranging] = useState(false);
   /** The side panel: the chart, or the comparison with another period. */
+  /** The growth panel's pick of parties that are report groups (area, zone ...): their heading is on a row of its own, so the rows under it are the ones let through. */
+  const [groupGate, setGroupGate] = useState<ReadonlySet<unknown> | null>(null);
   const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | "pivot" | null>(null);
   /** The side panel (Growth, Budget, Compare, Chart ...) shrunk to a strip so the grid has the room; opening another panel shows it again. */
   const [panelMin, setPanelMin] = useState(false);
@@ -236,6 +239,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** Whether a row passes the search and every column filter but `except` (the one whose list is being opened). */
   const passes = (row: OutputRow, except?: string) => {
     if (!filteredKind(row)) return true;
+    if (groupGate !== null && !groupGate.has(row)) return false;
     if (needle !== "" && !Object.values(row.values).some((value) => value.toUpperCase().includes(needle))) return false;
     if (activeFilters === 0) return true;
     return Object.entries(filters).every(([key, columnFilter]) => {
@@ -301,23 +305,53 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-  }, [output, tree, closed, groupStart, collapsed, needle, filters, activeFilters]);
+  }, [output, tree, closed, groupStart, collapsed, needle, filters, activeFilters, groupGate]);
   /** The column the chart filtered the grid on (its picked slice), which the chart itself does not apply. */
   const [chartFilter, setChartFilter] = useState<string | null>(null);
   /** The rows the filters and the search let through, whatever the tree or F6 hides (what the chart counts). */
   const passingIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row) ? [index] : []))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-    [output, needle, filters, activeFilters]);
+    [output, needle, filters, activeFilters, groupGate]);
   /** The same without the chart's own pick, so its donut stays whole and another slice can be picked. */
   const donutIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row, chartFilter ?? undefined) ? [index] : []))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-    [output, needle, filters, activeFilters, chartFilter]);
+    [output, needle, filters, activeFilters, chartFilter, groupGate]);
   /** A slice picked in the chart: the grid's column filtered to its value (null clears it). */
   const filterTo = (columnKey: string, value: string | null) => {
     setChartFilter(value === null ? null : columnKey);
     columnFilters.setFilters((current) => {
       const next = { ...current };
       if (value === null) delete next[columnKey]; else next[columnKey] = { values: [value] };
+      return next;
+    });
+  };
+  /** Several values picked in the growth panel (the parties that are new, up or down): the grid's column filtered to them (null clears it). */
+  const filterToMany = (columnKey: string, values: string[] | null) => {
+    // A pair of columns (salesman then area): the rows whose texts, put together as the growth panel does, are among the picked pairs.
+    if (columnKey.includes("")) {
+      setChartFilter(null);
+      if (values === null) { setGroupGate(null); return; }
+      const keys = columnKey.split("");
+      const wanted = new Set(values);
+      const grouped = withGroups(output).output.rows;
+      const text = (value: unknown) => { const trimmed = String(value ?? "").trim(); return trimmed === "" ? "(blank)" : trimmed; };
+      setGroupGate(new Set(output.rows.filter((_, index) => wanted.has(keys.map((key) => text(grouped[index]?.values[key])).join(" › ")))));
+      return;
+    }
+    if (columnKey.startsWith(GROUP_PREFIX)) {
+      if (values === null) { setGroupGate(null); return; }
+      const wanted = new Set(values);
+      const grouped = withGroups(output).output.rows;
+      setGroupGate(new Set(output.rows.filter((_, index) => wanted.has(String(grouped[index]?.values[columnKey] ?? "")))));
+      return;
+    }
+    setChartFilter(values === null ? null : columnKey);
+    // The growth panel names a party trimmed; the cells may hold it padded ("Mumbai   "): the filter is given the cells' own texts.
+    const wanted = values === null ? null : new Set(values.map((value) => value.trim()));
+    const raw = wanted === null ? null : [...new Set(output.rows.filter((row) => row.kind === "data").map((row) => row.values[columnKey] ?? "").filter((text) => wanted.has(text.trim())))];
+    columnFilters.setFilters((current) => {
+      const next = { ...current };
+      if (raw === null) delete next[columnKey]; else next[columnKey] = { values: raw.length > 0 ? raw : [...(values ?? [])] };
       return next;
     });
   };
@@ -1051,7 +1085,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={served} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterTo(columnKey, party) : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterToMany(columnKey, [party]) : undefined} onPickMany={filterable ? filterToMany : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setGroupGate(null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto, lastYear) => { const result = await loadCompare(from, upto, lastYear); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       </div>
@@ -1106,7 +1140,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         info={(
           <>
             <span className="rp-run-info"><span>{rowsText}</span><span>Time : {output.elapsed.replace(" Minutes ", " Min ").replace(" Seconds", " Sec")}</span></span>
-            {(search || activeFilters > 0) && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" title="Clear the search and every column filter" onClick={() => { setSearch(""); clearAllFilters(); setChartFilter(null); }}><Icon name="clear" /><HotkeyLabel text="Clear" hotkey="a" /></button>}
+            {(search || activeFilters > 0 || groupGate !== null) && <button type="button" data-hotkey="a" aria-keyshortcuts="Alt+A" className="mp-btn mp-btn-plain" title="Clear the search and every column filter" onClick={() => { setSearch(""); clearAllFilters(); setChartFilter(null); setGroupGate(null); }}><Icon name="clear" /><HotkeyLabel text="Clear" hotkey="a" /></button>}
             <label className="mp-search"><Icon name="search" /><input id="rp-search" type="search" placeholder="Search all columns (Ctrl+F)" value={search} onChange={(event) => { setSearch(event.target.value); setCursor({ row: 0, col: at.col }); setSelEnd(null); }} /></label>
           </>
         )}
