@@ -4,6 +4,7 @@ import { multiCompanyLedger } from "./multiCompanyLedger";
 import { missingNumber } from "./missingNumber";
 import { logReport } from "./logReport";
 import { queryReport } from "./queryReport";
+import { reminderReport } from "./reminderReport";
 import { multiCompanyProduct } from "./multiCompanyProduct";
 import { packingPlan } from "./packingPlan";
 import { productionInquiry } from "./productionInquiry";
@@ -160,6 +161,7 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 50: return logReport(loader, plan);
     case 98: return missingNumber(loader, plan);
     case 111: return queryReport(loader, plan);
+    case 67: return reminderReport(loader, plan);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey} is not available in the web version yet.`, "Not ported yet");
   }
 }

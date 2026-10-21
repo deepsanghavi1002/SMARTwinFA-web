@@ -3,6 +3,9 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-21 (REPORT > Extra Report > Reminder, report key 67)
+- New: `lib/report/reminderReport.ts`, `lib/report/reportStandard.ts`, `lib/report/reportFormating.ts`, `lib/report/setup.ts`. SP_FRT_RPT_REMINDER ported: REMINDER_FOR, REMINDER_DESC, REMINDER_DAY_BEFORE, REMINDER_DATE and USER of smart_system.reminder, by date then by what it is for. The procedure builds a period and an own-reminders-only condition for non-administrators but never adds it to its query, so (as on the desktop) every reminder of every operator is listed whatever the period.
+
 ## 2026-10-21 (Log out, screen saver lock, auto-logoff)
 - New: `features/startup/IdleGuard.tsx`, `app/api/unlock/route.ts`, `features/startup/StartupGate.tsx`, `app/page.tsx`, `app/globals.css`. The context strip has Lock and Log out. Log out asks (open windows close, unsaved work is lost) and returns to the login. Lock, or 10 minutes without a key or mouse move, covers the screen with a drifting clock while the windows stay open behind it; the operator's password (checked on the server against user_master with Read_pw; only yes/no returns) lifts it, with a Log out choice. Licences 5, 9, 89, 90 (300 s), 65, 66, 67, 72, 77 (60 s) and 17, 53, 60 (180 s) have Main_Menu_New's auto-logoff instead: that long idle logs the operator out without the lock.
 

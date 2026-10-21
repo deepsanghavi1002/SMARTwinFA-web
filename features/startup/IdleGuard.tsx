@@ -42,7 +42,7 @@ export function IdleGuard({ companyGroup, loginName, locked, onLock, onUnlock, o
     const timer = window.setInterval(() => {
       const idle = (Date.now() - last.current) / 1000;
       if (logoffAfter > 0) { if (idle >= logoffAfter) onLogoff(); }
-      else if (!lockedNow.current && idle >= SAVER_AFTER_SECONDS) onLock();
+      else if (!lockedNow.current && idle >= SAVER_AFTER_SECONDS) { last.current = Date.now(); onLock(); }
     }, 1000);
     return () => {
       for (const name of events) window.removeEventListener(name, touch, { capture: true });

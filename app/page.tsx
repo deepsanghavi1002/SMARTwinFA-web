@@ -222,7 +222,21 @@ function MainMenu() {
 
   /** The screen saver is up: the windows stay open behind it until the operator's password lifts it. */
   const [locked, setLocked] = useState(false);
-  const lock = useCallback(() => setLocked(true), []);
+  /** Lock needs the operator's screen saver password (USER_SCREEN_PW): none set, the desktop's message shows instead (nothing when the idle timer asks). */
+  const lockLoginName = selection?.loginName ?? "";
+  const lockWith = useCallback(async (silent: boolean) => {
+    try {
+      const response = await fetch("/api/unlock", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ action: "status", loginName: lockLoginName }) });
+      const body = await response.json() as { set?: boolean; error?: string };
+      if (!response.ok) throw new Error(body.error || "The screen saver password could not be checked");
+      if (body.set) setLocked(true);
+      else if (!silent) await messageBox.alert("Screen Saver Password Not Set... Please Input Screen Saver Password In User Password Menu", "Screen Saver", "warning");
+    } catch (reason) {
+      if (!silent) await messageBox.alert(reason instanceof Error ? reason.message : "The screen saver password could not be checked", "Screen Saver", "error");
+    }
+  }, [lockLoginName]);
+  const lock = useCallback(() => { void lockWith(true); }, [lockWith]);
+  const lockNow = () => { closeMenus(); void lockWith(false); };
   const unlock = useCallback(() => setLocked(false), []);
   /** Log out (also the auto-logoff and the lock's own Log out): the windows go with the screen. */
   const logoutNow = useCallback(() => { setLocked(false); startup?.logout(); }, [startup]);
@@ -775,7 +789,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         <span className="running" title={activeItem === "Home" ? "" : activeItem}>
           <span>{activeItem === "Home" ? "" : activeItem}</span>
         </span>
-        <MoreMenu onLock={lock} onLogout={() => void askLogout()} />
+        <MoreMenu onLock={lockNow} onLogout={() => void askLogout()} />
       </section>
 
       <section className={`work-area ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
