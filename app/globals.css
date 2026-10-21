@@ -1830,15 +1830,27 @@
 
 /* Screen saver / lock (features/startup/IdleGuard.tsx) */
 .saver{position:fixed;inset:0;z-index:2000;background:radial-gradient(circle at 50% 30%,#10243f,#050b14);color:#e8f1ff;outline:0;cursor:pointer}
-.saver-clock{position:absolute;display:grid;gap:4px;transition:left 2s ease,top 2s ease;user-select:none}
-.saver-clock b{font-size:clamp(56px,10vw,120px);font-weight:300;letter-spacing:.04em}
+.saver-clock{position:absolute;left:0;top:0;display:grid;gap:4px;padding:8px 14px;will-change:transform;user-select:none}
+.saver-clock b{font-size:clamp(48px,8vw,96px);font-weight:300;letter-spacing:.04em}
 .saver-clock span{font-size:clamp(14px,2vw,22px);opacity:.85}
 .saver-clock small{opacity:.55}
-.saver-box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(340px,calc(100vw - 32px));padding:22px;display:grid;gap:10px;border-radius:10px;background:#f4f8fc;color:#15283d;box-shadow:0 20px 60px #000a;cursor:default}
-.saver-box input{height:34px;padding:0 10px;border:1px solid #7a93ad;border-radius:5px;font-size:14px}
-.saver-box p{margin:0;color:#b3261e;font-size:12px}
-.saver-box div{display:flex;gap:8px;justify-content:flex-end}
-@media(prefers-reduced-motion:reduce){.saver-clock{transition:none}}
+.saver-box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(380px,calc(100vw - 32px));padding:34px 32px 26px;display:flex;flex-direction:column;align-items:center;gap:12px;border:1px solid #ffffff2e;border-radius:20px;background:linear-gradient(160deg,#ffffff24,#ffffff0d);box-shadow:0 30px 80px #000a,inset 0 1px #ffffff2e;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:#fff;cursor:default;animation:saver-pop .25s ease-out}
+.saver-logo{width:54px;height:54px;background:transparent url("/smartwinfa-logo.svg") center/contain no-repeat;filter:drop-shadow(0 6px 14px #1976d2aa)}
+.saver-avatar{width:68px;height:68px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(135deg,#2f79dc,#26a69a);box-shadow:0 8px 24px #1976d27a;font-size:28px;font-weight:700}
+.saver-box h2{margin:2px 0 0;font-size:22px;font-weight:700;letter-spacing:-.01em}
+.saver-box .saver-user{margin:0 0 6px;color:#b9cde8;font-size:13px;letter-spacing:.08em;text-transform:uppercase}
+.saver-field{width:100%;height:46px;padding:0 6px 0 14px;display:flex;align-items:center;gap:8px;border:1px solid #ffffff3d;border-radius:12px;background:#ffffff1a;transition:border-color .15s,box-shadow .15s}
+.saver-field:focus-within{border-color:#6fb1ff;box-shadow:0 0 0 3px #3b86d855}
+.saver-field input{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:#fff;font-size:14px}
+.saver-field input::placeholder{color:#b9cde8aa}
+.saver-eye{width:34px;height:34px;border:0;border-radius:8px;background:transparent;color:#fff;font-size:15px;cursor:pointer}
+.saver-eye:hover{background:#ffffff26}
+.saver-box .saver-error{width:100%;margin:0;padding:8px 12px;border-radius:8px;color:#ffd7d3;background:#d93a2f55;font-size:12px;text-align:center}
+.saver-unlock{width:100%;height:46px;border:0;border-radius:12px;color:#fff;background:linear-gradient(135deg,#2f79dc,#1557ba);box-shadow:0 8px 20px #1557ba7a;font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,filter .15s}
+.saver-unlock:hover:not(:disabled){filter:brightness(1.1)}.saver-unlock:active:not(:disabled){transform:translateY(1px)}.saver-unlock:disabled{opacity:.7;cursor:progress}
+.saver-logout{border:0;background:transparent;color:#b9cde8;font-size:12px;text-decoration:underline;cursor:pointer}.saver-logout:hover{color:#fff}
+@keyframes saver-pop{from{opacity:0;transform:translate(-50%,-47%)}to{opacity:1;transform:translate(-50%,-50%)}}
+@media(prefers-reduced-motion:reduce){.saver-box{animation:none}}
 
 /* ⋮ menu at the right of the context strip (view, lock, log out) */
 .more-menu{position:relative;padding:0 6px!important;flex-shrink:0!important;overflow:visible!important}

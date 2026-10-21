@@ -62,9 +62,39 @@ function ScreenSaver({ loginName, onUnlock, onLogoff }: { loginName: string; onU
   const [asking, setAsking] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const box = useRef<HTMLInputElement>(null);
   const cover = useRef<HTMLDivElement>(null);
+  const clock = useRef<HTMLDivElement>(null);
+
+  // The clock travels across the screen and bounces off its edges (so it never rests on one place of the screen). It moves whatever the system's reduced-motion setting says: that is what a screen saver is for.
+  useEffect(() => {
+    if (asking) return;
+    const element = clock.current;
+    if (!element) return;
+    let x = Math.random() * Math.max(1, window.innerWidth - element.offsetWidth);
+    let y = Math.random() * Math.max(1, window.innerHeight - element.offsetHeight);
+    let dx = Math.random() < 0.5 ? 1 : -1;
+    let dy = Math.random() < 0.5 ? 1 : -1;
+    const speed = 60; // pixels a second
+    let before = performance.now();
+    let frame = 0;
+    const step = (time: number) => {
+      const seconds = Math.min(0.1, (time - before) / 1000);
+      before = time;
+      const maxX = Math.max(0, window.innerWidth - element.offsetWidth);
+      const maxY = Math.max(0, window.innerHeight - element.offsetHeight);
+      x += dx * speed * seconds;
+      y += dy * speed * seconds;
+      if (x <= 0) { x = 0; dx = 1; } else if (x >= maxX) { x = maxX; dx = -1; }
+      if (y <= 0) { y = 0; dy = 1; } else if (y >= maxY) { y = maxY; dy = -1; }
+      element.style.transform = `translate(${x}px, ${y}px)`;
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [asking]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -96,16 +126,12 @@ function ScreenSaver({ loginName, onUnlock, onLogoff }: { loginName: string; onU
     }
   }, [busy, loginName, password, onUnlock]);
 
-  // The clock drifts: a new place every half minute (so the cover never keeps one image on the screen).
-  const slot = Math.floor(now.getTime() / 30000);
-  const left = 10 + ((slot * 37) % 55);
-  const top = 12 + ((slot * 53) % 55);
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the whole cover wakes to the password box on any click or key
     <div ref={cover} className="saver" role="dialog" aria-modal="true" aria-label="Screen locked" tabIndex={-1}
       onPointerDown={() => setAsking(true)} onKeyDown={(event) => { if (!asking && event.key !== "Tab") setAsking(true); }}>
       {!asking && (
-        <div className="saver-clock" style={{ left: `${left}%`, top: `${top}%` }}>
+        <div className="saver-clock" ref={clock}>
           <b>{pad(now.getHours())}:{pad(now.getMinutes())}</b>
           <span>{now.toLocaleDateString(undefined, { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</span>
           <small>Locked — click or press a key</small>
@@ -113,14 +139,18 @@ function ScreenSaver({ loginName, onUnlock, onLogoff }: { loginName: string; onU
       )}
       {asking && (
         <form className="saver-box" onPointerDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void unlock(); }}>
-          <strong>SMARTwinFA is locked</strong>
-          <span>User: {loginName}</span>
-          <input ref={box} type="password" autoComplete="current-password" aria-label="Password" placeholder="Password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} />
-          {error && <p role="alert">{error}</p>}
-          <div>
-            <button type="submit" className="mp-btn mp-btn-green" disabled={busy}>Unlock</button>
-            <button type="button" className="mp-btn mp-btn-red" disabled={busy} onClick={onLogoff} title="Log out (unsaved work is lost)">Log out</button>
-          </div>
+          <div className="saver-logo" role="img" aria-label="SMARTwinFA" />
+          <div className="saver-avatar" aria-hidden="true">{loginName.trim().charAt(0).toUpperCase() || "?"}</div>
+          <h2>Screen Locked</h2>
+          <p className="saver-user">{loginName}</p>
+          <label className="saver-field">
+            <span aria-hidden="true">🔒</span>
+            <input ref={box} type={show ? "text" : "password"} autoComplete="current-password" aria-label="Password" placeholder="Enter screen saver password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} />
+            <button type="button" className="saver-eye" tabIndex={-1} aria-label={show ? "Hide password" : "Show password"} onClick={() => setShow((current) => !current)}>{show ? "🙈" : "👁"}</button>
+          </label>
+          {error && <p className="saver-error" role="alert">{error}</p>}
+          <button type="submit" className="saver-unlock" disabled={busy}>{busy ? "Checking…" : "Unlock"}</button>
+          <button type="button" className="saver-logout" disabled={busy} onClick={onLogoff} title="Log out (unsaved work is lost)">Log out instead</button>
         </form>
       )}
     </div>
