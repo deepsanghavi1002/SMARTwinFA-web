@@ -218,6 +218,32 @@ function defaultDate(entryId: number, name: string, session: MasterSession, now:
   return formatDesktopDate(session.tarikh1);
 }
 
+/** Small entry 9: LYACCOUNT_OUTSTANDING (Last Year Account Outstanding). */
+const LY_OUTSTANDING = 9;
+
+/**
+ * Last Year Account Outstanding's Series list for each Book entry (a book account): the series (BOOK_NUMBER) of the year that are for the
+ * book's side or for both (BN_DBCODE = side or 0), start and end inside the year, and belong to the book's setup (BN_ID is a BOOK_SETUP
+ * record of the book's account). |SYS.cmb_SmallEntry1| is the header's Select Option: Sale 2, any other 1. Each Book entry carries its
+ * series (their id and text, see seriesKey) in `series`.
+ */
+/** One series: BN_ID is shared by a book's debit-side and credit-side series, so the series' own text goes with it. */
+export const seriesKey = (id: string, series: string) => `${id}|${series.trim()}`;
+
+async function withSeries(loader: Loader, context: SysContext, books: readonly EntryOption[]): Promise<EntryOption[]> {
+  const db = `${loader.session.companySchema}.`;
+  const side = (context.state.controls.cmb_smallentry1 ?? "").trim().toUpperCase() === "SALE" ? 2 : 1;
+  const period = [formatDesktopDate(loader.session.tarikh1), formatDesktopDate(loader.session.tarikh2)];
+  const out: EntryOption[] = [];
+  for (const book of books) {
+    const rows = (await loader.readTable(
+      `SELECT bn_series, bn_id FROM ${db}book_number WHERE bn_pos <> 'D' AND (bn_dbcode = $1 OR bn_dbcode = 0) AND bn_from >= $2::date AND bn_upto <= $3::date`
+      + ` AND bn_id IN (SELECT bs_rec FROM ${db}book_setup WHERE book_code = $4)`, [side, period[0], period[1], toInt(book.value)])) ?? [];
+    out.push({ ...book, series: rows.map((row) => seriesKey(toText(displayValue(field(row, "bn_id"))), text(row, "bn_series"))) });
+  }
+  return out;
+}
+
 export async function loadEntry(loader: Loader, entryName: string, menuShortName: string, now = new Date()): Promise<EntryDefinition> {
   const { session } = loader;
   const properties = await entryProperties(loader, entryName);
@@ -563,7 +589,10 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
     const column = { ...setupColumn, caption: properHeading(setupColumn.caption), ...(isBoolean ? { boolean: true } : {}) };
     const row = [...plan.body].reverse().find((item) => item.column.toLowerCase() === key.toLowerCase())?.row;
     if (!column.editable || !row || !["F", "L", "Q", "X"].includes(text(row, "combo_value").toUpperCase())) return column;
-    return { ...column, options: await controlOptions(loader, row, plan.context) };
+    const options = await controlOptions(loader, row, plan.context);
+    // Last Year Account Outstanding: the Series list of a Book entry (Small_Entry's LYOUT_BOOK_SERIES with the Book's account as |SYS.GRID_VALUE|).
+    if (plan.entryId === LY_OUTSTANDING && key.toLowerCase() === "book") return { ...column, options: await withSeries(loader, plan.context, options) };
+    return { ...column, options };
   })());
   const rows = plan.blank
     ? Array.from({ length: BLANK_ROWS }, () => Object.fromEntries(keys.map((key) => [key, ""])))

@@ -249,12 +249,6 @@ export function StartupGate({ children }: { children: ReactNode }) {
   };
   const canContinue = Boolean(selectedYear && selectedCompany?.available);
 
-  const viewButton = (
-    <button className={`view-switch ${modernView ? "modern-active" : "legacy-active"}`} type="button" onClick={() => setModernView((current) => !current)} aria-label={modernView ? "Switch to legacy view" : "Switch to modern view"}>
-      <span>Legacy</span>
-      <span>Modern</span>
-    </button>
-  );
   const viewModeValue = useMemo(() => ({ modernView, setModernView }), [modernView]);
 
   if (stage === "ready" && operator && selectedYear && selectedCompany) {
@@ -301,7 +295,6 @@ export function StartupGate({ children }: { children: ReactNode }) {
       <ThemeProvider theme={modernTheme}>
         <CssBaseline />
         <div className="view-mode modern-view">
-          {viewButton}
           <Box
             sx={{
               minHeight: "100vh",
@@ -537,7 +530,6 @@ export function StartupGate({ children }: { children: ReactNode }) {
   return (
     <ViewModeContext.Provider value={viewModeValue}>
       <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>
-        {viewButton}
         <main className="startup-desktop">
           {stage === "login" ? <section className="login-window" aria-label="User login screen">
             <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
