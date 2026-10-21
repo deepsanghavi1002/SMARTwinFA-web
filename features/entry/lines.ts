@@ -91,6 +91,8 @@ function defaultTax(book: BookScreen, column: EntryColumn | undefined, product: 
 export function chooseProduct(line: Line, product: ProductChoice, context: Context, slab: readonly SlabRow[]): Line {
   const same = line.product?.key === product.key;
   const cells: Record<string, string> = same ? { ...line.cells } : {};
+  // The +/- mark (a stock register's rows going in or out) belongs to the row, not to the product in it.
+  if (!same && line.cells.prod_return !== undefined) cells.prod_return = line.cells.prod_return;
   cells.prod_key = product.short;
   cells.prod_desc = product.desc;
   cells.stock_1 = product.stock1;
