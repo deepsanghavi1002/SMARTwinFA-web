@@ -242,12 +242,17 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
       book = await bookContext(loader, entryName, firstCombo);
     }
   }
-  if (!book.values.bookActual) throw new Error("Opening a stock register's entry (process) is not ported yet; only account books (sale, purchase ...) open.");
+  // A stock register's entry (Job Stock In / Out ...) is a process row, not a ledger row: its unique key is process_key.
+  const stock = !book.values.bookActual;
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
-  const header = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_01_LEDGER")).replace(/\|sys\.@pkval_1\|/gi, String(uniqueKey))), book.values)))?.[0];
+  const headerSql = stock
+    ? (await restoreQuery(loader, "RESTINV_01_PROCESS")).replace(/\|sys\.process_key\|/gi, String(uniqueKey))
+    : (await restoreQuery(loader, "RESTINV_01_LEDGER")).replace(/\|sys\.@pkval_1\|/gi, String(uniqueKey));
+  const header = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(headerSql), book.values)))?.[0];
   if (!header) throw new Error("The entry is not found (deleted, or not posted)");
-  const ledKey = toInt(field(header, "led_key"));
+  // The key the product, slab and addon rows hang on: led_key for an account book, process_key for a stock register.
+  const ledKey = stock ? uniqueKey : toInt(field(header, "led_key"));
 
   const controls = (await loader.readTable(`SELECT control_name, field_name FROM ${SETUP_SCHEMA}.entry_control WHERE entry_id = $1 AND add_active AND BTRIM(field_restore_queryid) = 'RESTINV_01_LEDGER'`, [entryId])) ?? [];
   const values: Record<string, string> = {};
@@ -258,17 +263,19 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     values[name] = controlValue(field(header, column));
   }
   const partyCode = toInt(field(header, "code"));
-  const addressId = toInt(field((await loader.readTable(`SELECT ent_address_id FROM |sys.db|ledger WHERE unique_key = $1 LIMIT 1`, [uniqueKey]))?.[0], "ent_address_id"));
+  const addressId = stock ? toInt(field(header, "ent_address_id")) : toInt(field((await loader.readTable(`SELECT ent_address_id FROM |sys.db|ledger WHERE unique_key = $1 LIMIT 1`, [uniqueKey]))?.[0], "ent_address_id"));
   values.tbx_partyname = text(header, "name").trim();
   const docDate = values.dtp_date ?? "";
   const { taxGroup } = partyCode > 0 ? await partyTaxGroup(loader, partyCode, docDate) : { taxGroup: (loader.session.coGstReq ? "G" : "V") as "G" | "I" | "V" };
 
   // Product rows.
   const products = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_02_PRODLEDGER"))
-    .replace(/\|sys\.query\.@pkval_1\|/gi, `pled.led_id=${ledKey}`).replace(/\|sys\.query\.@pkilval_1\|/gi, "")), book.values))) ?? [];
+    .replace(/\|sys\.query\.@pkval_1\|/gi, stock ? `pled.process_id=${ledKey}` : `pled.led_id=${ledKey}`).replace(/\|sys\.query\.@pkilval_1\|/gi, "")
+    // Job Stock In / Out show the rows by stock nature first (the received / issued lists).
+    .replace("order by pled.il_serial", stock && /^JOB-/i.test(book.row ? text(book.row, "stkm_short") : "") ? "order by pled.stock_nat,pled.il_serial" : "order by pled.il_serial")), book.values))) ?? [];
   const stockNat = book.stockNat === "A" ? "A" : "L";
   const ext = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_03_SLAB"))
-    .replace(/\|sys\.query\.@pkval_3\|/gi, `ledext.led_id=${ledKey}`)), book.values))) ?? [];
+    .replace(/\|sys\.query\.@pkval_3\|/gi, stock ? `ledext.process_id=${ledKey}` : `ledext.led_id=${ledKey}`)), book.values))) ?? [];
   const itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>> = {};
   const slab: Record<number, { perc: string; amount: string }> = {};
   const slabTax: Record<number, number> = {};
@@ -286,7 +293,10 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     cells.uomentry_id = text(row, "qtyuom_desc").trim();
     cells.rateuom_id = text(row, "rateuom_desc").trim();
     cells._il_key = String(toInt(field(row, "il_key")));
-    const choice = choiceFrom({ ...row, qtyless_short: cells.uomentry_id, qtyadd_short: cells.uomentry_id, rateless_short: cells.rateuom_id, rateadd_short: cells.rateuom_id, product_tax_perc: field(row, "tax_perc") }, stockNat, {
+    // A stock register whose rows go either way: the +/- column shows each row's own direction.
+    const rowNat = stock && book.stockNatBoth ? (text(row, "stock_nat") === "L" ? "L" : "A") : stockNat;
+    if (stock && book.stockNatBoth) cells.prod_return = rowNat === "L" ? "-" : "+";
+    const choice = choiceFrom({ ...row, qtyless_short: cells.uomentry_id, qtyadd_short: cells.uomentry_id, rateless_short: cells.rateuom_id, rateadd_short: cells.rateuom_id, product_tax_perc: field(row, "tax_perc") }, rowNat, {
       key: toInt(field(row, "prod_id")),
     });
     return { cells, product: choice };
@@ -294,7 +304,8 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
 
   // Account addons (addon_aentry: txt_<fiel_save> by the addon's key).
   const addon: Record<number, string> = {};
-  const addonRow = (await loader.readTable(replaceEntryTokens((await restoreQuery(loader, "RESTINV_04_ADDON")).replace(/\|sys\.@pkval_1\|/gi, String(ledKey)), book.values)))?.[0];
+  const addonSql = (await restoreQuery(loader, "RESTINV_04_ADDON")).replace(/\|sys\.@pkval_1\|/gi, String(ledKey));
+  const addonRow = (await loader.readTable(replaceEntryTokens(stock ? addonSql.replace(/aona_ledid\s*=/i, "aona_processid =").replace(/aona_recid\s*=\s*'L'/i, "aona_recid = 'P'") : addonSql, book.values)))?.[0];
   if (addonRow) {
     const fields = (await loader.readTable(`SELECT fiel_key, fiel_save, fiel_type FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D'`)) ?? [];
     for (const item of fields) {

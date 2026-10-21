@@ -42,6 +42,8 @@ export type ControlPlace = "T" | "B" | "E";
 export type InvoiceControl = Readonly<{
   /** control_name, lowercase: cmb_series, dtp_date, tbx_number, tbx_partyname ... */
   name: string;
+  /** The foot box the TDS auto journal shows as "TDS Amount" (the screen shows it only for a party that deducts TDS). */
+  tds?: boolean;
   label: string;
   /** CB a list, DT a date, TB a text box. */
   type: "CB" | "DT" | "TB";
@@ -132,6 +134,8 @@ export type BookScreen = Readonly<{
   decimals: Readonly<{ qty: number; factor: number; rate: number; value: number }>;
   /** str_Stock_nat: A stock comes in (purchase), L goes out (sale). */
   stockNat: string;
+  /** A stock register whose rows go either way (Job Stock In / Out ...): each row carries "+" (in) or "-" (out) in the +/- column. */
+  stockNatBoth: boolean;
   warnings: readonly string[];
 }>;
 

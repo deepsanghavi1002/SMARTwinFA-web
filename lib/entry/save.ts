@@ -6,6 +6,8 @@ import { round, stockUnits, toNumber } from "./calc";
 import { bookContext, entryProperties, loadBook, partyDetails, seriesDefaults } from "./invoice";
 import type { BookContext } from "./invoice";
 import { productChoice } from "./products";
+import { TDS_PURCHASE_LIMIT, tdsBook, tdsInfo, tdsJournal } from "./tds";
+import { BOOK } from "./values";
 import { replaceEntryTokens } from "./values";
 import type { EntryValues } from "./values";
 import type { BookScreen, EntryOption, SlabRow } from "./types";
@@ -49,7 +51,7 @@ export type SaveInput = Readonly<{
 
 /** One statement of the plan. An insert names its key column so a dry run can number it without touching the sequence. */
 export type Statement =
-  | Readonly<{ kind: "insert"; table: string; /** Another schema than the company's (the _biglog one). */ schema?: string; keyColumn?: string; columns: string[]; values: string[]; capture?: "pkval_1" | "pkval_2" | "pkval_3"; /** The product row this insert makes: its key can be named as @il_N later. */ ilLine?: number; label: string }>
+  | Readonly<{ kind: "insert"; table: string; /** Another schema than the company's (the _biglog one). */ schema?: string; keyColumn?: string; columns: string[]; values: string[]; capture?: "pkval_1" | "pkval_2" | "pkval_3" | "jv_1" | "jv_2"; /** The product row this insert makes: its key can be named as @il_N later. */ ilLine?: number; label: string }>
   | Readonly<{ kind: "sql"; sql: string; label: string }>
   | Readonly<{ kind: "set"; key: "pkval_1" | "pkval_2" | "pkval_3"; value: number; ilLine?: number; label: string }>;
 
@@ -118,6 +120,12 @@ type Ctx = {
   addonRows: { save: string; type: string; value: string; key: number }[];
   uomKey: (short: string) => number;
   uomRound: (key: number) => number;
+  /** A stock register's entry (process), not an account book's (ledger). */
+  stock: boolean;
+  /** Job Stock Out / In: which one decides, for each row, whether it moves stock (inventory Y / N). */
+  jobMode: "OUT" | "IN" | "";
+  /** An expense / agency book: the expense account chosen in Exp. Name (|sys.exp_code|), 0 when none. */
+  expCode: number;
 };
 
 type Rule = Row;
@@ -128,6 +136,8 @@ async function loadRules(loader: Loader, entryId: number, mode: "A" | "E"): Prom
 }
 
 /** The book-key list a rule is saved for (save_only_forbook: " 8, 9, 10,"). */
+/** The book a save rule is chosen by: a stock register (Job Stock In / Out ...) by its own book (int_type), an account book by its book key. */
+const ruleBook = (values: Pick<EntryValues, "bookActual" | "type" | "bookKey">) => (!values.bookActual && values.type > 0 ? values.type : values.bookKey);
 const savedForBook = (rule: Rule, bookKey: number) => {
   const list = text(rule, "save_only_forbook");
   return list === "" || list.includes(` ${bookKey},`) || list.startsWith(`${bookKey},`) || list.replace(/ /g, "").split(",").includes(String(bookKey));
@@ -165,7 +175,7 @@ function sysLiteral(ctx: Ctx, name: string, grid?: { il?: Record<string, number 
     case "book_code": return values.bookCode === 0 ? "null" : String(values.bookCode);
     case "ag_book": return String(values.agBook);
     case "ag_bkcode": return values.agCode === 0 ? "null" : String(values.agCode);
-    case "entry_book_code": return String(values.bookCode);
+    case "entry_book_code": return String((values.bookKey === BOOK.AGENCY || values.bookKey === BOOK.EXPENSE) && ctx.expCode > 0 ? ctx.expCode : values.bookCode);
     case "type": return String(values.type);
     case "blank": return "''";
     case "null": return "null";
@@ -180,12 +190,12 @@ function sysLiteral(ctx: Ctx, name: string, grid?: { il?: Record<string, number 
     case "doc_date": return dateLiteral(ctx.docDate);
     case "doc_chlndate": return dateLiteral(ctx.chlnDate);
     case "chln_date": return dateLiteral(ctx.chlnDate);
-    case "stock_nat": return quote(ctx.stockNat);
-    case "stock_nat1": return quote(ctx.stockNat === "A" ? "L" : "A");
+    case "stock_nat": return quote(typeof grid?.il?._nat === "string" ? grid.il._nat : ctx.stockNat);
+    case "stock_nat1": return quote((typeof grid?.il?._nat === "string" ? grid.il._nat : ctx.stockNat) === "A" ? "L" : "A");
     case "ac_code": return ctx.input.party.code === 0 ? "null" : String(ctx.input.party.code);
     case "ac_book": return String(ctx.partyBook);
     case "full_docno": return quote(ctx.fullDocNo);
-    case "inventory": return quote(book.inventory ? "Y" : "N");
+    case "inventory": return quote(typeof grid?.il?._inv === "string" ? grid.il._inv : book.inventory ? "Y" : "N");
     case "entry_short": return quote(!bookActual && book.stkmToShort !== "" ? book.stkmToShort : values.stkmShort);
     case "stkm_short": return quote(values.stkmShort);
     case "stkm_id": return quote(book.stkmId);
@@ -199,7 +209,7 @@ function sysLiteral(ctx: Ctx, name: string, grid?: { il?: Record<string, number 
     case "narration": return quote((ctx.input.values.tbx_narration ?? "").trim());
     case "time": case "last_savetime": return quote(timeText(ctx.now));
     case "doc_no": return quote(ctx.number);
-    case "exp_code": return "null";
+    case "exp_code": return ctx.expCode > 0 ? String(ctx.expCode) : "null";
     case "il_div": return grid?.il?.il_div !== undefined && Number(grid.il.il_div) > 0 ? String(grid.il.il_div) : "null";
     case "address_id": return String(ctx.input.party.addressId && ctx.input.party.addressId > 0 ? Math.trunc(ctx.input.party.addressId) : 1);
     case "machine_name": return quote("WEB");
@@ -379,7 +389,8 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   const { session } = loader;
   const warnings: string[] = [];
   const book = await bookContext(loader, entryName, firstCombo);
-  if (!book.values.bookActual) throw new Error("Saving a stock register entry is not ported yet; only account books (Sale, Purchase ...) save");
+  // A stock register's entry (Job Stock In / Out ...) is saved to process (its unique key is process_key) with its product rows; no ledger, no postings.
+  const stock = !book.values.bookActual;
   const screen = await loadBook(loader, entryName, firstCombo, input.taxGroup);
   const entryId = toInt(field(await entryProperties(loader, entryName), "entry_key"));
 
@@ -393,12 +404,20 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
 
   // Edit: the opened invoice, found by its unique_key; a locked one (doc_lock Y) cannot be changed.
   const mode: "A" | "E" = (input.editKey ?? 0) > 0 ? "E" : "A";
-  const editLed = mode === "E" ? (await loader.readTable(`SELECT * FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos = 'A' AND book = $2`, [input.editKey, book.values.bookKey]))?.[0] : undefined;
+  const stockModule = text(book.row, "stkm_short");
+  const editLed = mode === "E"
+    ? (stock
+      ? (await loader.readTable(`SELECT * FROM |sys.db|process WHERE process_key = $1 AND il_pos = 'A' AND BTRIM(stk_module) = $2`, [input.editKey, stockModule]))?.[0]
+      : (await loader.readTable(`SELECT * FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos = 'A' AND book = $2`, [input.editKey, book.values.bookKey]))?.[0])
+    : undefined;
   if (mode === "E" && !editLed) throw new Error("The invoice to change was not found: it may have been deleted");
-  if (mode === "E" && text(editLed, "doc_lock").toUpperCase() === "Y") throw new Error("Current Entry Lock...  Changes Save not Allowed....");
-  const ledKey = mode === "E" ? toInt(field(editLed, "led_key")) : 0;
+  if (mode === "E" && !stock && text(editLed, "doc_lock").toUpperCase() === "Y") throw new Error("Current Entry Lock...  Changes Save not Allowed....");
+  // The key the product, slab and addon rows hang on: led_key, or process_key for a stock register.
+  const ledKey = mode === "E" ? toInt(field(editLed, stock ? "process_key" : "led_key")) : 0;
   // Duplicate guard: Save's "select @pkval_1=COUNT(*) ... where full_docno" check (the invoice being changed does not count).
-  const taken = async (docNo: string) => Boolean(await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE full_docno = $1 AND doc_pos = 'A' AND book = $2 AND doc_date BETWEEN $3 AND $4 AND led_key <> $5`, [docNo, book.values.bookKey, session.tarikh1, session.tarikh2, ledKey]));
+  const taken = async (docNo: string) => Boolean(stock
+    ? await loader.readTable(`SELECT process_key FROM |sys.db|process WHERE full_docno = $1 AND il_pos = 'A' AND BTRIM(stk_module) = $2 AND p_date BETWEEN $3 AND $4 AND process_key <> $5`, [docNo, stockModule, session.tarikh1, session.tarikh2, ledKey])
+    : await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE full_docno = $1 AND doc_pos = 'A' AND book = $2 AND doc_date BETWEEN $3 AND $4 AND led_key <> $5`, [docNo, book.values.bookKey, session.tarikh1, session.tarikh2, ledKey]));
   // The save lock is already held (the route takes it first), so what is read here is what every earlier save committed.
   // A new invoice whose number was taken meanwhile (another user saved it first) is given the next number after the highest.
   let renumberedFrom = "";
@@ -430,12 +449,14 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     checked.push(base);
     lines.push({ cells: { ...line.cells }, product, il: {} });
   }
-  if (lines.length === 0) throw new Error("Total of All Product can not be Zero Value");
+  // A book with no product rows (agency / expense bills typed in the slab grid) works on the slab's amount alone.
+  if (lines.length === 0 && book.inventory) throw new Error("Total of All Product can not be Zero Value");
   const result = slabFromLines(screen, slabRows, checked);
   const finalAmount = round(result.final, 2);
   if (Math.abs(finalAmount - toNumber(input.finalAmount)) > 0.005) throw new Error(`The final amount ${input.finalAmount} differs from the ${finalAmount} the server works out`);
   const prodAmount = result.amounts[0] ?? 0;
-  if (mode === "E") {
+  if (lines.length === 0 && finalAmount <= 0) throw new Error("Total of All Product can not be Zero Value");
+  if (mode === "E" && !stock) {
     const own = (await loader.readTable(`SELECT out_setoff::numeric AS setoff, out_ly_setoff::numeric AS ly FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) = 0 ORDER BY out_key LIMIT 1`, [ledKey]))?.[0];
     const settled = toDecimal(field(own, "setoff")) + toDecimal(field(own, "ly"));
     if (own && finalAmount < settled) throw new Error(`The amount cannot be below what is already set off against this bill (${settled})`);
@@ -446,11 +467,13 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   let acDbcode = book.values.acDbcode;
   if (finalAmount < 0 && book.values.bookKey === 8) { bkDbcode = 1; acDbcode = 2; }
   const slabMaster = (await loader.readTable(`SELECT slab_key, slab_accode FROM |sys.db|slab_master`)) ?? [];
+  const taxAccounts = new Map(((await loader.readTable(`SELECT tax_rec, tax_accode FROM |sys.db|tax_master`)) ?? []).map((row) => [toInt(field(row, "tax_rec")), toInt(field(row, "tax_accode"))]));
   const slab: SlabGridRow[] = slabRows.map((row, index) => {
     const amount = result.amounts[index] ?? 0;
     const option = row.master && !row.itemWise ? row.options?.find((candidate) => candidate.text === row.perc) : undefined;
     const taxRec = option ? toInt(option.value) : 0;
-    const accountOf = toInt(field(slabMaster.find((candidate) => toInt(field(candidate, "slab_key")) === row.key), "slab_accode"));
+    // A tax row's account is the chosen tax's own (tax_master.tax_accode), else the slab's.
+    const accountOf = (taxRec > 0 ? taxAccounts.get(taxRec) ?? 0 : 0) || toInt(field(slabMaster.find((candidate) => toInt(field(candidate, "slab_key")) === row.key), "slab_accode"));
     const postDb = bkDbcode === 1 ? (row.mathOp === "A" && amount >= 0 ? 1 : 2) : (row.mathOp === "A" && amount >= 0 ? 2 : 1);
     return {
       key: row.key, mathOp: row.mathOp, master: row.master, itemWise: row.itemWise, amount, runTotal: result.runTotals[index] ?? 0,
@@ -476,6 +499,8 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   const ctx: Ctx = {
     loader, book, screen, input, now, values, series, number, docDate, chlnDate, fullDocNo, finalAmount, prodAmount, bkDbcode, acDbcode,
     stockNat: book.stockNat === "A" ? "A" : "L", slab, lines, bookNumber, mode, aonaKey: 0, partyBook, bookAmount: finalAmount, addonRows, uomKey, uomRound,
+    expCode: toInt(screen.controls.find((control) => control.name === "cmb_ac_exp_name")?.options.find((option) => option.text === (input.values.cmb_ac_exp_name ?? "") || option.value === (input.values.cmb_ac_exp_name ?? ""))?.value),
+    stock, jobMode: book.stockNatBoth ? (values.stkmShort === "JOB-OUT" ? "OUT" : values.stkmShort === "JOB-IN" || values.stkmShort === "LJOUT-IN" ? "IN" : "") : "",
   };
 
   // The cells as the screen shows them (the special log writes these), before the uom texts become keys below.
@@ -494,6 +519,14 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     const trn = stockUnits(toNumber(cells.quantity), toNumber(cells.factor), entryUom, rateUom, line.product.units, uomRound(rateUom), copyBundle ? (cells.bundle ?? "0") : null);
     for (const [key, value] of Object.entries(trn)) cells[key] = String(value);
     line.il = trn;
+    // A stock register whose rows go either way: the +/- mark gives the row its direction (- is out), and a Job Stock row moves
+    // stock only on the side the desktop's |sys.inventory| names (Job Out: the - rows; Job In: the + rows).
+    if (book.stockNatBoth) {
+      const mark = (cells.prod_return ?? "").trim();
+      const nat = mark === "-" ? "L" : mark === "+" ? "A" : (cells.stock_nat ?? "").trim() === "L" ? "L" : "A";
+      cells.stock_nat = nat;
+      line.il = { ...trn, _nat: nat, ...(ctx.jobMode === "OUT" ? { _inv: nat === "A" ? "N" : "Y" } : ctx.jobMode === "IN" ? { _inv: nat === "L" ? "N" : "Y" } : {}) };
+    }
     if (toNumber(cells.il_div) > 0) line.il.il_div = toNumber(cells.il_div);
   });
 
@@ -503,12 +536,12 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   const presetKeys: Record<string, number> = {};
   const oldIl = new Map<number, Row>();
   if (mode === "E") {
-    presetKeys.pkval_1 = ledKey;
-    ctx.aonaKey = toInt(field((await loader.readTable(`SELECT aona_key FROM |sys.db|addon_aentry WHERE aona_ledid = $1 ORDER BY aona_key LIMIT 1`, [ledKey]))?.[0], "aona_key"));
-    for (const row of (await loader.readTable(`SELECT il_key FROM |sys.db|prod_ledger WHERE led_id = $1 AND il_pos = 'A'`, [ledKey])) ?? []) oldIl.set(toInt(field(row, "il_key")), row);
+    presetKeys[stock ? "pkval_3" : "pkval_1"] = ledKey;
+    ctx.aonaKey = toInt(field((await loader.readTable(`SELECT aona_key FROM |sys.db|addon_aentry WHERE ${stock ? "aona_processid" : "aona_ledid"} = $1 ORDER BY aona_key LIMIT 1`, [ledKey]))?.[0], "aona_key"));
+    for (const row of (await loader.readTable(`SELECT il_key FROM |sys.db|prod_ledger WHERE ${stock ? "process_id" : "led_id"} = $1 AND il_pos = 'A'`, [ledKey])) ?? []) oldIl.set(toInt(field(row, "il_key")), row);
     // The old postings come off first (Save_CodePost's "first delete all existing ledger_post of the led_key"); the slab rows go and are written again.
-    statements.push(...(await reversal(loader, ledKey, session.yearId)));
-    statements.push({ kind: "sql", label: "old slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE led_id = ${ledKey}` });
+    statements.push(...(await reversal(loader, ledKey, session.yearId, stock)));
+    statements.push({ kind: "sql", label: "old slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE ${stock ? "process_id" : "led_id"} = ${ledKey}` });
     for (const line of lines) {
       const key = toInt(line.cells._il_key);
       if (key > 0 && !oldIl.has(key)) throw new Error("A product row does not belong to this invoice");
@@ -517,7 +550,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
   // ---- The Outstanding tab: what this entry sets off against the party's pending bills (c1dg_OutClear, save_order 8)
   const wanted = (input.setoffs ?? []).map((item) => ({ outKey: Number(item.outKey), amount: String(round(toNumber(item.amount), 2)) })).filter((item) => toNumber(item.amount) > 0);
   if (wanted.some((item) => !Number.isInteger(item.outKey) || item.outKey <= 0)) throw new Error("A set-off bill is not valid");
-  const setoffRule = rules.some((rule) => text(rule, "grid_name").toLowerCase() === "c1dg_outclear" && field(rule, "multiple_save") === true && savedForBook(rule, book.values.bookKey));
+  const setoffRule = rules.some((rule) => text(rule, "grid_name").toLowerCase() === "c1dg_outclear" && field(rule, "multiple_save") === true && savedForBook(rule, ruleBook(book.values)));
   if (wanted.length > 0 && !setoffRule) throw new Error("This register does not set off outstanding bills");
   const oldSetoff = new Map<number, number>();
   if (mode === "E") {
@@ -554,7 +587,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     const table = text(first, "table_name").toUpperCase();
     const queryType = text(first, mode === "A" ? "query_add_type" : "query_update_type").toUpperCase();
     if (queryType === "S") continue;
-    if (!savedForBook(first, book.values.bookKey)) continue;
+    if (!savedForBook(first, ruleBook(book.values))) continue;
     if (logfileOff && table.includes("LOG_")) continue;
     const gridName = text(first, "grid_name").toLowerCase();
     const multiple = field(first, "multiple_save") === true;
@@ -601,7 +634,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
           const rowStart = statements.length;
           for (const group of groups(set)) {
             const head = group[0];
-            if (!savedForBook(head, book.values.bookKey)) continue;
+            if (!savedForBook(head, ruleBook(book.values))) continue;
             if (text(head, "codepost_para") !== "") {
               const cp = text(head, "codepost_file").toUpperCase();
               if (text(head, "codepost_para").split(",")[8] !== "+") continue;
@@ -609,7 +642,9 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
                 if (!book.inventory) continue;
                 if (text(head, "codepost_para").includes("sys.str_addon_mbal")) continue;
                 if (!text(head, "codepost_para").includes("'RP'")) continue;
-                pushPostProduct(ctx, statements, line.product.key, line.il as Record<string, number>, ctx.stockNat, `row ${index + 1}: prod_balance`);
+                // A Job Stock row on the side that does not move stock (inventory N) leaves the balance alone.
+                if (line.il._inv === "N") continue;
+                pushPostProduct(ctx, statements, line.product.key, line.il as Record<string, number>, typeof line.il._nat === "string" ? line.il._nat : ctx.stockNat, `row ${index + 1}: prod_balance`);
               }
               continue;
             }
@@ -631,7 +666,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
 
     for (const group of groups(set)) {
       const head = group[0];
-      if (!savedForBook(head, book.values.bookKey)) continue;
+      if (!savedForBook(head, ruleBook(book.values))) continue;
       if (logfileOff && text(head, "table_name").toUpperCase().includes("LOG_")) continue;
       if (text(head, "table_name").toUpperCase() === "ADDON_AENTRY") {
         if (ctx.addonRows.length === 0) continue;
@@ -653,10 +688,32 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
           pushPostAccount(ctx, statements, input.party.code, ctx.acDbcode, finalAmount, partyBook, String(book.values.bookCode), "party");
         } else if (para.startsWith("|sys.book_code|,|sys.bk_dbcode|")) {
           pushPostAccount(ctx, statements, book.values.bookCode, ctx.bkDbcode, round(bookAmount, 2), 1, String(book.values.bookCode), "book");
+        } else if (para.startsWith("|sys.exp_code|,|sys.bk_dbcode|")) {
+          // An expense / agency book posts to the expense account chosen in Exp. Name instead of the book's own account.
+          if (ctx.expCode > 0) pushPostAccount(ctx, statements, ctx.expCode, ctx.bkDbcode, round(bookAmount, 2), 1, String(book.values.bookCode), "expense");
         }
         continue;
       }
       runGroup(ctx, statements, group, {}, undefined, text(head, "table_name"));
+    }
+  }
+  // The TDS auto journal (Save_Entry's block after the save): a new expense / agency / purchase entry of a party that deducts TDS, with a TDS amount in the foot box.
+  if (mode === "A" && !stock && tdsBook(book.values.bookKey, book.values.bookActual)) {
+    const found = await tdsInfo(loader, entryName, firstCombo, input.party.code, true);
+    if (found.error) throw new Error(found.error);
+    const amount = toNumber(input.values.tbx_credit_days ?? "");
+    if (found.info && amount > 0) {
+      let allowed = true;
+      if (book.values.bookKey === BOOK.PURCH) {
+        // A purchase party is liable only once its year's purchases (this entry included) pass the limit.
+        const mine = slab.find((row) => row.key === found.info!.purchaseSlab);
+        const total = found.info.purchaseYear + (mine ? mine.runTotal - mine.amount : 0);
+        if (total <= TDS_PURCHASE_LIMIT) { allowed = false; warnings.push("Party's Purchase Amount Not Over than 50,00,000.00 So TDS Entry Not Allowed..."); }
+      }
+      if (allowed) {
+        statements.push(...(await tdsJournal(loader, { bookKey: book.values.bookKey, partyCode: input.party.code, nature: found.info.nature, amount, date: docDate, now, fullDocNo })));
+        warnings.push(`TDS journal of ${round(amount, 2)} posted`);
+      }
     }
   }
   // logfile S: the special log (the desktop's [<company>_BIGLOG].LOG_ENTRY row, a readable copy of the whole entry).
@@ -684,7 +741,7 @@ function specialLogStatement(input: { ctx: Ctx; mode: "A" | "E"; registerLabel: 
   const typed = (name: string) => (ctx.input.values[name] ?? "").toString();
   const pair = (key: string, value: string) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`;
   const head: string[] = [
-    pair("!*Led_key", "@pkval_1"),
+    pair(ctx.stock ? "!*Process_key" : "!*Led_key", ctx.stock ? "@pkval_3" : "@pkval_1"),
     pair(input.registerLabel || "Register", ctx.values.firstCombo.text),
     pair("user", loader.session.loginName),
     pair("savedate", formatDesktopDate(ctx.now)),
@@ -742,7 +799,7 @@ function specialLogStatement(input: { ctx: Ctx; mode: "A" | "E"; registerLabel: 
   return {
     kind: "insert", table: "log_entry", schema: `${loader.session.companySchema}_biglog`, keyColumn: "lentry_key", label: "special log (log_entry)",
     columns: ["lentry_top_bottom", "lentry_items", "lentry_slab", "lentry_outstand", "lentry_addon", "lentry_einvoice", "lentry_fields", "lentry_mode", "lentry_user", "lentry_ledid", "lentry_processid", "lentry_code", "lentry_book", "lentry_bookcode", "lentry_savedate", "lentry_savetime", "lentry_machine_name"],
-    values: [quote(topBottom), quote(itemsText), quote(slabText), "''", quote(addonText), quote(einvoiceText), quote(fields), quote(mode), String(loader.session.userNo), "@pkval_1", "null", String(ctx.input.party.code), String(ctx.values.bookKey), String(ctx.values.bookCode), dateLiteral(ctx.now), quote(clock12(ctx.now)), quote("WEB")],
+    values: [quote(topBottom), quote(itemsText), quote(slabText), "''", quote(addonText), quote(einvoiceText), quote(fields), quote(mode), String(loader.session.userNo), ctx.stock ? "null" : "@pkval_1", ctx.stock ? "@pkval_3" : "null", String(ctx.input.party.code), String(ctx.values.bookKey), String(ctx.values.bookCode), dateLiteral(ctx.now), quote(clock12(ctx.now)), quote("WEB")],
   };
 }
 
@@ -760,7 +817,7 @@ function runGroup(ctx: Ctx, statements: Statement[], group: Rule[], cells: Recor
   const values: string[] = [];
   let where = "";
   for (const rule of group) {
-    if (!savedForBook(rule, ctx.values.bookKey)) continue;
+    if (!savedForBook(rule, ruleBook(ctx.values))) continue;
     const name = text(rule, "save_field_name") || text(rule, "column_name");
     if (name === "") continue;
     // The optional product columns are saved only when the screen has them.
@@ -830,7 +887,7 @@ export async function runPlan(client: Client, loader: Loader, plan: SavePlan, op
   const keys: Record<string, number> = { ...plan.presetKeys };
   const rows: SaveReport["rows"] = [];
   const updates: SaveReport["updates"] = [];
-  const bind = (sql: string) => sql.replace(/@(pkval_\d|il_\d+)/g, (_all, name) => String(keys[name] ?? "null"));
+  const bind = (sql: string) => sql.replace(/@(pkval_\d|il_\d+|jv_\d)/g, (_all, name) => String(keys[name] ?? "null"));
   const schema = loader.session.companySchema;
   const inSchema = (sql: string) => sql.replace(/\|sys\.db\|/gi, `${schema}.`);
   if (options.commit) {
@@ -879,10 +936,11 @@ export async function runPlan(client: Client, loader: Loader, plan: SavePlan, op
 export { toDecimal };
 
 /** Takes an invoice's postings off the balances (the minus half of Save_CodePost / Save_ProductPost) and deletes its ledger_post rows. */
-async function reversal(loader: Loader, ledKey: number, yearId: string): Promise<Statement[]> {
+async function reversal(loader: Loader, ledKey: number, yearId: string, stock = false): Promise<Statement[]> {
   const out: Statement[] = [];
   const year = quote(yearId);
-  const posts = (await loader.readTable(`SELECT p.post_code, p.post_amt::numeric AS amount, p.post_dbcode, a.book FROM |sys.db|ledger_post p LEFT JOIN |sys.db|account a ON a.code = p.post_code WHERE p.led_id = $1 ORDER BY p.post_key`, [ledKey])) ?? [];
+  // A stock register's entry (process) has no ledger postings: only its stock balances come off.
+  const posts = stock ? [] : (await loader.readTable(`SELECT p.post_code, p.post_amt::numeric AS amount, p.post_dbcode, a.book FROM |sys.db|ledger_post p LEFT JOIN |sys.db|account a ON a.code = p.post_code WHERE p.led_id = $1 ORDER BY p.post_key`, [ledKey])) ?? [];
   for (const post of posts) {
     const amount = toDecimal(field(post, "amount"));
     const debit = toInt(field(post, "post_dbcode")) === 1;
@@ -893,8 +951,8 @@ async function reversal(loader: Loader, ledKey: number, yearId: string): Promise
     const book = toInt(field(post, "book"));
     if (book === 2 || book === 3) out.push({ kind: "sql", label: `undo control account ${book - 1}`, sql: `UPDATE |sys.db|ac_balance SET ${set} WHERE code = ${book - 1} AND a_recflag = 'AC' AND year_id = ${year}` });
   }
-  out.push({ kind: "sql", label: "old ledger_post rows", sql: `DELETE FROM |sys.db|ledger_post WHERE led_id = ${ledKey}` });
-  const rows = (await loader.readTable(`SELECT prod_id, stock_nat, trn_qty1, trn_qty2, trn_qty3, trn_pcs, trn_pack, trn_weight FROM |sys.db|prod_ledger WHERE led_id = $1 AND il_pos = 'A' AND inventory = 'Y'`, [ledKey])) ?? [];
+  if (!stock) out.push({ kind: "sql", label: "old ledger_post rows", sql: `DELETE FROM |sys.db|ledger_post WHERE led_id = ${ledKey}` });
+  const rows = (await loader.readTable(`SELECT prod_id, stock_nat, trn_qty1, trn_qty2, trn_qty3, trn_pcs, trn_pack, trn_weight FROM |sys.db|prod_ledger WHERE ${stock ? "process_id" : "led_id"} = $1 AND il_pos = 'A' AND inventory = 'Y'`, [ledKey])) ?? [];
   for (const row of rows) {
     const add = text(row, "stock_nat") === "A";
     const move = add ? "add" : "less";
@@ -918,7 +976,7 @@ export type DeleteSummary = SavePlan["summary"];
 export async function buildDelete(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number, now = new Date()): Promise<SavePlan> {
   const { session } = loader;
   const book = await bookContext(loader, entryName, firstCombo);
-  if (!book.values.bookActual) throw new Error("Deleting a stock register entry is not ported yet");
+  if (!book.values.bookActual) return buildStockDelete(loader, text(book.row, "stkm_short"), uniqueKey, now);
   const led = (await loader.readTable(`SELECT *, amount::numeric AS amount_n FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos = 'A' AND book = $2`, [uniqueKey, book.values.bookKey]))?.[0];
   if (!led) throw new Error("The invoice to delete was not found: it may be deleted already");
   if (text(led, "doc_lock").toUpperCase() === "Y") throw new Error("Current Entry Lock...  Changes Save not Allowed....");
@@ -984,4 +1042,36 @@ export async function buildDelete(loader: Loader, entryName: string, firstCombo:
     });
   }
   return { statements, presetKeys: { pkval_1: ledKey }, summary: { fullDocNo: full, finalAmount: toDecimal(field(led, "amount_n")), bookAmount: 0, party: toInt(field(led, "code")) }, warnings: [] };
+}
+
+/**
+ * Delete of a stock register's entry (Job Stock In / Out ...: a process row with its product rows, no ledger): the stock balances come off,
+ * the slab and addon rows go, the process row and the product rows stay as deleted rows (il_pos D), and each product row is logged.
+ */
+async function buildStockDelete(loader: Loader, stockModule: string, processKey: number, now: Date): Promise<SavePlan> {
+  const { session } = loader;
+  const process = (await loader.readTable(`SELECT * FROM |sys.db|process WHERE process_key = $1 AND il_pos = 'A'`, [processKey]))?.[0];
+  if (!process) throw new Error("The entry to delete was not found: it may be deleted already");
+  if (text(process, "stk_module") !== stockModule) throw new Error("The entry belongs to another register");
+  const yearId = session.yearId;
+  const year = quote(yearId);
+  const statements: Statement[] = [...(await reversal(loader, processKey, yearId, true))];
+  const rows = (await loader.readTable(`SELECT * FROM |sys.db|prod_ledger WHERE process_id = $1 AND il_pos = 'A' ORDER BY il_key`, [processKey])) ?? [];
+  statements.push({ kind: "sql", label: "slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE process_id = ${processKey}` });
+  statements.push({ kind: "sql", label: "addon row", sql: `DELETE FROM |sys.db|addon_aentry WHERE aona_processid = ${processKey}` });
+  const today = dateLiteral(now);
+  const time = quote(timeText(now));
+  for (const row of rows) {
+    const key = toInt(field(row, "il_key"));
+    statements.push({ kind: "sql", label: `row ${key} deleted`, sql: `UPDATE |sys.db|prod_ledger SET il_pos = 'D' WHERE il_key = ${key}` });
+    if (toText(session.setup.logfile).toUpperCase() !== "N") {
+      statements.push({
+        kind: "insert", table: "log_regtrn", keyColumn: KEY_COLUMN.log_regtrn, label: `row ${key}: log_regtrn`,
+        columns: ["lreg_logdate", "lreg_logmode", "lreg_loguser", "lreg_id", "lreg_docno1", "lreg_prodid", "lreg_quantity", "lreg_factor", "lreg_rate", "lreg_value", "lreg_rateuom", "lreg_date", "lreg_stocknat", "lreg_code", "lreg_logtime", "lreg_pos", "year_id", "lreg_machine_name"],
+        values: [today, "'D'", String(session.userNo), String(key), quote(text(row, "doc_no1")), String(toInt(field(row, "prod_id"))), String(toDecimal(field(row, "quantity"))), String(toDecimal(field(row, "factor"))), String(toDecimal(field(row, "rate"))), String(toDecimal((await loader.readTable(`SELECT il_value::numeric AS v FROM |sys.db|prod_ledger WHERE il_key = $1`, [key]))?.[0]?.v)), String(toInt(field(row, "rateuom_id"))), dateLiteral(parseDesktopDate(field(row, "il_date")) ?? now), quote(text(row, "stock_nat")), String(toInt(field(row, "code"))), time, "'D'", year, quote("WEB")],
+      });
+    }
+  }
+  statements.push({ kind: "sql", label: "process deleted", sql: `UPDATE |sys.db|process SET il_pos = 'D' WHERE process_key = ${processKey}` });
+  return { statements, presetKeys: { pkval_3: processKey }, summary: { fullDocNo: text(process, "full_docno"), finalAmount: toDecimal(field(process, "p_amount")), bookAmount: 0, party: toInt(field(process, "code")) }, warnings: ["The special log (logfile S) is not written for a stock register's entry."] };
 }

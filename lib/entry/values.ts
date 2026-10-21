@@ -13,6 +13,11 @@ import { pgFragment } from "../report/sqlText";
 /** Book keys the desktop keeps in SmartVfaConstants. */
 export const BOOK = { PETTYCASH: 7, SALE: 8, AGENCY: 10, PURCH: 13, EXPENSE: 15, CRNOTE: 16, JOURNAL: 19 } as const;
 
+/** Books a TDS auto journal belongs to: expense, agency, and the purchase (account) book. */
+export const tdsBook = (bookKey: number, bookActual: boolean) => bookKey === BOOK.EXPENSE || bookKey === BOOK.AGENCY || (bookKey === BOOK.PURCH && bookActual);
+/** The company runs the TDS auto journal (setup entry_para TDS_AUTOJV,). */
+export const tdsAutoJournal = (setup: Readonly<Record<string, unknown>>) => String(setup.entry_para ?? "").toUpperCase().includes("TDS_AUTOJV,");
+
 export type EntryValues = Readonly<{
   session: MasterSession;
   /** The register chosen: account code and name. */

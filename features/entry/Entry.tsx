@@ -6,6 +6,7 @@ import { useStartupSelection } from "../startup/StartupGate";
 import { formatDesktopDate, parseDesktopDate } from "../../lib/master-program/legacy";
 import { fixed, toNumber } from "../../lib/entry/calc";
 import type { BookScreen, EntryColumn, EntryOption, HelpList as HelpData, InvoiceControl, InvoiceDefinition, PartyDetails, ProductChoice, RestoredEntry, SeriesDefaults, SlabRow } from "../../lib/entry/types";
+import type { TdsInfo } from "../../lib/entry/tds";
 import type { HeaderField, HeaderProblem } from "../../lib/entry/checks";
 import type { SaveReport } from "../../lib/entry/save";
 import { entryCall } from "./api";
@@ -146,6 +147,8 @@ function headerPlace(item: InvoiceControl): { label: CSSProperties; box: CSSProp
   const right = (top: number) => ({ label: { right: PARTY_RIGHT + PARTY_WIDTH, left: "auto", top, width: 90, textAlign: "right" as const }, box: { right: PARTY_RIGHT, left: "auto", top, width: PARTY_WIDTH } });
   switch (item.name) {
     case "tbx_partyname": return right(item.box.top);
+    // The expense name sits under the address, its head and box on the party name's right edge.
+    case "cmb_ac_exp_name": return right(item.box.top);
     case "dtp_entrydate": return { label: { left: 412, top: 50, width: 88, textAlign: "right" }, box: { left: 500, top: 50, width: 112 } };
     case "tbx_entryno": return { label: { left: 412, top: 72, width: 88, textAlign: "right" }, box: { left: 500, top: 72, width: 88 } };
     default: return null;
@@ -176,6 +179,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [voucherRow, setVoucherRow] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>("all");
   const [party, setParty] = useState<PartyDetails | null>(null);
+  /** The party's TDS (an expense / agency / purchase book with the TDS auto journal): the nature account and rate the TDS Amount box works from. */
+  const [tds, setTds] = useState<{ code: number; info: TdsInfo } | null>(null);
   const [addon, setAddon] = useState<Record<number, string>>({});
   const [accountHelp, setAccountHelp] = useState<HelpData | null>(null);
   const [productHelp, setProductHelp] = useState<HelpData | null>(null);
@@ -586,8 +591,16 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         setBook(reloaded.book);
         setSlab([...reloaded.book.slabRows]);
       }
+      // The TDS of the party (a new entry only): a party whose TDS nature account is not open is refused.
+      let deducts = false;
+      if (restored === null) {
+        const reply = await call<{ tds: { info: TdsInfo | null; error?: string } }>("tds", { firstCombo: register, code: next.code });
+        if (reply.tds.error) { await say(reply.tds.error, "Entry Warning"); partyRef.current?.focus(); return; }
+        setTds(reply.tds.info ? { code: next.code, info: reply.tds.info } : null);
+        deducts = reply.tds.info !== null;
+      }
       setParty(next);
-      setValues((current) => ({ ...current, tbx_partyname: next.name, tbx_credit_days: current.tbx_credit_days !== undefined ? next.creditDays : current.tbx_credit_days }));
+      setValues((current) => ({ ...current, tbx_partyname: next.name, tbx_credit_days: deducts ? "" : current.tbx_credit_days !== undefined ? next.creditDays : current.tbx_credit_days }));
       setAddon(Object.fromEntries(next.addon.map((item) => [item.key, item.value])));
       // Several addresses: the operator picks the one first (c1help_Address); the keyboard moves on after it.
       if (next.addresses.length > 1) { setAddressPick(next); return; }
@@ -597,7 +610,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     } finally {
       setBusy("");
     }
-  }, [register, book, call, checkHeader, values.dtp_date, lines, loadBook, say, failed, afterParty]);
+  }, [register, book, call, checkHeader, values.dtp_date, lines, loadBook, say, failed, afterParty, restored]);
 
   const partyKeys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (helpKeys(event, "account", (row) => void choosePartyRow(row))) return;
@@ -705,7 +718,9 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setLines((current) => {
         const copy = [...current];
         while (copy.length <= row) copy.push({ cells: {}, product: null });
-        const chosen = chooseProduct(copy[row], product, context, slab);
+        let chosen = chooseProduct(copy[row], product, context, slab);
+        // A stock register whose rows go either way: a new row comes in (+) until the operator marks it out (-), as the desktop does.
+        if (book?.stockNatBoth && !chosen.cells.prod_return) chosen = { ...chosen, cells: { ...chosen.cells, prod_return: "+" } };
         // IL_DIV: the product type the row was picked under is saved with it.
         copy[row] = prodFilter && productHelp?.filter ? { ...chosen, cells: { ...chosen.cells, il_div: prodFilter.value } } : chosen;
         return copy;
@@ -744,8 +759,23 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     afterGrids();
   };
 
+  /** The +/- column of a row (a stock register whose rows go either way): "+" stock in, "-" stock out. */
+  const markRow = (row: number, mark: string) => {
+    setLines((current) => {
+      const copy = [...current];
+      while (copy.length <= row) copy.push({ cells: {}, product: null });
+      copy[row] = { ...copy[row], cells: { ...copy[row].cells, prod_return: mark } };
+      return copy;
+    });
+  };
   const productKeys = (event: ReactKeyboardEvent<HTMLInputElement>, row: number): boolean => {
     if (event.key === "F5") { event.preventDefault(); void endProducts(); return true; }
+    // Job Stock In / Out ...: "+" or "-" on a row with no product yet marks it as stock in or out (the desktop's F2 on the empty row).
+    if (book?.stockNatBoth && (event.key === "+" || event.key === "-") && !lines[row]?.product && (productText?.text ?? "") === "") {
+      event.preventDefault();
+      markRow(row, event.key);
+      return true;
+    }
     if (helpKeys(event, "product", (helpRow) => void chooseProductRow(row, helpRow))) return true;
     // Enter on an empty row (nothing typed) ends the products: on to the slab grid's first open cell.
     if (event.key === "Enter" && !lines[row]?.product) {
@@ -1056,6 +1086,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // Save opens once series, date and number are filled (or an entry is open from Find / Edit); Delete, Print, Range,
   // Upload Document, E-Invoice and Log only for an entry opened from Find / Edit. Cancel, Refresh and Quit always.
   const isRestored = restored !== null;
+  const tdsNow = !isRestored && party && tds && tds.code === party.code ? tds.info : null;
   const canSave = Boolean(book) && (isRestored || ((values.cmb_series ?? "").trim() !== "" && (values.dtp_date ?? "").trim() !== "" && (values.tbx_number ?? "").trim() !== ""));
   /**
    * Btn_Save_Click (a new invoice): the screen's figures go to the server, which works them out again and writes the entry.
@@ -1064,12 +1095,16 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
    */
   const saveEntry = async () => {
     if (!book || !register) return;
+    if (tdsNow && (values.tbx_credit_days ?? "").trim() === "" && !voucher) {
+      const answer = await messageBox.ask("TDS Amount Zero, Save Entry With TDS Amount Zero?", "TDS Amount Zero Message", ["Yes", "No"], { defaultButton: "Yes" });
+      if (answer !== "Yes") return;
+    }
     if (voucher) {
       if (filledVoucherLines(vlines).length === 0) { await say("Account Name not selected...", "Entry Warning"); return; }
       await say("Saving a voucher is not ported to the web yet. The account rows, side, series, date and number are set up; saving comes next.", "Voucher");
       return;
     }
-    if (filledLines(lines).length === 0) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
+    if (filledLines(lines).length === 0 && (book.inventory || slabResult.final <= 0)) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
     setBusy("Saving");
     try {
       const reply = await call<{ report: SaveReport; committed: boolean; commitDisabled?: boolean }>("save", {
@@ -1163,8 +1198,25 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     if (name === "dtp_entrydate") return { min: yearStart, max: yearEnd };
     return undefined;
   };
+  /** Tbx_Credit_Days_Enter's TDS amount: the run total before the tax slab (slab_master Y, not linked) at the party's TDS %, rounded to the rupee. */
+  const tdsAmountFor = (info: TdsInfo): string => {
+    if (info.perc <= 0) return "";
+    const LIMIT = 5000000;
+    const even = (value: number) => { const down = Math.floor(value); const part = value - down; return part > 0.5 + 1e-9 ? down + 1 : part < 0.5 - 1e-9 ? down : down % 2 === 0 ? down : down + 1; };
+    let out = "";
+    slab.forEach((row, index) => {
+      if (!(row.master && row.link < 0)) return;
+      const before = (slabResult.runTotals[index] ?? 0) - (slabResult.amounts[index] ?? 0);
+      if (info.purchaseSlab > 0) {
+        if (info.purchaseYear < LIMIT && info.purchaseYear + before > LIMIT) out = String(even((info.purchaseYear + before - LIMIT) * info.perc / 100));
+        else if (info.purchaseYear > LIMIT) out = String(even(before * info.perc / 100));
+      } else out = String(even(before * info.perc / 100));
+    });
+    return out;
+  };
   const control = (item: InvoiceControl) => {
     const value = values[item.name] ?? "";
+    if (item.tds && !tdsNow) return [];
     const set = (next: string) => setValues((current) => ({ ...current, [item.name]: next }));
     const shift = item.place === "B" ? DESKTOP_FOOT_TOP - FOOT_TOP : 0;
     const place = item.place === "T" ? headerPlace(item) : null;
@@ -1175,7 +1227,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
       <span key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})} onBlur={(event) => leaveBox(event, item.name)}>
         {item.type === "CB" ? (
           item.place === "E" ? (
-            <EntryCell kind="combo" cellId={`eway:${item.name}`} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextEway(document.activeElement)} />
+            <EntryCell kind="combo" cellId={`eway:${item.name}`} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => ewayAfter(`eway:${item.name}`)} />
           ) : item.name === "cmb_series" ? (
             <SearchCombo ariaLabel={item.label} options={seriesList(item)} value={seriesList(item).find((option) => option.text === value) ?? null} onChoose={(option) => void chooseSeries(option.text)} />
           ) : (
@@ -1225,7 +1277,15 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         ) : item.name === "tbx_narration" ? (
           <textarea id={`ent-${item.name}`} className="mp-control ent-narration" aria-label={item.label} maxLength={item.maxLength > 0 ? item.maxLength : undefined} value={value} onChange={(event) => set(event.target.value.replace(/'/g, ""))} />
         ) : item.name === "tbx_distancekm" ? (
-          <EntryCell kind="number" positiveInteger cellId="eway:distance" value={value} onChange={set} tools={tools} ariaLabel={item.label} rules={WHOLE_NUMBER_RULES} align="right" clearable onEnter={() => nextEway(document.activeElement)} />
+          <EntryCell kind="number" positiveInteger cellId="eway:distance" value={value} onChange={set} tools={tools} ariaLabel={item.label} rules={WHOLE_NUMBER_RULES} align="right" clearable onEnter={() => ewayAfter("eway:distance")} />
+        ) : item.name === "tbx_credit_days" && tdsNow ? (
+          <>
+            <input id={`ent-${item.name}`} className="mp-control ent-number" aria-label={item.label} inputMode="numeric" maxLength={12} value={value}
+              title={`TDS at ${tdsNow.perc}%`}
+              onFocus={(event) => { set(tdsAmountFor(tdsNow)); event.target.select(); }}
+              onChange={(event) => set(event.target.value.split(".")[0].replace(/\D/g, ""))} />
+            <span className="ent-tdsperc" style={{ position: "absolute", left: "100%", top: 0, marginLeft: 8, whiteSpace: "nowrap", fontWeight: 600 }}>TDS Perc : {tdsNow.perc}</span>
+          </>
         ) : item.name === "tbx_credit_days" ? (
           <input id={`ent-${item.name}`} className="mp-control ent-number" aria-label={item.label} inputMode="numeric" maxLength={item.maxLength > 0 ? item.maxLength : 4} value={value}
             title={`Credit days: 0 to ${maxCreditDays}`} onFocus={(event) => event.target.select()}
@@ -1321,8 +1381,19 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     setSlabRow(row, { perc });
   };
   /** Enter in an E-Way Bill box: the next box of the tab; after the last, the narration. */
+  /** The tab's editable boxes in the order the eye reads them (row by row, left to right), not in the order the setup lists them. */
+  const ewayBoxes = () => {
+    const found = [...(formRef.current?.querySelectorAll<HTMLElement>(".ent-eway input:not([disabled]):not([readonly]), .ent-eway button[data-cell]:not([disabled])") ?? [])].filter((box) => box.offsetParent !== null);
+    const placed = found.map((box) => { const at = box.getBoundingClientRect(); return { box, top: Math.round(at.top / 8), left: at.left }; });
+    return placed.sort((a, b) => a.top - b.top || a.left - b.left).map((item) => item.box);
+  };
+  /**
+   * The box after the one with this cell id. Looked up by id, once the screen has drawn again: a combo's list is open while it is chosen from,
+   * so the keyboard is then in the list, not in the box (going by the active element skipped the boxes that follow).
+   */
+  const ewayAfter = (cellId: string) => setTimeout(() => nextEway(formRef.current?.querySelector(`.ent-eway [data-cell="${cellId}"]`) ?? null), 0);
   const nextEway = (from: Element | null) => {
-    const boxes = [...(formRef.current?.querySelectorAll<HTMLElement>(".ent-eway input:not([disabled]), .ent-eway button[data-cell]") ?? [])].filter((box) => box.offsetParent !== null);
+    const boxes = ewayBoxes();
     const at = boxes.findIndex((box) => box === from || box.contains(from));
     const next = boxes[at + 1];
     if (at >= 0 && next) { next.focus(); return; }
@@ -1339,7 +1410,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const due = Boolean(def?.tabs.eway && book?.stockNat === "L" && book.bookActual !== false && limit > 0 && slabResult.final > limit && date && date >= EWAY_START && !/^(LQTN-ORD|ORD-IN)$/i.test(register?.text ?? ""));
     if (due) {
       setTab("eway");
-      setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-eway input:not([disabled])")?.focus(), 60);
+      setTimeout(() => ewayBoxes()[0]?.focus(), 60);
       return;
     }
     formRef.current?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus();
@@ -1514,7 +1585,13 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               searchKey={HELP_MAIN[helpKind]}
               onClose={() => closeHelp()}
               onEscape={() => focusHelpField(helpKind)}
-              onKey={(event) => { if (event.key === "F1") { event.preventDefault(); void showDetails(helpKind); return true; } if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; } return false; }}
+              onKey={(event) => {
+                if (event.key === "F1") { event.preventDefault(); void showDetails(helpKind); return true; }
+                if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; }
+                // The product help has the keyboard while a row is being filled: "+" or "-" before any search text marks the row (stock in / out).
+                if (helpKind === "product" && book?.stockNatBoth && productRow !== null && (event.key === "+" || event.key === "-") && typed.trim() === "" && !lines[productRow]?.product) { event.preventDefault(); markRow(productRow, event.key); return true; }
+                return false;
+              }}
               onHeadingClick={helpView.sortBy}
               sortMark={helpView.sortMark}
               headingTools={helpView.headingTools}

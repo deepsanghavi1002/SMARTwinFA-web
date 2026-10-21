@@ -2,7 +2,8 @@ import { displayValue, Loader } from "../master-program/load";
 import { toDecimal, toInt, toText } from "../master-program/legacy";
 import { properHeading } from "../master-program/heading";
 import { fixed } from "./calc";
-import { entryPreview } from "./invoice";
+import { againstNames, bookContext, entryPreview, loadBook } from "./invoice";
+import { tdsAutoJournal, tdsBook } from "./values";
 import type { EntryOption, HelpList } from "./types";
 
 /**
@@ -25,31 +26,93 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
   const columns = base.columns.filter((column) => column.key.toLowerCase() !== "tick");
   const keys = base.rows.map((row) => toInt(row.unique_key)).filter((key) => key > 0);
   if (keys.length === 0) return { ...base, columns };
+  // A stock register's entries (Job Stock In / Out, Production Slip ...) are process rows: their unique key is process_key, and their product, slab and
+  // addon rows hang on process_id. Reading them through ledger.unique_key would pick up another entry that happens to hold the same number.
+  const book = await bookContext(loader, entryName, firstCombo);
+  const stock = !entryName.trim().toUpperCase().startsWith("V") && !book.values.bookActual && book.values.type > 0 && book.values.agBook === 0;
+  const own = stock
+    ? { table: "process", key: "process_key", pk: "process_key", link: "process_id", aon: "aona_processid", rec: "P" }
+    : { table: "ledger", key: "unique_key", pk: "led_key", link: "led_id", aon: "aona_ledid", rec: "L" };
 
   // "All fields" alone stops here: the product lines (and their units, addons and item-wise text) are what make the read long.
   const lines = !withProducts ? [] : (await loader.readTable(
-    `SELECT l.unique_key AS uk, p.il_key, p.il_serial, BTRIM(pm.prod_short) AS short, BTRIM(pm.prod_desc) AS descr, p.quantity::numeric AS qty, qu.uom_short AS qty_uom, p.rate::numeric AS rate, ru.uom_short AS rate_uom, p.il_value::numeric AS value
-       FROM |sys.db|ledger l JOIN |sys.db|prod_ledger p ON p.led_id = l.led_key AND p.il_pos <> 'D'
+    `SELECT l.${own.key} AS uk, p.il_key, p.il_serial, BTRIM(pm.prod_short) AS short, BTRIM(pm.prod_desc) AS descr, p.quantity::numeric AS qty, qu.uom_short AS qty_uom, p.rate::numeric AS rate, ru.uom_short AS rate_uom, p.il_value::numeric AS value
+       FROM |sys.db|${own.table} l JOIN |sys.db|prod_ledger p ON p.${own.link} = l.${own.pk} AND p.il_pos <> 'D'
        JOIN |sys.db|product_master pm ON pm.prod_key = p.prod_id
        LEFT JOIN |sys.db|prod_uom qu ON qu.uom_key = p.uomentry_id LEFT JOIN |sys.db|prod_uom ru ON ru.uom_key = p.rateuom_id
-       WHERE l.unique_key = ANY($1::int[]) ORDER BY l.unique_key, p.il_serial`, [keys])) ?? [];
+       WHERE l.${own.key} = ANY($1::int[]) ORDER BY l.${own.key}, ${stock ? "p.stock_nat, " : ""}p.il_serial`, [keys])) ?? [];
   const itemSlabRows = !withProducts ? [] : (await loader.readTable(
     `SELECT e.il_id, e.slab_id, e.slab_perc::numeric AS perc, e.slab_amt::numeric AS amount
-       FROM |sys.db|ledger_ext e JOIN |sys.db|prod_ledger p ON p.il_key = e.il_id JOIN |sys.db|ledger l ON l.led_key = p.led_id
-       WHERE l.unique_key = ANY($1::int[])`, [keys])) ?? [];
+       FROM |sys.db|ledger_ext e JOIN |sys.db|prod_ledger p ON p.il_key = e.il_id JOIN |sys.db|${own.table} l ON l.${own.pk} = p.${own.link}
+       WHERE l.${own.key} = ANY($1::int[])`, [keys])) ?? [];
   const entrySlabRows = (await loader.readTable(
-    `SELECT l.unique_key AS uk, e.slab_id, e.slab_perc::numeric AS perc, e.slab_amt::numeric AS amount
-       FROM |sys.db|ledger_ext e JOIN |sys.db|ledger l ON l.led_key = e.led_id
-       WHERE l.unique_key = ANY($1::int[])`, [keys])) ?? [];
+    `SELECT l.${own.key} AS uk, e.slab_id, e.slab_perc::numeric AS perc, e.slab_amt::numeric AS amount
+       FROM |sys.db|ledger_ext e JOIN |sys.db|${own.table} l ON l.${own.pk} = e.${own.link}
+       WHERE l.${own.key} = ANY($1::int[])`, [keys])) ?? [];
   // Item-wise slab rows summed per entry in the database, when the lines themselves are not wanted.
   const itemSlabSums = withProducts ? [] : (await loader.readTable(
-    `SELECT l.unique_key AS uk, e.slab_id, SUM(e.slab_amt::numeric) AS amount
-       FROM |sys.db|ledger l JOIN |sys.db|prod_ledger p ON p.led_id = l.led_key AND p.il_pos <> 'D'
+    `SELECT l.${own.key} AS uk, e.slab_id, SUM(e.slab_amt::numeric) AS amount
+       FROM |sys.db|${own.table} l JOIN |sys.db|prod_ledger p ON p.${own.link} = l.${own.pk} AND p.il_pos <> 'D'
        JOIN |sys.db|ledger_ext e ON e.il_id = p.il_key
-       WHERE l.unique_key = ANY($1::int[]) GROUP BY l.unique_key, e.slab_id`, [keys])) ?? [];
+       WHERE l.${own.key} = ANY($1::int[]) GROUP BY l.${own.key}, e.slab_id`, [keys])) ?? [];
   const addonRows = (await loader.readTable(
-    `SELECT l.unique_key AS uk, a.* FROM |sys.db|addon_aentry a JOIN |sys.db|ledger l ON l.led_key = a.aona_ledid
-       WHERE a.aona_recid = 'L' AND l.unique_key = ANY($1::int[])`, [keys])) ?? [];
+    `SELECT l.${own.key} AS uk, a.* FROM |sys.db|addon_aentry a JOIN |sys.db|${own.table} l ON l.${own.pk} = a.${own.aon}
+       WHERE a.aona_recid = '${own.rec}' AND l.${own.key} = ANY($1::int[])`, [keys])) ?? [];
+  // The entry's own head fields, shown with their labels beside the narration: credit days (TDS amount on a TDS book), what the entry is against,
+  // the CN / DN nature, the contra / expense account and the reverse entry.
+  const heads: Row[] = (stock
+    ? await loader.readTable(`SELECT process_key AS uk, stk_remark AS narration, supply_type, sub_supply_type, eway_doc_type, trp_mode, eway_veh_type, distance_km, eway_billno, eway_billdate, eway_valid FROM |sys.db|process WHERE process_key = ANY($1::int[])`, [keys])
+    : await loader.readTable(`SELECT unique_key AS uk, narration, credit_days, ag_bkcode, "TYPE" AS nature, post_bkcode, rev_charge, supply_type, sub_supply_type, eway_doc_type, trp_mode, eway_veh_type, distance_km, eway_billno, eway_billdate, eway_valid FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [keys])) ?? [];
+  // The E-Way Bill tab's boxes: the lists save the position of the chosen item; the figures and the bill number as typed.
+  const ewayControls = (await loadBook(loader, entryName, firstCombo)).controls;
+  const ewayLabel = (name: string, fallback: string) => (ewayControls.find((control) => control.name === name)?.label ?? fallback).replace(/^\*\s*/, "");
+  const ewayList = (name: string, column: string) => (row: Row) => {
+    if (!hasEway(row)) return "";
+    return ewayControls.find((control) => control.name === name)?.options[toInt(field(row, column))]?.text ?? "";
+  };
+  const hasEway = (row: Row) => text(row, "eway_billno") !== "" || text(row, "distance_km") !== "";
+  const ewayDate = (row: Row) => (hasEway(row) ? toText(displayValue(field(row, "eway_billdate"))).trim() : "");
+  const headNames = await againstNames(
+    loader,
+    [...new Set(heads.flatMap((row) => [toInt(field(row, "ag_bkcode")), toInt(field(row, "post_bkcode"))]).filter((code) => code > 0))],
+    [...new Set(heads.map((row) => toInt(field(row, "nature"))).filter((kind) => kind > 0))],
+  );
+  const headByEntry = new Map<number, Row>(heads.map((row) => [toInt(field(row, "uk")), row]));
+  const hasHead = (read: (row: Row) => string) => heads.some((row) => read(row) !== "");
+  const creditText = (row: Row) => { const days = toDecimal(field(row, "credit_days")); return days === 0 ? "" : String(days); };
+  type HeadField = { key: string; caption: string; width: number; align: string; read: (row: Row) => string };
+  const headAll: HeadField[] = [
+    { key: "head_narration", caption: "Narration", width: 220, align: "L", read: (row) => text(row, "narration") },
+    { key: "head_credit_days", caption: tdsAutoJournal(loader.session.setup) && tdsBook(book.values.bookKey, book.values.bookActual) ? "TDS Amount" : "Credit Days", width: 90, align: "R", read: creditText },
+    { key: "head_against", caption: "Against Book", width: 140, align: "L", read: (row) => headNames.accounts.get(toInt(field(row, "ag_bkcode"))) ?? "" },
+    { key: "head_nature", caption: "CN / DN Nature", width: 130, align: "L", read: (row) => headNames.kinds.get(toInt(field(row, "nature"))) ?? "" },
+    { key: "head_contra", caption: "Contra / Exp. Name", width: 160, align: "L", read: (row) => headNames.accounts.get(toInt(field(row, "post_bkcode"))) ?? "" },
+    { key: "head_rev", caption: "Reverse Entry", width: 90, align: "L", read: (row) => (text(row, "rev_charge") === "" ? "" : text(row, "rev_charge")) },
+    { key: "eway_supply", caption: ewayLabel("cmb_supplytype", "Supply Type"), width: 100, align: "L", read: ewayList("cmb_supplytype", "supply_type") },
+    { key: "eway_sub_supply", caption: ewayLabel("cmb_subsupplytype", "Sub Supply Type"), width: 120, align: "L", read: ewayList("cmb_subsupplytype", "sub_supply_type") },
+    { key: "eway_doc_type", caption: ewayLabel("cmb_documenttype", "Document Type"), width: 110, align: "L", read: ewayList("cmb_documenttype", "eway_doc_type") },
+    { key: "eway_mode", caption: ewayLabel("cmb_transportmode", "Transportation Mode"), width: 110, align: "L", read: ewayList("cmb_transportmode", "trp_mode") },
+    { key: "eway_vehicle", caption: ewayLabel("cmb_vehicletype", "Vehicle Type"), width: 100, align: "L", read: ewayList("cmb_vehicletype", "eway_veh_type") },
+    { key: "eway_distance", caption: ewayLabel("tbx_distancekm", "Distance KM"), width: 90, align: "R", read: (row) => text(row, "distance_km") },
+    { key: "eway_billno", caption: ewayLabel("tbx_ewaybillno", "EWAY Bill Number"), width: 130, align: "L", read: (row) => text(row, "eway_billno") },
+    { key: "eway_date", caption: "E-Way Date", width: 100, align: "L", read: ewayDate },
+    { key: "eway_valid", caption: "E-Way Valid Upto", width: 100, align: "L", read: (row) => (hasEway(row) ? text(row, "eway_valid") : "") },
+  ];
+  const headFields = headAll.filter((item) => item.key === "head_narration" || (!base.columns.some((column) => (item.key === "head_against" && column.key === "against_book") || (item.key === "head_nature" && column.key === "against_nature")) && hasHead(item.read)));
+  // The TDS auto journal an entry passed (a JV pair made with it: imp_ledkey is the entry's ledger row): the account debited and credited, and the amount.
+  const jvByEntry = new Map<number, string>();
+  if (!stock) {
+    const jvRows = (await loader.readTable(
+      `SELECT l.unique_key AS uk, jv.full_docno, jv.ac_dbcode, jv.amount::numeric AS amount, ac.name
+         FROM |sys.db|ledger jv JOIN |sys.db|ledger l ON l.led_key = jv.imp_ledkey LEFT JOIN |sys.db|account ac ON ac.code = jv.code
+        WHERE jv.book = 19 AND jv.doc_series = 'JV' AND jv.doc_pos = 'A' AND l.unique_key = ANY($1::int[]) ORDER BY l.unique_key, jv.led_key`, [keys])) ?? [];
+    const byEntry = new Map<number, Row[]>();
+    for (const row of jvRows) byEntry.set(toInt(field(row, "uk")), [...(byEntry.get(toInt(field(row, "uk"))) ?? []), row]);
+    for (const [entry, list] of byEntry) {
+      const side = (code: number) => list.filter((row) => toInt(field(row, "ac_dbcode")) === code).map((row) => `${text(row, "name")} ${money(toDecimal(field(row, "amount")))}`).join(", ");
+      jvByEntry.set(entry, `${text(list[0], "full_docno")}  |  Dr: ${side(1)}  |  Cr: ${side(2)}`);
+    }
+  }
   const slabNames = (await loader.readTable(`SELECT slab_key, BTRIM(slab_desc) AS slab_desc, BTRIM(slab_short) AS slab_short, slab_order FROM |sys.db|slab_master`)) ?? [];
   const accountAddons = (await loader.readTable(`SELECT fiel_key, fiel_save, fiel_type, fiel_name FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D' ORDER BY fiel_key`)) ?? [];
   const productAddons = (await loader.readTable(`SELECT fiel_save, fiel_type, fiel_name FROM |sys.db|addon_fld WHERE fiel_relate = 'P' AND fiel_pos <> 'D' ORDER BY fiel_key`)) ?? [];
@@ -135,6 +198,8 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     ...columns,
     ...slabColumns.map((slab) => ({ key: slabKey(slab), caption: properHeading(slabInfo.get(slab)?.desc ?? `Slab ${slab}`), width: 90, align: "R", format: "N2" })),
     ...addonColumns.map((item) => ({ key: addonKey(item), caption: properHeading(text(item, "fiel_name")), width: 120, align: "L", format: "" })),
+    ...headFields.map((item) => ({ key: item.key, caption: item.caption, width: item.width, align: item.align, format: "" })),
+    ...(jvByEntry.size > 0 ? [{ key: "tds_jv", caption: "TDS JV (A/c Debit, Credit, Amount)", width: 420, align: "L", format: "" }] : []),
     ...(withProducts ? [{ key: "products_all", caption: "Products (product, qty, rate, value, discount, tax, addons)", width: 1100, align: "L", format: "" }] : []),
   ];
   const rows = base.rows.map((row) => {
@@ -143,6 +208,8 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     const per = slabAmounts.get(entry);
     for (const slab of slabColumns) out[slabKey(slab)] = per?.has(slab) ? money(per.get(slab) ?? 0) : "";
     for (const item of addonColumns) out[addonKey(item)] = valueOf(addonByEntry.get(entry), item);
+    for (const item of headFields) out[item.key] = headByEntry.has(entry) ? item.read(headByEntry.get(entry)!) : "";
+    if (jvByEntry.size > 0) out.tds_jv = jvByEntry.get(entry) ?? "";
     if (withProducts) out.products_all = (linesByEntry.get(entry) ?? []).join("   ‖   ");
     return out;
   });
