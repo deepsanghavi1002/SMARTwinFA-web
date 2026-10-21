@@ -1022,7 +1022,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                   data-tip={`${column.caption} · click to select column · ${filterable ? "▾ to filter · " : ""}right-click for options · drag right edge to size`}
                   onMouseDown={(event) => {
                     if (event.button !== 0) return;
-                    if ((event.target as Element).closest(".mp-resize, button, input, .mp-filter-popup")) return;
+                    if ((event.target as Element).closest(".mp-resize, button, input, select, label, .mp-filter, .mp-filter-popup")) return;
                     event.preventDefault();
                     selectColumn(col, event.shiftKey, event.ctrlKey || event.metaKey);
                     scroller.current?.focus();

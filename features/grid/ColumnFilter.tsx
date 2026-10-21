@@ -75,6 +75,10 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
   floating?: boolean;
 }) {
   const { draft, setDraft, search, setSearch, anchor, apply, clear, setOpenFilter } = state;
+  // The search box takes the keyboard when the list opens, once (a ref callback ran on every render and pulled the cursor back from the condition boxes).
+  const searchBox = useRef<HTMLInputElement>(null);
+  const shown = draft !== null && draft.key === columnKey && state.openFilter === columnKey;
+  useEffect(() => { if (shown) searchBox.current?.focus({ preventScroll: true }); }, [shown]);
   if (!draft || draft.key !== columnKey || state.openFilter !== columnKey) return null;
   const place = (element: HTMLDivElement | null) => {
     if (!element) return;
@@ -120,8 +124,11 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
     );
   };
   return (
-    <div ref={place} className="mp-filter" role="dialog" aria-label={`Filter ${caption}`}>
-      <input type="search" placeholder="Search values…" aria-label={`Search ${caption} values`} value={search} ref={(element) => element?.focus({ preventScroll: true })} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
+    <div ref={place} className="mp-filter" role="dialog" aria-label={`Filter ${caption}`}
+      // The heading the list sits in takes a mouse press to select its column and keeps the press from reaching the page (so a drag does not start text selection);
+      // that also kept the condition list (a native select) from opening. A press inside the list stays in the list.
+      onMouseDown={(event) => event.stopPropagation()}>
+      <input type="search" placeholder="Search values…" aria-label={`Search ${caption} values`} value={search} ref={searchBox} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
       <label className="mp-filter-all">
         <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => change({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
         <b>{needle ? "(Select all found)" : "(Select All)"}</b>

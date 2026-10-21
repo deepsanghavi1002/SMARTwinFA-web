@@ -307,7 +307,7 @@ async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> 
   const order = call.orderBy.trim();
   const orderBy = order !== "" && !order.toLowerCase().startsWith("led.doc_no")
     ? ` ORDER BY ${order},LED.DOC_NO,LED.FULL_DOCNO${printSlabs ? ",slabmst.SLAB_ORDER" : ""}`
-    : printSlabs ? ` ORDER BY SORTING_DATE,LED.DOC_NO,slabmst.SLAB_ORDER` : ` ORDER BY SORTING_DATE,LED.DOC_NO`;
+    : printSlabs ? ` ORDER BY "SORTING_DATE",LED.DOC_NO,slabmst.SLAB_ORDER` : ` ORDER BY "SORTING_DATE",LED.DOC_NO`;
   const slabCells = printSlabs ? `,COALESCE(ltrim(rtrim(SLAB_REPOHD)),'') AS "SLAB_DESC",COALESCE(ledext.SLAB_AMT::numeric,0.00) AS "SLAB_AMOUNT"` : slabColumns;
   const narrationColumn = useUnion ? "NARRATION1" : "NARRATION";
   const sql = `SELECT ${distinct}${select}${slabCells},LED.DOC_REMARK,LED.NARRATION AS "${narrationColumn}"${end}${from}${apply}${where}${orderBy}`;
@@ -408,7 +408,7 @@ async function register(loader: Loader, plan: ReportPlan): Promise<ResultTable> 
     table.rows.forEach((row, at) => { row.ORDERCOL = at + 1; row.ORDERCOL1 = "L"; });
     if (call.unionQuery === "") throw new ReportRefusal("Blank Groups For Narration\nCheck Database..OUTPUT", "INTERNAL PROGRAM FAILURE");
     const fixCols = call.fixCols.replace(`'LED' as "ROW_DATA_TYPE"`, `'NARRATION' as "ROW_DATA_TYPE"`);
-    const narrationOrder = order !== "" && !order.toLowerCase().startsWith("led.doc_no") ? ` ORDER BY ${order},LED.DOC_NO,LED.FULL_DOCNO` : ` ORDER BY SORTING_DATE,LED.DOC_NO`;
+    const narrationOrder = order !== "" && !order.toLowerCase().startsWith("led.doc_no") ? ` ORDER BY ${order},LED.DOC_NO,LED.FULL_DOCNO` : ` ORDER BY "SORTING_DATE",LED.DOC_NO`;
     const narration = await runReportSql(loader, frag(`SELECT ${fixCols}${call.unionQuery}${plainFrom}${where}${narrationOrder}`));
     const names = table.columns.filter((name) => name !== "ORDERCOL" && name !== "ORDERCOL1");
     const nameAt = names.findIndex((name) => name.toUpperCase() === "NAME");

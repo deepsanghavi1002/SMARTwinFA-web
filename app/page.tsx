@@ -16,10 +16,12 @@ import { UserYearRights } from "../features/security/UserYearRights";
 import { UserDashboardRights } from "../features/security/UserDashboardRights";
 import { TransportEntry } from "../features/transport/TransportEntry";
 import { Notepad } from "../features/utility/Notepad";
+import { CheckGstNo } from "../features/utility/CheckGstNo";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
-import { StartupGate, useStartupActions, useStartupSelection, ViewSwitchButton } from "../features/startup/StartupGate";
+import { IdleGuard } from "../features/startup/IdleGuard";
+import { StartupGate, useStartupActions, useStartupSelection, useViewMode } from "../features/startup/StartupGate";
 
 /**
  * The menu is data, not application code: it is read from
@@ -59,7 +61,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "check-gst" | "pending";
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
@@ -100,6 +102,43 @@ function launchApp(link: string) {
   anchor.remove();
 }
 
+/** The ⋮ at the right of the context strip: Legacy / Modern view, Lock and Log out. */
+function MoreMenu({ onLock, onLogout }: { onLock: () => void; onLogout: () => void }) {
+  const mode = useViewMode();
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  /** Where the panel opens: under the ⋮ button at the window's right edge (fixed, so the strip cannot clip it). */
+  const [place, setPlace] = useState({ top: 0, right: 0 });
+  const toggle = () => {
+    const rect = root.current?.getBoundingClientRect();
+    if (rect) setPlace({ top: rect.bottom + 2, right: Math.max(4, window.innerWidth - rect.right) });
+    setOpen((current) => !current);
+  };
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    const esc = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const run = (action: () => void) => () => { setOpen(false); action(); };
+  return (
+    <div className="more-menu" ref={root}>
+      <button type="button" className="more-button" aria-label="More" aria-haspopup="menu" aria-expanded={open} title="More" onClick={toggle}>⋮</button>
+      {open && (
+        <div className="more-panel" role="menu" style={{ top: place.top, right: place.right }}>
+          {mode && <button type="button" role="menuitemradio" aria-checked={!mode.modernView} onClick={run(() => mode.setModernView(false))}><span>{mode.modernView ? "" : "✓"}</span>Legacy</button>}
+          {mode && <button type="button" role="menuitemradio" aria-checked={mode.modernView} onClick={run(() => mode.setModernView(true))}><span>{mode.modernView ? "✓" : ""}</span>Modern</button>}
+          <hr />
+          <button type="button" role="menuitem" onClick={run(onLock)}><span>🔒</span>Lock</button>
+          <button type="button" role="menuitem" onClick={run(onLogout)}><span>⏻</span>Log out</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function screenOf(node: MenuNode | null): Screen {
   if (node === null) return "home";
   const code = node.actionCode?.toUpperCase();
@@ -110,6 +149,7 @@ function screenOf(node: MenuNode | null): Screen {
   if ((code === "SECURITY_MENU" || code === "USER_COMPANY_RIGHTS" || code === "USER_YEAR_RIGHTS" || code === "USER_DASHBOARD_RIGHTS") && node.actionMenu) return "security";
   if (code === "TRANSPORT_ENTRY" && node.actionMenu) return "transport";
   if (code === "U_NOTEPAD") return "notepad";
+  if (code === "UTILITY_CHECK_GSTNO" && node.actionMenu) return "check-gst";
   if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
   if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";
   if ((code === "REP_DASHBOARD" || code === "YEAR_DASHBOARD") && node.actionMenu) return "dashboard";
@@ -179,6 +219,20 @@ function MainMenu() {
   const menuBar = useRef<HTMLDivElement>(null);
   /** The menus are being used from the keyboard: their letters are underlined. */
   const [keyboardMenus, setKeyboardMenus] = useState(false);
+
+  /** The screen saver is up: the windows stay open behind it until the operator's password lifts it. */
+  const [locked, setLocked] = useState(false);
+  const lock = useCallback(() => setLocked(true), []);
+  const unlock = useCallback(() => setLocked(false), []);
+  /** Log out (also the auto-logoff and the lock's own Log out): the windows go with the screen. */
+  const logoutNow = useCallback(() => { setLocked(false); startup?.logout(); }, [startup]);
+  const askLogout = async () => {
+    closeMenus();
+    const open = windows.length;
+    if (!(await messageBox.confirm(open > 0 ? `Log out ?
+The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved is lost.` : "Log out ?", "Log Out"))) return;
+    logoutNow();
+  };
 
   const closeMenus = () => { setOpenMenu(null); setOpenSub(null); setKeyboardMenus(false); };
   const bringToFront = (id: number | null) => {
@@ -255,6 +309,26 @@ function MainMenu() {
     if (appLink) {
       closeMenus();
       launchApp(appLink);
+      return;
+    }
+    // UTILITY > Get E Invoice Token: no window, the gateway is asked and the answer shown in a message (Main_Menu_New EINVOICE_TOKEN).
+    if (node.actionCode?.toUpperCase() === "EINVOICE_TOKEN" && node.actionMenu && selection) {
+      closeMenus();
+      void (async () => {
+        try {
+          const response = await fetch("/api/einvoice-token", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({ menuShortName: node.menuShortName ?? "", session: { companyId: Number(selection.companyId), yearKey: selection.yearKey, loginName: selection.loginName } }),
+          });
+          const body = await response.json() as { kind?: string; message?: string; error?: string };
+          if (!response.ok || !body.message) throw new Error(body.error || "The request failed");
+          await messageBox.alert(body.message, "EINVOICE GST Token", body.kind === "created" ? "info" : "warning");
+        } catch (reason) {
+          await messageBox.alert(reason instanceof Error ? reason.message : "The request failed", "EINVOICE GST Token", "error");
+        }
+      })();
       return;
     }
     // SETUP > COMPANY > SELECT: the company and accounting year selection, as after the login.
@@ -599,6 +673,7 @@ function MainMenu() {
         ? <UserCompanyRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />
         : <SecurityRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "notepad": return <Notepad title={node.label} onClose={close} />;
+      case "check-gst": return <CheckGstNo menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "transport": return <TransportEntry menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "dashboard": return <Dashboard reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       default: return <NotBuiltYet node={node} />;
@@ -624,6 +699,7 @@ function MainMenu() {
   return (
     <ZoomContext.Provider value={openZoom}>
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
+      {selection && <IdleGuard companyGroup={selection.companyGroup} loginName={selection.loginName} locked={locked} onLock={lock} onUnlock={unlock} onLogoff={logoutNow} />}
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
         {windows.length > 0 && (
@@ -699,11 +775,7 @@ function MainMenu() {
         <span className="running" title={activeItem === "Home" ? "" : activeItem}>
           <span>{activeItem === "Home" ? "" : activeItem}</span>
         </span>
-        <div className="context-tools">
-          <ViewSwitchButton />
-          <button type="button">▤ Layout</button>
-          <button type="button">⚙ Color</button>
-        </div>
+        <MoreMenu onLock={lock} onLogout={() => void askLogout()} />
       </section>
 
       <section className={`work-area ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>

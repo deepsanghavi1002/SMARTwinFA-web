@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { addDays, formatDate, monthBefore, parseDate, periodBefore, planPeriod } from "../../lib/report/compare";
+import { addDays, formatDate, isEntry, monthBefore, parseDate, periodBefore, planPeriod } from "../../lib/report/compare";
 import { GROUP_PREFIX, movers, quietParties, rankParties, withGroups } from "../../lib/report/growth";
 import type { MoverKind } from "../../lib/report/growth";
 import type { ReportOutput } from "../../lib/report/types";
@@ -49,7 +49,8 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
   const grouped = useMemo(() => withGroups(output), [output]);
   const work = grouped.output;
   const texts: { key: string; caption: string }[] = [
-    ...output.columns.filter((column) => column.kind === "text" && column.key !== "HEADING_COLUMN_BY_SYSTEM"),
+    // The system's heading column (PARTICULARS) heads the groups; where the entries carry their own text in it (the stock summary's products) it is the party.
+    ...output.columns.filter((column) => column.kind === "text" && (column.key !== "HEADING_COLUMN_BY_SYSTEM" || output.rows.some((row) => isEntry(row) && (row.values[column.key] ?? "").trim() !== ""))),
     ...grouped.groups.map((group) => ({ key: group.key, caption: `${group.caption} (group)` })),
   ];
   const numbers = output.columns.filter((column) => column.kind === "number" && !/CLOSING|BAL|RATE|PERC|%|^DR_CR$/i.test(`${column.key} ${column.caption}`));

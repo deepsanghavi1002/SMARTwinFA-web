@@ -52,6 +52,8 @@ export function useStartupSelection() {
 export type StartupActions = Readonly<{
   /** SETUP > COMPANY > SELECT: back to the company and accounting year selection, as after the login. */
   changeCompany: () => void;
+  /** Log out: every window closes and the login screen shows again. */
+  logout: () => void;
 }>;
 
 const StartupActionsContext = createContext<StartupActions | null>(null);
@@ -217,7 +219,20 @@ export function StartupGate({ children }: { children: ReactNode }) {
     setFromMenu(true);
     setStage("company");
   }, [year, company]);
-  const actions = useMemo<StartupActions>(() => ({ changeCompany }), [changeCompany]);
+  /** Back to the login: the operator, company and year are forgotten, and the windows (children) go with the ready screen. */
+  const logout = useCallback(() => {
+    openBefore.current = null;
+    setFromMenu(false);
+    setPassword("");
+    setError("");
+    setOperator(null);
+    setAccountingYears([]);
+    setCompanies([]);
+    setYear("");
+    setCompany("");
+    setStage("login");
+  }, []);
+  const actions = useMemo<StartupActions>(() => ({ changeCompany, logout }), [changeCompany, logout]);
   /** OK on the company screen. */
   const confirmCompany = () => { openBefore.current = null; setFromMenu(false); setStage("ready"); };
   /** Exit / close on the company screen: from the menu, back to the company that was open; after the login, back to the login. */

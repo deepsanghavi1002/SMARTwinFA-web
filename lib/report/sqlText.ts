@@ -84,6 +84,8 @@ export function pgFragment(sql: string, plan: Readonly<{ moneyColumns: readonly 
   }
   // The document number is text here: a number compared with it (the Numbers sort's Between boxes: led.doc_no >= 1 and led.doc_no <= 4) is read as a number, as SQL Server does.
   out = out.replace(/\b((?:led|ledger|proce|process|prodled|pled)\.)?doc_no\s*(>=|<=|>|<|=)\s*(\d+)(?![\w.'"])/gi, (_match, owner: string | undefined, operator: string, value: string) => `(CASE WHEN btrim(${owner ?? ""}doc_no) ~ '^[0-9]+$' THEN btrim(${owner ?? ""}doc_no)::numeric END) ${operator} ${value}`);
+  // CAST(RTRIM(LTRIM(led.doc_no1)) as BIGINT) (the Challan Number sort's Between boxes): SQL Server reads a blank as 0, PostgreSQL refuses it; a blank or a text that is not a whole number counts 0.
+  out = out.replace(/CAST\(\s*RTRIM\(\s*LTRIM\(\s*([\w.]+)\s*\)\s*\)\s*AS\s+BIGINT\s*\)/gi, (_match, column: string) => `(CASE WHEN btrim(${column}) ~ '^[0-9]+$' THEN btrim(${column})::bigint ELSE 0 END)`);
   // SQL Server reads '' as 0 in a numeric CASE (case when ... then amount else '' end).
   out = out.replace(/(::numeric\s+else\s+)''/gi, (_match, head: string) => `${head}0`);
   return out;

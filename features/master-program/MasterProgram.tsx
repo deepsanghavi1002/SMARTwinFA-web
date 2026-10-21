@@ -669,6 +669,20 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     return override ?? (column.editable && !closedByRow(row, column));
   };
 
+  /** Why a cell the column allows to be edited is closed on this row (shown when the pointer rests on it). */
+  const closedReason = (row: number, column: UpdateColumn): string => {
+    const record = records[row];
+    if (closedByPartner(row, column)) return `Closed: only one of this field and "${toText(column.setup.value_diff_than)}" may be filled, and the other holds a value.`;
+    const override = cellEditable[`${row}:${column.key}`];
+    if (override === false) return "Closed by a rule that ran when the cell was entered (a value that already exists for it, or a record that is in use).";
+    if (record && closedByRow(row, column)) {
+      const status = toText(column.setup.status_against_fld);
+      const exists = status.toLowerCase() === "record_exist" ? ` (record in use: ${cellOf(record, "record_exist") || "?"})` : "";
+      return `Closed by the setup rule on "${status}"${exists}: ${toText(column.setup.enable_for) !== "" ? `enabled for ${toText(column.setup.enable_for)}` : `disabled for ${toText(column.setup.disable_for)}`}.`;
+    }
+    return "Closed.";
+  };
+
   const permissionSource = (record: UpdateRecord) => ({
     firstCombo: { text: first?.text ?? "", value: first?.value ?? "", bound: def?.firstCombo?.bound ?? true },
     fieldValue: (name: string) => (keyOf(record, name) ? cellOf(record, name) : undefined),
@@ -920,8 +934,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     revealColumn(element, columns, widthOf, columns.findIndex((candidate) => candidate.key === key), grids?.frozen ?? 0, INDICATOR_WIDTH);
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
-  /** `editAfter`: open the editor once the cursor gets there (used when a commit makes the move wait). */
-  const moveTo = async (row: number, key: string, editAfter = false): Promise<boolean> => {
+  /** `editAfter`: open the editor once the cursor gets there (used when a commit makes the move wait). `byMouse`: a click on a cell goes to that cell, not on to the description of the code the cursor left (the keyboard still does). */
+  const moveTo = async (row: number, key: string, editAfter = false, byMouse = false): Promise<boolean> => {
     if (!grids || !meta || busy) return false;
     if (editing) {
       if (!(await commitEdit())) return false;
@@ -980,7 +994,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (oldColumn.setup.field_validation.toLowerCase() === "sys.compulsionhandle" && cellOf(oldRecord, oldColumn.key) !== "") {
         const target = grids.columns.find((column) => lower(column.setup.run_compulsory_field) === lower(oldColumn.setup.field_name));
         // Only to a field that is open: a quantity of 0 keeps its UOM closed, and the cursor must not stop there.
-        if (target && target.key !== key && isEditable(row, target)) key = target.key;
+        if (!byMouse && target && target.key !== key && isEditable(row, target)) key = target.key;
       }
     }
 
@@ -2207,6 +2221,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                           tabIndex={-1}
                           aria-selected={current}
                           aria-readonly={!editable}
+                          title={!editable && column.editable ? closedReason(row, column) : undefined}
                           className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${current ? "mp-current" : ""} ${editable ? "" : column.editable ? "mp-readonly mp-row-closed" : "mp-readonly"} ${editable && column.options?.length ? "mp-combo-cell" : ""}`}
                           style={{ width: widthOf(column), textAlign: column.align === "R" || column.format.startsWith("#") || column.format === "N2" ? "right" : column.align === "C" ? "center" : "left", ...(index < frozenCount ? { left: frozenLeft[index] } : {}) }}
                           onMouseDown={(event) => {
@@ -2222,7 +2237,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                             if (event.button !== 0 && pickedRows.has(row)) return;
                             if (event.button === 0) dragSelect.current = true;
                             if (row !== cursor.row) { findMode.current = true; setTyped(""); }
-                            void moveTo(row, column.key);
+                            void moveTo(row, column.key, false, true);
                           }}
                           onDoubleClick={() => void startEdit()}
                           // Dragging down (or up) with the left button held selects those rows.

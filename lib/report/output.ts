@@ -312,6 +312,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     if (reportKey === 244 && name.toUpperCase() === "STD_PACK") base.align = "R";
     // Moulding Production Plan: the figures read right-justified whatever the setup says.
     if (reportKey === 203 && ["STD_WT", "PCS_HOUR", "PLANING_QTY", "PRODUCTION", "PENDING_PLAN_QTY"].includes(name.toUpperCase())) base.align = "R";
+    if (reportKey === 163 && ["STD_PACK", "PRODUCTION", "SALE"].includes(name.toUpperCase())) base.align = "R";
     columns.push(base);
   }
 
