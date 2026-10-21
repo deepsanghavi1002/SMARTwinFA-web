@@ -8,7 +8,7 @@ import { addonColumns, columnFor, controlOptions, queryOptions } from "../small-
 import type { GridPlan } from "../small-entry/load";
 import { orderByAliases } from "../small-entry/text";
 import { moneyColumnNames } from "../report/generate";
-import { BOOK, entryDialect, replaceEntryTokens } from "./values";
+import { BOOK, entryDialect, replaceEntryTokens, tdsAutoJournal, tdsBook } from "./values";
 import type { EntryValues } from "./values";
 import type { BookScreen, ControlPlace, EntryColumn, EntryOption, GridColumn, HelpList, InvoiceControl, InvoiceDefinition, PartyDetails, SeriesDefaults, SlabRow } from "./types";
 
@@ -267,11 +267,15 @@ async function headerControls(loader: Loader, entryId: number, book: BookContext
     }
     if (name === "tbx_partyname" && !book.party) continue;
     if (name === "cmb_rev_entry" && !((values.bookKey === BOOK.EXPENSE || values.bookKey === BOOK.AGENCY) && session.coGstReq)) continue;
+    // The TDS auto journal shows the foot box (Credit Days, as "TDS Amount") on the expense, agency and purchase books; the screen hides it for a party with no TDS.
+    const tdsBox = name === "tbx_credit_days" && tdsAutoJournal(session.setup) && tdsBook(values.bookKey, values.bookActual);
+    if (tdsBox) { row.field_enable_book = `${text(row, "field_enable_book")} ${forBook},`; row.field_disable_book = ""; row.add_visible = true; }
     // Entry_Control_Properties: shown on an add when add_visible and the book is enabled (and not disabled).
     if (!flag(row, "add_visible")) continue;
     if (!` ${toText(row.field_enable_book)}`.includes(` ${forBook},`) || ` ${toText(row.field_disable_book)}`.includes(` ${forBook},`)) continue;
     let label = text(row, "label_caption");
     if (session.licence === 21) label = licence21Caption(label, forBook, values.bookActual);
+    if (tdsBox) label = "TDS Amount";
     const compulsory = flag(row, "value_compulsory") && text(row, "field_name").toUpperCase() !== "(GRID)";
     const options = type === "CB" ? await controlOptions(loader, row, replace) : [];
     controls.push({
@@ -288,6 +292,7 @@ async function headerControls(loader: Loader, entryId: number, book: BookContext
       initial: text(row, "defa_fixvalue") || (type === "CB" ? (options[0]?.text ?? "") : ""),
       maxLength: toInt(field(row, "field_length_max")) || toInt(field(row, "field_length")),
       tooltip: text(row, "field_tooltips"),
+      ...(tdsBox ? { tds: true } : {}),
     });
   }
   return controls;
@@ -551,6 +556,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     uoms,
     decimals: { qty: toInt(setup.i_decqty), factor: toInt(setup.i_decfact), rate: toInt(setup.i_decrate), value: toInt(setup.decamount) || 2 },
     stockNat: book.stockNat === "A" ? "A" : "L",
+    stockNatBoth: book.stockNatBoth,
     warnings,
     asksTaxGroup: asks && !chosenGroup,
   };
@@ -604,7 +610,8 @@ async function slabGrid(loader: Loader, book: BookContext, rows: Row[], group: B
   for (let index = 0; index < kept.length; index += 1) {
     const row = kept[index];
     const master = text(row, "slab_master") === "Y";
-    const itemWise = text(row, "slab_pos") === "P";
+    // Item-wise rows (slab_pos P) are fed by the product rows; a book with no product rows (Entry.cs: slab_pos P with str_Inventory not Y) works them as the entry's own rows.
+    const itemWise = text(row, "slab_pos") === "P" && inventory;
     const calc = text(row, "slab_calc");
     const mathOp = text(row, "slab_mathop").toUpperCase();
     const short = text(row, "slab_short").trim();
@@ -873,9 +880,12 @@ export async function againstNames(loader: Loader, codes: readonly number[], nat
 export async function entryPreview(loader: Loader, entryName: string, firstCombo: EntryOption, series: string): Promise<HelpList> {
   const properties = await entryProperties(loader, entryName);
   const helpName = text(properties, "help_preview_queryname");
-  const helpRow = (await loader.readTable(`SELECT help_query, help_col_frozen FROM ${SETUP_SCHEMA}.help_table WHERE help_prog_id = $1`, [helpName]))?.[0];
-  if (!helpRow) throw new Error(`${helpName} is not in smart_setup.help_table`);
   const book = await bookContext(loader, entryName, firstCombo, { series });
+  // Invoice_Tab_Find_Edit_Enter: a stock-only register (a link / process book such as Job Stock In / Out, with no book against) lists its entries
+  // from the process table (STOCK_PREVIEW), not from the ledger the bill list reads.
+  const stockOnly = !entryName.trim().toUpperCase().startsWith("V") && !book.values.bookActual && book.values.type > 0 && book.values.agBook === 0;
+  const helpRow = (await loader.readTable(`SELECT help_query, help_col_frozen FROM ${SETUP_SCHEMA}.help_table WHERE help_prog_id = $1`, [stockOnly ? "STOCK_PREVIEW" : helpName]))?.[0];
+  if (!helpRow) throw new Error(`${stockOnly ? "STOCK_PREVIEW" : helpName} is not in smart_setup.help_table`);
   const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(text(helpRow, "help_query")), book.values))) ?? [];
   const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
   const shown = rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
@@ -891,6 +901,17 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
       (row as Record<string, string>).against_nature = names.kinds.get(toInt(field(mine, "nature"))) ?? "";
     }
     columns.push({ key: "against_book", caption: "Against Book", width: 130, align: "L", format: "" }, { key: "against_nature", caption: "Nature", width: 130, align: "L", format: "" });
+  }
+  // How many product rows (Sr.) each listed entry has: one grouped read for the whole list.
+  if (shown.length > 0 && book.inventory) {
+    const keys = shown.map((row) => toInt(row.unique_key)).filter((key) => key > 0);
+    const counts = keys.length === 0 ? [] : (await loader.readTable(
+      `SELECT ${stockOnly ? "process_id" : "led_id"} AS owner, COUNT(*) AS n FROM |sys.db|prod_ledger WHERE il_pos = 'A' AND ${stockOnly ? "process_id" : "led_id"} = ANY($1::int[]) GROUP BY 1`,
+      [stockOnly ? keys : (await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [keys]))?.map((row) => toInt(field(row, "led_key"))) ?? []])) ?? [];
+    const byOwner = new Map(counts.map((row) => [toInt(field(row, "owner")), toInt(field(row, "n"))]));
+    const ledgerKeys = stockOnly ? new Map<number, number>() : new Map(((await loader.readTable(`SELECT unique_key, led_key FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [keys])) ?? []).map((row) => [toInt(field(row, "unique_key")), toInt(field(row, "led_key"))]));
+    for (const row of shown) (row as Record<string, string>).sr_count = String(byOwner.get(stockOnly ? toInt(row.unique_key) : ledgerKeys.get(toInt(row.unique_key)) ?? 0) ?? 0);
+    columns.push({ key: "sr_count", caption: "Sr.", width: 50, align: "R", format: "" });
   }
   return {
     columns,

@@ -1634,7 +1634,7 @@
 .ent-find th .ent-th-text{max-width:100%}
 .ent-find th .mp-filter-button{position:absolute;right:3px;top:50%;transform:translateY(-50%);z-index:3}
 /* Invoice Print: format choice and the bill preview */
-.ent-print-back{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:rgba(10,30,60,.45)}
+.ent-print-back{position:fixed;inset:0;z-index:1300;display:grid;place-items:center;background:rgba(10,30,60,.45)}
 .ent-print-choose{width:360px;display:grid;gap:8px;padding:12px;border:2px solid #1f64b8;border-radius:6px;background:#f5fffa;box-shadow:0 8px 28px rgba(0,0,0,.4)}
 .ent-print-title{display:flex;align-items:center;gap:6px;font-weight:700;color:#16365f}
 .ent-print-option{display:grid;gap:2px;padding:8px 10px;border:1px solid #8fb0d8;border-radius:5px;background:#fff;text-align:left;font:inherit;cursor:pointer}

@@ -61,6 +61,11 @@ export function useColumnFilters() {
 }
 
 /** `skipTab`: kept out of the Tab order (a screen whose Tab moves through its own fields). */
+/**
+ * Puts the keyboard on the filter's search box when the popup opens. A stable function: an inline ref is called again on every draw,
+ * which took the keyboard back from the condition boxes while they were being typed in.
+ */
+
 export function FilterButton({ caption, onOpen, skipTab = false }: { caption: string; onOpen: () => void; skipTab?: boolean }) {
   return <button type="button" className="mp-filter-button" tabIndex={skipTab ? -1 : undefined} aria-label={`Filter ${caption}`} onClick={onOpen}>▾</button>;
 }

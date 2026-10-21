@@ -207,7 +207,9 @@ export function ProductGrid({
             <tr>
               {columns.map((column, index) => {
                 const total = totals[column.key.toLowerCase()];
-                return <td key={column.key} className={`${index < frozen ? "ent-frozen" : ""} ${total !== undefined ? "ent-total" : ""}`} style={{ left: lefts[index] }}>{total !== undefined ? amountText(total, decimals(column.key.toLowerCase())) : ""}</td>;
+                // The Sr. column's total is the number of product rows filled.
+                const rowCount = column.key.toLowerCase() === "il_serial" && total === undefined ? lines.filter((line) => line.product).length : 0;
+                return <td key={column.key} className={`${index < frozen ? "ent-frozen" : ""} ${total !== undefined || rowCount > 0 ? "ent-total" : ""}`} style={{ left: lefts[index] }}>{total !== undefined ? amountText(total, decimals(column.key.toLowerCase())) : rowCount > 0 ? rowCount : ""}</td>;
               })}
             </tr>
           </tbody>

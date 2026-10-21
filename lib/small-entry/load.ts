@@ -196,7 +196,11 @@ export async function controlOptions(loader: Loader, row: Row, context: SysConte
     }
     case "Q": {
       const query = text((await loader.readTable(`SELECT query_string FROM ${SETUP_SCHEMA}.query_table WHERE BTRIM(query_prog_id) = $1`, [text(row, "combo_query")]))?.[0], "query_string");
-      return query === "" ? [] : queryOptions(loader, fill(query));
+      if (query !== "") return queryOptions(loader, fill(query));
+      // A query-type list that names no query (the Exp. Name box) carries its query in combo_fixquery.
+      const own = text(row, "combo_fixquery");
+      // The query gives code, name: the list shows the name and keeps the code.
+      return own === "" ? [] : queryOptions(loader, `select name, code from (${fill(own).replace(/\s+order\s+by\s+name\s*$/i, "")}) as exp_list order by name`);
     }
     case "L":
       return text(row, "combo_list").split("|").filter((item) => item !== "").map((item) => ({ text: item, value: item }));
