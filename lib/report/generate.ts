@@ -29,6 +29,23 @@ const flag = (row: Row | undefined | null, name: string) => {
 export { ReportRefusal };
 
 /** Everything GenerateReport works out besides the procedure's parameters, which Report_Combine reads again after the call. */
+/**
+ * The order-by expressions of the ticked groups, in the order they were ticked: the account's name for the Account group (its run select
+ * may be empty), and for each other group the next run select of `unionGroups` (the groups' run selects, "a,b,").
+ */
+export function tickedGroupOrder(groups: readonly { text: string }[], unionGroups: string): string[] {
+  const parts = unionGroups.split(",").map((part) => part.trim()).filter((part) => part !== "");
+  const out: string[] = [];
+  let next = 0;
+  for (const group of groups) {
+    if (group.text.trim().toUpperCase() === "ACCOUNT") {
+      if ((parts[next] ?? "").toLowerCase().replace(/\s/g, "") === "ac.name") next += 1;
+      out.push("AC.NAME");
+    } else if (parts[next] !== undefined) { out.push(parts[next]); next += 1; }
+  }
+  return out;
+}
+
 export type ReportPlan = {
   call: ReportCall;
   properties: Row;
@@ -648,6 +665,8 @@ export async function planReport(loader: Loader, reportName: string, selection: 
       if (dateColumn === "") sorting = `${groups} || '   P'`;
       else if (reportKey === 5 || reportKey === 25 || (reportKey === 3 && unionRankingGroups !== "")) sorting = `${groups} || CAST(ac.code AS varchar(10)) || to_char(${dateColumn}, 'YYYYMMDD') || '   P'`;
       else if (reportKey === 1) sorting = `${groups} || to_char(${dateColumn}, 'YYYYMMDD') || led.full_docno || CAST(led.led_key AS varchar(20)) || '   P'`;
+      // Partywise Stock: the ticked groups (the account or an addon, in the order ticked), then the date, then the voucher number; with none ticked, the date and the voucher number.
+      else if (reportKey === 16) { const lead = tickedGroupOrder(tickedGroups, unionRankingGroups).join(" || ' ' || "); sorting = `${lead !== "" ? `${lead} || ` : ""}to_char(${dateColumn}, 'YYYYMMDD') || prodled.full_docno || '   P'`; }
       else sorting = `${groups} || to_char(${dateColumn}, 'YYYYMMDD') || '   P'`;
       fixColumns.set("SORTING_COL", sorting.replace(/bs\.bs_desc/gi, "bs.bs_code || ' ' || bs.bs_desc"));
     }

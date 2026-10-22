@@ -39,3 +39,46 @@ test("the Excel file carries real formulas", () => {
   const text = new TextDecoder().decode(xlsx(table as never));
   assert.ok(text.includes("<f>(A5*B5)</f><v>20</v>"));
 });
+
+const data: Record<string, (string | number | null)[]> = { DOC: ["A", "B", "A", "C", "A"], QTY: [10, 20, 30, 40, 50] };
+const lookupSheet = {
+  rows: 5,
+  cell: (name: string, i: number) => data[name]?.[i],
+  table: (reference: string) => (reference === "Other" ? { rows: [["A", 1, 5], ["B", 2, 6], ["A", 3, 7], ["Z", "t", "u"], ["Z", "t", "v"]] as (string | number)[][] } : "#REF!"),
+};
+const work = (formula: string) => { const result = evaluate(parseFormula(formula), lookupSheet); return result.perRow ? result.values : result.scalar; };
+
+test("SUMIF, COUNTIF and AVERAGEIF: by the row's own cell, a text, or an operator", () => {
+  assert.deepEqual(work("SUMIF(DOC, DOC, QTY)"), [90, 20, 90, 40, 90]);
+  assert.equal(work('SUMIF(DOC, "A", QTY)'), 90);
+  assert.equal(work('SUMIF(QTY, ">25")'), 120);
+  assert.deepEqual(work("COUNTIF(DOC, DOC)"), [3, 1, 3, 1, 3]);
+  assert.equal(work('AVERAGEIF(DOC, "A", QTY)'), 30);
+});
+
+test("SUMIF is a real SUMIF in Excel, one for each run of rows", () => {
+  const excel = { letter: (name: string) => ({ DOC: "A", QTY: "B" } as Record<string, string>)[name] ?? null, row: 2, segments: [[2, 4], [6, 7]] as [number, number][] };
+  assert.equal(toExcel(parseFormula("SUMIF(DOC, DOC, QTY)"), excel), "(SUMIF(A2:A4,A2,B2:B4)+SUMIF(A6:A7,A2,B6:B7))");
+});
+
+test("VLOOKUP with an exact match adds up a value that is on many lines of the other report", () => {
+  assert.deepEqual(work('VLOOKUP(DOC, "Other", 2, 0)'), [4, 2, 4, "#N/A", 4]);
+  assert.deepEqual(work('VLOOKUP(DOC, "Other", 3, 0)'), [12, 6, 12, "#N/A", 12]);
+  // Text figures are not added: the first line's text.
+  assert.equal(work('VLOOKUP("Z", "Other", 2, 0)'), "t");
+});
+
+test("SUMIF over a column of another open report, written as a text 'Report!COLUMN'", () => {
+  const other = { rows: [["A", 1], ["B", 2], ["A", 3], ["C", 4]] as (string | number)[][] };
+  const sheet = {
+    rows: 3,
+    cell: (name: string, i: number) => ({ DOC: ["A", "B", "Z"] }[name as "DOC"]?.[i]),
+    // "Other!KEY" is the first column of the other report, "Other!AMT" the second: each is a one-column table here.
+    table: (reference: string) => (reference === "Other!KEY" ? { rows: other.rows.map((line) => [line[0]]) } : reference === "Other!AMT" ? { rows: other.rows.map((line) => [line[1]]) } : "#REF!"),
+  };
+  const run = (formula: string) => { const result = evaluate(parseFormula(formula), sheet); return result.perRow ? result.values : result.scalar; };
+  assert.deepEqual(run('SUMIF("Other!KEY", DOC, "Other!AMT")'), [4, 2, 0]);
+  assert.equal(run('SUMIF("Other!KEY", "A", "Other!AMT")'), 4);
+  assert.equal(run('COUNTIF("Other!KEY", "A")'), 2);
+  assert.equal(run('SUMIF("Nope!KEY", "A", "Other!AMT")'), "#REF!");
+});

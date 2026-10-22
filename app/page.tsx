@@ -17,6 +17,7 @@ import { UserDashboardRights } from "../features/security/UserDashboardRights";
 import { TransportEntry } from "../features/transport/TransportEntry";
 import { Notepad } from "../features/utility/Notepad";
 import { CheckGstNo } from "../features/utility/CheckGstNo";
+import { AskAi } from "../features/ask/AskAi";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
@@ -69,6 +70,8 @@ export interface WindowInstance extends MenuNode {
   zoomLedKey?: number;
   /** Zoom from a report row: the account whose Ledger a report window opens on. */
   zoomAcCode?: number;
+  /** The report runs at once, to its output grid (opened from Ask AI). */
+  autoRun?: boolean;
   /** The window this one was zoomed from (a report row's voucher or account). */
   zoomParent?: number;
 }
@@ -220,6 +223,10 @@ function MainMenu() {
   /** The menus are being used from the keyboard: their letters are underlined. */
   const [keyboardMenus, setKeyboardMenus] = useState(false);
 
+  /** The Ask AI panel (questions answered from the open company's data). */
+  const [askOpen, setAskOpen] = useState(false);
+  /** Minimized: only its title bar shows (bottom right), the question and answer are kept. */
+  const [askMin, setAskMin] = useState(false);
   /** The screen saver is up: the windows stay open behind it until the operator's password lifts it. */
   const [locked, setLocked] = useState(false);
   /** Lock needs the operator's screen saver password (USER_SCREEN_PW): none set, the desktop's message shows instead (nothing when the idle timer asks). */
@@ -312,7 +319,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     if (!node) { void messageBox.alert(`The ${wanted} program is not in this company's menu, so it cannot be opened.`, "Zoom", "warning"); return; }
     if (windows.length >= MAX_WINDOWS) { void messageBox.alert(`${MAX_WINDOWS} windows are open already.\nClose one (× on its tab) to open it.`, "Too Many Windows", "warning"); return; }
     const winId = nextWindowId.current++;
-    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode }) }]);
+    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode, ...(target.run ? { autoRun: true } : {}) }) }]);
     bringToFront(winId);
   };
 
@@ -676,7 +683,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       case "master": return <MasterProgram programName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "small-entry": return <SmallEntry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoom={(node as WindowInstance).zoomLedKey} />;
-      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} />;
+      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} autoRun={(node as WindowInstance).autoRun} />;
       case "pie-chart": return <PieChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "year-chart": return <YearChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "security": return node.actionCode?.toUpperCase() === "USER_DASHBOARD_RIGHTS"
@@ -713,6 +720,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   return (
     <ZoomContext.Provider value={openZoom}>
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
+      {askOpen && <AskAi minimized={askMin} onMinimize={() => setAskMin(true)} onRestore={() => setAskMin(false)} onClose={() => { setAskOpen(false); setAskMin(false); }} onOpenLedger={(acCode) => { openZoom({ reportName: "REPORT_LEDGER", acCode }); setAskMin(true); }} onOpenReport={(name) => { openZoom({ reportName: name, run: true }); setAskMin(true); }} />}
       {selection && <IdleGuard companyGroup={selection.companyGroup} loginName={selection.loginName} locked={locked} onLock={lock} onUnlock={unlock} onLogoff={logoutNow} />}
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
@@ -789,7 +797,10 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         <span className="running" title={activeItem === "Home" ? "" : activeItem}>
           <span>{activeItem === "Home" ? "" : activeItem}</span>
         </span>
-        <MoreMenu onLock={lockNow} onLogout={() => void askLogout()} />
+        <div className="context-end">
+          <button type="button" className="ask-button" aria-pressed={askOpen} title="Ask a question about your accounts" onClick={() => { if (!askOpen) { setAskOpen(true); setAskMin(false); } else setAskMin((min) => !min); }}>✨ Ask AI</button>
+          <MoreMenu onLock={lockNow} onLogout={() => void askLogout()} />
+        </div>
       </section>
 
       <section className={`work-area ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
