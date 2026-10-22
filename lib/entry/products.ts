@@ -315,7 +315,14 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
       if (value !== undefined && value !== null) addon[toInt(field(item, "fiel_key"))] = toText(displayValue(value)).trim();
     }
   }
-  return { uniqueKey, ...(against ? { against } : {}), values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax };
+  // The TDS auto journal the entry passed: a JV pair made with it (imp_ledkey is the entry's ledger row); its one amount is the debit side's.
+  let tdsAmount = "";
+  if (!stock) {
+    const jv = (await loader.readTable(`SELECT COALESCE(SUM(amount::numeric), 0) AS amount FROM |sys.db|ledger WHERE imp_ledkey = $1 AND book = 19 AND doc_series = 'JV' AND doc_pos = 'A' AND ac_dbcode = 1`, [ledKey]))?.[0];
+    const amount = toDecimal(field(jv, "amount"));
+    if (amount > 0) tdsAmount = amount.toFixed(2);
+  }
+  return { uniqueKey, ...(against ? { against } : {}), values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax, tdsAmount };
 }
 
 /**

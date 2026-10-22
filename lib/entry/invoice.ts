@@ -205,6 +205,8 @@ export async function bookContext(loader: Loader, entryName: string, firstCombo:
     agBook = toInt(field((await loader.readTable(`SELECT book FROM |sys.db|account WHERE code = $1`, [against.code]))?.[0], "book"));
     if (agBook > 0) type = against.nature;
   }
+  // A note of a nature that takes no stock (Others: book_properties.stkm_stkentry N) has no product rows: its slab amounts are typed.
+  const natureNoStock = agBook > 0 && type > 0 && text((await loader.readTable(`SELECT stkm_stkentry FROM |sys.db|book_properties WHERE book_key = $1`, [type]))?.[0], "stkm_stkentry").toUpperCase() === "N";
   if (stkmFromShort !== "" && (stkmToShort !== "" || session.licence === 71)) warnings.push("A link register lists the entries to link first (the link panel); that panel is not ported yet.");
 
   const values: EntryValues = {
@@ -216,7 +218,7 @@ export async function bookContext(loader: Loader, entryName: string, firstCombo:
   };
   return {
     values, row, stkmId, stkmToShort, stockNat, stockNatBoth, returnFor,
-    inventory: text(row, "stkm_stkentry").toUpperCase() === "Y",
+    inventory: text(row, "stkm_stkentry").toUpperCase() === "Y" && !natureNoStock,
     party: text(row, "stkm_pcode").toUpperCase() === "Y",
     slab, entryFor, linkFromParty, warnings,
   };
@@ -886,7 +888,9 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
   const stockOnly = !entryName.trim().toUpperCase().startsWith("V") && !book.values.bookActual && book.values.type > 0 && book.values.agBook === 0;
   const helpRow = (await loader.readTable(`SELECT help_query, help_col_frozen FROM ${SETUP_SCHEMA}.help_table WHERE help_prog_id = $1`, [stockOnly ? "STOCK_PREVIEW" : helpName]))?.[0];
   if (!helpRow) throw new Error(`${stockOnly ? "STOCK_PREVIEW" : helpName} is not in smart_setup.help_table`);
-  const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(text(helpRow, "help_query")), book.values))) ?? [];
+  // Edit is allowed for every series of the register, so the list is not narrowed to the series on the screen.
+  const listQuery = text(helpRow, "help_query").replace(/\s+and\s+[\w.]+\s*=\s*'\|sys\.doc_series\|'/gi, "");
+  const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(listQuery), book.values))) ?? [];
   const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
   const shown = rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
   const columns = keys.length > 0 ? await helpColumns(loader, helpName, "E", keys) : [];
@@ -911,7 +915,18 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
     const byOwner = new Map(counts.map((row) => [toInt(field(row, "owner")), toInt(field(row, "n"))]));
     const ledgerKeys = stockOnly ? new Map<number, number>() : new Map(((await loader.readTable(`SELECT unique_key, led_key FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [keys])) ?? []).map((row) => [toInt(field(row, "unique_key")), toInt(field(row, "led_key"))]));
     for (const row of shown) (row as Record<string, string>).sr_count = String(byOwner.get(stockOnly ? toInt(row.unique_key) : ledgerKeys.get(toInt(row.unique_key)) ?? 0) ?? 0);
-    columns.push({ key: "sr_count", caption: "Sr.", width: 50, align: "R", format: "" });
+    columns.push({ key: "sr_count", caption: "Item Row", width: 70, align: "R", format: "" });
+  }
+  // How many bills each entry sets off in its Outstanding window (a debit / credit note, or any register that sets off): one grouped read for the whole list.
+  // The column shows only when some entry of the list has a set-off.
+  if (shown.length > 0 && !stockOnly) {
+    const keys = shown.map((row) => toInt(row.unique_key)).filter((key) => key > 0);
+    const ledgerKeys = new Map(((await loader.readTable(`SELECT unique_key, led_key FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [keys])) ?? []).map((row) => [toInt(field(row, "unique_key")), toInt(field(row, "led_key"))]));
+    const counts = new Map(((await loader.readTable(`SELECT out_ledid, COUNT(*) AS n FROM |sys.db|outclear WHERE out_ledid = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) > 0 AND out_setoff::numeric > 0 GROUP BY out_ledid`, [[...ledgerKeys.values()]])) ?? []).map((row) => [toInt(field(row, "out_ledid")), toInt(field(row, "n"))]));
+    if (counts.size > 0) {
+      for (const row of shown) (row as Record<string, string>).out_rows = String(counts.get(ledgerKeys.get(toInt(row.unique_key)) ?? 0) ?? 0);
+      columns.push({ key: "out_rows", caption: "Outstanding Row", width: 110, align: "R", format: "" });
+    }
   }
   return {
     columns,

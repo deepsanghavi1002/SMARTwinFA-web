@@ -81,7 +81,7 @@ export async function readSession(client: Client, request: SessionRequest): Prom
 
   const company = (await client.query(
     `SELECT c.co_key, BTRIM(c.name) AS name, LOWER(BTRIM(COALESCE(c.co_dataname, ''))) AS schema_name,
-            BTRIM(COALESCE(c.co_group, '')) AS co_group, BTRIM(COALESCE(c.state_name, '')) AS state_name, BTRIM(COALESCE(c.state_code::text, '')) AS state_code,
+            BTRIM(COALESCE(c.co_group, '')) AS co_group, BTRIM(COALESCE(c.state_name, '')) AS state_name, BTRIM(COALESCE(c.state_code::text, '')) AS state_code, BTRIM(COALESCE(c.gst_no, '')) AS gst_no,
             BTRIM(COALESCE(c.gst_req, '')) AS gst_req, BTRIM(COALESCE(c.business_nat, '')) AS business_nat,
             LOWER(BTRIM(COALESCE(c.co_from_dataname, ''))) AS from_schema_name
        FROM ${SYSTEM_SCHEMA}.company c
@@ -121,7 +121,8 @@ export async function readSession(client: Client, request: SessionRequest): Prom
     companyGroup: company.co_group,
     licence: companyLicence(company.co_group || null),
     coStateName: company.state_name,
-    coStateCode: company.state_code,
+    // The company's GSTIN begins with its state's code, so it decides when the stored state code disagrees with it (a company master keyed with the wrong state).
+    coStateCode: /^[0-9]{2}/.test(company.gst_no) ? company.gst_no.slice(0, 2) : company.state_code,
     coGstReq: company.gst_req.toUpperCase().includes("Y"),
     businessNature: company.business_nat,
     yearKey: year.year_key,

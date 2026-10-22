@@ -19,10 +19,13 @@ export type LogRow = Readonly<{
   kind: "head" | "field";
   /** The group the field belongs to: ITEM120406 (the section and the key of the row it is on). */
   group: string;
+  /** The section as the window shows it: TOP, ITEM, SLAB, ADDON ... (no row key). */
+  section: string;
   name: string;
   cells: readonly string[];
 }>;
-export type EntryLog = Readonly<{ versions: LogVersion[]; rows: LogRow[] }>;
+/** docNo: the entry's own number (ledger.doc_no), for the name of an exported file. */
+export type EntryLog = Readonly<{ versions: LogVersion[]; rows: LogRow[]; docNo: string }>;
 
 const SECTIONS: readonly { column: string; label: (style: string) => string }[] = [
   { column: "lentry_top_bottom", label: () => "TOP" },
@@ -47,7 +50,7 @@ export async function entryLog(loader: Loader, entryName: string, firstCombo: En
   const { session } = loader;
   const book = await bookContext(loader, entryName, firstCombo);
   const style = "I";
-  const led = (await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE unique_key = $1 AND book = $2`, [uniqueKey, book.values.bookKey]))?.[0];
+  const led = (await loader.readTable(`SELECT led_key, doc_no FROM |sys.db|ledger WHERE unique_key = $1 AND book = $2`, [uniqueKey, book.values.bookKey]))?.[0];
   const ledKey = toInt(field(led, "led_key"));
   if (ledKey <= 0) throw new Error("The entry was not found");
   const result = await loader.client.query(
@@ -65,13 +68,13 @@ export async function entryLog(loader: Loader, entryName: string, firstCombo: En
 
   const rows: LogRow[] = [];
   const at = new Map<string, number>();
-  const put = (kind: "head" | "field", group: string, name: string, version: number, value: string) => {
+  const put = (kind: "head" | "field", group: string, section: string, name: string, version: number, value: string) => {
     const key = `${kind}|${group}|${name}`;
     let index = at.get(key);
     if (index === undefined) {
       index = rows.length;
       at.set(key, index);
-      rows.push({ kind, group, name, cells: versions.map(() => "") });
+      rows.push({ kind, group, section, name, cells: versions.map(() => "") });
     }
     const cells = [...rows[index].cells];
     cells[version] = value;
@@ -82,17 +85,17 @@ export async function entryLog(loader: Loader, entryName: string, firstCombo: En
       const label = section.label(style);
       const list = objects(toText(row[section.column]));
       if (list.length === 0) continue;
-      put("head", label, "Group Head: ", version, `${label}  --------------------------------------------------`);
+      put("head", label, label, "Group Head: ", version, `${label}  --------------------------------------------------`);
       for (const item of list) {
         // The key of the row (!*Il_key, !Slab_key ...) names the row the other fields belong to.
         const keyField = Object.keys(item).find((name) => name.startsWith("!"));
         const group = `${label}${keyField ? toText(item[keyField]) : ""}`;
         for (const [name, value] of Object.entries(item)) {
           if (name.startsWith("!")) continue;
-          put("field", group, name, version, toText(value));
+          put("field", group, label, name, version, toText(value));
         }
       }
     }
   });
-  return { versions, rows };
+  return { versions, rows, docNo: toText(field(led, "doc_no")).trim() };
 }
