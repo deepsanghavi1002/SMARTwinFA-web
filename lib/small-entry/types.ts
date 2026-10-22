@@ -11,6 +11,8 @@ export type EntryOption = Readonly<{
   value: string;
   /** Entry (invoice) only: what a debit / credit note is against - the account (int_ag_bookcode) and the nature book (int_type) chosen on the Returns panel. */
   against?: Readonly<{ code: number; nature: number }>;
+  /** Last Year Account Outstanding, a Book entry: the Series entries (BN_ID | series text) that belong to this book. */
+  series?: readonly string[];
 }>;
 
 /** A header control from entry_control (cmb_SmallEntry1-3, dtp_Date1-3, tbx_Text1-3). */

@@ -9,6 +9,7 @@ import type { PermissionSource } from "../../lib/master-program/legacy";
 import type { EntryColumn, EntryDefinition, EntryGrid, EntryOption, SaveOutcome } from "../../lib/small-entry/types";
 import { smallEntryCall } from "./api";
 import { commitCell, isNumberColumn, sameValue, shownValue, typingAllowed } from "./cells";
+import type { CellCommit } from "./cells";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { editorKindOf, useEditorTools } from "../grid/EditorTools";
 import { filterHolds, kindOfFieldType, sortedDistinct } from "../grid/filter";
@@ -69,6 +70,20 @@ function valueIn(record: Readonly<Record<string, string>> | undefined, name: str
   const lower = name.split(".").pop()!.trim().toLowerCase();
   const key = Object.keys(record).find((candidate) => candidate.toLowerCase() === lower);
   return key === undefined ? undefined : record[key];
+}
+
+/**
+ * A list column's entries for one row. Last Year Account Outstanding's Series list shows only the series of the row's Book (each Book entry
+ * carries its series); with no Book chosen yet it shows them all.
+ */
+function listFor(column: EntryColumn | undefined, record: Record<string, string> | undefined, columns: readonly EntryColumn[]): readonly EntryOption[] | undefined {
+  const options = column?.options;
+  // Only the Series list is narrowed; the Book list always shows every book.
+  if (!options || !record || column.key.toLowerCase() !== "doc_series") return options;
+  const bookColumn = columns.find((candidate) => candidate.key.toLowerCase() === "book");
+  const chosen = bookColumn ? (record[bookColumn.key] ?? "").trim() : "";
+  const ids = chosen === "" ? undefined : bookColumn?.options?.find((option) => option.text === chosen)?.series;
+  return ids ? options.filter((option) => ids.includes(`${option.value}|${option.text.trim()}`)) : options;
 }
 
 export function SmallEntry({ entryName, menuShortName, title, onClose }: { entryName: string; menuShortName: string; title: string; onClose: () => void }) {
@@ -391,7 +406,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     setTyped("");
     setSelectionEnd(null);
     // A combo cell (a list column) opens its list under the cell, as the master's do.
-    setComboAt(column.options ? comboPlace(activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`), column.options.map((option) => option.text)) : null);
+    setComboAt(column.options ? comboPlace(activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`), (listFor(column, record, columns) ?? column.options).map((option) => option.text)) : null);
     if (column.options) setEditText(value);
     setEditing(true);
   }, [columns, cursor, records, shownRows, isEditable, controls, toggleTick]);
@@ -417,7 +432,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       return true;
     }
     // A combo cell takes only an entry of its list (or nothing); the entry's key goes with the text for saving.
-    const option = column.options?.find((candidate) => candidate.text === entered);
+    const option = listFor(column, record, columns)?.find((candidate) => candidate.text === entered);
     if (column.options && entered.trim() !== "" && !option) { await ask(`Choose ${column.caption} from its list`, "Entry Validation"); return false; }
     // Entry Approved, ValidateEdit: an order of a party over its credit days or limit is not approved.
     if (def?.entryId === ENTRY_APPROVED && (first?.text ?? "").trim() === LOCKED_BOOK && column.key.toLowerCase() === "ent_approve" && entered === "Yes" && isLocked(record)) {
@@ -454,11 +469,17 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       const withText = records.map((candidate, at) => (at === index ? { ...candidate, [column.key]: text } : candidate));
       if (duplicateInGrid(withText, index, text, column.setup)) { await ask("Duplicate Entry Found...", "Warning"); return false; }
     }
-    const outcome = commitCell(column, text);
+    // A list column holds its entry's text (chosen from the list above), whatever the column's field type says: no number check.
+    const outcome: CellCommit = column.options ? { ok: true, value: text } : commitCell(column, text);
     if (!outcome.ok) { await ask(outcome.message, "Entry Validation"); return false; }
     // AfterEdit's style_case; a list keeps its entry's text as the list has it.
     const value = column.options || isNumberColumn(column) ? outcome.value : styleCase(column.setup, outcome.value, licence);
-    const next = { ...record, [column.key]: value, ...(column.options ? { [`${column.key}__key`]: option?.value ?? "" } : {}) };
+    let next = { ...record, [column.key]: value, ...(column.options ? { [`${column.key}__key`]: option?.value ?? "" } : {}) };
+    // A new Book: a Series chosen for the old one that is not among the new Book's goes blank.
+    if (column.key.toLowerCase() === "book") {
+      const series = columns.find((candidate) => candidate.key.toLowerCase() === "doc_series" && candidate.options !== undefined && columns.some((other) => other.options?.some((item) => item.series !== undefined)));
+      if (series && (next[series.key] ?? "") !== "" && !(listFor(series, next, columns) ?? []).some((item) => item.text === next[series.key])) next = { ...next, [series.key]: "", [`${series.key}__key`]: "" };
+    }
     setRecords((rows) => rows.map((row, at) => (at === index ? next : row)));
     settleEdited(index, next);
     setEditing(false);
@@ -609,6 +630,12 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     setComboStart(letter);
     startEdit();
   };
+  // A list's arrow on a cell that is not the current one: the cursor moves there first, and the list opens on the render that has it
+  // (opening in the same click would read the old cursor, and open the list of the cell the operator was in).
+  const openComboNow = useRef(openCombo);
+  useEffect(() => { openComboNow.current = openCombo; });
+  const [arrowOpen, setArrowOpen] = useState(0);
+  useEffect(() => { if (arrowOpen > 0) openComboNow.current(); }, [arrowOpen]);
 
   const gridKeys = async (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (editing || shownRows.length === 0) return;
@@ -975,7 +1002,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                         >
                           {here && editing && column.options ? (
                             <GridCombo
-                              options={column.options}
+                              options={listFor(column, record, columns) ?? column.options}
                               current={editText}
                               startWith={comboStart}
                               place={comboAt}
@@ -1000,7 +1027,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                               {column.boolean ? <span className={`se-tick${(record[column.key] ?? "").trim().toLowerCase() === "true" ? " se-ticked" : ""}`} role="checkbox" aria-checked={(record[column.key] ?? "").trim().toLowerCase() === "true"} aria-label={column.caption} /> : <FoundText text={shownValue(column, record[column.key] ?? "")} typed={here ? typed : ""} />}
                               {open && column.options ? (
                                 <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
-                                  onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); if (editing) return; setSelectionEnd(null); setCursor({ row: position, col }); Promise.resolve().then(() => openCombo()); }}>
+                                  onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); if (editing) return; setSelectionEnd(null); setCursor({ row: position, col }); setArrowOpen((count) => count + 1); }}>
                                   <svg className="ui-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
                                 </span>
                               ) : null}
