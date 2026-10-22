@@ -178,6 +178,8 @@ export type RestoredEntry = Readonly<{
   slab: Readonly<Record<number, Readonly<{ perc: string; amount: string }>>>;
   /** Account addon values by addon key. */
   addon: Readonly<Record<number, string>>;
+  /** The amount of the TDS auto journal the entry passed (one amount: the JV pair's debit side), "" when it passed none. */
+  tdsAmount: string;
 }>;
 
 /** A column of the side grids, as Setting_GridCol shows it. */

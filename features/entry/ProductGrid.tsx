@@ -29,7 +29,7 @@ const BLANK_WINDOW = 30;
  */
 export function ProductGrid({
   columns, frozen, lines, uoms, totals, decimals, style, totalsStyle, productText, locked, tools, amountOpen, beforeLeave,
-  onCell, onProductText, onProductKeys, onProductFocus, onProductBlur, onDeleteRow,
+  onCell, onProductText, onProductKeys, onProductFocus, onProductBlur, onDeleteRow, lastEditRow, onLeaveProducts, onProductClick,
 }: {
   columns: readonly EntryColumn[];
   frozen: number;
@@ -55,6 +55,11 @@ export function ProductGrid({
   onProductFocus: (row: number) => void;
   onProductBlur: (event: React.FocusEvent<HTMLInputElement>) => void;
   onDeleteRow: (row: number) => void;
+  /** An entry being edited: the last row it was opened with. Enter at the end of that row leaves the grid (onLeaveProducts) instead of opening a new row; a row after it is reached by hand. */
+  lastEditRow?: number;
+  onLeaveProducts?: () => void;
+  /** A click on a Product cell (the screen may ask the product type again on a row with no product yet). */
+  onProductClick?: (row: number) => void;
 }) {
   const layout = useColumnLayout(columns, frozen, (column) => Math.max(30, column.width || 80));
   const grid = useRef<HTMLDivElement>(null);
@@ -97,6 +102,7 @@ export function ProductGrid({
     const at = columns.findIndex((column) => column.key === key);
     const after = columns.slice(at + 1).find((column) => openCell(column, row) && !isProduct(column));
     if (after) focusCell(row, after.key);
+    else if (lastEditRow !== undefined && row === lastEditRow && onLeaveProducts) onLeaveProducts();
     else { const product = columns.find(isProduct); if (product) focusCell(row + 1, product.key); }
   };
   /** Ctrl+Del removes the row; ↑ / ↓ go to the row above / below (Alt+↓ is the calendar or the list). */
@@ -131,6 +137,7 @@ export function ProductGrid({
           title="Type to search the product help · ↓ or F2 opens it · Enter takes the product · Ctrl+Del removes the row"
           onChange={(event) => onProductText(row, event.target.value)}
           onFocus={() => onProductFocus(row)}
+          onClick={() => onProductClick?.(row)}
           onBlur={onProductBlur}
           onKeyDown={(event) => { if (!onProductKeys(event, row)) cellKeys(event, row, column.key); }}
         />

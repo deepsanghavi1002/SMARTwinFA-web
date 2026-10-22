@@ -15,6 +15,8 @@ import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
 import { tdsInfo } from "@/lib/entry/tds";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
 import type { HeaderField } from "@/lib/entry/checks";
+import { deleteDocuments, documentFile, listDocuments, saveDocuments } from "@/lib/entry/documents";
+import type { DocumentInput } from "@/lib/entry/documents";
 import { productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
 
@@ -82,6 +84,35 @@ async function saveEntry(body: Body, key: SessionKey, moduleName: string) {
   }
 }
 
+/** Upload Document: the window's rows applied to an opened (or just saved) entry; written only under the same condition as a save. */
+async function saveDocumentsAction(body: Body, key: SessionKey, moduleName: string) {
+  const allowed = process.env.SMARTWINFA_ENTRY_SAVE_COMMIT === "true";
+  try {
+    const result = await transaction(async (client) => {
+      const session = await readSession(client, key);
+      if (!allowedMasterMenu(await readMenuCatalog(session.companyGroup), body.entryName, moduleName, "ENTRY")) {
+        throw new Error("The requested entry and module are not in this company's visible menu");
+      }
+      const loader = new Loader(client, session);
+      const def = await loadInvoice(loader, body.entryName, moduleName);
+      if (def.rights.restricted && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
+      const docs = Array.isArray(body.documents) ? (body.documents as DocumentInput[]) : [];
+      const counts = await saveDocuments(client, loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey), docs);
+      if (!allowed) throw new DocumentDryRun(counts);
+      return counts;
+    }, { timeoutMs: 60000 });
+    return Response.json({ saved: result, committed: true }, { headers });
+  } catch (error) {
+    if (error instanceof DocumentDryRun) return Response.json({ saved: error.counts, committed: false }, { headers });
+    console.error("Entry documents error:", error);
+    return Response.json({ error: error instanceof Error ? error.message : "The documents could not be saved" }, { status: 500, headers });
+  }
+}
+
+class DocumentDryRun extends Error {
+  constructor(readonly counts: { inserted: number; updated: number; deleted: number }) { super("dry run"); }
+}
+
 /** Delete of a saved invoice; committed under the same two conditions as saveEntry. */
 async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
   const wantsCommit = body.commit === true;
@@ -102,6 +133,7 @@ async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
       const plan = await buildDelete(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey);
       const result = await runPlan(client, loader, plan, { commit });
       if (!commit) throw new DryRun(result);
+      await deleteDocuments(client, loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey);
       return result;
     }, { timeoutMs: 60000 });
     return Response.json({ report, committed: true }, { headers });
@@ -129,6 +161,7 @@ export async function POST(request: Request) {
   const moduleName = String(body.menuShortName ?? "");
   if (body.action === "save") return saveEntry(body, key, moduleName);
   if (body.action === "delete") return deleteEntry(body, key, moduleName);
+  if (body.action === "doc-save") return saveDocumentsAction(body, key, moduleName);
 
   try {
     const result = await transaction(async (client) => {
@@ -165,6 +198,10 @@ export async function POST(request: Request) {
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
           return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0, Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0), warnings: loader.warnings };
         }
+        case "doc-list":
+          return { documents: await listDocuments(loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey)), warnings: loader.warnings };
+        case "doc-file":
+          return { file: await documentFile(loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey), Number(body.key)), warnings: loader.warnings };
         case "tds": {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");

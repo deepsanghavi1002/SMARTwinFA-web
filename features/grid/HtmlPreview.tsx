@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { activeById } from "../ui/activeWindow";
 import { HotkeyLabel } from "../ui/hotkeys";
 import { printHtmlDocument } from "./printFrame";
+import { downloadRtf } from "./richText";
 
 /**
  * The report's print preview window (PrintPreview) for a finished HTML document, such as the invoice bill: the same window, bar, zoom,
@@ -18,7 +19,7 @@ type Orientation = "portrait" | "landscape";
 const GAP = 16;
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-export function HtmlPreview({ html: source, title, onClose }: { html: string; title: string; onClose: () => void }) {
+export function HtmlPreview({ html: source, title, fileName, onClose }: { html: string; title: string; /** The name of the exported file (without the extension); the title when not given. */ fileName?: string; onClose: () => void }) {
   const [orientation, setOrientation] = useState<Orientation>("portrait");
   const landscape = orientation === "landscape";
   const PAGE_WIDTH = landscape ? LONG : SHORT;
@@ -68,8 +69,8 @@ export function HtmlPreview({ html: source, title, onClose }: { html: string; ti
     setCurrent(target);
   };
   const print = () => printHtmlDocument(html);
-  /** No PDF library is installed, so the PDF is made by the browser: its print window with "Save as PDF" chosen, named after the bill. */
-  const exportPdf = () => printHtmlDocument(html);
+  /** Export to Richtext: an .rtf file Word opens and edits, named after the bill. */
+  const exportRichText = () => downloadRtf(html, fileName ?? title);
   const measure = () => {
     const doc = frame.current?.contentDocument;
     if (doc) setContentHeight(Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight));
@@ -168,7 +169,7 @@ export function HtmlPreview({ html: source, title, onClose }: { html: string; ti
             <button type="button" onClick={() => showHit(1)} disabled={!hits} title="Next match (F3 or Enter)">▼</button>
           </span>
           <button type="button" data-hotkey="p" aria-keyshortcuts="Alt+P" className="mp-btn mp-btn-green" onClick={print} title="Print this bill (Alt+P or Ctrl+P)">🖨 <HotkeyLabel text="Print" hotkey="p" /></button>
-          <button type="button" data-hotkey="e" aria-keyshortcuts="Alt+E" className="mp-btn mp-btn-blue" onClick={exportPdf} title="Export to PDF (Alt+E): choose Save as PDF in the print window">📄 <HotkeyLabel text="Export PDF" hotkey="e" /></button>
+          <button type="button" data-hotkey="e" aria-keyshortcuts="Alt+E" className="mp-btn mp-btn-blue" onClick={exportRichText} title="Export to Richtext (Alt+E): a .rtf file that Word opens and edits">📝 <HotkeyLabel text="Export Richtext" hotkey="e" /></button>
           <button type="button" data-hotkey="c" aria-keyshortcuts="Alt+C" className="mp-btn mp-btn-red" onClick={onClose} title="Close (Alt+C or Esc)">✖ <HotkeyLabel text="Close" hotkey="c" /></button>
         </div>
         <div

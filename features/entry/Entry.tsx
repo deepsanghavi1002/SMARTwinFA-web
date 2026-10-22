@@ -25,6 +25,9 @@ import type { FindMode } from "./FindList";
 import { ReturnsPanel } from "./ReturnsPanel";
 import type { ReturnsChoices } from "../../lib/entry/invoice";
 import { EntryLog } from "./EntryLog";
+import { UploadDocuments, docRowsFor } from "./UploadDocuments";
+import { RangePanel } from "./RangePanel";
+import type { DocRow } from "./UploadDocuments";
 import { MasterDetails } from "./MasterDetails";
 import type { MasterDetails as MasterDetailsData } from "../../lib/entry/details";
 import type { EntryLog as EntryLogData } from "../../lib/entry/log";
@@ -38,7 +41,7 @@ import { EntryCell, focusEntryCell } from "./EntryCell";
 import { properHeading } from "../../lib/master-program/heading";
 import { SideGrid } from "./SideGrid";
 import { InvoicePrint } from "./InvoicePrint";
-import { standardBillHtml } from "../../lib/entry/billHtml";
+import { combineBills, standardBillHtml } from "../../lib/entry/billHtml";
 import type { Bill } from "../../lib/entry/billHtml";
 import { AddressPick } from "./AddressPick";
 import { addressFields } from "./addressLines";
@@ -202,6 +205,16 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   /** The Returns panel of a debit / credit note while it asks, and what the note is against once answered (lbl_AgainstBook / lbl_AgainstNature). */
   const [returnsAsk, setReturnsAsk] = useState<{ choices: ReturnsChoices; resolve: (choice: { code: number; nature: number; accountName: string; natureText: string } | null) => void } | null>(null);
   const [against, setAgainst] = useState<{ book: string; nature: string } | null>(null);
+  /** Range print: the panel while it is open, and the entries it (or a click) ticked in the Find / Edit list - the ones Print prints. */
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [ticked, setTicked] = useState<number[]>([]);
+  /** Upload Document: the window while it is open (its answer comes back as a promise), and the rows it was left with, kept for the entry's Save. */
+  const [docsAsk, setDocsAsk] = useState<{ initial: DocRow[]; resolve: (rows: DocRow[] | null) => void } | null>(null);
+  const [docPending, setDocPending] = useState<DocRow[] | null>(null);
+  /** How many product rows the opened entry came with: the keyboard leaves the grid for the slab after the last of them. */
+  const [restoredRows, setRestoredRows] = useState(0);
+  /** The TDS amount the opened entry's auto journal passed ("" when none): shown as a label beside the narration. */
+  const [restoredTds, setRestoredTds] = useState("");
   /** The Print button: the format choice and the bill preview are open. */
   const [printing, setPrinting] = useState(false);
   /** The entry opened from Find / Edit (its unique key), or null for a new entry. */
@@ -270,8 +283,11 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setHelpKind(null);
     setProductText(null);
     // The Find / Edit list (and the All fields / With product choice) stays until the register or series changes or an entry is saved.
-    if (!keepList) { setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); }
+    if (!keepList) { setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setTicked([]); }
     setRestored(null);
+    setRestoredTds("");
+    setDocPending(null);
+    setRestoredRows(0);
     setTab("all");
   }, []);
 
@@ -464,6 +480,15 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const productView = useHelpView(helpKind === "product" ? typedHelp : null, helpCell);
   const helpView = helpKind === "account" ? accountView : productView;
   const shownHelp = helpView.view;
+  /** A Product cell that already holds a product (an entry being edited): its help opens with the cursor on that product, not on the first one. */
+  const helpLandOn = useRef<number | null>(null);
+  const [landTick, setLandTick] = useState(0);
+  useEffect(() => {
+    if (helpKind !== "product" || helpLandOn.current === null || !shownHelp || shownHelp.rows.length === 0) return;
+    const at = shownHelp.rows.findIndex((row) => Number(row.prod_key) === helpLandOn.current);
+    helpLandOn.current = null;
+    if (at >= 0) setHelpAt(at);
+  }, [helpKind, shownHelp, landTick]);
 
   /** The field a help belongs to: the party box, or the Product cell it opened from. */
   const focusHelpField = useCallback((kind: HelpKind | null) => {
@@ -550,6 +575,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setTimeout(() => {
       if (!formRef.current || !partyRef.current) return;
       if (book?.inventory && focusEntryCell(formRef.current, `${freeRow}:prod_key`)) return;
+      // A debit / credit note of a nature that takes no stock (Others) has no product rows: from the party straight to the slab grid's first row.
+      if (book && !book.inventory && book.slab && book.entryFor === "DrCr" && focusFirstCell(formRef.current.querySelector("[aria-label=Slab]"))) return;
       moveOn(formRef.current, partyRef.current);
     }, 0);
   }, [book, lines]);
@@ -755,6 +782,10 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     }
     setHelpKind(null);
     const form = formRef.current;
+    // The product grid shows from its first row (Sr. 1), so every product entered is on view whichever row F5 was pressed on.
+    const showFromTop = () => { const box = form?.querySelector<HTMLElement>(".ent-product[aria-label=Products]"); if (box) { box.scrollTop = 0; box.scrollLeft = 0; } };
+    setTimeout(showFromTop, 0);
+    setTimeout(showFromTop, 120);
     if (focusFirstCell(form?.querySelector("[aria-label=Slab]")) || focusFirstCell(form?.querySelector("[aria-label=Addon]"))) return;
     afterGrids();
   };
@@ -791,6 +822,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setProductRow(row);
     if (productText && productText.row !== row) setProductText(null);
     setHelpAt(0);
+    helpLandOn.current = lines[row]?.product?.key ?? null;
+    setLandTick((now) => now + 1);
     // The keyboard goes into the product help (it is read already); Esc brings it back to this cell.
     // A book with a product filter (PGFILT) asks the product type first, for each new row.
     void openHelp("product").then((help) => {
@@ -803,6 +836,13 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       }
       setTimeout(enterHelp, 30);
     });
+  };
+  /** A click on the Product cell of a row with no product yet (a wrong product type was chosen): the product type is asked again, and the help follows it. */
+  const askFilterAgain = (row: number) => {
+    if (filterAsk !== null || !productHelp?.filter || productHelp.filter.options.length === 0 || lines[row]?.product) return;
+    filterAsked.current = row;
+    setHelpKind(null);
+    setFilterAsk(row);
   };
   /** cmb_ProdFilter chosen (null: Esc, all products): the product help opens on that type. */
   const chooseFilter = (option: EntryOption | null) => {
@@ -832,10 +872,32 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       const expected = line.product.taxPerc > 0 && book.taxGroup === "G" ? line.product.taxPerc / 2 : line.product.taxPerc;
       if ((chosen > 0 || percOf(line.cells[key] ?? "") !== chosen) && Math.abs(chosen - expected) > 0.001) {
         const answer = await messageBox.ask("Selected Entry Tax And Product Master Tax Not Match Are You Continued Entry...", "Tax Selection Warning", ["Yes", "No"], { defaultButton: "No" });
-        if (answer !== "Yes") return;
+        if (answer !== "Yes") { setTimeout(() => focusEntryCell(formRef.current, `${row}:${key}`), 0); return; }
       }
     }
-    setLines((current) => current.map((line, index) => (index === row ? recalcLine({ ...line, cells: { ...line.cells, [key]: value } }, key, context, slab) : line)));
+    // The SGST (UTGST) tax of a product row is locked to the CGST % of the same row: choosing CGST puts the same % in SGST, and an SGST of another % is refused.
+    const carried: Record<string, string> = {};
+    const central = slab.find((item) => item.itemWise && item.master && /CGST/i.test(item.desc) && !/SGST|UTGST/i.test(item.desc));
+    const state = slab.find((item) => item.itemWise && item.master && /SGST|UTGST/i.test(item.desc));
+    if (central && state && value !== "") {
+      const columnOf = (short: string) => productColumns.find((column) => column.key === short);
+      const percIn = (short: string, text: string) => book.taxPercs[columnOf(short)?.options?.find((option) => option.text === text)?.value ?? ""] ?? 0;
+      if (key === central.short) {
+        const perc = percIn(central.short, value);
+        const same = columnOf(state.short)?.options?.find((option) => (book.taxPercs[option.value] ?? 0) === perc);
+        if (same) carried[state.short] = same.text;
+      } else if (key === state.short && (line?.cells[central.short] ?? "") !== "") {
+        const cgst = percIn(central.short, line?.cells[central.short] ?? "");
+        const chosen = percIn(state.short, value);
+        if (chosen > 0 && cgst > 0 && Math.abs(cgst - chosen) > 0.0001) {
+          await say(`CGST And ${/UTGST/i.test(state.desc) ? "UTGST" : "SGST"} Tax Percentage Different not allowed...`, "Entry Warning");
+          // Ok on the warning: editing goes on in the same cell of the same row.
+          setTimeout(() => focusEntryCell(formRef.current, `${row}:${key}`), 0);
+          return;
+        }
+      }
+    }
+    setLines((current) => current.map((line, index) => (index === row ? recalcLine({ ...line, cells: { ...line.cells, [key]: value, ...carried } }, key, context, slab) : line)));
   }, [context, book, slab, lines, productColumns]);
 
   const deleteRow = useCallback(async (row: number) => {
@@ -980,6 +1042,10 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setAddon({ ...Object.fromEntries((partyDetails?.addon ?? []).map((item) => [item.key, item.value])), ...entry.addon });
       setLines(restoredLines);
       restoredDate.current = next.dtp_date ?? "";
+      setRestoredTds(entry.tdsAmount);
+      setRestoredRows(restoredLines.length);
+      // The entry is open: the keyboard goes to the Series, ready to type.
+      setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button")?.focus(), 150);
       setRestored(entry.uniqueKey);
     } catch (error) {
       await failed(error);
@@ -1128,6 +1194,15 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       if (reply.committed) {
         windowLink.changed();
         await say(`${reply.report.summary.renumberedFrom ? `Number ${reply.report.summary.renumberedFrom} was taken by another user meanwhile.\n` : ""}${reply.report.summary.fullDocNo} saved.  Amount ${amountText(String(reply.report.summary.finalAmount), 2)}`, "Entry Saved");
+        // Upload Document: an entry that was changed keeps the rows the window was left with; a new entry is asked ("Upload Documents File?").
+        if (def?.buttons.upload) {
+          const savedKey = restored ?? reply.report.keys.pkval_1;
+          if (restored !== null) { if (docPending) await saveDocuments(restored, docPending); }
+          else if (savedKey > 0 && (await messageBox.ask("Upload Documents File?", "Upload Documents Message", ["Yes", "No"], { defaultButton: "Yes" })) === "Yes") {
+            const rows = await askDocuments(docRowsFor([]));
+            if (rows) await saveDocuments(savedKey, rows);
+          }
+        }
         blankEntry();
         setBook(null);
         setValues({});
@@ -1183,6 +1258,95 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
       await failed(error);
     } finally {
       setBusy("");
+    }
+  };
+  /** Btn_Refresh_Click's Fill_AddonGridCombo("A"): the party's addon lists (transport, sub ledger ...) are read again; what was typed in the addon grid stays. */
+  const refreshAddonLists = async () => {
+    if (!register || !party || !book) return;
+    try {
+      const body = await call<{ party: PartyDetails }>("party", { firstCombo: register, editKey: restored ?? 0, code: party.code, date: values.dtp_date ?? "", addressId: party.addressId });
+      setParty((now) => (now ? { ...now, addon: now.addon.map((item) => ({ ...item, options: body.party.addon.find((fresh) => fresh.key === item.key)?.options ?? item.options })) } : now));
+    } catch (error) {
+      await failed(error);
+    }
+  };
+
+  // ---- Btn_Range_Click / Btn_Range_print_ok_Click: the entries from number to number of the series are ticked in Find / Edit, to print together
+  const applyRange = async (from: number, to: number) => {
+    if (!register) return;
+    setRangeOpen(false);
+    let list = preview;
+    if (!list) {
+      setBusy("Entries");
+      try {
+        list = (await call<{ preview: HelpData }>("preview", { firstCombo: register, series: values.cmb_series ?? "" })).preview;
+        setPreview(list);
+      } catch (error) {
+        await failed(error);
+        return;
+      } finally {
+        setBusy("");
+      }
+    }
+    const series = (values.cmb_series ?? "").trim();
+    const wanted = new Set<string>();
+    for (let number = from; number <= Math.min(to, from + 5000); number += 1) wanted.add(`${series}/${number}`);
+    const found = list.rows.filter((row) => wanted.has((row.full_docno ?? "").trim())).sort((a, b) => Number(a.doc_no) - Number(b.doc_no) || (a.doc_no ?? "").localeCompare(b.doc_no ?? "")).map((row) => Number(row.unique_key));
+    setTicked(found);
+    setTab("find");
+    if (found.length === 0) await say(`No entries of ${series} from ${from} to ${to} are in the list.`, "Range Print");
+  };
+  const tickEntry = (key: number) => setTicked((now) => (now.includes(key) ? now.filter((item) => item !== key) : [...now, key]));
+  /** The bill (Standard print) of the ticked entries, one after the other as one document; else of the opened entry. */
+  const loadBills = async () => {
+    if (!register) return "";
+    const keys = ticked.length > 0 ? ticked : restored !== null ? [restored] : [];
+    const bills: string[] = [];
+    for (const key of keys) bills.push(standardBillHtml((await call<{ bill: Bill }>("bill", { firstCombo: register, uniqueKey: key })).bill));
+    return combineBills(bills);
+  };
+  /** The number the exported file is named with: the opened entry's, or the first and last of the ticked ones. */
+  const printNumber = () => {
+    if (ticked.length === 0) return (values.tbx_number ?? "").trim();
+    const numbers = ticked.map((key) => (preview?.rows.find((row) => Number(row.unique_key) === key)?.doc_no ?? "").trim()).filter(Boolean);
+    return numbers.length > 1 ? `${numbers[0]}-${numbers[numbers.length - 1]}` : numbers[0] ?? "";
+  };
+
+  // ---- btn_UploadDocument_Click: up to five JPEG / PDF files kept with the entry (written when the entry is saved)
+  const askDocuments = (initial: DocRow[]) => new Promise<DocRow[] | null>((resolve) => setDocsAsk({ initial, resolve }));
+  const documentPayload = (rows: readonly DocRow[]) => rows.map((row) => ({ key: row.key, path: row.path, remark: row.remark, fileName: row.path, data: row.data }));
+  /** The rows to the entry's own documents (after its Save); says so when this server only checks. */
+  const saveDocuments = async (entryId: number, rows: readonly DocRow[]) => {
+    if (!register || !rows.some((row) => row.key > 0 || row.path !== "")) return;
+    const reply = await call<{ committed: boolean; saved: { inserted: number; updated: number; deleted: number } }>("doc-save", { firstCombo: register, uniqueKey: entryId, documents: documentPayload(rows) });
+    if (!reply.committed) await say("Documents checked, NOTHING was written (saving is switched off on this server).", "Upload Document");
+  };
+  const uploadDocuments = async () => {
+    if (!register || restored === null) return;
+    let rows: DocRow[] | undefined = docPending ?? undefined;
+    if (!rows) {
+      setBusy("Documents");
+      try {
+        rows = (await call<{ documents: DocRow[] }>("doc-list", { firstCombo: register, uniqueKey: restored })).documents;
+      } catch (error) {
+        await failed(error);
+        return;
+      } finally {
+        setBusy("");
+      }
+    }
+    const result = await askDocuments(docRowsFor(rows));
+    if (result) setDocPending(result);
+  };
+  /** F7 on a stored row: the file is read from the server; the window shows it (it is not downloaded). */
+  const fetchStoredDocument = async (row: DocRow): Promise<Blob | null> => {
+    if (!register || restored === null) return null;
+    try {
+      const { file } = await call<{ file: { name: string; type: string; data: string } }>("doc-file", { firstCombo: register, uniqueKey: restored, key: row.key });
+      return new Blob([Uint8Array.from(atob(file.data), (char) => char.charCodeAt(0))], { type: file.type });
+    } catch (error) {
+      await failed(error);
+      return null;
     }
   };
   const notPorted = (what: string) => () => void say(`${what} is not ported to the web yet. Product entry and opening entries are done; saving comes next.`, "Entry");
@@ -1332,7 +1496,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     return true;
   };
   /** F4 / F8 on an empty set-off: the row's pending amount, or what is left of the entry amount. */
-  /** Enter in a set-off box: when the set-offs add up to the entry amount (or no bill is left) the set-off is over; else the next bill's box. */
+  /** Enter in a set-off box: the set-off is over only when the set-offs add up to the entry amount (or F5 is pressed); else the next bill's box, and after the last bill the first one again. */
   const nextSetoffCell = (cellId: string) => {
     const form = formRef.current;
     const box = form?.querySelector(`.ent-grid[aria-label=Outstanding]`);
@@ -1340,8 +1504,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const at = cells.findIndex((cell) => cell.getAttribute("data-cell") === cellId);
     const tallied = slabResult.final > 0 && Math.abs(outstandingSetoff - slabResult.final) < 0.005;
     const next = cells[at + 1];
-    if (tallied || !next) { finishSetoff(); return; }
-    next.focus();
+    if (tallied) { finishSetoff(); return; }
+    (next ?? cells[0])?.focus();
   };
   const fillSetoff = (row: number) => {
     if (money(setoff[row]) !== 0) return;
@@ -1369,16 +1533,25 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   const chooseSlabTax = async (row: number, perc: string) => {
     const item = slab[row];
     const percOf = (candidate: SlabRow, text: string) => view?.taxPercs[candidate.options?.find((option) => option.text === text)?.value ?? ""] ?? 0;
-    if (book && /SGST/i.test(item.desc) && !item.itemWise) {
+    if (book && /SGST|UTGST/i.test(item.desc) && !item.itemWise) {
       const central = slab.find((candidate) => !candidate.itemWise && /CGST/i.test(candidate.desc));
       const chosen = percOf(item, perc);
       const cgst = central ? percOf(central, central.perc) : 0;
       if (chosen > 0 && cgst > 0 && Math.abs(cgst - chosen) > 0.0001) {
         await say(`CGST And ${/UTGST/i.test(item.desc) ? "UTGST" : "SGST"} Tax Percentage Different not allowed...`, "Entry Warning");
+        // Ok on the warning: editing goes on in the same slab row.
+        setTimeout(() => focusEntryCell(formRef.current, `s${row}:slab_perc`), 0);
         return;
       }
     }
     setSlabRow(row, { perc });
+    // The CGST % chosen puts the same % on the SGST (UTGST) row, which only takes that %.
+    if (book && /CGST/i.test(item.desc) && !/SGST|UTGST/i.test(item.desc) && !item.itemWise) {
+      const linked = slab.findIndex((candidate) => !candidate.itemWise && /SGST|UTGST/i.test(candidate.desc));
+      const wanted = percOf(item, perc);
+      const same = linked >= 0 && wanted > 0 ? slab[linked].options?.find((option) => (view?.taxPercs[option.value] ?? 0) === wanted) : undefined;
+      if (same) setSlabRow(linked, { perc: same.text });
+    }
   };
   /** Enter in an E-Way Bill box: the next box of the tab; after the last, the narration. */
   /** The tab's editable boxes in the order the eye reads them (row by row, left to right), not in the order the setup lists them. */
@@ -1444,7 +1617,20 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
       if (def?.licence === 20) shown += ` DATED: ${row.out_date ?? ""}`;
       text += (text.trim() === "" ? "" : ",") + shown;
     });
-    if (text !== "") setValues((current) => ((current.tbx_narration ?? "").trim() === "" ? { ...current, tbx_narration: `${def?.licence === 20 ? "SETOFF FOR BILL" : "Setoff for Bill"}: ${text}` } : current));
+    if (text === "") return;
+    const label = def?.licence === 20 ? "SETOFF FOR BILL" : "Setoff for Bill";
+    // A narration that already has the "Setoff for Bill: ..." words (an entry being edited) gets its list of bills replaced, the other words kept.
+    // Only the party's own bill numbers count as the list, so words the user typed right after it ("DSAL/25-26/9577-Being CN ...") are never taken for part of it.
+    const names = new Set<string>();
+    for (const row of rows) for (const name of [row.out_fulldocno, row.doc_no, row.doc_no1]) if ((name ?? "").trim() !== "") names.add((name ?? "").trim());
+    const escapeRx = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const bill = `(?:${[...names].sort((a, b) => b.length - a.length).map(escapeRx).join("|")})(?: DATED: [^\\s,]+)?`;
+    const listed = new RegExp(`(setoff for bill:\\s*)${bill}(?:,${bill})*`, "i");
+    setValues((current) => {
+      const narration = current.tbx_narration ?? "";
+      if (narration.trim() === "") return { ...current, tbx_narration: `${label}: ${text}` };
+      return listed.test(narration) ? { ...current, tbx_narration: narration.replace(listed, (_all, lead: string) => `${lead}${text}`) } : current;
+    });
   };
   /** Run_Outclear_f5: the set-off is over - the narration is made and the keyboard goes on (E-Way Bill or narration). */
   const finishSetoff = () => { generateSetoffNarration(); afterOutstanding(); };
@@ -1537,7 +1723,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   return (
     <div ref={screenRef} className={`mp-screen ent-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title}>
       {details && <MasterDetails details={details.data} kind={details.kind} onClose={closeDetails} />}
-      {logView && <EntryLog log={logView} title={register?.text ?? title} onClose={() => setLogView(null)} />}
+      {logView && <EntryLog log={logView} docNo={(values.tbx_number ?? "").trim()} title={register?.text ?? title} onClose={() => setLogView(null)} />}
       <div className="ent-scroll">
         <div ref={formRef} className="ent-form" style={{ height: FORM_HEIGHT, ...(fit < 1 ? { zoom: fit } : {}) }} role="group" aria-label={def?.caption || title}>
           <div className="ent-head" role="group" aria-label={`${def?.caption || title} header`}>
@@ -1572,7 +1758,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 </dl>
               </>
             )}
-            {isRestored && <span className="ent-mode" style={{ left: 406, top: 28 }} title="An entry opened from Find / Edit">EDIT</span>}
+            {/* The mode (EDIT for an entry opened from Find / Edit, else ADD) sits after the Debit / Credit label on the register's row, with a margin. */}
+            {book && <span className={`ent-mode ${isRestored ? "" : "ent-mode-add"}`} style={{ left: 406 + 55 + 12, top: 6 }} title={isRestored ? "An entry opened from Find / Edit" : "A new entry"}>{isRestored ? "EDIT" : "ADD"}</span>}
           </div>
 
           {helpKind && shownHelp && (
@@ -1665,9 +1852,12 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                         onProductText={(row, text) => { setProductText({ row, text }); setProductRow(row); setHelpAt(0); if (helpKind !== "product") void openHelp("product"); }}
                         onProductKeys={productKeys}
                         onProductFocus={productFocus}
+                        onProductClick={askFilterAgain}
                         onProductBlur={(event) => leaveField(event, "product")}
                         tools={tools}
                         onDeleteRow={(row) => void deleteRow(row)}
+                        lastEditRow={restored !== null && restoredRows > 0 ? restoredRows - 1 : undefined}
+                        onLeaveProducts={() => void endProducts()}
                       />
                     ) : (
                       <div className="ent-note" style={{ left: 3, right: 6, top: PRODUCT_TOP }}>This book takes no product rows: the amount goes in the slab grid&apos;s first row.</div>
@@ -1729,7 +1919,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                           <EntryCell
                             kind="number" clearable cellId={cellId} value={setoff[row] ?? ""} align="right" rules={SETOFF_RULES} tools={tools} ariaLabel="Setoff amount"
                             onChange={(next) => setSetoff((current) => ({ ...current, [row]: next }))}
-                            onKeys={(event) => { if (event.key === "F4" || event.key === "F8") { event.preventDefault(); fillSetoff(row); return true; } if (event.key === "F5") { event.preventDefault(); finishSetoff(); return true; } return false; }}
+                            onKeys={(event) => { if (event.key === "F4" || event.key === "F8") { event.preventDefault(); fillSetoff(row); return true; } if (event.key === "F5") { event.preventDefault(); finishSetoff(); return true; } if (event.key === "Tab" && !event.shiftKey) { event.preventDefault(); void checkSetoff(row).then((ok) => { if (ok) nextSetoffCell(cellId); }); return true; } return false; }}
                             onEnter={() => void checkSetoff(row).then((ok) => { if (ok) nextSetoffCell(cellId); })}
                           />
                         );
@@ -1743,7 +1933,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                     />
                   </>
                 )}
-                {(tab === "find" || preview) && <FindList preview={(findMode && previewAll[findMode]) || preview} mode={findMode} onMode={(next) => void chooseFindMode(next)} style={{ left: 3, right: 3, top: 3, bottom: 3, ...(tab === "find" ? {} : { display: "none" }) }} onOpen={(row) => void openEntry(row)} />}
+                {(tab === "find" || preview) && <FindList preview={(findMode && previewAll[findMode]) || preview} mode={findMode} onMode={(next) => void chooseFindMode(next)} ticked={ticked} onTick={tickEntry} style={{ left: 3, right: 3, top: 3, bottom: 3, ...(tab === "find" ? {} : { display: "none" }) }} onOpen={(row) => void openEntry(row)} />}
                 {tab === "eway" && <div className="ent-eway">{ewayControls.flatMap(control)}</div>}
               </div>
             </div>
@@ -1751,6 +1941,11 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
 
           {view && (
             <div className="ent-foot" inert={!book}>
+              {(() => {
+                // "TDS Amt.: 178.00": the one amount of the TDS auto journal - the typed TDS Amount on a new entry, the saved journal's on an opened one.
+                const amount = isRestored ? restoredTds : tdsNow ? (values.tbx_credit_days ?? "").trim() : "";
+                return toNumber(amount) > 0 ? <span className="ent-against ent-against-book" style={{ left: footControls.find((item) => item.name === "cmb_rev_entry")?.label_.left ?? 892, top: FOOT_TOP + 30, width: 188 }} title="The TDS amount of the entry's auto journal (TDS JV)">{`TDS Amt.: ${amountText(fixed(toNumber(amount), 2), 2)}`}</span> : null;
+              })()}
               {against && (book ?? ghost)?.entryFor === "DrCr" && (
                 <>
                   <span className="ent-against ent-against-nature" style={{ left: 873, top: FOOT_TOP, width: 188 }} title="Nature of the entry">{against.nature}</span>
@@ -1769,10 +1964,10 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         <button type="button" className="mp-btn mp-btn-green" data-hotkey="s" aria-keyshortcuts="Alt+S" disabled={!canSave} title="Save the invoice (checked on the server; written only when saving is switched on)" onClick={() => void saveEntry()}><Icon name="save" /><HotkeyLabel text="Save" hotkey="s" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="c" aria-keyshortcuts="Alt+C" onClick={() => void cancelEntry()}><Icon name="cancel" /><HotkeyLabel text="Cancel" hotkey="c" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="d" aria-keyshortcuts="Alt+D" disabled={!isRestored} title="Delete the opened invoice" onClick={() => void deleteEntry()}><Icon name="clear" /><HotkeyLabel text="Delete" hotkey="d" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored} title="Print the opened invoice: Standard (bill preview with a Print button) or Special (later)" onClick={() => setPrinting(true)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setHelpKind(null); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!isRestored} title="Range print is not ported yet" onClick={notPorted("Range print")}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
-        {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="Upload document is not ported yet" onClick={notPorted("Upload document")}><Icon name="image" />Upload Document</button>}
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored && ticked.length === 0} title="Print the opened invoice, or the entries ticked by Range: Standard (bill preview with a Print button) or Special (later)" onClick={() => setPrinting(true)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps, the addon lists and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setHelpKind(null); void refreshAddonLists(); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!book || voucher} title="Range print: tick the entries from a number to a number of the series, then Print" onClick={() => setRangeOpen(true)}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
+        {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="Keep up to five JPEG / PDF files with this entry (written when the entry is saved)" onClick={() => void uploadDocuments()}><Icon name="image" />Upload Document</button>}
         {def?.buttons.einvoice && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="E-invoice is not ported yet" onClick={notPorted("E-invoice")}><Icon name="export" />E-Invoice</button>}
         {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" />Log</button>}
         <div className="ent-status" aria-live="polite">
@@ -1782,13 +1977,16 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         </div>
         <button type="button" className="mp-btn mp-btn-red" data-hotkey="q" aria-keyshortcuts="Alt+Q" onClick={() => void quit()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>
       </div>
-      {printing && restored !== null && register && (
+      {printing && (restored !== null || ticked.length > 0) && register && (
         <InvoicePrint
+          docNo={printNumber()}
           onClose={() => setPrinting(false)}
-          load={async () => standardBillHtml((await call<{ bill: Bill }>("bill", { firstCombo: register, uniqueKey: restored })).bill)}
+          load={loadBills}
         />
       )}
       {returnsAsk && <ReturnsPanel choices={returnsAsk.choices} onDone={returnsAsk.resolve} />}
+      {rangeOpen && <RangePanel series={(values.cmb_series ?? "").trim()} onOk={(from, to) => void applyRange(from, to)} onQuit={() => setRangeOpen(false)} />}
+      {docsAsk && <UploadDocuments initial={docsAsk.initial} onOk={(rows) => { docsAsk.resolve(rows); setDocsAsk(null); }} onQuit={() => { docsAsk.resolve(null); setDocsAsk(null); }} fetchFile={fetchStoredDocument} say={(message) => void say(message, "Upload Document")} />}
       {tools.popups}
     </div>
   );
