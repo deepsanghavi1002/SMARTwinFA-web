@@ -89,6 +89,8 @@ export type SlabRow = Readonly<{
 
 /** Choosing a register (Cmb_FirstCombo_Leave): everything the screen shows for that book. */
 export type BookScreen = Readonly<{
+  /** A LINK register (licence 21): the entry is made from a pending source entry, picked in the link list. */
+  link?: boolean;
   bookCode: number;
   bookKey: number;
   /** book_actual Y: an account book (sale, purchase...); else a stock module (order, challan...). */

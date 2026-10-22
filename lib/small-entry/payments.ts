@@ -16,7 +16,7 @@ import type { EditedRow } from "./types";
  *
  * A voucher is a ledger row on the bank (book 6, Payment, numbered after the book series'
  * highest), its two ledger_post rows, the addon_aentry row, the party debited and the bank
- * credited in ac_balance, a log_ledger row and the LOG_ENTRY record in the big log.
+ * credited in ac_balance, and the LOG_ENTRY record in the big log.
  *
  * As on the desktop, every bill or allotment the grid listed is then cleared, approved or
  * not: 42 sets ledger.form_amt to 0, 47 deletes the pay_allot row. So the save works on the
@@ -89,7 +89,6 @@ export async function paymentStatements(loader: Loader, entryId: number, rows: r
     statements.push({ sql: `Update ledger set unique_key=${ref} where led_key=${ref}` });
     statements.push({ sql: `Update ac_balance set debit=debit+${money(amount)},closing=closing+${money(amount)} where code=${code} and year_id=${year} and a_recflag='AC'` });
     statements.push({ sql: `Update ac_balance set credit=credit+${money(amount)},closing=closing-${money(amount)} where code=${bank} and year_id=${year} and a_recflag='AC'` });
-    statements.push({ sql: "", insert: { table: "log_ledger", fields: ["lled_logdate", "lled_logtime", "lled_logmode", "lled_loguser", "lled_logsystem", "lled_id", "lled_code", "lled_docdate", "lled_fulldocno", "lled_docno1", "lled_amount", "lled_narration", "lled_docpos", "year_id", "lled_machine_name"], values: [saveDate, saveTime, "'A'", String(session.userNo), "null", ref, String(code), entryDate, quote(fullDocNo), "''", money(amount), quote(narration), "'A'", year, "'WEB'"] } });
     // LOG_ENTRY: the voucher as the entry screen would log it (top, item, outstanding, addon).
     const shown = amount.toFixed(2);
     const top = `[${json([["!*Led_key", ref], ["DAYBOOK", bankName], ["user", session.loginName], ["savedate", formatDesktopDate(now)], ["savetime", formatDesktopTime(now)], ["machine_name", "WEB"], ["* Series", series.trim()], ["* Ent. Dt.", entryDateText], ["* Ent. No.", String(number)], ["Narration", narration], ["* Doc. Type", "Regular"], ["* Book Side", "Payment"], ["Total Debit Amount", shown], ["Total Credit Amount", "0"]])}]`;

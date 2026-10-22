@@ -577,7 +577,6 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     }
     if (total > finalAmount + 0.005) throw new Error("Outstanding Setoff Amount can not be greater than Entry Amount...");
   }
-  const logfileOff = toText(session.setup.logfile).toUpperCase() === "N";
   const orders = [...new Set(rules.map((rule) => toInt(field(rule, "save_order"))))].sort((a, b) => a - b);
   let bookAmount = finalAmount;
 
@@ -588,7 +587,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     const queryType = text(first, mode === "A" ? "query_add_type" : "query_update_type").toUpperCase();
     if (queryType === "S") continue;
     if (!savedForBook(first, ruleBook(book.values))) continue;
-    if (logfileOff && table.includes("LOG_")) continue;
+    if (table.includes("LOG_")) continue; // the per-table logs are not kept: only the big log (logfile S) is
     const gridName = text(first, "grid_name").toLowerCase();
     const multiple = field(first, "multiple_save") === true;
 
@@ -626,11 +625,20 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
         continue;
       }
       if (gridName === "c1dg_inputdata") {
+        // byte_stkm_frombook: the stock book the source entry was made in (stkm_frombook, else the book of the stkm_fromshort module).
+        const linkFromBook = lines.some((line) => toInt(line.cells._link_il) > 0) ? toInt(field(book.row, "stkm_frombook")) || toInt(field((await loader.readTable("SELECT book_key FROM |sys.db|book_properties WHERE rtrim(stkm_short) = $1 AND stkm_pos = 'A' LIMIT 1", [book.values.stkmFromShort.trim()]))?.[0], "book_key")) : 0;
         const productPosting = session.flags.productAccountPosting;
         void productPosting;
         lines.forEach((line, index) => {
           const ilKey = mode === "E" ? toInt(line.cells._il_key) : 0;
           if (ilKey > 0) statements.push({ kind: "set", key: "pkval_2", value: ilKey, ilLine: index + 1, label: `row ${index + 1}: key` });
+          // An invoice row made from a source entry (LINK register): when its quantity is changed the source line follows, as Save_Entry's "already link" rule does.
+          if (ilKey > 0) {
+            const quantity = toNumber(line.cells.quantity);
+            const factor = session.licence === 21 ? quantity : toNumber(line.cells.factor);
+            statements.push({ kind: "sql", label: `row ${index + 1}: link quantity`, sql: `UPDATE |sys.db|prod_ledger SET ag_qty = ag_qty + (${quantity} - (SELECT quantity::numeric FROM |sys.db|prod_ledger WHERE il_key = ${ilKey})), ag_fact = ag_fact + (${factor} - (SELECT factor::numeric FROM |sys.db|prod_ledger WHERE il_key = ${ilKey})) WHERE il_key IN (SELECT iled_rec1 FROM |sys.db|prod_link WHERE iled_rec2 = ${ilKey}) AND ${quantity} <> (SELECT quantity::numeric FROM |sys.db|prod_ledger WHERE il_key = ${ilKey})` });
+            statements.push({ kind: "sql", label: `row ${index + 1}: link row`, sql: `UPDATE |sys.db|prod_link SET plink_qty1 = ${quantity}, plink_qty2 = ${quantity} WHERE iled_rec2 = ${ilKey} AND ${quantity} <> (SELECT quantity::numeric FROM |sys.db|prod_ledger WHERE il_key = ${ilKey})` });
+          }
           const rowStart = statements.length;
           for (const group of groups(set)) {
             const head = group[0];
@@ -655,9 +663,25 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
             if (made.kind === "insert" && made.table === "prod_ledger") statements[at] = { ...made, ilLine: index + 1 };
           }
           itemSlabRows(ctx, statements, line, index);
+          // A new row made from a source entry (LINK register): PROD_LINK ties it to the source line, whose linked quantity (ag_qty / ag_fact) goes up.
+          const sourceIl = toInt(line.cells._link_il);
+          if (mode === "A" && sourceIl > 0) {
+            const quantity = toNumber(line.cells.quantity);
+            const factor = session.licence === 21 ? quantity : toNumber(line.cells.factor);
+            const fromBook = linkFromBook;
+            const toBook = toInt(field(book.row, "stkm_tobook")) > 0 && !book.values.bookActual ? toInt(field(book.row, "stkm_tobook")) : book.values.bookKey;
+            statements.push({
+              kind: "insert", table: "prod_link", keyColumn: "plink_key", label: `row ${index + 1}: prod_link`,
+              columns: ["led_rec1", "led_rec2", "iled_rec1", "iled_rec2", "from_stkmd", "to_stkmd", "from_book", "to_book", "prod_code", "plink_qty1", "plink_uom1", "plink_qty2", "plink_uom2", "plink_flag", "plink_entry", "year_id"],
+              values: [String(toInt(line.cells._link_process)), stock ? "@pkval_3" : "@pkval_1", String(sourceIl), `@il_${index + 1}`, quote(book.values.stkmFromShort), quote(book.stkmToShort.trim()), String(fromBook), String(toBook), String(line.product.key),
+                String(quantity), String(toInt(line.cells._link_uom)), String(quantity), String(toInt(line.cells.uomentry_id)), stock ? "'P'" : "'L'", quote(book.stkmId), quote(session.yearId)],
+            });
+            statements.push({ kind: "sql", label: `row ${index + 1}: source line linked`, sql: `UPDATE |sys.db|prod_ledger SET ag_qty = ag_qty + ${quantity}, ag_fact = ag_fact + ${factor} WHERE il_key = ${sourceIl}` });
+          }
         });
         // Rows taken out of the invoice stay as deleted rows (il_pos D), as the desktop does.
         const kept = new Set(lines.map((line) => toInt(line.cells._il_key)));
+        for (const key of oldIl.keys()) if (!kept.has(key)) statements.push(...linkTakenBack(key));
         for (const key of oldIl.keys()) if (!kept.has(key)) statements.push({ kind: "sql", label: `old row ${key} removed`, sql: `UPDATE |sys.db|prod_ledger SET il_pos = 'D', il_serial = 0 WHERE il_key = ${key}` });
         continue;
       }
@@ -667,7 +691,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     for (const group of groups(set)) {
       const head = group[0];
       if (!savedForBook(head, ruleBook(book.values))) continue;
-      if (logfileOff && text(head, "table_name").toUpperCase().includes("LOG_")) continue;
+      if (text(head, "table_name").toUpperCase().includes("LOG_")) continue;
       if (text(head, "table_name").toUpperCase() === "ADDON_AENTRY") {
         if (ctx.addonRows.length === 0) continue;
         runGroup(ctx, statements, group, {}, undefined, "addon", ctx.aonaKey > 0 ? { column: "aona_key", value: ctx.aonaKey } : undefined);
@@ -908,7 +932,7 @@ export async function runPlan(client: Client, loader: Loader, plan: SavePlan, op
   for (const statement of plan.statements) {
     if (statement.kind === "set") { keys[statement.key] = statement.value; if (statement.ilLine) keys[`il_${statement.ilLine}`] = statement.value; continue; }
     if (statement.kind === "sql") {
-      const result = await client.query(inSchema(bind(statement.sql)));
+      const result = await client.query(inSchema(bind(statement.sql))).catch((error: unknown) => { throw new Error(`${statement.label}: ${error instanceof Error ? error.message : String(error)}`); });
       updates.push({ label: statement.label, rowCount: result.rowCount ?? 0 });
       continue;
     }
@@ -923,7 +947,8 @@ export async function runPlan(client: Client, loader: Loader, plan: SavePlan, op
       override = " OVERRIDING SYSTEM VALUE";
     }
     const returning = statement.keyColumn ? `RETURNING ${statement.keyColumn} AS key` : "";
-    const result = await client.query(`INSERT INTO ${table} (${columns.map(columnName).join(", ")})${override} VALUES (${values.join(", ")}) ${returning}`);
+    const insertSql = `INSERT INTO ${table} (${columns.map(columnName).join(", ")})${override} VALUES (${values.join(", ")}) ${returning}`;
+    const result = await client.query(insertSql).catch((error: unknown) => { throw new Error(`${statement.label}: ${error instanceof Error ? error.message : String(error)}`); });
     const key = statement.keyColumn ? Number(result.rows[0]?.key) : 0;
     if (statement.capture) keys[statement.capture] = key;
     if (statement.ilLine) keys[`il_${statement.ilLine}`] = key;
@@ -936,6 +961,17 @@ export async function runPlan(client: Client, loader: Loader, plan: SavePlan, op
 export { toDecimal };
 
 /** Takes an invoice's postings off the balances (the minus half of Save_CodePost / Save_ProductPost) and deletes its ledger_post rows. */
+/**
+ * A row made from a source entry (a LINK register) is taken out or its entry deleted: the source line gets its quantity back (ag_qty / ag_fact down by what the
+ * row held) and the PROD_LINK rows of the row go, as Save_Entry's already-link and delete rules do. Nothing happens for a row that was not linked.
+ */
+function linkTakenBack(ilKey: number): Statement[] {
+  return [
+    { kind: "sql", label: `row ${ilKey}: source line quantity back`, sql: `UPDATE |sys.db|prod_ledger SET ag_qty = ag_qty - (SELECT quantity::numeric FROM |sys.db|prod_ledger WHERE il_key = ${ilKey}), ag_fact = ag_fact - (SELECT factor::numeric FROM |sys.db|prod_ledger WHERE il_key = ${ilKey}) WHERE il_key IN (SELECT iled_rec1 FROM |sys.db|prod_link WHERE iled_rec2 = ${ilKey})` },
+    { kind: "sql", label: `row ${ilKey}: prod_link`, sql: `DELETE FROM |sys.db|prod_link WHERE iled_rec2 = ${ilKey}` },
+  ];
+}
+
 async function reversal(loader: Loader, ledKey: number, yearId: string, stock = false): Promise<Statement[]> {
   const out: Statement[] = [];
   const year = quote(yearId);
@@ -976,7 +1012,7 @@ export type DeleteSummary = SavePlan["summary"];
 export async function buildDelete(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number, now = new Date()): Promise<SavePlan> {
   const { session } = loader;
   const book = await bookContext(loader, entryName, firstCombo);
-  if (!book.values.bookActual) return buildStockDelete(loader, text(book.row, "stkm_short"), uniqueKey, now);
+  if (!book.values.bookActual) return buildStockDelete(loader, text(book.row, "stkm_short"), uniqueKey);
   const led = (await loader.readTable(`SELECT *, amount::numeric AS amount_n FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos = 'A' AND book = $2`, [uniqueKey, book.values.bookKey]))?.[0];
   if (!led) throw new Error("The invoice to delete was not found: it may be deleted already");
   if (text(led, "doc_lock").toUpperCase() === "Y") throw new Error("Current Entry Lock...  Changes Save not Allowed....");
@@ -986,7 +1022,6 @@ export async function buildDelete(loader: Loader, entryName: string, firstCombo:
   const linked = out.length > 0 ? await loader.readTable(`SELECT out_key FROM |sys.db|outclear WHERE out_ag_outid = ANY($1)`, [out.map((row) => toInt(field(row, "out_key")))]) : null;
   if (settled > 0 || linked) throw new Error("Delete not allowed: receipts or notes are set off against this bill. Remove those set-offs first.");
   const yearId = session.yearId;
-  const year = quote(yearId);
   const full = text(led, "full_docno");
   const statements: Statement[] = [...(await reversal(loader, ledKey, yearId))];
   const rows = (await loader.readTable(`SELECT * FROM |sys.db|prod_ledger WHERE led_id = $1 AND il_pos = 'A' ORDER BY il_key`, [ledKey])) ?? [];
@@ -1000,26 +1035,12 @@ export async function buildDelete(loader: Loader, entryName: string, firstCombo:
   }
   statements.push({ kind: "sql", label: "outstanding row", sql: `DELETE FROM |sys.db|outclear WHERE out_ledid = ${ledKey}` });
   const today = dateLiteral(now);
-  const time = quote(timeText(now));
   for (const row of rows) {
     const key = toInt(field(row, "il_key"));
+    statements.push(...linkTakenBack(key));
     statements.push({ kind: "sql", label: `row ${key} deleted`, sql: `UPDATE |sys.db|prod_ledger SET il_pos = 'D' WHERE il_key = ${key}` });
-    if (toText(session.setup.logfile).toUpperCase() !== "N") {
-      statements.push({
-        kind: "insert", table: "log_regtrn", keyColumn: KEY_COLUMN.log_regtrn, label: `row ${key}: log_regtrn`,
-        columns: ["lreg_logdate", "lreg_logmode", "lreg_loguser", "lreg_id", "lreg_docno1", "lreg_prodid", "lreg_quantity", "lreg_factor", "lreg_rate", "lreg_value", "lreg_rateuom", "lreg_date", "lreg_stocknat", "lreg_code", "lreg_logtime", "lreg_pos", "year_id", "lreg_machine_name"],
-        values: [today, "'D'", String(session.userNo), String(key), quote(text(row, "doc_no1")), String(toInt(field(row, "prod_id"))), String(toDecimal(field(row, "quantity"))), String(toDecimal(field(row, "factor"))), String(toDecimal(field(row, "rate"))), String(toDecimal((await loader.readTable(`SELECT il_value::numeric AS v FROM |sys.db|prod_ledger WHERE il_key = $1`, [key]))?.[0]?.v)), String(toInt(field(row, "rateuom_id"))), dateLiteral(parseDesktopDate(field(row, "il_date")) ?? now), quote(text(row, "stock_nat")), String(toInt(field(row, "code"))), time, "'D'", year, quote("WEB")],
-      });
-    }
   }
   statements.push({ kind: "sql", label: "ledger deleted", sql: `UPDATE |sys.db|ledger SET doc_pos = 'D' WHERE led_key = ${ledKey}` });
-  if (toText(session.setup.logfile).toUpperCase() !== "N") {
-    statements.push({
-      kind: "insert", table: "log_ledger", keyColumn: KEY_COLUMN.log_ledger, label: "log_ledger",
-      columns: ["lled_logdate", "lled_logmode", "lled_loguser", "lled_id", "lled_code", "lled_docdate", "lled_fulldocno", "lled_docno1", "lled_amount", "lled_narration", "lled_logtime", "lled_docpos", "year_id", "lled_machine_name"],
-      values: [today, "'D'", String(session.userNo), String(ledKey), String(toInt(field(led, "code"))), dateLiteral(parseDesktopDate(field(led, "doc_date")) ?? now), quote(full), quote(text(led, "doc_no1")), String(toDecimal(field(led, "amount_n"))), quote(text(led, "narration")), time, "'D'", year, quote("WEB")],
-    });
-  }
   // logfile S: the special log keeps a readable copy of what was deleted.
   if (toText(session.setup.logfile).toUpperCase() === "S") {
     const pair = (key: string, value: string) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`;
@@ -1048,29 +1069,20 @@ export async function buildDelete(loader: Loader, entryName: string, firstCombo:
  * Delete of a stock register's entry (Job Stock In / Out ...: a process row with its product rows, no ledger): the stock balances come off,
  * the slab and addon rows go, the process row and the product rows stay as deleted rows (il_pos D), and each product row is logged.
  */
-async function buildStockDelete(loader: Loader, stockModule: string, processKey: number, now: Date): Promise<SavePlan> {
+async function buildStockDelete(loader: Loader, stockModule: string, processKey: number): Promise<SavePlan> {
   const { session } = loader;
   const process = (await loader.readTable(`SELECT * FROM |sys.db|process WHERE process_key = $1 AND il_pos = 'A'`, [processKey]))?.[0];
   if (!process) throw new Error("The entry to delete was not found: it may be deleted already");
   if (text(process, "stk_module") !== stockModule) throw new Error("The entry belongs to another register");
   const yearId = session.yearId;
-  const year = quote(yearId);
   const statements: Statement[] = [...(await reversal(loader, processKey, yearId, true))];
   const rows = (await loader.readTable(`SELECT * FROM |sys.db|prod_ledger WHERE process_id = $1 AND il_pos = 'A' ORDER BY il_key`, [processKey])) ?? [];
   statements.push({ kind: "sql", label: "slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE process_id = ${processKey}` });
   statements.push({ kind: "sql", label: "addon row", sql: `DELETE FROM |sys.db|addon_aentry WHERE aona_processid = ${processKey}` });
-  const today = dateLiteral(now);
-  const time = quote(timeText(now));
   for (const row of rows) {
     const key = toInt(field(row, "il_key"));
+    statements.push(...linkTakenBack(key));
     statements.push({ kind: "sql", label: `row ${key} deleted`, sql: `UPDATE |sys.db|prod_ledger SET il_pos = 'D' WHERE il_key = ${key}` });
-    if (toText(session.setup.logfile).toUpperCase() !== "N") {
-      statements.push({
-        kind: "insert", table: "log_regtrn", keyColumn: KEY_COLUMN.log_regtrn, label: `row ${key}: log_regtrn`,
-        columns: ["lreg_logdate", "lreg_logmode", "lreg_loguser", "lreg_id", "lreg_docno1", "lreg_prodid", "lreg_quantity", "lreg_factor", "lreg_rate", "lreg_value", "lreg_rateuom", "lreg_date", "lreg_stocknat", "lreg_code", "lreg_logtime", "lreg_pos", "year_id", "lreg_machine_name"],
-        values: [today, "'D'", String(session.userNo), String(key), quote(text(row, "doc_no1")), String(toInt(field(row, "prod_id"))), String(toDecimal(field(row, "quantity"))), String(toDecimal(field(row, "factor"))), String(toDecimal(field(row, "rate"))), String(toDecimal((await loader.readTable(`SELECT il_value::numeric AS v FROM |sys.db|prod_ledger WHERE il_key = $1`, [key]))?.[0]?.v)), String(toInt(field(row, "rateuom_id"))), dateLiteral(parseDesktopDate(field(row, "il_date")) ?? now), quote(text(row, "stock_nat")), String(toInt(field(row, "code"))), time, "'D'", year, quote("WEB")],
-      });
-    }
   }
   statements.push({ kind: "sql", label: "process deleted", sql: `UPDATE |sys.db|process SET il_pos = 'D' WHERE process_key = ${processKey}` });
   return { statements, presetKeys: { pkval_3: processKey }, summary: { fullDocNo: text(process, "full_docno"), finalAmount: toDecimal(field(process, "p_amount")), bookAmount: 0, party: toInt(field(process, "code")) }, warnings: ["The special log (logfile S) is not written for a stock register's entry."] };

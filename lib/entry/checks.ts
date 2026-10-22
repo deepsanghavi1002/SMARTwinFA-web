@@ -20,13 +20,15 @@ const field = Loader.field;
 const text = (row: Row | undefined, name: string) => toText(field(row, name)).trim();
 
 /** One message box of the desktop: "stop" returns the cursor to the box, "ask" is Yes / No, "warn" lets the entry go on. */
-export type HeaderProblem = Readonly<{ text: string; title: string; kind: "stop" | "warn" | "ask"; setDate?: string }>;
+export type HeaderProblem = Readonly<{ text: string; title: string; kind: "stop" | "warn" | "ask"; setDate?: string; /** The number box the desktop blanks with the message (a number the party already used). */ clear?: "number" | "chlnno" | "entryno" }>;
 
 export type HeaderField = "date" | "number" | "chlnno" | "entryno" | "party";
 
 export type HeaderInput = Readonly<{
   field: HeaderField;
   series: string;
+  /** The register chosen (cmb_FirstCombo's text): a LINK register is the linked entry itself. */
+  registerText: string;
   /** dd/MMM/yyyy. */
   date: string;
   number: string;
@@ -40,7 +42,7 @@ export type HeaderInput = Readonly<{
   taxGroup: string;
   /** The voucher style: this is account row `rows` (1 for the first), the side picked (1 account debit, 2 account credit) and the day book's name. */
   voucher?: Readonly<{ rows: number; sideDbcode: number; bookName: string }>;
-  party?: Readonly<{ name: string; book: number; closing: string; limit: string; message: string; startDate: string; lastDate: string }>;
+  party?: Readonly<{ code?: number; name: string; book: number; closing: string; limit: string; message: string; startDate: string; lastDate: string }>;
 }>;
 
 const dayOf = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -98,6 +100,28 @@ async function numberUsed(loader: Loader, events: Row[], values: EntryValues, bo
   return false;
 }
 
+/**
+ * Tbx_Number_Leave's blocks for an entry that must be made through its parent: with the company's filt_para ORDER8LINK / ORDER13LINK a sale invoice
+ * / purchase bill is not added directly (only in the SALEDIR / PURCHDIR register), with QUOTLINK a purchase order (ORD-IN) comes from a quotation,
+ * and with licence 21 a Job In (not a MIN series) comes from a Job Out. A LINK register (licence 21) is the linked entry itself and is let through.
+ */
+function orderBlocks(loader: Loader, book: BookContext, input: HeaderInput): HeaderProblem[] {
+  const { session } = loader;
+  if (input.editKey > 0 || input.number.trim() === "") return [];
+  const filt = toText(session.setup.filt_para).toUpperCase();
+  const values = book.values;
+  const registerShort = text(book.row, "a_short").toUpperCase();
+  const linkEntry = session.licence === 21 && input.registerText.trim().toUpperCase().startsWith("LINK");
+  if (linkEntry) return [];
+  const stop = (message: string): HeaderProblem[] => [{ text: message, title: "Entry Warning", kind: "stop", clear: "number" }];
+  if (values.bookActual && values.bookKey === 8 && filt.includes("ORDER8LINK,") && registerShort !== "SALEDIR") return stop("Sale Invoice Add not allowed... Enter Sales Order and Link Invoice");
+  if (values.bookActual && values.bookKey === 13 && filt.includes("ORDER13LINK,") && registerShort !== "PURCHDIR") return stop("Purchase Bill Add not allowed... Enter Purchase Order and Link Invoice");
+  if (!values.bookActual && filt.includes("QUOTLINK,") && values.stkmShort === "ORD-IN") return stop("Purchase Order Add not allowed... Enter Quotation and Link Order");
+  const jobIn = !values.bookActual && book.stkmId === "JI" && values.stkmShort === "JOB-IN";
+  if (session.licence === 21 && jobIn && !input.series.toUpperCase().startsWith("MIN")) return stop("Job In Add not allowed... Link Job Out In");
+  return [];
+}
+
 /** The three number boxes: bn_start / bn_start1 / bn_postno limits, then the duplicate rule. */
 async function numberProblems(loader: Loader, book: BookContext, entryId: number, bn: Row, input: HeaderInput, values: EntryValues): Promise<HeaderProblem[]> {
   const which = input.field as "number" | "chlnno" | "entryno";
@@ -110,6 +134,7 @@ async function numberProblems(loader: Loader, book: BookContext, entryId: number
   if (digits && field(bn, limit.column) !== undefined && number(typed) < toInt(field(bn, limit.column))) {
     return [{ text: `${limit.message} ${text(bn, limit.shown)}`, title: limit.title, kind: "stop" }];
   }
+  if (which === "number") { const blocked = orderBlocks(loader, book, input); if (blocked.length > 0) return blocked; }
   const dup = text(bn, which === "number" ? "bn_docdup" : which === "chlnno" ? "bn_doc1dup" : "bn_postdup");
   const events = await controlEvents(loader, entryId);
   const problems: HeaderProblem[] = [];
@@ -221,6 +246,36 @@ function voucherAccountProblems(loader: Loader, book: BookContext, input: Header
   return problems;
 }
 
+/**
+ * Tbx_PartyName_Leave's party-wise duplicate rule: a Number / Challan No / Entry No whose book_number rule (bn_docdup / bn_doc1dup / bn_postdup) is P
+ * must not be one this party already used in another entry of the series (the setup's tbx_partyname "dupl" queries, with the party's code).
+ */
+async function partyNumberProblems(loader: Loader, entryId: number, bn: Row, input: HeaderInput, values: EntryValues): Promise<HeaderProblem[]> {
+  const party = input.party;
+  if (!party?.code || input.editKey < 0) return [];
+  const events = (await controlEvents(loader, entryId)).filter((event) => text(event, "control_name").toLowerCase() === "tbx_partyname" && text(event, "control_event").toUpperCase() === "LF" && text(event, "control_type") === "dupl" && field(event, "query_condition") !== true);
+  const boxes = [
+    { box: "number", rule: "bn_docdup", typed: input.number, column: "doc_no", what: "Party No.", title: "Number Warning" },
+    { box: "chlnno", rule: "bn_doc1dup", typed: input.chlnNo, column: "doc_no1", what: "Party Challan No.", title: "Challan Number Warning" },
+    { box: "entryno", rule: "bn_postdup", typed: input.entryNo, column: "entry_no", what: "Party Entry No.", title: "Entry Number Warning" },
+  ] as const;
+  const problems: HeaderProblem[] = [];
+  const withParty: EntryValues = { ...values, acCode: party.code };
+  for (const box of boxes) {
+    if (text(bn, box.rule) !== "P" || box.typed.trim() === "") continue;
+    for (const event of events.filter((candidate) => toText(field(candidate, "fill_control_query")).trim().toLowerCase().startsWith(`${box.column},`))) {
+      let sql = `Select ${toText(field(event, "fill_control_query"))}`;
+      sql = sql.replace(/\|sys\.doc_no1\|/gi, SQL_TEXT(box.box === "chlnno" || box.box === "entryno" ? box.typed : input.chlnNo)).replace(/\|sys\.entry_no\|/gi, SQL_TEXT(input.entryNo));
+      sql = replaceEntryTokens(sql, withParty);
+      if (/\|sys\.doc_no\|/i.test(sql)) sql = sql.replace(/\|sys\.doc_no\|/gi, SQL_TEXT(box.typed));
+      if (input.editKey > 0 && /ledger/i.test(sql)) sql += ` and unique_key <> ${input.editKey}`;
+      if (input.editKey > 0 && /process/i.test(sql)) sql += ` and process_key <> ${input.editKey}`;
+      if (await loader.readTable(sql)) { problems.push({ text: `Selected ${box.what} Already Use In Another Entry...`, title: box.title, kind: "stop", clear: box.box }); break; }
+    }
+  }
+  return problems;
+}
+
 /** Tbx_PartyName_Leave: the messages in the order the desktop builds str_Error_Message (later ones replace earlier ones). */
 function partyProblems(loader: Loader, book: BookContext, input: HeaderInput): HeaderProblem[] {
   const { session } = loader;
@@ -262,7 +317,12 @@ function partyProblems(loader: Loader, book: BookContext, input: HeaderInput): H
 export async function headerProblems(loader: Loader, entryName: string, book: BookContext, input: HeaderInput): Promise<HeaderProblem[]> {
   const entryId = toInt(field(await entryProperties(loader, entryName), "entry_key"));
   const values: EntryValues = { ...book.values, series: input.series, docDate: input.date, docNo: input.number, entryNat: input.editKey > 0 ? "E" : "A" };
-  if (input.field === "party") return partyProblems(loader, book, input);
+  if (input.field === "party") {
+    const own = partyProblems(loader, book, input);
+    if (own.some((problem) => problem.kind === "stop") || input.voucher) return own;
+    const bnRow = await bookNumberRow(loader, entryId, values);
+    return bnRow ? [...own, ...await partyNumberProblems(loader, entryId, bnRow, input, values)] : own;
+  }
   const bn = await bookNumberRow(loader, entryId, values);
   if (!bn) return [];
   if (input.field === "date") return dateProblems(loader, book, bn, input);

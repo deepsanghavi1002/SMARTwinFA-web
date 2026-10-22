@@ -11,6 +11,9 @@ import { entryLog } from "@/lib/entry/log";
 import { entryAll } from "@/lib/entry/all";
 import { entryBill } from "@/lib/entry/bill";
 import { masterDetails } from "@/lib/entry/details";
+import { accountLedger } from "@/lib/entry/ledger";
+import { isLinkRegister, linkEntries, linkLines } from "@/lib/entry/link";
+import { partyStock } from "@/lib/entry/partyStock";
 import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
 import { tdsInfo } from "@/lib/entry/tds";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
@@ -182,7 +185,7 @@ export async function POST(request: Request) {
           // A debit / credit note asks what it is against (the Returns panel) before its slab can be filled.
           if (!register.against && (await bookContext(loader, body.entryName, register)).entryFor === "DrCr") return { asksAgainst: true, warnings: loader.warnings };
           const book = await loadBook(loader, body.entryName, register, group);
-          return { book, warnings: loader.warnings };
+          return { book: { ...book, link: isLinkRegister(loader, register) }, warnings: loader.warnings };
         }
         case "returns":
           return { returns: await returnsChoices(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
@@ -220,6 +223,14 @@ export async function POST(request: Request) {
           if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Choose an entry from the Find / Edit list");
           return { entry: await restoreEntry(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
         }
+        case "link-entries": return { list: await linkEntries(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
+        case "link-lines": return { list: await linkLines(loader, body.entryName, chosenRegister(def, body.firstCombo), (Array.isArray(body.processKeys) ? body.processKeys : []).map(Number)), warnings: loader.warnings };
+        case "link-restore": {
+          const processKeys = (Array.isArray(body.processKeys) ? body.processKeys : []).map(Number).filter((key: number) => Number.isInteger(key) && key > 0);
+          if (processKeys.length === 0) throw new Error("Tick an entry first");
+          const ilKeys = (Array.isArray(body.ilKeys) ? body.ilKeys : []).map(Number).filter((key: number) => Number.isInteger(key) && key > 0);
+          return { entry: await restoreEntry(loader, body.entryName, chosenRegister(def, body.firstCombo), 0, { processKeys, ilKeys }), warnings: loader.warnings };
+        }
         case "zoom": {
           const ledKey = Number(body.ledKey);
           if (!Number.isInteger(ledKey) || ledKey <= 0) throw new Error("Choose a voucher row");
@@ -233,10 +244,10 @@ export async function POST(request: Request) {
           const clip = (value: unknown, size = 40) => String(value ?? "").slice(0, size);
           const party = body.party as Record<string, unknown> | undefined;
           const problems = await headerProblems(loader, body.entryName, book, {
-            field: fieldName, series: clip(body.series), date: clip(body.date, 20), number: clip(body.number), chlnNo: clip(body.chlnNo), entryNo: clip(body.entryNo),
+            field: fieldName, registerText: register.text, series: clip(body.series), date: clip(body.date, 20), number: clip(body.number), chlnNo: clip(body.chlnNo), entryNo: clip(body.entryNo),
             editKey: Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0, editDate: clip(body.editDate, 20), taxGroup: clip(body.taxGroup, 1),
             voucher: body.voucher ? { rows: Number((body.voucher as Record<string, unknown>).rows) || 1, sideDbcode: Number((body.voucher as Record<string, unknown>).sideDbcode) || 1, bookName: clip((body.voucher as Record<string, unknown>).bookName, 100) } : undefined,
-            party: party ? { name: clip(party.name, 100), book: Number(party.book) || 0, closing: clip(party.closing, 30), limit: clip(party.limit, 30), message: clip(party.message, 500), startDate: clip(party.startDate, 20), lastDate: clip(party.lastDate, 20) } : undefined,
+            party: party ? { code: Number(party.code) || 0, name: clip(party.name, 100), book: Number(party.book) || 0, closing: clip(party.closing, 30), limit: clip(party.limit, 30), message: clip(party.message, 500), startDate: clip(party.startDate, 20), lastDate: clip(party.lastDate, 20) } : undefined,
           });
           return { problems, warnings: loader.warnings };
         }
@@ -244,6 +255,16 @@ export async function POST(request: Request) {
           const key = Number(body.key);
           if (!Number.isInteger(key) || key <= 0 || (body.kind !== "account" && body.kind !== "product")) throw new Error("Choose an account or a product row");
           return { details: await masterDetails(loader, body.kind, key), warnings: loader.warnings };
+        }
+        case "party-stock": {
+          const code = Number(body.code);
+          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose an account row");
+          return { stock: await partyStock(loader, code), warnings: loader.warnings };
+        }
+        case "ledger": {
+          const code = Number(body.code);
+          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose an account row");
+          return { ledger: await accountLedger(loader, code), warnings: loader.warnings };
         }
         case "log": {
           const uniqueKey = Number(body.uniqueKey);

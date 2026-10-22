@@ -2,7 +2,7 @@ import type { Client } from "pg";
 import { runStatement } from "./statement";
 import { requiredEditRights } from "./access";
 import type { SysValueContext } from "../sys-values";
-import { isNumeric, parseDesktopDate, removeTableAlias, runFormula, securityRead, securityWrite, toDecimal, toInt, toText, writePw, formatDesktopDate, formatDesktopTime } from "./legacy";
+import { parseDesktopDate, removeTableAlias, runFormula, securityRead, securityWrite, toDecimal, toInt, toText, writePw, formatDesktopDate, formatDesktopTime } from "./legacy";
 import { displayValue, Loader, loadContext, prepareProgram, rateAddon, replaceControlValues, updateColumnShown } from "./load";
 import type { BodyRow, PreparedProgram } from "./load";
 import { columnName, replaceSessionValues } from "./sql";
@@ -214,30 +214,6 @@ export type AddSaveRequest = Readonly<{
   dryRun?: boolean;
 }>;
 
-type LogCollector = { fields: string; values: string };
-
-function collectLog(log: LogCollector, logShort: string, value: string, pk: number) {
-  const add = (column: string, text: string) => { if (!log.fields.includes(`${column},`)) { log.fields += `${column},`; log.values += `${text},`; } };
-  const truncated = (limit: number) => {
-    let text = value;
-    if (text.length > limit) { text = text.slice(0, limit); if (text.includes("'")) text += "'"; }
-    return text.includes("'") ? text : `'${text}'`;
-  };
-  switch (logShort.toLowerCase().trim()) {
-    case "short": add("lmst_short", truncated(29)); break;
-    case "name": add("lmst_name", value.includes("'") ? value : `'${value}'`); break;
-    case "head": add("lmst_head", truncated(39)); break;
-    case "open": add("lmst_opening", value); break;
-    case "rate": case "amt": add("lmst_amount", value); break;
-    case "uom": add("lmst_uomid", value); break;
-    case "pkv": add("lmst_pk", isNumeric(value, true) ? value : String(pk)); break;
-    default: {
-      const date = /^dt([1-7])$/.exec(logShort.toLowerCase().trim());
-      if (date) add(`lmst_date${date[1]}`, value.includes("'") || value.toLowerCase() === "null" ? value : `'${value}'`);
-    }
-  }
-}
-
 export async function addSave(client: Client, loader: Loader, request: AddSaveRequest): Promise<SaveResult> {
   const { session } = loader;
   const statements: string[] = [];
@@ -274,8 +250,6 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
 
   const grid = await buildSaveGrid(loader, prepared, top.add_screen_hidden !== true);
   const pkTable: number[] = [];
-  const log: LogCollector = { fields: "", values: "" };
-  const addLogSave = top.add_log_save === true;
   let addonType = "";
   let addonName = "";
   let addonPos = "";
@@ -433,7 +407,6 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
         if (currentValue.trim() !== "" && currentField.trim() !== "") {
           fields.push(columnName(currentField));
           values.push(currentValue);
-          if (source && addLogSave && toText(source.log_short) !== "") collectLog(log, source.log_short, currentValue, pkTable[0] ?? 0);
         }
         if (extraValue.trim() !== "" && extraField.trim() !== "") { fields.push(extraField); values.push(extraValue); }
       }
@@ -450,8 +423,6 @@ export async function addSave(client: Client, loader: Loader, request: AddSaveRe
     // Log store
     if (session.flags.logFileSpecial) {
       statements.push(...await specialLog(loader, programId, request, prepared, pkTable[0] ?? 0, { kind: "add", tableName: grid.addTables[0] ?? "", rows: request.rows }));
-    } else if (addLogSave && log.fields !== "") {
-      statements.push(await masterLog(loader, programId, "A", log, pkTable[0] ?? 0));
     }
 
     if (programId === 8) statements.push(...await productAddFollowUp(loader, request, prepared, pkTable, findProductName));
@@ -550,35 +521,6 @@ async function addonFieldColumns(client: Client, schema: string, type: string, n
     if (position === "P") await add("addon_ientry", `INPUT_${name}`, "varchar(40) DEFAULT ' '");
   }
   return statements;
-}
-
-async function masterLog(loader: Loader, programId: number, mode: "A" | "E" | "D", log: LogCollector, pk: number): Promise<string> {
-  const { session } = loader;
-  const now = new Date();
-  let fields = `lmst_top_id,lmst_logdate,lmst_logtime,lmst_logmode,lmst_loguser,${log.fields}lmst_logsystem,lmst_machine_name`;
-  let values = `${programId},${quote(formatDesktopDate(now))},${quote(formatDesktopTime(now))},'${mode}',${session.userNo},${log.values}`;
-  if (!log.fields.includes("lmst_pk,")) { fields = fields.replace("lmst_logsystem,lmst_machine_name", "lmst_pk,lmst_logsystem,lmst_machine_name"); values += `${pk},`; }
-  values += "null,'WEB'";
-  const fieldList = fields.split(",");
-  const valueList = splitValues(values);
-  await withAllocatedKey(loader, session.companySchema, "log_master", "", fieldList, valueList);
-  const sql = `INSERT INTO ${session.companySchema}.log_master (${fieldList.join(",")}) VALUES (${valueList.join(",")})`;
-  await runStatement(loader.client, sql);
-  return sql;
-}
-
-/** Splits a values list on commas that are not inside a quoted literal. */
-function splitValues(values: string): string[] {
-  const out: string[] = [];
-  let current = "";
-  let inQuote = false;
-  for (let index = 0; index < values.length; index += 1) {
-    const character = values.charAt(index);
-    if (character === "'") inQuote = !inQuote;
-    if (character === "," && !inQuote) { out.push(current); current = ""; } else current += character;
-  }
-  if (current !== "") out.push(current);
-  return out;
 }
 
 /** What one logfile = 'S' record describes: the saved master record and where its values come from. */
@@ -811,9 +753,7 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
 
   const grid = await buildSaveGrid(loader, prepared, top.add_screen_hidden !== true);
   const whereColumns = prepared.updateBody.filter((row) => row.field_in_upd_where);
-  const updateLogSave = top.update_log_save === true;
   const lastSaveQuery = String(top.update_lastsavequery ?? "");
-  const logFileY = toText(session.setup.logfile).toUpperCase() === "Y";
   const keys: number[] = [];
   let cloud: CloudPush | null = null;
 
@@ -830,7 +770,6 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
       let partyName = "";
       let productName = "";
       let firstTableHasQuery = false;
-      const log: LogCollector = { fields: "", values: "" };
       let boolRunDelete = false;
 
       for (let i = 0; i < grid.updateTables.length; i += 1) {
@@ -1038,7 +977,6 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
 
           if (fieldValue !== "" && fieldName !== "") {
             emit(columnName(fieldName), fieldValue);
-            if (source && updateLogSave && logFileY && toText(source.log_short) !== "") collectLog(log, source.log_short, fieldValue, pkTable[0] ?? 0);
           }
           if (extraValue !== "") emit(extraName, extraValue);
         }
@@ -1060,10 +998,7 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
 
       if (!firstTableHasQuery) continue;
 
-      if (updateLogSave && (log.fields !== "" || record.deleted) && logFileY && !session.flags.logFileSpecial) {
-        if (programId === 48 && record.deleted) queries.push(`DELETE FROM ${session.companySchema}.addon_data WHERE prod_id=${pkTable[0] ?? 0}`);
-        queries.push(`__LOG__${record.deleted ? "D" : "E"}`);
-      }
+      if (programId === 48 && record.deleted) queries.push(`DELETE FROM ${session.companySchema}.addon_data WHERE prod_id=${pkTable[0] ?? 0}`);
       if (programId === 2 && !boolRunDelete) {
         const addonFld = await loader.readTable(`SELECT fiel_save, fiel_masterpos, fiel_entrypos, fiel_relate FROM ${session.companySchema}.addon_fld WHERE fiel_key = $1`, [toInt(request.group.firstCombo.value)]);
         if (addonFld) {
@@ -1109,10 +1044,6 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
       }
       for (const raw of queries) {
         if (!raw) continue;
-        if (raw.startsWith("__LOG__")) {
-          statements.push(await masterLog(loader, programId, raw.slice(7) as "E" | "D", log, pkTable[0] ?? 0));
-          continue;
-        }
         let sql = raw;
         if (raw.startsWith("__ALLOC__")) {
           const [, tableName, rest] = /^__ALLOC__([a-z_]+)__([\s\S]*)$/.exec(raw) ?? [];

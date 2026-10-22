@@ -29,6 +29,12 @@ import { UploadDocuments, docRowsFor } from "./UploadDocuments";
 import { RangePanel } from "./RangePanel";
 import type { DocRow } from "./UploadDocuments";
 import { MasterDetails } from "./MasterDetails";
+import { AccountLedger } from "./AccountLedger";
+import { LinkPick } from "./LinkPick";
+import type { LinkList as LinkListData } from "../../lib/entry/link";
+import { PartyStock } from "./PartyStock";
+import type { PartyStock as PartyStockData } from "../../lib/entry/partyStock";
+import type { AccountLedger as AccountLedgerData } from "../../lib/entry/ledger";
 import type { MasterDetails as MasterDetailsData } from "../../lib/entry/details";
 import type { EntryLog as EntryLogData } from "../../lib/entry/log";
 import { amountText, helpCell } from "./format";
@@ -196,8 +202,6 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [addressPick, setAddressPick] = useState<PartyDetails | null>(null);
   /** cmb_ProdFilter: the product-type choice the product help is filtered by, and the row it is being asked for. */
   const [prodFilter, setProdFilter] = useState<EntryOption | null>(null);
-  const [filterAsk, setFilterAsk] = useState<number | null>(null);
-  const filterAsked = useRef<number | null>(null);
   const [preview, setPreview] = useState<HelpData | null>(null);
   /** Find / Edit with every field of each entry: read only when "All fields" is pressed; shown while allFields is on. */
   const [previewAll, setPreviewAll] = useState<{ fields: HelpData | null; products: HelpData | null }>({ fields: null, products: null });
@@ -221,6 +225,14 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [restored, setRestored] = useState<number | null>(null);
   const [logView, setLogView] = useState<EntryLogData | null>(null);
   /** The F1 window of a help row: the account or product master, field and value side by side. */
+  /** The F8 window of an account help row: that account's Ledger with the items of each voucher. */
+  /** Set when the F1 / F8 window closes: the account help it returns to stays on the row it was on (the focus would reset it to the first). */
+  const keepHelpAt = useRef(false);
+  /** The F7 window of an account help row: that party's stock lines (Partywise Stock). */
+  const [stockView, setStockView] = useState<PartyStockData | null>(null);
+  /** A LINK register: the pending source entries, then their lines, are ticked in a list before the entry is made from them. */
+  const [linkPick, setLinkPick] = useState<{ step: "entries" | "lines"; list: LinkListData; processKeys: number[] } | null>(null);
+  const [ledgerView, setLedgerView] = useState<AccountLedgerData | null>(null);
   const [details, setDetails] = useState<{ kind: HelpKind; data: MasterDetailsData } | null>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   /** Set when a register has just been chosen: the keyboard goes to the series once the screen is drawn. */
@@ -278,8 +290,6 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setParty(null);
     setAddon({});
     setAddressPick(null);
-    setFilterAsk(null);
-    filterAsked.current = null;
     setHelpKind(null);
     setProductText(null);
     // The Find / Edit list (and the All fields / With product choice) stays until the register or series changes or an entry is saved.
@@ -314,6 +324,20 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     return body;
   }, [call]);
 
+  // ---- LINK registers: the pending source entries are listed as soon as the register is chosen (c1dg_LinkEntry)
+  const openLinkEntries = useCallback(async (option: EntryOption) => {
+    setBusy("Pending entries");
+    try {
+      const { list } = await call<{ list: LinkListData }>("link-entries", { firstCombo: option });
+      if (list.rows.length === 0) { await say("No pending entry found to link...", "Entry Warning"); return; }
+      setLinkPick({ step: "entries", list, processKeys: [] });
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  }, [call, say, failed]);
+
   // ---- Cmb_FirstCombo_Leave: the register sets the screen up
   const chooseRegister = useCallback(async (option: EntryOption) => {
     setRegister(option);
@@ -335,13 +359,14 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setValues(initial);
       setWarnings([...(def?.unsupported ?? []), ...next.warnings, ...body.warnings]);
       focusSeries.current = true;
+      if (next.link) void openLinkEntries(option);
     } catch (error) {
       setBook(null);
       await failed(error);
     } finally {
       setBusy("");
     }
-  }, [loadBook, blankEntry, def, failed]);
+  }, [loadBook, blankEntry, def, failed, openLinkEntries]);
 
   // ---- Cmb_Series_Leave: another series has its own last date and number
   const chooseSeries = useCallback(async (series: string) => {
@@ -380,6 +405,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
           continue;
         }
         await say(problem.text, problem.title);
+        if (problem.clear) setValues((current) => ({ ...current, [`tbx_${problem.clear}`]: "" }));
         if (problem.kind === "stop") {
           if (problem.setDate) setValues((current) => ({ ...current, dtp_date: problem.setDate! }));
           return false;
@@ -511,10 +537,52 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setBusy("");
     }
   };
+  /** F8 on an account help row: the Ledger of that account in a window like the F1 one (Esc gives the keyboard back to the help). */
+  const showLedger = async () => {
+    const rows = shownHelp?.rows ?? [];
+    const row = rows[Math.min(helpAt, rows.length - 1)];
+    const code = Number(row?.CODE);
+    if (!row || !code) return;
+    setBusy("Ledger");
+    try {
+      const body = await call<{ ledger: AccountLedgerData }>("ledger", { code });
+      setLedgerView(body.ledger);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  const showPartyStock = async () => {
+    const rows = shownHelp?.rows ?? [];
+    const row = rows[Math.min(helpAt, rows.length - 1)];
+    const code = Number(row?.CODE);
+    if (!row || !code) return;
+    setBusy("Partywise Stock");
+    try {
+      const body = await call<{ stock: PartyStockData }>("party-stock", { code });
+      setStockView(body.stock);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  const closeStock = () => {
+    setStockView(null);
+    keepHelpAt.current = true;
+    setTimeout(() => { if (voucher) { if (voucherRow !== null) focusEntryCell(formRef.current, `${voucherRow}:name`); } else partyRef.current?.focus(); }, 0);
+  };
+  const closeLedger = () => {
+    setLedgerView(null);
+    keepHelpAt.current = true;
+    setTimeout(() => { if (voucher) { if (voucherRow !== null) focusEntryCell(formRef.current, `${voucherRow}:name`); } else partyRef.current?.focus(); }, 0);
+  };
   /** Esc on the details: the keyboard goes back to the field the help belongs to (its help shows again). */
   const closeDetails = () => {
     const kind = details?.kind;
     setDetails(null);
+    if (kind === "account") keepHelpAt.current = true;
     setTimeout(() => {
       if (kind === "account") { if (voucher) { if (voucherRow !== null) focusEntryCell(formRef.current, `${voucherRow}:name`); } else partyRef.current?.focus(); }
       else if (kind === "product" && productRow !== null) focusEntryCell(formRef.current, `${productRow}:prod_key`);
@@ -550,6 +618,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const helpKeys = (event: ReactKeyboardEvent<HTMLInputElement>, kind: HelpKind, choose: (row: Readonly<Record<string, string>>) => void): boolean => {
     const open = helpKind === kind && shownHelp !== null;
     if (event.key === "F1" && open) { event.preventDefault(); void showDetails(kind); return true; }
+    if (event.key === "F7" && open && kind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+    if (event.key === "F8" && open && kind === "account") { event.preventDefault(); void showLedger(); return true; }
     if (event.key === "ArrowDown" || event.key === "F2") {
       event.preventDefault();
       if (!open) void openHelp(kind).then(enterHelp); else enterHelp();
@@ -600,7 +670,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const choosePartyRow = useCallback(async (row: Readonly<Record<string, string>> | undefined) => {
     if (!row || !register || !book) return;
     setHelpKind(null);
-    const allowed = await checkHeader("party", { party: { name: row.NAME ?? "", book: Number(row.BOOK) || 0, closing: row.CLOSING_BAL ?? "", limit: row.LIMIT ?? "", message: row.ac_message ?? "", startDate: row.a_startdate ?? "", lastDate: row.a_lastdate ?? "" } });
+    const allowed = await checkHeader("party", { party: { code: Number(row.CODE) || 0, name: row.NAME ?? "", book: Number(row.BOOK) || 0, closing: row.CLOSING_BAL ?? "", limit: row.LIMIT ?? "", message: row.ac_message ?? "", startDate: row.a_startdate ?? "", lastDate: row.a_lastdate ?? "" } });
     if (!allowed) { partyRef.current?.focus(); return; }
     setBusy("Party");
     try {
@@ -645,6 +715,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   };
   /** The party box got the keyboard: its help shows (on the party already chosen); the keyboard stays in the box. */
   const partyFocus = () => {
+    if (keepHelpAt.current) { keepHelpAt.current = false; void openHelp("account"); return; }
     const at = accountHelp?.rows.findIndex((row) => row.NAME === party?.name) ?? -1;
     setHelpAt(at >= 0 ? at : 0);
     void openHelp("account");
@@ -680,6 +751,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const accountFocus = (row: number) => {
     setVoucherRow(row);
     if (accountText && accountText.row !== row) setAccountText(null);
+    if (keepHelpAt.current) { keepHelpAt.current = false; void openHelp("account"); return; }
     setHelpAt(0);
     void openHelp("account");
   };
@@ -735,13 +807,14 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
 
   const chooseProductRow = useCallback(async (row: number, helpRow: Readonly<Record<string, string>> | undefined) => {
     if (!helpRow || !register || !context) return;
+    // A LINK register's rows come from the source entry: a product can not be picked or changed here.
+    if (book?.link) { setHelpKind(null); return; }
     if (await productRefused(row, helpRow)) { setTimeout(enterHelp, 0); return; }
     setHelpKind(null);
     setBusy("Product");
     try {
       const body = await call<{ product: ProductChoice }>("product", { firstCombo: register, prodKey: Number(helpRow.prod_key), acCode: party?.code ?? 0, date: values.dtp_date ?? "" });
       const product = { ...body.product, stock1: helpRow.stock_1 ?? body.product.stock1, stock2: helpRow.stock_2 ?? body.product.stock2 };
-      filterAsked.current = null;
       setLines((current) => {
         const copy = [...current];
         while (copy.length <= row) copy.push({ cells: {}, product: null });
@@ -826,33 +899,19 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setLandTick((now) => now + 1);
     // The keyboard goes into the product help (it is read already); Esc brings it back to this cell.
     // A book with a product filter (PGFILT) asks the product type first, for each new row.
+    // A book with a product filter (PGFILT) shows the product type above the product help, always: a new row starts on it (its value is the row's, else the last one chosen),
+    // and any change of it gives the same in the help below at once.
+    if (book?.link) return;
     void openHelp("product").then((help) => {
       if (!help) return;
-      if (help.filter && help.filter.options.length > 0 && !lines[row]?.product && filterAsked.current !== row) {
-        filterAsked.current = row;
-        setHelpKind(null);
-        setFilterAsk(row);
-        return;
+      if (help.filter && help.filter.options.length > 0) {
+        const own = lines[row]?.cells.il_div;
+        const rowType = own ? help.filter.options.find((option) => option.value === own) : undefined;
+        if (rowType) setProdFilter(rowType);
+        if (!lines[row]?.product) { setTimeout(() => formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(), 60); return; }
       }
       setTimeout(enterHelp, 30);
     });
-  };
-  /** A click on the Product cell of a row with no product yet (a wrong product type was chosen): the product type is asked again, and the help follows it. */
-  const askFilterAgain = (row: number) => {
-    if (filterAsk !== null || !productHelp?.filter || productHelp.filter.options.length === 0 || lines[row]?.product) return;
-    filterAsked.current = row;
-    setHelpKind(null);
-    setFilterAsk(row);
-  };
-  /** cmb_ProdFilter chosen (null: Esc, all products): the product help opens on that type. */
-  const chooseFilter = (option: EntryOption | null) => {
-    const row = filterAsk;
-    setFilterAsk(null);
-    if (option) setProdFilter(option);
-    if (row === null) return;
-    setProductRow(row);
-    setHelpAt(0);
-    void openHelp("product").then((help) => { if (help) setTimeout(enterHelp, 30); });
   };
 
   /** A cell to put the keyboard on once the product rows are drawn again (the next cell after a product is taken). */
@@ -866,6 +925,15 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     // C1dg_Inputdata_AfterEdit: an item-wise tax chosen against the product master's tax asks first (half each for CGST / SGST).
     const taxColumn = slab.some((item) => item.itemWise && item.master && item.short === key) ? productColumns.find((column) => column.key === key) : undefined;
     const line = lines[row];
+    // Unit more than the source entry holds is not allowed (the quantity and the factor of a row made from a source line).
+    if (line?.cells._link_il && (key === "quantity" || key === "factor")) {
+      const limit = toNumber(key === "quantity" ? line.cells._max_qty : line.cells._max_factor);
+      if (toNumber(value) > limit + 0.0000001) {
+        await say("Unit more than Source Documents not allowed...", "Entry Warning");
+        setTimeout(() => focusEntryCell(formRef.current, `${row}:${key}`), 0);
+        return;
+      }
+    }
     if (taxColumn && value !== "" && line?.product) {
       const percOf = (text: string) => book.taxPercs[taxColumn.options?.find((option) => option.text === text)?.value ?? ""] ?? 0;
       const chosen = percOf(value);
@@ -1053,6 +1121,74 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setBusy("");
     }
   }, [register, book, lines, restored, call, loadBook, blankEntry, say, failed]);
+
+  /**
+   * Link_Product_Rec / Restore_Entry for a LINK register: the lines chosen from the source entries become the rows of a new entry (their pending quantity, the
+   * source's rate and units; the taxes and totals work out as for any chosen product), and each row remembers its source line for the Save.
+   */
+  const applyLinkEntry = async (entry: Restored) => {
+    if (!register || !book) return;
+    setBusy("Loading the entry");
+    try {
+      let screenBook = book;
+      if (book.slab && entry.taxGroup !== book.taxGroup) screenBook = (await loadBook(register, entry.taxGroup)).book;
+      const ctx = { book: screenBook, columns: screenBook.product.columns.filter((column) => column.visible) };
+      const slabRows = [...screenBook.slabRows];
+      const carried = ["quantity", "factor", "rate", "uomentry_id", "rateuom_id", "pack_qty", "master_rate", "_link_process", "_link_il", "_link_uom", "_file_qty", "_file_factor", "_max_qty", "_max_factor"];
+      const nextLines: Line[] = entry.lines.map((source) => {
+        const chosen = chooseProduct({ cells: {}, product: null }, source.product!, ctx, slabRows);
+        const cells = { ...chosen.cells };
+        for (const key of carried) if (source.cells[key] !== undefined && source.cells[key] !== "") cells[key] = source.cells[key];
+        return recalcLine({ cells, product: chosen.product }, "quantity", ctx, slabRows);
+      });
+      const next: Record<string, string> = { ...values };
+      for (const control of screenBook.controls) {
+        const saved = entry.values[control.name];
+        if (saved === undefined) { if (next[control.name] === undefined) next[control.name] = control.initial; continue; }
+        const option = control.type === "CB" && !control.options.some((candidate) => candidate.text === saved) ? control.options.find((candidate) => candidate.value === saved) : undefined;
+        next[control.name] = option ? option.text : saved;
+      }
+      let partyDetails: PartyDetails | null = null;
+      if (entry.partyCode > 0 && screenBook.party) partyDetails = (await call<{ party: PartyDetails }>("party", { firstCombo: register, editKey: 0, code: entry.partyCode, date: next.dtp_date ?? "", addressId: entry.addressId })).party;
+      setBook(screenBook);
+      setSlab(slabRows);
+      setValues(next);
+      setParty(partyDetails);
+      setAddon(Object.fromEntries((partyDetails?.addon ?? []).map((item) => [item.key, item.value])));
+      setLines(nextLines);
+      setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button")?.focus(), 150);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /** F5 in the link list: the ticked entries go to their lines, the ticked lines make the entry. */
+  const linkDone = async (rows: readonly Readonly<Record<string, string>>[]) => {
+    if (!linkPick || !register) return;
+    try {
+      if (linkPick.step === "entries") {
+        if (rows.length === 0) { await say("Tick an entry to link.", "Entry Warning"); return; }
+        if (new Set(rows.map((row) => row.party_name)).size > 1) { await say("Only Single Party Selection Allowed.", "Party Selection Warning"); return; }
+        if (!linkPick.list.multi && rows.length > 1) { await say("Multiple Entry Selection not Allowed.", "Entry Warning"); return; }
+        const processKeys = rows.map((row) => Number(row._key));
+        setBusy("Lines");
+        const { list } = await call<{ list: LinkListData }>("link-lines", { firstCombo: register, processKeys });
+        setLinkPick({ step: "lines", list, processKeys });
+        return;
+      }
+      // No line ticked: every pending line of the chosen entries.
+      setBusy("Loading the entry");
+      const { entry } = await call<{ entry: Restored }>("link-restore", { firstCombo: register, processKeys: linkPick.processKeys, ilKeys: rows.map((row) => Number(row._key)) });
+      setLinkPick(null);
+      await applyLinkEntry(entry);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
 
   // The register chosen: the keyboard goes to the series as soon as the screen is drawn.
   useEffect(() => {
@@ -1722,6 +1858,9 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
 
   return (
     <div ref={screenRef} className={`mp-screen ent-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title}>
+      {linkPick && <LinkPick key={linkPick.step} title={linkPick.step === "entries" ? "LINK - PENDING ENTRIES" : "LINK - PENDING LINES"} list={linkPick.list} onDone={(rows) => void linkDone(rows)} onClose={() => setLinkPick(null)} />}
+      {stockView && <PartyStock stock={stockView} onClose={closeStock} />}
+      {ledgerView && <AccountLedger ledger={ledgerView} onClose={closeLedger} />}
       {details && <MasterDetails details={details.data} kind={details.kind} onClose={closeDetails} />}
       {logView && <EntryLog log={logView} docNo={(values.tbx_number ?? "").trim()} title={register?.text ?? title} onClose={() => setLogView(null)} />}
       <div className="ent-scroll">
@@ -1774,6 +1913,10 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               onEscape={() => focusHelpField(helpKind)}
               onKey={(event) => {
                 if (event.key === "F1") { event.preventDefault(); void showDetails(helpKind); return true; }
+                // The product-type filter sits above the first row: ↑ on it goes there.
+                if (helpKind === "product" && productHelp?.filter && event.key === "ArrowUp" && helpAt === 0) { event.preventDefault(); formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(); return true; }
+                if (event.key === "F7" && helpKind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+                if (event.key === "F8" && helpKind === "account") { event.preventDefault(); void showLedger(); return true; }
                 if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; }
                 // The product help has the keyboard while a row is being filled: "+" or "-" before any search text marks the row (stock in / out).
                 if (helpKind === "product" && book?.stockNatBoth && productRow !== null && (event.key === "+" || event.key === "-") && typed.trim() === "" && !lines[productRow]?.product) { event.preventDefault(); markRow(productRow, event.key); return true; }
@@ -1791,17 +1934,22 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               onResetPosition={helpKind === "account" ? accountDrag.reset : productDrag.reset}
               formatCell={helpCell}
               f1
+              f7={helpKind === "account"}
+              topSlot={helpKind === "product" && productHelp?.filter && productHelp.filter.options.length > 0 ? (
+                <div className="ent-filter-bar" onKeyDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
+                  if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); void endProducts(); }
+                  else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeHelp(); }
+                }}>
+                  <label>{properHeading(productHelp.filter.caption)}</label>
+                  <SearchCombo ariaLabel={productHelp.filter.caption} options={productHelp.filter.options} value={prodFilter} reselect onChoose={(option) => { setProdFilter(option); setHelpAt(0); setTimeout(enterHelp, 30); }} />
+                </div>
+              ) : undefined}
+              f8={helpKind === "account"}
               shown={helpKind === "product" ? PRODUCT_HELP_ROWS : HELP_ROWS}
             />
             </div>
           )}
 
-          {filterAsk !== null && productHelp?.filter && (
-            <div className="ent-filter" style={{ left: 5, top: TAB_TOP + 21 }} onKeyDownCapture={(event) => { if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); setFilterAsk(null); void endProducts(); return; } if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); chooseFilter(null); } }}>
-              <label>{properHeading(productHelp.filter.caption)}</label>
-              <SearchCombo ariaLabel={productHelp.filter.caption} options={productHelp.filter.options} value={prodFilter} focus reselect onChoose={(option) => chooseFilter(option)} />
-            </div>
-          )}
           {addressPick && <AddressPick name={addressPick.name} rows={addressPick.addresses} current={addressPick.addressId} onChoose={(id) => void pickAddress(id)} onEscape={() => void pickAddress(null)} />}
 
           {view && (
@@ -1852,7 +2000,6 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                         onProductText={(row, text) => { setProductText({ row, text }); setProductRow(row); setHelpAt(0); if (helpKind !== "product") void openHelp("product"); }}
                         onProductKeys={productKeys}
                         onProductFocus={productFocus}
-                        onProductClick={askFilterAgain}
                         onProductBlur={(event) => leaveField(event, "product")}
                         tools={tools}
                         onDeleteRow={(row) => void deleteRow(row)}
