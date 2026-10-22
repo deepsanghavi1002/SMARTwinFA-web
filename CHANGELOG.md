@@ -3,6 +3,9 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-21 (Ask AI: 50 questions, no model)
+- New: `lib/ask/ask.ts`, `app/api/ask/route.ts`, `features/ask/AskAi.tsx`, `app/page.tsx`, `app/globals.css`. An Ask AI panel (button in the top strip, minimizable) answers 50 questions from the open company's own data with fixed read-only queries and no model: accounts and outstanding (balances as the Outstanding Agewise report takes them; overdue = bill date + the account's credit days), sales and purchase (sales before tax, less credit notes against the Sale book, with debit notes against it adding), inventory and stock (PROD_BALANCE closing; valuation at average cost), banking, cash and expenses, and financial analysis (Trial Balance, Profit / Loss, Balance Sheet and Fund Flow open the existing reports). Rows of party answers open that party's Ledger on a double-click or Enter; party and product help lists narrow as they are typed; a question it does not know is refused with the nearest ones listed.
+
 ## 2026-10-21 (REPORT > Extra Report > Reminder, report key 67)
 - New: `lib/report/reminderReport.ts`, `lib/report/reportStandard.ts`, `lib/report/reportFormating.ts`, `lib/report/setup.ts`. SP_FRT_RPT_REMINDER ported: REMINDER_FOR, REMINDER_DESC, REMINDER_DAY_BEFORE, REMINDER_DATE and USER of smart_system.reminder, by date then by what it is for. The procedure builds a period and an own-reminders-only condition for non-administrators but never adds it to its query, so (as on the desktop) every reminder of every operator is listed whatever the period.
 

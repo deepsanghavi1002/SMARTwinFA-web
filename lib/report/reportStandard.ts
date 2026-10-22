@@ -46,7 +46,7 @@ import type { ResultRow } from "./call";
 import { ResultTable } from "./call";
 import { dateStyle112, dateStyle6, desktopDate, sqlServerCompare } from "./formula";
 import type { ReportPlan } from "./generate";
-import { pgFragment, ReportRefusal } from "./generate";
+import { pgFragment, ReportRefusal, tickedGroupOrder } from "./generate";
 import {
   cashBookColumns, dayBefore, dropColumn, groupFailed, groupHeadingColumns, groupList, groupSmartColumn, insertFirst, narrationPieces, numberKey,
   parseRowDate, renameColumn, replaceCI, rightAlignedKey, sortRows, tableFromFields, tableFromResult, textKey, withEntryAddon,
@@ -3913,7 +3913,11 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
   if (book === 8) where += drCrBook && licence !== 21 ? " and (PRODLED.BOOK = 16 or PRODLED.BOOK = 8)" : " and (PRODLED.BOOK = 13 or PRODLED.BOOK = 16 or PRODLED.BOOK = 11 or PRODLED.BOOK = 8) and ac.book = 2";
   else if (book === 9) where += " and PRODLED.BOOK = 9 and ac.book = 2";
   else where += drCrBook && licence !== 21 ? ` and (PRODLED.BOOK = 11 or PRODLED.BOOK = ${book})` : ` and (PRODLED.BOOK = 8 or PRODLED.BOOK = 11 or PRODLED.BOOK = 16 or PRODLED.BOOK = ${book}) and ac.book = 3`;
-  const result = await runReportSql(loader, frag(`SELECT ${select}, PRODLED.BOOK AS "line_book" ${from} ${where} ORDER BY AC.NAME, TO_CHAR(PRODLED.IL_DATE,'YYYYMMDD'), PRODLED.DOC_NO1`));
+  // The order: the groups ticked (the account or an addon, first ticked first), then the date, then the voucher number; with none ticked, the date and the voucher number.
+  if (plan.tickedGroups.length === 0) throw new ReportRefusal("Please tick at least one Group to generate the report.", "Group Required");
+  const ticked = tickedGroupOrder(plan.tickedGroups, call.unionGroups);
+  const order = [...ticked, "TO_CHAR(PRODLED.IL_DATE,'YYYYMMDD')", "PRODLED.DOC_NO1", "PRODLED.FULL_DOCNO"].join(", ");
+  const result = await runReportSql(loader, frag(`SELECT ${select}, PRODLED.BOOK AS "line_book" ${from} ${where} ORDER BY ${order}`));
   const table = tableFromResult(result);
   for (const column of ["ADD_QTY", "LESS_QTY", "BOX_QTY", "RATE", "PURCH_VALUE", "SALE_VALUE"]) if (table.has(column)) table.setKind(column, "decimal");
 

@@ -41,6 +41,7 @@ import { selectionTotals as totalsOf } from "../grid/totals";
 import { useDraggable } from "../grid/useDraggable";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { useGridOutput } from "../grid/useGridOutput";
+import { useLookupSource } from "../grid/useLookupSource";
 import { GridButtons } from "../grid/GridButtons";
 import { confirmLeave, refreshQuestion } from "../grid/prompts";
 
@@ -1356,6 +1357,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   };
   /** Print, Preview, Excel, PDF and CSV of the Update grid as shown (features/grid/useGridOutput). */
   const unsaved = editing || edited.size > 0 || deleted.size > 0;
+  // The report columns' VLOOKUP can take figures from this grid too (the rows as shown).
+  useLookupSource({ titles: [def?.heading || title, title], captions: columns.map((column) => column.caption || column.key), rows: () => buildExportTable().rows }, records);
   const output = useGridOutput({
     table: buildExportTable,
     name: `${def?.heading || title} - ${first?.text ?? ""}`,

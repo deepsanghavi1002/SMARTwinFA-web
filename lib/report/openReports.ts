@@ -43,9 +43,12 @@ export function registerOpenReport(snapshot: () => OpenReportSnapshot): () => vo
   return () => { reports.delete(entry); notifyOpenReports(); };
 }
 
-/** The other open reports, for the Add Column lookup helper: the name to write and the columns each has (`except` is the report asking). */
+/** The other open windows with data (reports, masters, small entries), for the Add Column lookup helper: the name to write and the columns each has. `except` is the report asking, which is not offered. */
 export function listOpenReports(except?: () => OpenReportSnapshot): { title: string; columns: readonly string[] }[] {
-  return [...reports].filter((entry) => entry.snapshot !== except).map((entry) => { const shot = entry.snapshot(); return { title: shot.titles[0] ?? "", columns: shot.columns.map((column) => column.caption) }; }).filter((report) => report.title !== "");
+  return [...reports]
+    .filter((entry) => entry.snapshot !== except)
+    .map((entry) => { const shot = entry.snapshot(); return { title: shot.titles[0] ?? "", columns: shot.columns.map((column) => column.caption) }; })
+    .filter((report) => report.title !== "");
 }
 
 const same = (a: string, b: string) => a.trim().toUpperCase() === b.trim().toUpperCase();

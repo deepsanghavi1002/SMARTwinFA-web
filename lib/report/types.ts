@@ -183,6 +183,8 @@ export type OutputRow = Readonly<{
   /** The voucher the row is from (SMART_LED_KEY / SMART_PROCESS_KEY), for its log; 0 when none. */
   ledKey: number;
   processKey: number;
+  /** A master row of the Logfile: the master (program) id, the record's code and the first-combo text its log is kept under. */
+  masterLog?: Readonly<{ id: number; code: number; first: string; small?: boolean }>;
   /** A cell's own background (column key to colour), where the desktop colours a cell by its row's value (Stock Status). */
   cellColours?: Readonly<Record<string, string>>;
   /** The account of the row where Enter zooms into its Ledger (Trial Balance, Sales with Expense). */

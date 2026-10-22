@@ -87,7 +87,7 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
-export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount }: { reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
+export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo }: { autoRun?: boolean; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
   const [fatal, setFatal] = useState("");
@@ -366,16 +366,43 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     void generate();
   }, [zoomRun]);
 
+  // Opened from Ask AI: the report is run at once with its own defaults, to its output grid. When it refuses for want of a group or a list picked, the
+  // first group is ticked with everything in its list (nothing was picked: the whole of it) and it is run again.
+  const autoStarted = useRef(false);
+  const [autoGo, setAutoGo] = useState(false);
+  const desktopDay = (iso: string) => { const [year, month, day] = iso.split("-"); return `${day}/${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(month) - 1]}/${year}`; };
+  useEffect(() => {
+    if (!autoRun || !def || zoomAccount || autoStarted.current) return;
+    autoStarted.current = true;
+    // The dates the question named go in first; the run follows on the next render, when they are in.
+    if (autoFrom && autoTo) { setFrom(desktopDay(autoFrom)); setUpto(desktopDay(autoTo)); }
+    setAutoGo(true);
+  }, [autoRun, def]);
+  useEffect(() => {
+    if (!autoGo || !def) return;
+    setAutoGo(false);
+    void generate(true).then((done) => {
+      if (done) return;
+      const group = groupControl?.items[0];
+      if (group) {
+        tickGroup(group, true);
+        const help = def.helps.find((candidate) => candidate.grid === group.showControls);
+        if (help) setTicks((current) => ({ ...current, [help.grid]: new Set(help.rows.map((row) => row[help.keyColumn] ?? "")) }));
+      }
+      setZoomRun(true);
+    });
+  }, [autoGo]);
+
   // Btn_ok_Click: GenerateReport.
-  const generate = async () => {
-    if (!def || busy) return;
+  const generate = async (quiet = false): Promise<boolean> => {
+    if (!def || busy) return false;
     if (!def.ported) {
       await messageBox.alert(`${def.head || title} is not available in the web version yet.\nIts output has not been ported; the selection can be seen but not run.`, "Not ported yet");
-      return;
+      return false;
     }
     if (def.dates.fromVisible && def.dates.uptoVisible && from === upto) {
       const yes = await messageBox.confirm(`It Seems You Have Selected From And Upto Date\nSame As ${from}\nIt Will Generate Report Only For ${from}\n\nAre You Sure You Want To Continue?`, "Same Date Selection");
-      if (!yes) return;
+      if (!yes) return false;
     }
     saveLastDates({ from, upto });
     setBusy("Generating report");
@@ -385,15 +412,17 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       const reply = await call<{ output: ReportOutput }>("generate", { selection: chosen });
       generatedWith.current = chosen;
       setGeneratedPeriod({ from: chosen.from, upto: chosen.upto });
-      if (reply.refusal) { say("Report generation failed...", "", true); await refuse(reply.refusal); return; }
+      if (reply.refusal) { say("Report generation failed...", "", true); if (!quiet) await refuse(reply.refusal); return false; }
       setOutput(reply.output);
       setOutputRun((count) => count + 1);
       setTab("output");
       // The rows and the generation time show by Arrange Columns in the output, not here.
       say("", "F6 : Summarize F4 : Unsummarize");
+      return true;
     } catch (error) {
       say("Report generation failed...", "", true);
       await messageBox.alert(error instanceof Error ? error.message : String(error), "Report generation failed", "error");
+      return false;
     } finally {
       setBusy("");
     }
@@ -489,7 +518,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       setBusy("");
     }
   }, [call]);
-  const loadLog = useCallback(async (ledKey: number, processKey: number) => (await call<{ log: LogTable }>("log", { ledKey, processKey })).log, [call]);
+  const loadLog = useCallback(async (ledKey: number, processKey: number, master?: { id: number; code: number; first: string; small?: boolean }) => (await call<{ log: LogTable }>("log", { ledKey, processKey, ...(master ? { masterId: master.id, masterCode: master.code, masterFirst: master.first, masterSmall: master.small === true } : {}) })).log, [call]);
   const loadZoom = useCallback(async (request: { ledKey: number; processKey: number; acCode: number; name: string }) => (await call<{ zoom: { entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string } }>("zoom", request)).zoom, [call]);
 
   /** C1_CHECKBOX, the Report Options: the first tab of the help grids, ticked like them. */

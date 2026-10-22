@@ -29,6 +29,7 @@ import { GridCombo } from "../grid/GridCombo";
 import type { GridComboPlace } from "../grid/GridCombo";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { useGridOutput } from "../grid/useGridOutput";
+import { useLookupSource } from "../grid/useLookupSource";
 import { closedByRow, dropPadding, duplicateInGrid, fitCase, keyPress, numberRules, pairedMessage, rowRuled, styleCase, typingAllowed as setupAllows, validate } from "../grid/rules";
 import { tooltipText, zeroAsBlank } from "../grid/cellText";
 import { remainingAfterKey, typeAtCaret } from "../grid/caret";
@@ -159,6 +160,17 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     head.addEventListener("keydown", enter);
     return () => head.removeEventListener("keydown", enter);
   }, []);
+  // The cursor starts in the header's first input (Entry Option, else the first combo) when the screen opens and again whenever the grid is
+  // cleared (Cancel); it is not taken from a grid the operator is working in.
+  const headFree = !locked && !grid;
+  useEffect(() => {
+    if (!headFree) return;
+    const timer = window.setTimeout(() => {
+      const first = headRef.current?.querySelector<HTMLInputElement>(".se-field input:not(:disabled)");
+      if (first) { first.focus(); first.select(); }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [headFree, def]);
   useAltHotkeys(screenRef);
   // The shared grid library (features/grid): column filters, and the editors' calculator, calendar and date typing.
   const columnFilters = useColumnFilters();
@@ -761,6 +773,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     }),
     shownRows.map((index) => columns.map((column) => records[index][column.key] ?? "")),
   );
+  // The report columns' VLOOKUP can take figures from this grid too (the rows as shown).
+  useLookupSource({ titles: [def?.caption || title, title], captions: columns.map((column) => column.caption), rows: () => buildTable().rows }, records);
   const output = useGridOutput({
     table: buildTable,
     name: `${def?.caption || title}${first ? ` - ${first.text}` : ""}`,
@@ -884,6 +898,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                   value={controls[control.name] ?? ""}
                   tools={tools}
                   disabled={headLocked}
+                  required
                   onChange={(value) => setControls((currentControls) => ({ ...currentControls, [control.name]: value }))}
                 />
               ) : (
@@ -909,7 +924,6 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                 value={first}
                 reselect
                 disabled={headLocked}
-                focus={!locked && !grid}
                 onChoose={(option) => { setFirst(option); void loadGrid(option); }}
               />
             </span>

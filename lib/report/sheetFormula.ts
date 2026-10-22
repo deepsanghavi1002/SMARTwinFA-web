@@ -59,6 +59,8 @@ export type Node =
   | { t: "call"; fn: string; args: Node[] };
 
 export const REDUCERS = new Set(["SUM", "AVERAGE", "MIN", "MAX", "COUNT"]);
+/** SUMIF(range, criteria, [sum_range]), COUNTIF(range, criteria), AVERAGEIF(range, criteria, [average_range]): the range arguments are whole columns, the criteria is one value (a cell of the row, a number or a text such as ">100"). */
+export const CONDITIONAL = new Set(["SUMIF", "COUNTIF", "AVERAGEIF"]);
 const ALIASES: Record<string, string> = { AVG: "AVERAGE" };
 const ELEMENTWISE = new Set(["ROUND", "ABS", "INT", "SQRT", "MOD", "IF", "AND", "OR", "NOT", "IFERROR", "VLOOKUP"]);
 
@@ -121,7 +123,7 @@ export function parseFormula(source: string): Node {
       if (isOp("(") && !text.slice(token.at).startsWith("[")) {
         take();
         const fn = (ALIASES[token.text.toUpperCase()] ?? token.text.toUpperCase());
-        if (!REDUCERS.has(fn) && !ELEMENTWISE.has(fn)) throw new FormulaError(`Unknown function ${token.text}`);
+        if (!REDUCERS.has(fn) && !ELEMENTWISE.has(fn) && !CONDITIONAL.has(fn)) throw new FormulaError(`Unknown function ${token.text}`);
         const args: Node[] = [];
         if (!isOp(")")) { args.push(comparison()); while (isOp(",")) { take(); args.push(comparison()); } }
         if (!isOp(")")) throw new FormulaError('A ")" is missing');
@@ -197,7 +199,7 @@ export type Sheet = Readonly<{
 }>;
 
 /** The cells of another report's columns, one array for each row; the first column is the one VLOOKUP searches. */
-export type ExternalTable = { rows: readonly (readonly Value[])[]; index?: Map<string, number> };
+export type ExternalTable = { rows: readonly (readonly Value[])[]; /** The rows of each first-column value, for the exact match (built when first used). */ groups?: Map<string, number[]> };
 
 const ERR_DIV = "#DIV/0!";
 const ERR_VALUE = "#VALUE!";
@@ -254,6 +256,54 @@ function reduce(fn: string, values: Value[]): Value {
 const lookupKey = (value: Value): string => { const n = typeof value === "number" ? value : value === null || value === "" ? null : numberOf(value); return n !== null ? `n:${n}` : `s:${String(value ?? "").trim().toUpperCase()}`; };
 
 /**
+ * The test a SUMIF / COUNTIF / AVERAGEIF criteria stands for, as Excel reads it: a number or a plain text means "equals" (text without case);
+ * a text may start with = <> < > <= >= and then a number or a text; * and ? are wildcards in a text. An empty criteria matches the empty cells.
+ */
+function matcher(criteria: Value): (cell: Value) => boolean {
+  if (typeof criteria === "number") return (cell) => numberOf(cell) === criteria;
+  const text = String(criteria ?? "");
+  const parsed = /^(<=|>=|<>|<|>|=)?([\s\S]*)$/.exec(text) as RegExpExecArray;
+  const op = parsed[1] ?? "=";
+  const rest = parsed[2];
+  const wanted = rest.trim() === "" ? null : numberOf(rest);
+  const wildcard = /[*?]/.test(rest) ? new RegExp(`^${rest.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i") : null;
+  return (cell) => {
+    if (isError(cell)) return false;
+    if (rest === "") { const empty = cell === null || cell === ""; return op === "<>" ? !empty : empty; }
+    if (wanted !== null) {
+      const n = numberOf(cell);
+      if (n === null) return op === "<>";
+      return op === "=" ? n === wanted : op === "<>" ? n !== wanted : op === "<" ? n < wanted : op === ">" ? n > wanted : op === "<=" ? n <= wanted : n >= wanted;
+    }
+    const value = String(cell ?? "");
+    if (wildcard) { const hit = wildcard.test(value); return op === "<>" ? !hit : hit; }
+    const l = value.trim().toUpperCase(), r = rest.trim().toUpperCase();
+    return op === "=" ? l === r : op === "<>" ? l !== r : op === "<" ? l < r : op === ">" ? l > r : op === "<=" ? l <= r : l >= r;
+  };
+}
+
+/** Whether a criteria is a plain "equals" (no operator, no wildcard), which an index over the range can answer. */
+const plainEquals = (criteria: Value): boolean => typeof criteria === "number" || !/^(<=|>=|<>|<|>|=)|[*?]/.test(String(criteria ?? "")) && String(criteria ?? "").trim() !== "";
+
+type Tally = { sum: number; count: number; numbers: number };
+const tallyOf = (range: readonly Value[], sums: readonly Value[], test: (cell: Value) => boolean, only?: string): Tally => {
+  const out: Tally = { sum: 0, count: 0, numbers: 0 };
+  range.forEach((cell, at) => {
+    if (only !== undefined ? lookupKey(cell) !== only : !test(cell)) return;
+    out.count += 1;
+    const n = numberOf(sums[at] ?? null);
+    if (n !== null) { out.sum += n; out.numbers += 1; }
+  });
+  return out;
+};
+
+function conditional(fn: string, tally: Tally): Value {
+  if (fn === "SUMIF") return tally.sum;
+  if (fn === "COUNTIF") return tally.count;
+  return tally.numbers > 0 ? tally.sum / tally.numbers : ERR_DIV;
+}
+
+/**
  * VLOOKUP(value, "Report!C:H", column, [exact]) as Excel works it: the first column of the named range of another open report is searched for
  * the value, and the cell of that row in the range's `column`th column is the answer. Left out or TRUE / 1 it is the approximate match (the
  * last row whose first cell is not above the value, the first column read as sorted); FALSE / 0 wants the value itself. A value not found is
@@ -270,9 +320,11 @@ function vlookup(a: Value[], sheet?: Sheet): Value {
   const exact = a.length > 3 && mode !== null && mode !== "" && (numberOf(mode) ?? (String(mode).toUpperCase() === "FALSE" ? 0 : 1)) === 0;
   const wanted = lookupKey(value);
   let at = -1;
+  let rowsOf: number[] = [];
   if (exact) {
-    if (!found.index) { found.index = new Map(); found.rows.forEach((row, position) => { const key = lookupKey(row[0] ?? null); if (!found.index!.has(key)) found.index!.set(key, position); }); }
-    at = found.index.get(wanted) ?? -1;
+    if (!found.groups) { found.groups = new Map(); found.rows.forEach((row, position) => { const key = lookupKey(row[0] ?? null); const list = found.groups!.get(key); if (list) list.push(position); else found.groups!.set(key, [position]); }); }
+    rowsOf = found.groups.get(wanted) ?? [];
+    at = rowsOf.length > 0 ? rowsOf[0] : -1;
   } else {
     const x = numberOf(value);
     for (let position = 0; position < found.rows.length; position += 1) {
@@ -285,6 +337,12 @@ function vlookup(a: Value[], sheet?: Sheet): Value {
   if (at < 0) return "#N/A";
   const width = found.rows[at].length;
   if (Math.trunc(index) > width) return "#REF!";
+  // A value that is on several lines of the other report (a party's many lines, against one line here): their figures are added up, as SUMIF does.
+  if (rowsOf.length > 1) {
+    const cells = rowsOf.map((position) => found.rows[position][Math.trunc(index) - 1] ?? null);
+    const figures = cells.map((cell) => (typeof cell === "number" ? cell : numberOf(cell)));
+    if (figures.every((figure) => figure !== null)) return figures.reduce((sum: number, figure) => sum + (figure as number), 0);
+  }
   return found.rows[at][Math.trunc(index) - 1] ?? 0;
 }
 
@@ -315,7 +373,9 @@ export function isRowFormula(node: Node, inReducer = false): boolean {
     case "num": case "str": return false;
     case "neg": case "pct": return isRowFormula(node.x, inReducer);
     case "bin": return isRowFormula(node.l, inReducer) || isRowFormula(node.r, inReducer);
-    case "call": return node.args.some((arg) => isRowFormula(arg, inReducer || REDUCERS.has(node.fn)));
+    case "call":
+      if (CONDITIONAL.has(node.fn)) return node.args.some((arg, at) => isRowFormula(arg, inReducer || at !== 1));
+      return node.args.some((arg) => isRowFormula(arg, inReducer || REDUCERS.has(node.fn)));
   }
 }
 
@@ -334,6 +394,7 @@ export function columnsUsed(node: Node, into = new Set<string>()): Set<string> {
 export function evaluate(node: Node, sheet: Sheet): { perRow: boolean; values: Value[]; scalar: Value } {
   for (const name of columnsUsed(node)) if (sheet.rows > 0 && sheet.cell(name, 0) === undefined) throw new FormulaError(`There is no column ${name}`);
   const cache = new Map<Node, Value>();
+  const indexes = new Map<Node, Map<string, Tally>>();
   const ev = (n: Node, row: number | null): Value | Vec => {
     switch (n.t) {
       case "num": return n.v;
@@ -353,6 +414,39 @@ export function evaluate(node: Node, sheet: Sheet): { perRow: boolean; values: V
         return arith(n.op, l as Value, r as Value);
       }
       case "call": {
+        if (CONDITIONAL.has(n.fn)) {
+          if (n.args.length < 2 || (n.fn === "COUNTIF" && n.args.length !== 2)) return ERR_VALUE;
+          // A range written as a text "Report!COLUMN" is that column of another open report (its rows are read in the order that report shows them).
+          const columnOf = (arg: Node): Value[] | string => {
+            if (arg.t !== "str") return flat(ev(arg, null));
+            const found = sheet.table?.(arg.v);
+            if (found === undefined) return "#REF!";
+            return typeof found === "string" ? found : found.rows.map((line) => line[0] ?? null);
+          };
+          const range = columnOf(n.args[0]);
+          if (typeof range === "string") return range;
+          const given = ev(n.args[1], row);
+          const criteria = Array.isArray(given) ? (given[0] ?? null) : given;
+          if (isError(criteria)) return criteria;
+          const sums = n.args[2] ? columnOf(n.args[2]) : range;
+          if (typeof sums === "string") return sums;
+          if (plainEquals(criteria)) {
+            let index = indexes.get(n);
+            if (!index) {
+              index = new Map<string, Tally>();
+              range.forEach((cell, at) => {
+                const key = lookupKey(cell);
+                const tally = index!.get(key) ?? index!.set(key, { sum: 0, count: 0, numbers: 0 }).get(key)!;
+                tally.count += 1;
+                const x = numberOf(sums[at] ?? null);
+                if (x !== null) { tally.sum += x; tally.numbers += 1; }
+              });
+              indexes.set(n, index);
+            }
+            return conditional(n.fn, index.get(lookupKey(criteria)) ?? { sum: 0, count: 0, numbers: 0 });
+          }
+          return conditional(n.fn, tallyOf(range, sums, matcher(criteria)));
+        }
         if (REDUCERS.has(n.fn)) {
           let hit = cache.get(n);
           if (hit === undefined) {
@@ -439,6 +533,17 @@ export function toExcel(node: Node, sheet: ExcelSheet): string | null {
             return n.fn === "SUM" ? `(${parts.join("+")})` : rowsCount > 0 ? `((${parts.join("+")})/${rowsCount})` : null;
           }
           return null;
+        }
+        if (CONDITIONAL.has(n.fn)) {
+          const ranged = (arg: Node | undefined, [from, to]: readonly [number, number]) => { if (!arg || arg.t !== "ref") return null; const letter = sheet.letter(arg.name); return letter ? `${letter}${from}:${letter}${to}` : null; };
+          const criteria = tx(n.args[1]);
+          if (criteria === null || (n.fn === "AVERAGEIF" && sheet.segments.length !== 1)) return null;
+          const parts = sheet.segments.map((segment) => {
+            const range = ranged(n.args[0], segment);
+            const sums = n.args[2] ? ranged(n.args[2], segment) : "";
+            return range === null || sums === null ? null : `${n.fn}(${range},${criteria}${sums !== "" ? `,${sums}` : ""})`;
+          });
+          return parts.length === 0 || parts.some((part) => part === null) ? null : parts.length === 1 ? (parts[0] as string) : `(${parts.join("+")})`;
         }
         // VLOOKUP reads another open report, which the exported sheet does not have: its cells hold the worked-out values.
         if (n.fn === "VLOOKUP") return null;
