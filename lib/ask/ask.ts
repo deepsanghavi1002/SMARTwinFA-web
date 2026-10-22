@@ -30,10 +30,10 @@ export type AskAnswer = Readonly<{
   /** The party's ledger can be opened as a report. */
   ledger?: Readonly<{ code: number; name: string }>;
   /** The answer is a report of the program: this button opens it (name is the report's menu action). */
-  report?: Readonly<{ name: string; label: string }>;
+  report?: Readonly<{ name: string; label: string; /** The dates the question named (YYYY-MM-DD): the report opens for them. */ from?: string; to?: string }>;
 }>;
 export type AskReply =
-  | Readonly<{ kind: "answer"; answer: AskAnswer }>
+  | Readonly<{ kind: "answer"; answer: AskAnswer; /** What answered it (for the memory): the template and the party or product chosen. */ used?: Readonly<{ templateId: number; partyCode?: number }> }>
   | Readonly<{ kind: "choose-party"; what: "party" | "product"; question: string; templateId: number; choices: readonly { code: number; name: string }[]; /** The question can also be answered for every party. */ allParties: boolean }>
   | Readonly<{ kind: "refuse"; message: string; suggestions: readonly string[] }>;
 
@@ -49,6 +49,8 @@ type Ctx = Readonly<{
   days: number;
   party?: Party;
   product?: Party;
+  /** The question as asked (a party named in it narrows an answer). */
+  question?: string;
 }>;
 
 type Template = Readonly<{
@@ -153,6 +155,22 @@ async function summaryDetail(ctx: Ctx, detail: string): Promise<AskAnswer | null
     const found = await rows(ctx, `SELECT l.code, btrim(ac.name) AS name, COUNT(*) AS entries, SUM(l.amount::numeric) AS amount FROM ${ctx.sch}.ledger l LEFT JOIN ${ctx.sch}.account ac ON ac.code = l.code WHERE l.book = ${PURCHASE} AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date GROUP BY l.code, ac.name ORDER BY amount DESC`, [from, to]);
     const out = found.map((row) => ({ name: String(row.name ?? ""), entries: num(row.entries), amount: num(row.amount), code: num(row.code) }));
     return { id: 0, title: `Purchases by supplier (${out.length})`, columns: [text("name", "Supplier"), int("entries", "Entries"), money("amount", "Amount")], rows: out.length === 0 ? [] : [...out, { name: "Total", entries: out.reduce((t, r) => t + r.entries, 0), amount: out.reduce((t, r) => t + r.amount, 0) }], note: `${label}: the Purchase book, with tax.` };
+  }
+  const monthOf = /^pmonth:(\d{4})-(\d{2}):(\d+)$/.exec(detail);
+  if (monthOf) {
+    const year = Number(monthOf[1]); const month = Number(monthOf[2]) - 1; const code = Number(monthOf[3]);
+    const found = await rows(ctx, `SELECT l.code, l.doc_date AS d, l.full_docno AS doc, btrim(ac.name) AS party, l.amount::numeric AS amount FROM ${ctx.sch}.ledger l LEFT JOIN ${ctx.sch}.account ac ON ac.code = l.code`
+      + ` WHERE l.book = ${PURCHASE} AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date${code > 0 ? " AND l.code = $3" : ""} ORDER BY l.doc_date, l.led_key LIMIT 1000`,
+      code > 0 ? [iso(new Date(year, month, 1)), iso(new Date(year, month + 1, 0)), code] : [iso(new Date(year, month, 1)), iso(new Date(year, month + 1, 0))]);
+    const out = found.map((row) => ({ d: dmy(row.d), doc: String(row.doc ?? ""), party: String(row.party ?? ""), amount: num(row.amount), code: num(row.code) }));
+    return { id: 0, title: `Purchase bills of ${MONTHS_SHORT[month]}-${year} (${out.length})`, columns: [date("d", "Date"), text("doc", "Bill"), text("party", "Supplier"), money("amount", "Amount")], rows: out.length === 0 ? [] : [...out, { d: "", doc: "", party: "Total", amount: out.reduce((t, r) => t + r.amount, 0) }], note: "Double-click a row to open the supplier's ledger." };
+  }
+  if (detail === "purchase-bills") {
+    const codes = (await namedParties(ctx)).map((party) => party.code);
+    const found = await rows(ctx, `SELECT l.code, l.doc_date AS d, l.full_docno AS doc, btrim(ac.name) AS party, l.amount::numeric AS amount FROM ${ctx.sch}.ledger l LEFT JOIN ${ctx.sch}.account ac ON ac.code = l.code`
+      + ` WHERE l.book = ${PURCHASE} AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date${codes.length > 0 ? " AND l.code = ANY($3::int[])" : ""} ORDER BY l.doc_date, l.led_key LIMIT 1000`, codes.length > 0 ? [from, to, codes] : [from, to]);
+    const out = found.map((row) => ({ d: dmy(row.d), doc: String(row.doc ?? ""), party: String(row.party ?? ""), amount: num(row.amount), code: num(row.code) }));
+    return { id: 0, title: `Purchase bills (${out.length})`, columns: [date("d", "Date"), text("doc", "Bill"), text("party", "Supplier"), money("amount", "Amount")], rows: out.length === 0 ? [] : [...out, { d: "", doc: "", party: "Total", amount: out.reduce((t, r) => t + r.amount, 0) }], note: `${label}: the Purchase book, with tax. Double-click a row to open the supplier's ledger.` };
   }
   if (detail === "received" || detail === "paid" || detail === "expenses") {
     const book = detail === "expenses" ? "l.book = 15" : "l.book IN (4, 6)";
@@ -374,11 +392,36 @@ async function netSales(ctx: Ctx, from: string, to: string, byParty: boolean) {
   return found.map((row) => ({ code: num(row.code), name: String(row.name ?? ""), entries: num(row.entries), sales: num(row.sales), returns: num(row.returns), net: num(row.sales) - num(row.returns) }));
 }
 
+/** Net sales (as netSales counts them) of each month of the period, of one party or of the whole company. */
+async function netSalesMonthly(ctx: Ctx, from: string, to: string, code?: number) {
+  const found = await rows(ctx,
+    `WITH slab AS (SELECT slab_key FROM ${ctx.sch}.slab_master WHERE book = ${SALE} AND slab_master = 'Y' AND slab_active = 'Y' AND slab_link = 0 ORDER BY slab_key LIMIT 1),`
+    + ` inv AS (SELECT to_char(l.doc_date, 'YYYY-MM') AS month, l.full_docno, CASE WHEN l.book = ${SALE} OR (l.book = 11 AND l.ag_book = ${SALE}) THEN 1 ELSE -1 END AS sign,`
+    + ` CASE WHEN slab.slab_key IS NULL THEN COALESCE(l.amount::numeric, 0) ELSE COALESCE(ext.s_lastot::numeric, 0) - COALESCE(ext.slab_amt::numeric, 0) END AS amt`
+    + ` FROM ${ctx.sch}.ledger l LEFT JOIN slab ON TRUE LEFT JOIN ${ctx.sch}.ledger_ext ext ON ext.led_id = l.led_key AND ext.il_id IS NULL AND ext.slab_id = slab.slab_key`
+    + ` WHERE l.doc_pos = 'A' AND l.doc_posting = 'P' AND l.doc_date >= $1::date AND l.doc_date <= $2::date${code ? " AND l.code = $3" : ""} AND (l.book = ${SALE} OR (l.book = ${CREDIT_NOTE} AND l.ag_book = ${SALE}) OR (l.book = 11 AND l.ag_book = ${SALE})))`
+    + ` SELECT month, COUNT(DISTINCT full_docno) AS entries, COALESCE(SUM(amt) FILTER (WHERE sign = 1), 0) AS sales, COALESCE(SUM(amt) FILTER (WHERE sign = -1), 0) AS returns FROM inv GROUP BY month ORDER BY month`,
+    code ? [from, to, code] : [from, to]);
+  const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return found.map((row) => {
+    const [year, month] = String(row.month).split("-");
+    return { month: `${names[Number(month) - 1]}-${year}`, entries: num(row.entries), sales: num(row.sales), returns: num(row.returns), net: num(row.sales) - num(row.returns) };
+  });
+}
+
 const SALES_NOTE = "Sales before tax, as the company counts them: Sale book entries and debit notes against it, less credit notes (returns) against it.";
 const salesColumns = [money("sales", "Sales"), money("returns", "Less: Returns"), money("net", "Net Sales")];
 
-async function bookTotal(ctx: Ctx, book: number, from: string, to: string) {
-  const r = (await rows(ctx, `SELECT COUNT(*) AS n, COALESCE(SUM(amount::numeric), 0) AS total FROM ${ctx.sch}.ledger WHERE book = $1 AND doc_pos = 'A' AND doc_date >= $2::date AND doc_date <= $3::date`, [book, from, to]))[0];
+/** The parties a question names besides what it asks (purchase from vstar): none when its words are all about the asking. */
+async function namedParties(ctx: Ctx): Promise<Party[]> {
+  const question = ctx.question ?? "";
+  const asking = new Set(["bill", "bills", "entries", "entry", "much", "many", "how", "what", "are", "my", "details", "detail", "amount", "month", "months", "date"]);
+  if (!nameWords(question).some((word) => !NOT_NAME.has(word) && !asking.has(word))) return [];
+  return findParties(ctx, question);
+}
+
+async function bookTotal(ctx: Ctx, book: number, from: string, to: string, codes?: readonly number[]) {
+  const r = (await rows(ctx, `SELECT COUNT(*) AS n, COALESCE(SUM(amount::numeric), 0) AS total FROM ${ctx.sch}.ledger WHERE book = $1 AND doc_pos = 'A' AND doc_date >= $2::date AND doc_date <= $3::date${codes && codes.length > 0 ? " AND code = ANY($4::int[])" : ""}`, codes && codes.length > 0 ? [book, from, to, [...codes]] : [book, from, to]))[0];
   return { n: num(r.n), total: num(r.total) };
 }
 
@@ -392,7 +435,16 @@ T.push({
 
 T.push({
   id: 15, question: "What are my total purchases this month?", defaultPeriod: "month", terms: [/purchase|purchases|bought|buying/], not: [/return|product|supplier|party/],
-  run: async (ctx) => { const t = await bookTotal(ctx, PURCHASE, ctx.period.from, ctx.period.to); return { id: 15, title: "Total purchases", columns: [text("item", "Item"), money("value", "Value")], rows: [{ item: "Bills", value: t.n }, { item: "Total purchases", value: t.total }], note: `${ctx.period.label}, bill totals (tax included).` }; },
+  run: async (ctx) => {
+    // A party named in the question (purchase from vstar) narrows the answer to its bills.
+    const named = await namedParties(ctx);
+    const t = await bookTotal(ctx, PURCHASE, ctx.period.from, ctx.period.to, named.map((party) => party.code));
+    return {
+      id: 15, title: named.length > 0 ? `Purchases from ${named.map((party) => party.name).join(", ")}` : "Total purchases", columns: [text("item", "Item"), money("value", "Value")],
+      rows: [{ item: "Bills", value: t.n, detail: "purchase-bills" }, { item: "Total purchases", value: t.total, detail: "" }],
+      note: `${ctx.period.label}, bill totals (tax included). Click Bills to show them, click again to hide them.`,
+    };
+  },
 });
 
 T.push({
@@ -463,10 +515,27 @@ T.push({
 });
 
 T.push({
-  id: 13, question: "Which customer purchased the most this year?", defaultPeriod: "year", terms: [/customers?|party|parties/, /most|top|highest|biggest|largest|best/, /purchas|bought|sale|sales|buy|revenue/], not: [/revenue|contribut|share|profit|outstanding|overdue/],
+  id: 13, question: "Which customer purchased the most this year?", defaultPeriod: "year", terms: [/customers?|party|parties/, /most|top|highest|biggest|largest|best/, /purchas|bought|sale|sales|buy|revenue/], not: [/revenue|contribut|share|profit|outstanding|overdue|supplier|vendor|purchase\s+part(y|ies)/],
   run: async (ctx) => {
     const list = (await netSales(ctx, ctx.period.from, ctx.period.to, true)).sort((x, y) => y.net - x.net).slice(0, Math.max(ctx.top, 10));
     return { id: 13, title: "Customers by purchases", columns: [int("no", "No."), text("name", "Customer"), int("entries", "Entries"), ...salesColumns], rows: list.map((row, at) => ({ no: at + 1, name: row.name, entries: row.entries, sales: row.sales, returns: -row.returns, net: row.net, code: row.code })), note: `${ctx.period.label}. ${SALES_NOTE}` };
+  },
+});
+
+T.push({
+  id: 62, question: "Show my top 10 suppliers by purchases.", defaultPeriod: "year",
+  terms: [/suppliers?|vendors?|purchase[ds]?\s+part(y|ies)|part(y|ies)\s+(of\s+)?purchase/, /top|highest|biggest|largest|most|best/], not: [/outstanding|overdue|owe|payable|product|item/],
+  run: async (ctx) => {
+    const found = await rows(ctx,
+      `SELECT l.code, btrim(ac.name) AS name, COUNT(*) AS entries, SUM(l.amount::numeric) AS amount FROM ${ctx.sch}.ledger l JOIN ${ctx.sch}.account ac ON ac.code = l.code`
+      + ` WHERE l.book = ${PURCHASE} AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date GROUP BY l.code, ac.name ORDER BY amount DESC`, [ctx.period.from, ctx.period.to]);
+    const grand = found.reduce((total, row) => total + num(row.amount), 0);
+    const list = found.slice(0, ctx.top).map((row, at) => ({ no: at + 1, name: String(row.name), entries: num(row.entries), amount: num(row.amount), share: grand === 0 ? 0 : (num(row.amount) / grand) * 100, code: num(row.code) }));
+    return {
+      id: 62, title: `Top ${ctx.top} suppliers by purchases`, columns: [int("no", "No."), text("name", "Supplier"), int("entries", "Entries"), money("amount", "Purchases"), money("share", "Share %")],
+      rows: list.length === 0 ? [] : [...list, { no: "", name: `Total of all ${found.length} suppliers`, entries: found.reduce((total, row) => total + num(row.entries), 0), amount: grand, share: 100 }],
+      note: `${ctx.period.label}: the Purchase book, with tax. Double-click a row to open the ledger of that supplier.`,
+    };
   },
 });
 
@@ -909,6 +978,45 @@ T.push({
 });
 
 T.push({
+  id: 61, question: "Show month-wise sales of a party.", defaultPeriod: "year", needsParty: true, terms: [/month/, /sales?|sold|selling/], not: [/compar|versus|\bvs\b|last month|previous month|this month|current month|business|summar/],
+  runAll: (ctx) => monthlySales(ctx),
+  run: (ctx) => monthlySales(ctx, ctx.party as Party),
+});
+
+async function monthlySales(ctx: Ctx, party?: Party): Promise<AskAnswer> {
+  const list = await netSalesMonthly(ctx, ctx.period.from, ctx.period.to, party?.code);
+  const sum = (key: "entries" | "sales" | "returns" | "net") => list.reduce((total, row) => total + row[key], 0);
+  return {
+    id: 61, title: party ? `Month-wise sales: ${party.name}` : "Month-wise sales", columns: [text("month", "Month"), int("entries", "Entries"), ...salesColumns],
+    rows: list.length === 0 ? [] : [...list.map((row) => ({ month: row.month, entries: row.entries, sales: row.sales, returns: -row.returns, net: row.net })), { month: "Total", entries: sum("entries"), sales: sum("sales"), returns: -sum("returns"), net: sum("net") }],
+    ...(party ? { ledger: { code: party.code, name: party.name } } : {}),
+    note: `${ctx.period.label}. ${SALES_NOTE}`,
+  };
+}
+
+T.push({
+  id: 63, question: "Show month-wise purchases of a supplier.", defaultPeriod: "year", needsParty: true, terms: [/month/, /purchas|bought|buying/], not: [/compar|versus|\bvs\b|last month|previous month|this month|current month|business|summar|sale|sales|return/],
+  runAll: (ctx) => monthlyPurchases(ctx),
+  run: (ctx) => monthlyPurchases(ctx, ctx.party as Party),
+});
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Purchases (the Purchase book's bills, tax included) of each month of the period, of one supplier or of the whole company; a month opens into its bills. */
+async function monthlyPurchases(ctx: Ctx, party?: Party): Promise<AskAnswer> {
+  const found = await rows(ctx,
+    `SELECT to_char(doc_date, 'YYYY-MM') AS month, COUNT(*) AS bills, COALESCE(SUM(amount::numeric), 0) AS amount FROM ${ctx.sch}.ledger WHERE book = ${PURCHASE} AND doc_pos = 'A' AND doc_date >= $1::date AND doc_date <= $2::date${party ? " AND code = $3" : ""} GROUP BY 1 ORDER BY 1`,
+    party ? [ctx.period.from, ctx.period.to, party.code] : [ctx.period.from, ctx.period.to]);
+  const list = found.map((row) => { const [year, month] = String(row.month).split("-"); return { key: String(row.month), month: `${MONTHS_SHORT[Number(month) - 1]}-${year}`, bills: num(row.bills), amount: num(row.amount) }; });
+  return {
+    id: 63, title: party ? `Month-wise purchases: ${party.name}` : "Month-wise purchases", columns: [text("month", "Month"), int("bills", "Bills"), money("amount", "Purchases")],
+    rows: list.length === 0 ? [] : [...list.map((row) => ({ month: row.month, bills: row.bills, amount: row.amount, detail: `pmonth:${row.key}:${party?.code ?? 0}` })), { month: "Total", bills: list.reduce((t, r) => t + r.bills, 0), amount: list.reduce((t, r) => t + r.amount, 0), detail: "" }],
+    ...(party ? { ledger: { code: party.code, name: party.name } } : {}),
+    note: `${ctx.period.label}: the Purchase book, with tax. Click a month to show its bills, click again to hide them.`,
+  };
+}
+
+T.push({
   id: 60, question: "Summarize my business performance this month.", defaultPeriod: "month", terms: [/summar|performance|overview|how is my business|business/], not: [/customer|product/],
   run: async (ctx) => {
     const sales = (await netSales(ctx, ctx.period.from, ctx.period.to, false))[0];
@@ -919,7 +1027,7 @@ T.push({
     const receivable = (await balances(ctx, 2)).filter((row) => row.closing > 0).reduce((sum, row) => sum + row.closing, 0);
     const payable = (await balances(ctx, 3)).filter((row) => row.closing < 0).reduce((sum, row) => sum - row.closing, 0);
     return {
-      id: 60, title: "Business summary", choices: ["This month", "Last month", "This quarter", "Last quarter", "This half year", "Last half year", "This year"].map((label) => ({ label, question: `Summarize my business performance ${label.toLowerCase()}.` })), columns: [text("item", "Item"), money("value", "Value")],
+      id: 60, title: "Business summary", choices: ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "This quarter", "Last quarter", "This half year", "Last half year", "This year"].map((label) => ({ label, question: `Summarize my business performance ${label.toLowerCase()}.` })), columns: [text("item", "Item"), money("value", "Value")],
       rows: [{ item: "Net sales (before tax)", value: sales.net, detail: "sales" }, { item: "Sales entries", value: sales.entries, detail: "sales" }, { item: "Purchases (with tax)", value: purchases.total, detail: "purchase" }, { item: "Money received (cash and bank)", value: num(flows.received), detail: "received" }, { item: "Money paid (cash and bank)", value: num(flows.paid), detail: "paid" },
         { item: "Expenses (with tax)", value: num(flows.expenses), detail: "expenses" }, { item: "Customers owe (as on today)", value: receivable, detail: "owe:2" }, { item: "Owed to suppliers (as on today)", value: payable, detail: "owe:3" }],
       note: `${ctx.period.label}. ${SALES_NOTE} Click a line to show what it is made of, click again to hide it.`,
@@ -937,6 +1045,13 @@ function periodOf(question: string, fallback: Template["defaultPeriod"], session
   const text = question.toLowerCase();
   const range = (from: Date, to: Date, label: string): Period => ({ from: iso(from), to: iso(to), label: `${label} (${dmy(from)} to ${dmy(to)})` });
   if (/yesterday/.test(text)) { const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); return range(day, day, "Yesterday"); }
+  // Weeks run Monday to Sunday: this week up to today, last week whole.
+  const week = /(this|current|last|previous)\s+week|weekly/.exec(text);
+  if (week) {
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+    if (week[1] === "last" || week[1] === "previous") return range(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 7), new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 1), "Last week");
+    return range(monday, now, "This week");
+  }
   // Quarters and half years of the financial year (it starts at the year's first day, April for most companies).
   const part = /(this|current|last|previous)?\s*(quarter|half[ -]?year)/.exec(text);
   if (part) {
@@ -973,13 +1088,30 @@ function nameWords(question: string): string[] {
   return question.toLowerCase().replace(/[^a-z0-9\s.&-]/g, " ").split(/\s+/).filter((word) => word.length >= 2 && !STOP.has(word) && !/^\d+$/.test(word));
 }
 
+/** Words that say what is asked, never part of a party's name (so a name can be found inside a longer question). */
+const NOT_NAME = new Set(["monthwise", "monthly", "month", "wise", "sale", "sales", "sold", "purchase", "purchases", "party", "parties", "customer", "customers", "supplier", "suppliers", "report", "statement", "ledger", "balance", "outstanding", "show", "give", "list", "total", "this", "year", "last", "week", "today", "details", "detail", "amount", "wise"]);
+
 async function findParties(ctx: Omit<Ctx, "party">, question: string): Promise<Party[]> {
   const words = nameWords(question);
   if (words.length === 0) return [];
-  const likes = words.map((_, at) => `ac.name ILIKE $${at + 1}`).join(" AND ");
-  const params = words.map((word) => `%${word.replace(/[%_]/g, "")}%`);
-  const best = (await rows(ctx as Ctx, `SELECT ac.code, btrim(ac.name) AS name FROM ${ctx.sch}.account ac WHERE ac.a_pos <> 'D' AND ${likes} ORDER BY (ac.book IN (2, 3)) DESC, ac.name LIMIT 8`, params));
-  return best.map((row) => ({ code: num(row.code), name: String(row.name) }));
+  const search = async (patterns: string[], joiner: "AND" | "OR") => {
+    const likes = patterns.map((_, at) => `ac.name ILIKE $${at + 1}`).join(` ${joiner} `);
+    const params = patterns.map((pattern) => `%${pattern.replace(/[%_]/g, "")}%`);
+    return (await rows(ctx as Ctx, `SELECT ac.code, btrim(ac.name) AS name FROM ${ctx.sch}.account ac WHERE ac.a_pos <> 'D' AND (${likes}) ORDER BY (ac.book IN (2, 3)) DESC, ac.name LIMIT 8`, params)).map((row) => ({ code: num(row.code), name: String(row.name) }));
+  };
+  const all = await search(words, "AND");
+  if (all.length > 0) return all;
+  // The question carries other words too (monthwise sale of Mahavir Impex): the longest run of words that is part of a name is the party.
+  const name = words.filter((word) => !NOT_NAME.has(word));
+  for (let length = name.length; length >= 1; length -= 1) {
+    for (let start = 0; start + length <= name.length; start += 1) {
+      const run = name.slice(start, start + length);
+      if (length === 1 && run[0].length < 4) continue;
+      const hit = await search([run.join(" ")], "AND");
+      if (hit.length > 0) return hit;
+    }
+  }
+  return [];
 }
 
 /** The party help: accounts whose name has every word typed (customers and suppliers first); with nothing typed, the first customers and suppliers by name. */
@@ -1033,16 +1165,18 @@ export async function ask(client: Client, session: MasterSession, input: { quest
   const question = String(input.question ?? "").trim().slice(0, 300);
   const template = input.templateId ? T.find((candidate) => candidate.id === input.templateId) ?? null : matchTemplate(question);
   if (!template) return { kind: "refuse", message: "I do not have an answer for that question yet. Try one of these.", suggestions: nearest(question) };
-  const now = new Date();
+  // "Today" is today, but never outside the open year: in a past year it is that year's last day (the year's database holds nothing later).
+  const real = new Date();
+  const now = real > session.tarikh2 ? new Date(session.tarikh2) : real < session.tarikh1 ? new Date(session.tarikh1) : real;
   const base: Omit<Ctx, "party"> = {
-    client, sch: session.companySchema, session, today: iso(now), period: periodOf(question, template.defaultPeriod, session, now),
+    client, sch: session.companySchema, session, question, today: iso(now), period: periodOf(question, template.defaultPeriod, session, now),
     top: Math.min(100, Math.max(1, Number(/top\s+(\d+)/i.exec(question)?.[1]) || 10)), days: Number(/(\d+)\s*days?/i.exec(question)?.[1]) || 90,
   };
   if (input.detail) {
     const answer = input.detail === "stock" ? await stockValue(base as Ctx, 34, "Products with stock", true) : (await summaryDetail(base as Ctx, input.detail)) ?? await outstandingParties(base as Ctx, input.detail);
     if (answer) return { kind: "answer", answer };
   }
-  if (input.allParties && template.runAll) return { kind: "answer", answer: await template.runAll({ ...base, party: undefined }) };
+  if (input.allParties && template.runAll) return { kind: "answer", answer: await template.runAll({ ...base, party: undefined }), used: { templateId: template.id } };
   let product: Party | undefined;
   if (template.needsProduct) {
     if (input.partyCode) {
@@ -1071,5 +1205,44 @@ export async function ask(client: Client, session: MasterSession, input: { quest
       else return { kind: "choose-party", what: "party", question, templateId: template.id, choices: found, allParties: template.runAll !== undefined };
     }
   }
-  return { kind: "answer", answer: await template.run({ ...base, party, product }) };
+  const answered = await template.run({ ...base, party, product });
+  // A report that is opened takes the dates the question named.
+  const named = answered.report ? reportDates(question, session, now) : null;
+  const answer = answered.report && named ? { ...answered, report: { ...answered.report, from: named.from, to: named.to } } : answered;
+  return { kind: "answer", answer, used: { templateId: template.id, ...(party || product ? { partyCode: (party ?? product)!.code } : {}) } };
 }
+
+
+const MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const monthEnd = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+
+/**
+ * The dates a question names for a report that is opened (not worked out here): two dates ("01-apr/2025 and 30-apr/2025", "from 01/04/2025 to 30/04/2025"),
+ * one date (the report up to it), a month and year ("april 2025"), or a period word (today, this week, last month, this quarter ...). A day past the end
+ * of its month (31-apr) is taken as the month's last day. Null when the question names none (the report opens as it always does).
+ */
+function reportDates(question: string, session: MasterSession, now: Date): { from: string; to: string } | null {
+  const text = question.toLowerCase();
+  const day = (year: number, month: number, date: number) => iso(new Date(year, month, Math.min(date, monthEnd(year, month))));
+  const found: string[] = [];
+  const dates = /\b(\d{1,2})\s*[-\/.\s]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2})[a-z]*\s*[-\/.\s]\s*(\d{4})\b/g;
+  for (let match = dates.exec(text); match; match = dates.exec(text)) {
+    const month = /\d/.test(match[2]) ? Number(match[2]) - 1 : MONTH_NAMES.indexOf(match[2]);
+    if (month >= 0 && month < 12) found.push(day(Number(match[3]), month, Number(match[1])));
+  }
+  if (found.length >= 2) { found.sort(); return { from: found[0], to: found[found.length - 1] }; }
+  if (found.length === 1) return { from: iso(session.tarikh1), to: found[0] };
+  const monthYear = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-\/,]*(\d{4})\b/.exec(text);
+  if (monthYear) { const month = MONTH_NAMES.indexOf(monthYear[1]); const year = Number(monthYear[2]); return { from: iso(new Date(year, month, 1)), to: iso(new Date(year, month, monthEnd(year, month))) }; }
+  if (/today|yesterday|(this|current|last|previous)\s+(week|month|quarter|half[ -]?year)|quarterly|half[ -]?yearly|monthly/.test(text)) {
+    const period = periodOf(question, "none", session, now);
+    return { from: period.from, to: period.to };
+  }
+  return null;
+}
+
+/** The id of the template this question matches now (0 when none). */
+export const matchedId = (question: string): number => matchTemplate(question)?.id ?? 0;
+
+/** Whether a template of this id is in the list (a remembered question may name one that has gone). */
+export const hasTemplate = (id: number): boolean => T.some((template) => template.id === id);

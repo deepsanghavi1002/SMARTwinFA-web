@@ -1,3 +1,4 @@
+import { readMasterLog, readSmallEntryLog } from "@/lib/master-program/extras";
 import { transaction } from "@/lib/db";
 import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
 import { verifyModulePassword } from "@/lib/master-program/extras";
@@ -18,7 +19,7 @@ import { packedOutputStream } from "@/lib/report/wire";
  * REPORT row of the company's visible menu can be opened, and everything runs read-only.
  */
 
-type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; acCode?: number; name?: string; fields?: string[]; compareYear?: string }>;
+type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; masterId?: number; masterCode?: number; masterFirst?: string; masterSmall?: boolean; acCode?: number; name?: string; fields?: string[]; compareYear?: string }>;
 
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
 const headers = { "cache-control": "no-store" };
@@ -106,7 +107,7 @@ export async function POST(request: Request) {
         case "against": return await againstBookItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""));
         case "slabs": return await slabFilterItems(loader, body.reportName, String(body.selection?.firstCombo ?? ""), Math.trunc(Number(String(body.selection?.choices?.cmb_AgainstBook ?? "").split("|").pop()) || 0));
         case "forms": return await formFilterItems(loader);
-        case "log": return { log: await readEntryLog(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0)) };
+        case "log": if (Number(body.masterId) > 0 && body.masterSmall === true) return { log: await readSmallEntryLog(loader, Math.trunc(Number(body.masterId)), String(body.masterFirst ?? "")) }; if (Number(body.masterId) > 0) return { log: await readMasterLog(loader, Math.trunc(Number(body.masterId)), String(body.masterFirst ?? ""), Math.trunc(Number(body.masterCode) || 0)) }; return { log: await readEntryLog(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0)) };
         case "zoom": return { zoom: await zoomTarget(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0), Math.trunc(Number(body.acCode) || 0), String(body.name ?? "").slice(0, 200)) };
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);

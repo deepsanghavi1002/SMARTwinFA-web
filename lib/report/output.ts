@@ -323,7 +323,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const removed = new Set(["SORTING_FIELD", "SORTING_DATE", "SMART_NAME", "AC_CODE", "PROD_ID", "SMART_SORTING_NAME", "OUT_KEY", "SR_NO", "LVLHEAD", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "SMART_SELECTED_SCHDULE", "RECPSELE_DATE", "SMART_PROD_DESC", "SMAN_KEY", "COLLECTION_KEY"]);
   if (reportKey !== 7 && reportKey !== 42) removed.add("BUDGET");
   if (reportKey === 5 && ["DETAIL"].includes(plan.call.filterText.toUpperCase()) && call.sortingText === "Party Wise") removed.add("NAME");
-  const alwaysHidden = new Set(["ROW_DATA_TYPE", "SMART_SELECTED_PRODUCT", "SMART_LED_KEY", "BOOK", "SMART_PROCESS_KEY", "SMART_IMAGE_ENT_KEY", "LMASTER_ID", "LOG_CODE", "LSMALL_PKV"]);
+  const alwaysHidden = new Set(["ROW_DATA_TYPE", "SMART_SELECTED_PRODUCT", "SMART_LED_KEY", "BOOK", "SMART_PROCESS_KEY", "SMART_IMAGE_ENT_KEY", "LMASTER_ID", "LOG_CODE", "LOG_FIRST", "LSMALL_PKV"]);
   if (reportKey === 4 && (call.checkQuery.includes("CHK_ACC_CNFRM,") || call.checkQuery.includes("CHK_TFPRINT,"))) { removed.add("DR_CR"); removed.add("CLOSING_BAL"); }
   if (reportKey === 5 && call.checkQuery.includes("CHK_MULTICO,") === false) removed.add("CO_SHORT");
 
@@ -546,7 +546,17 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     // Trial Balance (an account above the schedule codes) and Sales with Expense: Enter zooms into the account's Ledger.
     const zoomCode = (reportKey === 6 || reportKey === 280) && !node ? keyOf("SMART_AC_CODE") : 0;
     const acCode = zoomCode > (reportKey === 6 ? 27 : 0) ? zoomCode : 0;
-    return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY"), ...(cellColours ? { cellColours } : {}), ...(acCode ? { acCode } : {}), ...(entry.treeOnly ? { treeOnly: entry.treeOnly } : {}) };
+    // The Logfile's master rows (account, product, addon): the master's id and code, and its first-combo text, for the edit log.
+    const masterId = keyOf("LMASTER_ID");
+    const firstColumn = table.name("LOG_FIRST");
+    const pkvColumn = table.name("LSMALL_PKV");
+    // The Logfile's OTHER ENTRY rows (LMASTER_ID is the entry's id there, LSMALL_PKV the key of the row it saved) are read from LOG_SMALLENTRY.
+    const masterLog = masterId > 0
+      ? (pkvColumn !== undefined || reportKey === 50 && table.name("ENTRY_NAME") !== undefined
+        ? { id: masterId, code: 0, first: pkvColumn ? String(entry.values[pkvColumn] ?? "") : "", small: true }
+        : { id: masterId, code: keyOf("LOG_CODE"), first: firstColumn ? String(entry.values[firstColumn] ?? "") : "" })
+      : undefined;
+    return { kind: entry.kind, level: entry.level, rowType, values, ledKey: keyOf("SMART_LED_KEY"), processKey: keyOf("SMART_PROCESS_KEY"), ...(masterLog ? { masterLog } : {}), ...(cellColours ? { cellColours } : {}), ...(acCode ? { acCode } : {}), ...(entry.treeOnly ? { treeOnly: entry.treeOnly } : {}) };
   });
 
   // Subtotal and heading colours (report_style, and Update_Subtotal's colour for a grouping column).

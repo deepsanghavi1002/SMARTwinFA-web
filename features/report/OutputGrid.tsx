@@ -106,7 +106,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   busy: boolean;
   onRefresh: () => void;
   onQuit: () => void;
-  loadLog: (ledKey: number, processKey: number) => Promise<LogTable>;
+  loadLog: (ledKey: number, processKey: number, master?: { id: number; code: number; first: string; small?: boolean }) => Promise<LogTable>;
   /** Enter on a voucher row: the entry program that opens it (or why it cannot). */
   loadZoom: (request: { ledKey: number; processKey: number; acCode: number; name: string }) => Promise<{ entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string }>;
   /** Create Group: the report's entries grouped on these fields (none: the final total only). */
@@ -141,14 +141,17 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** Pivot: the rows on screen as a cross table (kept with the report it was set for). */
   const [pivoting, setPivoting] = useState<{ forBase: ReportOutput; spec: PivotSpec } | null>(null);
   const pivotSpec = pivoting !== null && pivoting.forBase === base ? pivoting.spec : null;
-  const shaped = useMemo(() => (pivotSpec ? applyPivot(served, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, groupSpecs, ungrouped, pivotSpec]);
   /** Add Column: the columns added with a formula (kept with the report they were added to). */
   const [formulaCols, setFormulaCols] = useState<{ forBase: ReportOutput; list: readonly FormulaColumn[] }>({ forBase: base, list: [] });
   const formulaSpecs = formulaCols.forBase === base ? formulaCols.list : NO_FORMULAS;
   const [formulaOpen, setFormulaOpen] = useState(false);
   // VLOOKUP reads the other open reports: the columns are worked out again when one opens, closes or changes.
   const openReports = useSyncExternalStore(subscribeOpenReports, openReportsVersion, () => 0);
-  const output = useMemo(() => withFormulaColumns(shaped, formulaSpecs), [shaped, formulaSpecs, openReports]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** The report with its added columns, before any pivot: the pivot takes its fields and values from these, the added columns among them. */
+  const withAdded = useMemo(() => withFormulaColumns(served, formulaSpecs), [served, formulaSpecs, openReports]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shaped = useMemo(() => (pivotSpec ? applyPivot(withAdded, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, withAdded, groupSpecs, ungrouped, pivotSpec]);
+  // A pivot already has the added columns worked in (they are its fields and values); otherwise they follow the grouping, as before.
+  const output = useMemo(() => (pivotSpec ? shaped : withFormulaColumns(shaped, formulaSpecs)), [shaped, formulaSpecs, openReports, pivotSpec]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
@@ -211,7 +214,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   }).current;
   useEffect(() => registerOpenReport(ownSnapshot), [ownSnapshot]);
   // The other windows work their formulas out again when this report changes (its added columns do not count: they follow this report).
-  useEffect(() => { notifyOpenReports(); }, [shaped]);
+  // (From what the report is made of, not from `shaped`: with a pivot that changes whenever another report opens, which would notify again and again.)
+  useEffect(() => { notifyOpenReports(); }, [served, groupSpecs, ungrouped, pivotSpec]);
 
   /** Where each subtotal's group starts (BelowData: the rows after the previous subtotal of its level or an outer one). */
   const groupStart = useMemo(() => {
@@ -575,9 +579,9 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   };
   const showLog = async () => {
     const entry = shown[at.row];
-    if (!entry || (entry.row.ledKey <= 0 && entry.row.processKey <= 0)) { onStatus({ hotKeys: "", message: "Log : put the cursor on a voucher row", red: true }); return; }
+    if (!entry || (entry.row.ledKey <= 0 && entry.row.processKey <= 0 && !entry.row.masterLog)) { onStatus({ hotKeys: "", message: "Log : put the cursor on a voucher row", red: true }); return; }
     try {
-      const table = await loadLog(entry.row.ledKey, entry.row.processKey);
+      const table = await loadLog(entry.row.ledKey, entry.row.processKey, entry.row.masterLog);
       if (table.columns.length === 0) { await messageBox.alert(table.message || "No log found", "Log"); return; }
       setLogTable(table);
     } catch (error) {
@@ -1084,7 +1088,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       {(charting || panel !== null) && <button type="button" className="rp-panel-toggle" aria-label={panelMin ? "Show the side panel" : "Minimize the side panel"} title={panelMin ? "Show the side panel" : "Minimize the side panel (the grid gets the room)"} onClick={() => setPanelMin((value) => !value)}>{panelMin ? "◀" : "▶"}</button>}
       {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={served} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={withAdded} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterToMany(columnKey, [party]) : undefined} onPickMany={filterable ? filterToMany : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setGroupGate(null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto, lastYear) => { const result = await loadCompare(from, upto, lastYear); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
@@ -1158,7 +1162,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           onClose={() => { setArranging(false); scroller.current?.focus(); }}
         />
       )}
-      {formulaOpen && <FormulaColumns others={() => listOpenReports(ownSnapshot)} output={shaped} shown={columns.map((column) => ({ key: column.key, caption: column.caption }))} specs={formulaSpecs} onChange={(list) => setFormulaCols({ forBase: base, list })} onClose={() => { setFormulaOpen(false); scroller.current?.focus(); }} />}
+      {formulaOpen && <FormulaColumns others={() => listOpenReports(ownSnapshot)} output={pivotSpec ? served : shaped} shown={(pivotSpec ? served.columns.filter((column) => column.visible) : columns).map((column) => ({ key: column.key, caption: column.caption }))} specs={formulaSpecs} onChange={(list) => setFormulaCols({ forBase: base, list })} onClose={() => { setFormulaOpen(false); scroller.current?.focus(); }} />}
       {logTable && <LogViewer table={logTable} title={`${output.title || fallbackTitle} Log`} onClose={() => { setLogTable(null); scroller.current?.focus(); }} />}
     </div>
   );

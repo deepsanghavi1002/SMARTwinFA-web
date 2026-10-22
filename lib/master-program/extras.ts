@@ -76,10 +76,39 @@ export async function readMasterLog(loader: Loader, programId: number, firstComb
 
   const records = (await loader.readTable(
     `SELECT lmaster_mode, lmaster_top::text AS lmaster_top, lmaster_new_grid::text AS lmaster_new_grid FROM ${schema}.log_allmaster
-      WHERE lmaster_firstname = $1 AND lmaster_id = $2 AND lmaster_code = $3 ORDER BY lmaster_mode <> 'A', lmaster_key`,
+      WHERE coalesce(lmaster_firstname, '') = $1 AND lmaster_id = $2 AND lmaster_code = $3 ORDER BY lmaster_mode <> 'A', lmaster_key`,
     [firstComboText, programId, code],
   )) as LogRecord[] | null;
 
+  return buildLogTable((records ?? []).map((record) => ({ mode: toText(record.lmaster_mode), top: toText(record.lmaster_top), grid: toText(record.lmaster_new_grid) })), added, total);
+}
+
+/**
+ * The edit log of an other-entry (small entry) record, LOG_SMALLENTRY in <company>_BIGLOG: the entry's id and the key of the row it saved (LSMALL_PKV);
+ * its top and grid text are the same kind of JSON as the master's, so the Add and each edit show the same way.
+ */
+export async function readSmallEntryLog(loader: Loader, entryId: number, pkv: string): Promise<MasterLogTable> {
+  const schema = `${loader.session.companySchema}_biglog`;
+  const empty = (message: string): MasterLogTable => ({ columns: [], rows: [], message });
+  if (entryId <= 0) return empty("");
+  if (!identifier.test(schema)) return empty("The log database name is not valid");
+  const have = new Set(((await loader.readTable("SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'log_smallentry'", [schema])) ?? []).map((row) => toText(field(row, "column_name")).toLowerCase()));
+  if (have.size === 0) return empty(`No other-entry log: ${schema}.log_smallentry does not exist`);
+  const keyed = have.has("lsmall_pkv") && pkv !== "";
+  const found = (await loader.readTable(
+    `SELECT lsmall_mode, lsmall_top::text AS lsmall_top, lsmall_grid::text AS lsmall_grid FROM ${schema}.log_smallentry WHERE lsmall_smallid = $1${keyed ? " AND lsmall_pkv = $2" : ""} ORDER BY lsmall_mode <> 'A', lsmall_savedate, ctid`,
+    keyed ? [entryId, pkv] : [entryId],
+  )) ?? [];
+  const list = found.map((record) => ({ mode: toText(field(record, "lsmall_mode")), top: toText(field(record, "lsmall_top")), grid: toText(field(record, "lsmall_grid")) }));
+  if (list.length === 0) return empty("No log has been saved for this record yet");
+  return buildLogTable(list, list.filter((record) => record.mode === "A").length, list.length);
+}
+
+type LogPiece = { mode: string; top: string; grid: string };
+
+/** Read_logdata over the top and the grid text of the records (the Add first, then the edits in save order). */
+function buildLogTable(records: readonly LogPiece[], added: number, total: number): MasterLogTable {
+  const hasAdd = added > 0;
   const columns = ["FieldName", ...(hasAdd ? ["Add_Value"] : []), ...Array.from({ length: Math.max(0, total - added) }, (_, index) => `Edit_Value_${index + 1}`)];
   const table = new Map<string, string[]>();
   const parse = (text: string): Record<string, unknown>[] => {
@@ -92,12 +121,12 @@ export async function readMasterLog(loader: Loader, programId: number, firstComb
   };
 
   // Read_logdata runs once for LMASTER_TOP, then for LMASTER_NEW_GRID, each counting edits afresh.
-  for (const [column, prefix] of [["lmaster_top", "TOP"], ["lmaster_new_grid", "BODY"]] as const) {
+  for (const [column, prefix] of [["top", "TOP"], ["grid", "BODY"]] as const) {
     let editCount = 0;
     let position = "";
-    for (const record of records ?? []) {
-      const mode = toText(record.lmaster_mode);
-      for (const item of parse(toText(record[column]))) {
+    for (const record of records) {
+      const mode = record.mode;
+      for (const item of parse(record[column])) {
         for (const [name, raw] of Object.entries(item)) {
           const value = raw === null || raw === undefined ? "" : String(raw);
           const edit = mode === "E" || mode === "D";

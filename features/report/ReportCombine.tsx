@@ -87,7 +87,7 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
-export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun }: { autoRun?: boolean; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
+export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo }: { autoRun?: boolean; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
   const [fatal, setFatal] = useState("");
@@ -369,9 +369,18 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   // Opened from Ask AI: the report is run at once with its own defaults, to its output grid. When it refuses for want of a group or a list picked, the
   // first group is ticked with everything in its list (nothing was picked: the whole of it) and it is run again.
   const autoStarted = useRef(false);
+  const [autoGo, setAutoGo] = useState(false);
+  const desktopDay = (iso: string) => { const [year, month, day] = iso.split("-"); return `${day}/${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(month) - 1]}/${year}`; };
   useEffect(() => {
     if (!autoRun || !def || zoomAccount || autoStarted.current) return;
     autoStarted.current = true;
+    // The dates the question named go in first; the run follows on the next render, when they are in.
+    if (autoFrom && autoTo) { setFrom(desktopDay(autoFrom)); setUpto(desktopDay(autoTo)); }
+    setAutoGo(true);
+  }, [autoRun, def]);
+  useEffect(() => {
+    if (!autoGo || !def) return;
+    setAutoGo(false);
     void generate(true).then((done) => {
       if (done) return;
       const group = groupControl?.items[0];
@@ -382,7 +391,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       }
       setZoomRun(true);
     });
-  }, [autoRun, def]);
+  }, [autoGo]);
 
   // Btn_ok_Click: GenerateReport.
   const generate = async (quiet = false): Promise<boolean> => {
@@ -509,7 +518,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       setBusy("");
     }
   }, [call]);
-  const loadLog = useCallback(async (ledKey: number, processKey: number) => (await call<{ log: LogTable }>("log", { ledKey, processKey })).log, [call]);
+  const loadLog = useCallback(async (ledKey: number, processKey: number, master?: { id: number; code: number; first: string; small?: boolean }) => (await call<{ log: LogTable }>("log", { ledKey, processKey, ...(master ? { masterId: master.id, masterCode: master.code, masterFirst: master.first, masterSmall: master.small === true } : {}) })).log, [call]);
   const loadZoom = useCallback(async (request: { ledKey: number; processKey: number; acCode: number; name: string }) => (await call<{ zoom: { entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string } }>("zoom", request)).zoom, [call]);
 
   /** C1_CHECKBOX, the Report Options: the first tab of the help grids, ticked like them. */

@@ -21,7 +21,7 @@ function cell(kind: string, value: string | number | undefined): string {
   return String(value);
 }
 
-export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger, onOpenReport }: { minimized: boolean; onMinimize: () => void; onRestore: () => void; onClose: () => void; onOpenLedger: (code: number) => void; onOpenReport: (name: string) => void }) {
+export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger, onOpenReport }: { minimized: boolean; onMinimize: () => void; onRestore: () => void; onClose: () => void; onOpenLedger: (code: number) => void; onOpenReport: (name: string, from?: string, to?: string) => void }) {
   const selection = useStartupSelection();
   const [questions, setQuestions] = useState<Question[]>([]);
   const [text, setText] = useState("");
@@ -67,7 +67,7 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
     return () => window.removeEventListener("keydown", esc);
   }, [minimized, onMinimize]);
 
-  const send = useCallback(async (question: string, extra: { templateId?: number; partyCode?: number; allParties?: boolean; detail?: string } = {}) => {
+  const send = useCallback(async (question: string, extra: { templateId?: number; partyCode?: number; allParties?: boolean; detail?: string; teach?: string } = {}) => {
     if (!selection || busy || question.trim() === "") return;
     setBusy(true);
     setError("");
@@ -93,6 +93,8 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
   const pickWhat = reply?.kind === "choose-party" ? reply.what : "party";
   useEffect(() => {
     if (!choosing || !selection) return;
+    // The parties the question named come first (nothing typed yet): the list is those, not every party.
+    if (partyName === "" && reply?.kind === "choose-party" && reply.choices.length > 0) { setParties(reply.choices.map((choice) => ({ code: choice.code, name: choice.name }))); return; }
     let live = true;
     const timer = window.setTimeout(() => {
       fetch("/api/ask", {
@@ -103,7 +105,26 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
     return () => { live = false; window.clearTimeout(timer); };
   }, [choosing, pickWhat, partyName, selection]);
 
-  const ask = (question: string) => { setText(question); setLast(question); void send(question); };
+  const ask = (question: string, teach?: string) => { setText(question); setLast(question); void send(question, teach ? { teach } : {}); };
+
+  /** The operator's recent and most asked questions (kept on the server), shown on the list of questions. */
+  const [memory, setMemory] = useState<{ recent: string[]; favourite: string[] }>({ recent: [], favourite: [] });
+  const memoryCall = useCallback((action: "memory" | "forget", question?: string) => {
+    if (!selection) return Promise.resolve(null);
+    return fetch("/api/ask", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ action, question, session: { companyId: Number(selection.companyId), yearKey: selection.yearKey, loginName: selection.loginName } }) })
+      .then((response) => response.json() as Promise<{ recent?: string[]; favourite?: string[] }>).catch(() => null);
+  }, [selection]);
+  useEffect(() => {
+    if (reply || error || !selection) return;
+    let live = true;
+    void memoryCall("memory").then((body) => { if (live && body) setMemory({ recent: body.recent ?? [], favourite: body.favourite ?? [] }); });
+    return () => { live = false; };
+  }, [reply, error, selection, memoryCall]);
+  /** Forgets one remembered question (the x on its chip) or all of them (Clear); the lists follow at once. */
+  const forgetQuestion = (question?: string) => {
+    setMemory((now) => (question === undefined ? { recent: [], favourite: [] } : { recent: now.recent.filter((item) => item !== question), favourite: now.favourite.filter((item) => item !== question) }));
+    void memoryCall("forget", question);
+  };
   const group = (from: number, to: number) => questions.filter((item) => item.id >= from && item.id <= to);
 
   const answer: AskAnswer | null = reply?.kind === "answer" ? reply.answer : null;
@@ -128,7 +149,8 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
         {reply?.kind === "refuse" && (
           <div className="ask-card">
             <p>{reply.message}</p>
-            <ul className="ask-list">{reply.suggestions.map((item) => <li key={item}><button type="button" onClick={() => ask(item)}>{item}</button></li>)}</ul>
+            <p className="ask-note">Pick the nearest question: it answers now, and your wording is remembered for next time.</p>
+            <ul className="ask-list">{reply.suggestions.map((item) => <li key={item}><button type="button" onClick={() => { const original = text; ask(item, original); }}>{item}</button></li>)}</ul>
           </div>
         )}
         {reply?.kind === "choose-party" && (
@@ -197,13 +219,28 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
             )}
             {answer.note && <p className="ask-note">{answer.note}</p>}
             {answer.rows.some((row) => typeof row.code === "number" && row.code > 0) && <p className="ask-note">Double-click a row, or press Enter on it, to open the ledger of that party.</p>}
-            {answer.report && <button type="button" className="ask-open" onClick={() => onOpenReport(answer.report!.name)}>{answer.report.label}</button>}
+            {answer.report && <button type="button" className="ask-open" onClick={() => onOpenReport(answer.report!.name, answer.report!.from, answer.report!.to)}>{answer.report.label}</button>}
             {answer.ledger && <button type="button" className="ask-open" onClick={() => onOpenLedger(answer.ledger!.code)}>Open ledger report</button>}
           </div>
         )}
         {!reply && !error && (
           <div className="ask-card" ref={listed}>
             <p className="ask-note">Pick a question, or type your own in plain words. Answers come straight from your data; nothing is guessed.</p>
+            {(memory.recent.length > 0 || memory.favourite.length > 0) && (
+              <div className="ask-memory">
+                {([["Recently asked", memory.recent, "r"], ["Most asked", memory.favourite, "f"]] as const).map(([heading, list, tag]) => list.length > 0 && (
+                  <Fragment key={tag}>
+                    <h4>{heading}{tag === "r" && <button type="button" className="ask-clear" onClick={() => forgetQuestion()} title="Forget every remembered question">Clear all</button>}</h4>
+                    <div className="ask-chips">{list.map((item) => (
+                      <span key={`${tag}-${item}`} className="ask-chip">
+                        <button type="button" data-question={item} onClick={() => ask(item)}>{item}</button>
+                        <button type="button" className="ask-chip-x" aria-label={`Forget: ${item}`} title="Forget this question" onClick={() => forgetQuestion(item)}>×</button>
+                      </span>
+                    ))}</div>
+                  </Fragment>
+                ))}
+              </div>
+            )}
             <h4>Accounts and outstanding</h4>
             <ul className="ask-list">{group(1, 10).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
             <h4>Sales and purchase</h4>
