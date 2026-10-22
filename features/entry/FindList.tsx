@@ -36,13 +36,14 @@ const TYPE_PAUSE_MS = 1200;
  * the total keeps the entries with the text in any column. Enter or a double-click opens the
  * entry for editing (C1Help_EntryPreview_DoubleClick → Restore_Entry).
  */
-export function FindList({ preview, style, onOpen, mode = "", onMode }: { preview: HelpList | null; style: CSSProperties; onOpen: (row: Readonly<Record<string, string>>) => void; mode?: FindMode; onMode?: (next: FindMode) => void }) {
+export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, onTick }: { preview: HelpList | null; style: CSSProperties; onOpen: (row: Readonly<Record<string, string>>) => void; mode?: FindMode; onMode?: (next: FindMode) => void; /** Range print: the entries ticked (unique keys) and the click that ticks one; the Tick column shows when given. */ ticked?: readonly number[]; onTick?: (uniqueKey: number) => void }) {
   const columns = useMemo(() => (preview?.columns ?? []).filter((column) => column.key.toLowerCase() !== "tick"), [preview]);
   const filters = useColumnFilters();
   const [search, setSearch] = useState("");
   /** The heading clicked: ascending, then descending, then the list as it came (Find / Edit headings sort). */
   const [sort, setSort] = useState<{ key: string; down: boolean } | null>(null);
-  const [current, setCurrent] = useState({ row: 0, column: 0 });
+  /** The cursor starts on the first row, in the document number column (the second: after the date). */
+  const [current, setCurrent] = useState({ row: 0, column: 1 });
   const typed = useRef({ text: "", at: 0 });
   /** What typing in the list has found so far: marked on the cell it landed on, as the master grid's type-to-find. */
   const [found, setFound] = useState("");
@@ -101,6 +102,13 @@ export function FindList({ preview, style, onOpen, mode = "", onMode }: { previe
   }, [allRows, columns, filters.filters, needle, sort]);
   const valuesOf = (column: Column) => sortedDistinct(filtered(column.key).map((row) => shownOf(column, row)));
 
+  // A list that has just come in: the cursor goes to the first row of the document number column and the keyboard to the list.
+  useEffect(() => {
+    if (!preview) return;
+    const docNo = columns.findIndex((column) => column.key.toLowerCase() === "doc_no");
+    setCurrent({ row: 0, column: docNo >= 0 ? docNo : Math.min(1, Math.max(0, columns.length - 1)) });
+    scroller.current?.focus({ preventScroll: true });
+  }, [preview, columns]);
   // The current row stays on a row the filters leave.
   const currentRow = Math.min(current.row, Math.max(0, rows.length - 1));
   // The window of rows drawn: where the list is scrolled to and how tall it is.
@@ -203,15 +211,17 @@ export function FindList({ preview, style, onOpen, mode = "", onMode }: { previe
     else typed.current.text = text.slice(0, -1);
   };
 
-  const tableWidth = columns.reduce((sum, column) => sum + layout.widthOf(column), 0);
+  const tickWidth = ticked && onTick ? 34 : 0;
+  const tableWidth = tickWidth + columns.reduce((sum, column) => sum + layout.widthOf(column), 0);
   return (
     <div ref={grid} className="ent-find" style={style}>
       <div className="mp-help-title ent-find-title"><span><HelpIcon name="file-text" /><b className="mp-help-name">FIND / EDIT HELP</b></span></div>
       <div ref={scroller} className="ent-grid ent-find-grid" tabIndex={0} role="grid" aria-label="Entries" aria-rowcount={rows.length} onKeyDown={keys} onScroll={measure} onContextMenu={contextMenu}>
         <table style={{ width: tableWidth }}>
-          <colgroup>{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>
+          <colgroup>{tickWidth > 0 && <col style={{ width: tickWidth }} />}{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>
           <thead>
             <tr>
+              {tickWidth > 0 && <th className="ent-tick-head" title="Range: tick the entries to print">✓</th>}
               {columns.map((column, index) => (
                 <th key={column.key} data-col={index} className={filters.filters[column.key] ? "ent-filtered" : ""} style={{ textAlign: column.align === "R" ? "right" : "left" }} title={column.caption} onClick={() => setCurrent((at) => ({ ...at, column: index }))}>
                   <button type="button" tabIndex={-1} className="ent-th-text ent-sortable" title={`${column.caption} · click to sort (ascending, descending, none)`} onClick={(event) => { event.stopPropagation(); setCurrent((at) => ({ ...at, column: index })); setSort((now) => (now?.key !== column.key ? { key: column.key, down: false } : now.down ? null : { key: column.key, down: true })); }}>{column.caption}{sort?.key === column.key ? <span className="ent-sort-mark">{sort.down ? " ▼" : " ▲"}</span> : null}</button>
@@ -223,16 +233,17 @@ export function FindList({ preview, style, onOpen, mode = "", onMode }: { previe
             </tr>
           </thead>
           <tbody>
-            {first > 0 && <tr aria-hidden="true" style={{ height: first * ROW_HEIGHT }}><td colSpan={Math.max(1, columns.length)} style={{ padding: 0, border: 0, height: first * ROW_HEIGHT }} /></tr>}
+            {first > 0 && <tr aria-hidden="true" style={{ height: first * ROW_HEIGHT }}><td colSpan={Math.max(1, columns.length) + (tickWidth > 0 ? 1 : 0)} style={{ padding: 0, border: 0, height: first * ROW_HEIGHT }} /></tr>}
             {rows.slice(first, last).map((row, offset) => { const index = first + offset; return (
               <tr key={`${row.unique_key ?? ""}-${index}`} data-row={index} className={index === currentRow ? "ent-find-current" : index % 2 ? "ent-alt" : ""} onMouseDown={() => setCurrent((at) => ({ ...at, row: index }))} onDoubleClick={() => onOpen(row)}>
+                {tickWidth > 0 && <td className="ent-tick-cell" onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}><input type="checkbox" tabIndex={-1} aria-label="Tick for range print" checked={ticked!.includes(Number(row.unique_key))} onChange={() => onTick!(Number(row.unique_key))} /></td>}
                 {columns.map((column, at) => (
                   <td key={column.key} data-col={at} title={tipOf(column, row)} className={index === currentRow && at === current.column ? "ent-find-cell" : ""} style={{ textAlign: column.align === "R" ? "right" : "left" }} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: index, column: at }); }}>{index === currentRow && at === current.column && found ? <FoundText text={shownOf(column, row)} typed={found} /> : <MarkedText text={shownOf(column, row)} query={search} />}</td>
                 ))}
               </tr>
             ); })}
-            {last < rows.length && <tr aria-hidden="true" style={{ height: (rows.length - last) * ROW_HEIGHT }}><td colSpan={Math.max(1, columns.length)} style={{ padding: 0, border: 0, height: (rows.length - last) * ROW_HEIGHT }} /></tr>}
-            {rows.length === 0 && <tr><td colSpan={Math.max(1, columns.length)} className="ent-empty">{preview ? "No entries" : "Loading…"}</td></tr>}
+            {last < rows.length && <tr aria-hidden="true" style={{ height: (rows.length - last) * ROW_HEIGHT }}><td colSpan={Math.max(1, columns.length) + (tickWidth > 0 ? 1 : 0)} style={{ padding: 0, border: 0, height: (rows.length - last) * ROW_HEIGHT }} /></tr>}
+            {rows.length === 0 && <tr><td colSpan={Math.max(1, columns.length) + (tickWidth > 0 ? 1 : 0)} className="ent-empty">{preview ? "No entries" : "Loading…"}</td></tr>}
           </tbody>
         </table>
       </div>

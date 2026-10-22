@@ -1255,7 +1255,7 @@
 .ent-find th .ent-th-text{display:inline-block;max-width:calc(100% - 18px);overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .ent-find th.ent-filtered{background:linear-gradient(#e08a1f,#b86614)}
 .ent-find .mp-filter-button{margin-left:2px;border:0;background:transparent;color:#fff;cursor:pointer;font-size:11px;padding:0 2px}
-.ent-find tr.ent-find-current td{background:#dbe9fb}
+.ent-find tr.ent-find-current td{background:#15779b;color:#fff}
 .ent-find td.ent-find-cell{background:#ffc0cb!important}
 .ent-find tbody tr{cursor:default}
 .ent-find-foot{flex:none;display:flex;align-items:center;gap:12px;padding:2px 6px;font-size:11px;color:#16365f;background:#e6eef9;border:1px solid #c9d8ea;border-radius:3px}
@@ -1523,8 +1523,13 @@
 
 /* Entry Log window (the Log button) */
 .ent-log-back{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;background:rgba(15,30,55,.45)}
-.ent-log{display:flex;flex-direction:column;width:min(1200px,96vw);height:min(700px,92vh);background:#fff;border:1px solid #1f5fa8;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden}
-.ent-log-title{flex:none;padding:8px 12px;font-weight:700;color:#fff;background:linear-gradient(#2d6fb5,#1a4f8a)}
+.ent-log{resize:both;min-width:480px;min-height:300px;display:flex;flex-direction:column;width:min(1200px,96vw);height:min(700px,92vh);background:#fff;border:1px solid #1f5fa8;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden}
+.ent-log .mp-help-title{flex:none;cursor:move;user-select:none}
+.ent-log-bar{flex:none;display:flex;align-items:center;gap:10px;padding:4px 8px;background:#e6eef9;border-bottom:1px solid #c9d8ea;font-size:12px}
+.ent-log-bar input{flex:0 1 260px;padding:2px 6px}
+.ent-log-table th{position:sticky}
+.ent-log-table th .mp-filter-button{margin-left:4px;border:0;background:transparent;color:#fff;cursor:pointer;font-size:11px}
+.ent-log-table th.ent-filtered{background:#b86614}
 .ent-log-scroll{flex:1;min-height:0;overflow:auto}
 .ent-log-empty{padding:24px;text-align:center;color:#555}
 .ent-log-table{border-collapse:collapse;width:100%;font-size:12px}
@@ -1698,8 +1703,7 @@
 .ent-total-label{display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#16365f}
 .ent-total-label output{min-width:105px;box-sizing:border-box;height:22px;padding:2px 5px;text-align:right;background:#fff0f5;border:1px solid #9cb9e0;border-radius:3px;font:700 11px/16px Tahoma,sans-serif}
 .ent-total-box.ent-total-none{background:transparent;border-color:transparent}
-/* Outstanding grid: the set-off cell always shows its calculator and cancel buttons; a heading keeps clear of its filter arrow */
-.ent-grid td.ent-always-tools .mp-mini{display:inline-grid}
+/* Outstanding grid: the set-off cell shows its calculator and cancel buttons only on the row being edited; a heading keeps clear of its filter arrow */
 .ent-grid th.ent-th-filterable{padding-right:22px}
 .ent-grid th.ent-th-filterable .mp-filter-button{right:5px}
 .ent-grid th button.ent-sortable{padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis}
@@ -1860,3 +1864,52 @@
 .more-menu .more-panel button{height:30px;min-height:30px;width:100%;padding:0 12px 0 6px;display:grid;grid-template-columns:22px 1fr;align-items:center;border:0;border-radius:3px;color:#172729;background:transparent;font:inherit;font-size:12px;text-align:left;white-space:nowrap;cursor:pointer}
 .more-menu .more-panel button:hover,.more-menu .more-panel button:focus-visible{outline:0;color:#fff;background:var(--selected)}
 .more-menu .more-panel hr{width:100%;margin:3px 0;border:0;border-top:1px solid #b9cccb}
+
+/* Log window dressed as the helps: golden border, charcoal headings with soft yellow text, aqua current row, found text marked. */
+.ent-log.mp-help-scheme{background:#f0f8ff;border:2px solid #d6b85a}
+.ent-log .mp-help-title{flex:none;gap:8px;padding:3px 8px;cursor:move;user-select:none;background:#1f3a78;color:#ffe082}
+.ent-log .mp-help-title .mp-help-name,.ent-log .mp-help-title button{color:#ffe082}
+.ent-log .mp-help-title .mp-help-name{margin-right:10px;letter-spacing:.04em}
+.ent-log .mp-help-tip{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-weight:400;font-size:11px}
+.ent-log-scroll{outline:none;background:#fff}
+.ent-log-table th{padding:2px 22px 2px 6px;background:#343a40;color:#ffe082;font-weight:400;border:1px solid #4b535b;border-bottom:2px solid #d6b85a}
+.ent-log-table th.ent-filtered{background:#5a4a12}
+.ent-log-table th.ent-log-colnow{background:#4d565f;box-shadow:inset 1px 1px 0 #ffffff55,inset -1px -2px 0 #14171a}
+.ent-log-table th .mp-filter-button{position:absolute;right:4px;top:6px;transform:none;margin:0;color:#ffe082;font-size:11px}
+.ent-log-table th .mp-resize{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize}
+.ent-log-table td{border-color:#d9e0e7;color:#1b2a3a}
+.ent-log-table tr.ent-log-current td{background:#7fdbff;color:#0b2a4a}
+.ent-log-table tr.ent-log-current td.ent-log-yellow{background:#ffff00}
+.ent-log-table tr.ent-log-current td.ent-log-green{background:#00c853;color:#fff}
+.ent-log-table tr.ent-log-current td.ent-log-red{background:#ff3b30;color:#fff}
+.ent-log-table td.ent-log-cell{box-shadow:inset 2px 2px 0 rgba(255,255,255,.7),inset -2px -2px 0 rgba(0,60,100,.45);font-weight:700}
+.ent-log-table td mark.mp-found{padding:0;border-radius:2px;background:#ffd23f;color:#1b1b1b;font-weight:700}
+.ent-log .mp-filter{z-index:2100}
+
+/* Upload Document window (Entry : Document Upload) */
+.ent-docs.mp-help-scheme{display:flex;flex-direction:column;width:min(640px,94vw);max-height:80vh;background:#f0f8ff;border:2px solid #d6b85a;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden}
+.ent-docs .mp-help-title{flex:none;gap:8px;padding:3px 8px;cursor:move;user-select:none;background:#1f3a78;color:#ffe082}
+.ent-docs .mp-help-title .mp-help-name{margin-right:10px;letter-spacing:.04em;color:#ffe082}
+.ent-docs .mp-help-tip{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-weight:400;font-size:11px}
+.ent-docs-scroll{flex:1;min-height:0;overflow:auto;background:#fff}
+.ent-docs-table{border-collapse:collapse;width:100%;font-size:12px}
+.ent-docs-table th{position:sticky;top:0;padding:3px 8px;text-align:left;background:#343a40;color:#ffe082;font-weight:400;border:1px solid #4b535b;border-bottom:2px solid #d6b85a}
+.ent-docs-table td{border:1px solid #d9e0e7;padding:0;color:#1b2a3a}
+.ent-docs-table td:first-child{padding:2px 6px;color:#555}
+.ent-docs-table tr.ent-log-current td{background:#7fdbff}
+.ent-docs-table input,.ent-docs-table button.ent-doc-path{display:block;width:100%;box-sizing:border-box;height:22px;padding:0 6px;border:0;background:transparent;font:inherit;text-align:left;color:inherit;cursor:pointer}
+.ent-docs-table input{cursor:text}
+.ent-docs-table input:focus,.ent-docs-table button.ent-doc-path:focus{outline:2px solid #d6b85a;outline-offset:-2px;background:#fffaf0}
+.ent-find .ent-tick-head{text-align:center;padding:0}
+.ent-find td.ent-tick-cell{text-align:center;padding:0}
+.ent-find td.ent-tick-cell input{margin:0;vertical-align:middle}
+.ent-docs.ent-range{width:min(360px,94vw)}
+.ent-range-body{display:flex;flex-direction:column;gap:8px;padding:12px 14px;font-size:12px;color:#16365f}
+.ent-range-body p{margin:0}
+.ent-range-body label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700}
+.ent-range-body input{width:130px;height:22px;padding:0 6px;border:1px solid #9cb9e0;border-radius:3px;text-align:right;font:inherit}
+.ent-doc-view{position:fixed;inset:6vh 6vw;z-index:2200;display:flex;flex-direction:column;background:#fff;border:2px solid #d6b85a;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.ent-doc-view .mp-help-title{flex:none;background:#1f3a78;color:#ffe082}
+.ent-doc-view .mp-help-title .mp-help-name,.ent-doc-view .mp-help-title button{color:#ffe082}
+.ent-doc-view iframe,.ent-doc-view img{flex:1;min-height:0;width:100%;border:0;object-fit:contain;background:#f4f4f4}
+.ent-mode.ent-mode-add{background:#d8f5d8;border-color:#5aa85a;color:#14501a}

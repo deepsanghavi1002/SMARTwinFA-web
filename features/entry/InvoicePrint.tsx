@@ -13,7 +13,7 @@ import { useDraggable } from "../grid/useDraggable";
  * report's print preview window (features/grid/HtmlPreview: its bar, pages, zoom and Print) with the bill in its own format. Esc closes the choice; the preview's own
  * Close returns to it.
  */
-export function InvoicePrint({ load, onClose }: { load: () => Promise<string>; onClose: () => void }) {
+export function InvoicePrint({ load, docNo = "", onClose }: { load: () => Promise<string>; /** The invoice number, added at the end of the exported file's name. */ docNo?: string; onClose: () => void }) {
   const [stage, setStage] = useState<"choose" | "loading" | "preview">("choose");
   const [html, setHtml] = useState("");
   const [error, setError] = useState("");
@@ -53,7 +53,7 @@ export function InvoicePrint({ load, onClose }: { load: () => Promise<string>; o
           <div className="ent-print-actions"><button type="button" className="mp-btn mp-btn-red" onClick={onClose}>Cancel</button></div>
         </div>
       ) : (
-        <HtmlPreview html={html} title="Standard bill" onClose={() => setStage("choose")} />
+        <HtmlPreview html={html} title="Standard bill" fileName={`Standard bill ${docNo}`} onClose={() => setStage("choose")} />
       )}
     </div>
   );

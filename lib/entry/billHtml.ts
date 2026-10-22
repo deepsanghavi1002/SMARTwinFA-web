@@ -108,3 +108,20 @@ ${detail("Invoice No.", bill.header.docNo, true)}${detail("Date", bill.header.da
 <div class="sign"><div class="note">Goods once sold will not be taken back. Subject to local jurisdiction. E. &amp; O.E.</div><div style="text-align:right">For <b>${escape(bill.company.name)}</b><br><br><br>Authorised Signatory</div></div>
 </div></body></html>`;
 }
+
+/**
+ * Several bills as one document (Range print): each bill on a sheet of its own - a page break before the next when printed, and on the
+ * screen a sheet at least one A4 tall, so the preview's pages follow the bills. The styles are the first bill's.
+ */
+export function combineBills(htmls: readonly string[]): string {
+  if (htmls.length <= 1) return htmls[0] ?? "";
+  const head = htmls[0].slice(0, htmls[0].search(/<body[^>]*>/i));
+  const bodies = htmls.map((html) => {
+    const start = html.search(/<body[^>]*>/i);
+    const open = html.slice(start).match(/<body[^>]*>/i);
+    const end = html.lastIndexOf("</body>");
+    return start < 0 || !open || end < 0 ? "" : html.slice(start + open[0].length, end);
+  });
+  const sheets = bodies.map((body, index) => `<div class="bill-sheet"${index < bodies.length - 1 ? ' style="break-after:page;page-break-after:always"' : ""}>${body}</div>`).join("\n");
+  return `${head.replace("</style>", "@media screen{.bill-sheet{min-height:297mm;box-sizing:border-box}}</style>")}<body>${sheets}</body></html>`;
+}
