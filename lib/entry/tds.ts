@@ -90,17 +90,11 @@ export async function tdsJournal(loader: Loader, input: { bookKey: number; party
   const agencyBill = `COALESCE((SELECT out_key FROM ${schema}.outclear WHERE code = ${input.nature} AND out_ag_outid IS NULL AND out_fulldocno IN (SELECT out_fulldocno FROM ${schema}.outclear WHERE out_entrybook = 19 AND out_ag_outid = COALESCE((SELECT out_ag_outid FROM ${schema}.outclear WHERE out_ledid = @pkval_1 ORDER BY out_key LIMIT 1), 0)) LIMIT 1), 0)`;
   const target = agency ? agencyBill : bill;
   const narration = `COALESCE((SELECT 'Setoff for Bill : ' || out_fulldocno FROM ${schema}.outclear WHERE out_ledid = @pkval_1 ORDER BY out_key LIMIT 1), 'Setoff for Bill : ')`;
-  const logOn = toText(session.setup.logfile).toUpperCase() !== "N";
   const columns = ["code", "doc_date", "doc_no", "doc_series", "full_docno", "doc_no1", "amount", "book", "book_code", "ac_dbcode", "narration", "setoff_amt", "ly_clearamt", "chln_date", "ag_book", "ag_bkcode", "type", "int_type", "entry_type", "post_amt", "doc_posting", "doc_mode", "doc_lock", "doc_pos", "prod_amt", "doc_remark", "entry_sty", "unique_key", "stkmdl", "year_id", "last_savedate", "last_savetime", "entry_no", "post_date", "imp_ledkey"];
   const ledger = (code: number, side: 1 | 2, narrationValue: string, capture: "jv_1" | "jv_2"): Statement => ({
     kind: "insert", table: "ledger", keyColumn: "led_key", capture, label: `TDS JV ${full}: ledger (${side === 1 ? "debit" : "credit"})`, columns,
     values: [String(code), date, quote(number.padStart(10, " ")), "'JV'", quote(full), quote("          "), amount, "19", "27", String(side), narrationValue, "0", "0", "null", "0", "null", "0", "0", "''", amount, "'P'", "0", "''", "'A'", "0", "''", "''", "0", "''", year, today, clock, quote("          "), date, "@pkval_1"],
   });
-  const log = (code: number, key: "jv_1" | "jv_2"): Statement[] => (logOn ? [{
-    kind: "insert", table: "log_ledger", keyColumn: "lled_key", label: `TDS JV ${full}: log_ledger`,
-    columns: ["lled_logdate", "lled_logmode", "lled_loguser", "lled_id", "lled_code", "lled_docdate", "lled_fulldocno", "lled_docno1", "lled_amount", "lled_narration", "lled_logtime", "lled_docpos", "year_id", "lled_machine_name"],
-    values: [today, "'A'", String(session.userNo), `@${key}`, String(code), date, quote(full), quote("          "), amount, "''", clock, "'A'", year, quote("WEB")],
-  }] : []);
   const addon = (code: number, key: "jv_1" | "jv_2"): Statement[] => (session.licence === 21 ? [{
     kind: "insert", table: "addon_aentry", keyColumn: "aona_key", label: `TDS JV ${full}: addon`, columns: ["aona_accode", "aona_ledid", "aona_recid", "key_subled", "txt_subled"], values: [String(code), `@${key}`, "'L'", "515", "' None'"],
   }] : []);
@@ -121,11 +115,11 @@ export async function tdsJournal(loader: Loader, input: { bookKey: number; party
     // The debit side.
     ledger(debitCode, 1, narration, "jv_1"),
     { kind: "sql", label: `TDS JV ${full}: unique_key`, sql: `UPDATE |sys.db|ledger SET unique_key = @jv_1 WHERE led_key = @jv_1` },
-    ...log(debitCode, "jv_1"), ...addon(debitCode, "jv_1"), balance(debitCode, 1), post(debitCode, 1, "jv_1"), outstanding(debitCode, 1, "jv_1"),
+    ...addon(debitCode, "jv_1"), balance(debitCode, 1), post(debitCode, 1, "jv_1"), outstanding(debitCode, 1, "jv_1"),
     { kind: "sql", label: `TDS JV ${full}: bill set off`, sql: `UPDATE |sys.db|outclear SET out_setoff = (out_setoff::numeric + ${amount}), clear_pos = 'C' WHERE out_key = ${target}` },
     // The credit side: the pair shares the first row's unique_key.
     ledger(creditCode, 2, "''", "jv_2"),
     { kind: "sql", label: `TDS JV ${full}: unique_key (credit)`, sql: `UPDATE |sys.db|ledger SET unique_key = @jv_1 WHERE led_key = @jv_2` },
-    ...log(creditCode, "jv_2"), ...addon(creditCode, "jv_2"), balance(creditCode, 2), post(creditCode, 2, "jv_2"), outstanding(creditCode, 2, "jv_2"),
+    ...addon(creditCode, "jv_2"), balance(creditCode, 2), post(creditCode, 2, "jv_2"), outstanding(creditCode, 2, "jv_2"),
   ];
 }

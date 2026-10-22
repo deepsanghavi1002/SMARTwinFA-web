@@ -227,7 +227,10 @@ function controlValue(value: unknown): string {
  * each control takes the column entry_control names for it (field_name), as the desktop's
  * field_restore_queryid does.
  */
-export async function restoreEntry(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number): Promise<RestoredEntry & { itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>>; slabTax: Record<number, number> }> {
+/** Where a LINK register's new entry comes from: the source stock entry (process_key) and the source lines chosen from it (il_key; none: every pending line). */
+export type LinkSource = Readonly<{ processKeys: readonly number[]; ilKeys: readonly number[] }>;
+
+export async function restoreEntry(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number, link?: LinkSource): Promise<RestoredEntry & { itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>>; slabTax: Record<number, number> }> {
   let book = await bookContext(loader, entryName, firstCombo);
   // A debit / credit note opens against the book it was saved with.
   let against: RestoredEntry["against"];
@@ -243,16 +246,17 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     }
   }
   // A stock register's entry (Job Stock In / Out ...) is a process row, not a ledger row: its unique key is process_key.
-  const stock = !book.values.bookActual;
+  // A LINK register (order to invoice ...) opens a new entry from its source stock entry (process row): the rows are the source's, still pending.
+  const stock = !book.values.bookActual || link !== undefined;
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
   const headerSql = stock
-    ? (await restoreQuery(loader, "RESTINV_01_PROCESS")).replace(/\|sys\.process_key\|/gi, String(uniqueKey))
+    ? (await restoreQuery(loader, "RESTINV_01_PROCESS")).replace(/\|sys\.process_key\|/gi, String(link ? link.processKeys[0] : uniqueKey))
     : (await restoreQuery(loader, "RESTINV_01_LEDGER")).replace(/\|sys\.@pkval_1\|/gi, String(uniqueKey));
   const header = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(headerSql), book.values)))?.[0];
   if (!header) throw new Error("The entry is not found (deleted, or not posted)");
   // The key the product, slab and addon rows hang on: led_key for an account book, process_key for a stock register.
-  const ledKey = stock ? uniqueKey : toInt(field(header, "led_key"));
+  const ledKey = link ? link.processKeys[0] : stock ? uniqueKey : toInt(field(header, "led_key"));
 
   const controls = (await loader.readTable(`SELECT control_name, field_name FROM ${SETUP_SCHEMA}.entry_control WHERE entry_id = $1 AND add_active AND BTRIM(field_restore_queryid) = 'RESTINV_01_LEDGER'`, [entryId])) ?? [];
   const values: Record<string, string> = {};
@@ -270,11 +274,11 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
 
   // Product rows.
   const products = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_02_PRODLEDGER"))
-    .replace(/\|sys\.query\.@pkval_1\|/gi, stock ? `pled.process_id=${ledKey}` : `pled.led_id=${ledKey}`).replace(/\|sys\.query\.@pkilval_1\|/gi, "")
+    .replace(/\|sys\.query\.@pkval_1\|/gi, link ? `pled.process_id in (${link.processKeys.map((key) => Math.trunc(key)).join(",")})` : stock ? `pled.process_id=${ledKey}` : `pled.led_id=${ledKey}`).replace(/\|sys\.query\.@pkilval_1\|/gi, link && link.ilKeys.length > 0 ? ` and pled.il_key in (${link.ilKeys.map((key) => Math.trunc(key)).join(",")})` : "")
     // Job Stock In / Out show the rows by stock nature first (the received / issued lists).
     .replace("order by pled.il_serial", stock && /^JOB-/i.test(book.row ? text(book.row, "stkm_short") : "") ? "order by pled.stock_nat,pled.il_serial" : "order by pled.il_serial")), book.values))) ?? [];
   const stockNat = book.stockNat === "A" ? "A" : "L";
-  const ext = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_03_SLAB"))
+  const ext = link ? [] : (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_03_SLAB"))
     .replace(/\|sys\.query\.@pkval_3\|/gi, stock ? `ledext.process_id=${ledKey}` : `ledext.led_id=${ledKey}`)), book.values))) ?? [];
   const itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>> = {};
   const slab: Record<number, { perc: string; amount: string }> = {};
@@ -292,7 +296,26 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     cells.prod_key = text(row, "prod_short").trim();
     cells.uomentry_id = text(row, "qtyuom_desc").trim();
     cells.rateuom_id = text(row, "rateuom_desc").trim();
-    cells._il_key = String(toInt(field(row, "il_key")));
+    cells._il_key = link ? "" : String(toInt(field(row, "il_key")));
+    if (link) {
+      // The source line (Link_Product_Rec): the pending quantity / factor / value come in, the line keeps where it came from for the Save.
+      const quantity = toDecimal(field(row, "quantity"));
+      const linked = toDecimal(field(row, "ag_qty"));
+      const factor = toDecimal(field(row, "factor")) - toDecimal(field(row, "ag_fact"));
+      const rate = toDecimal(field(row, "rate"));
+      const value = toDecimal(field(row, "il_value"));
+      const fixed = (n: number, places: number) => n.toFixed(places);
+      cells.quantity = fixed(quantity - linked, 4);
+      cells.factor = fixed(factor, 4);
+      cells._max_qty = fixed(quantity - linked, 4);
+      cells._max_factor = fixed(factor, 4);
+      cells._file_qty = fixed(quantity, 4);
+      cells._file_factor = fixed(toDecimal(field(row, "factor")), 4);
+      cells._link_process = String(toInt(field(row, "process_id")) || link.processKeys[0]);
+      cells._link_il = String(toInt(field(row, "il_key")));
+      cells._link_uom = String(toInt(field(row, "uomentry_id")));
+      if (linked > 0) cells.il_value = fixed(rate > 0 ? (Math.abs(value / rate - quantity) < 0.000001 ? (quantity - linked) * rate : factor * rate) : quantity > 0 ? (quantity - linked) * value / quantity : 0, 2);
+    }
     // A stock register whose rows go either way: the +/- column shows each row's own direction.
     const rowNat = stock && book.stockNatBoth ? (text(row, "stock_nat") === "L" ? "L" : "A") : stockNat;
     if (stock && book.stockNatBoth) cells.prod_return = rowNat === "L" ? "-" : "+";
@@ -305,7 +328,7 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
   // Account addons (addon_aentry: txt_<fiel_save> by the addon's key).
   const addon: Record<number, string> = {};
   const addonSql = (await restoreQuery(loader, "RESTINV_04_ADDON")).replace(/\|sys\.@pkval_1\|/gi, String(ledKey));
-  const addonRow = (await loader.readTable(replaceEntryTokens(stock ? addonSql.replace(/aona_ledid\s*=/i, "aona_processid =").replace(/aona_recid\s*=\s*'L'/i, "aona_recid = 'P'") : addonSql, book.values)))?.[0];
+  const addonRow = link ? undefined : (await loader.readTable(replaceEntryTokens(stock ? addonSql.replace(/aona_ledid\s*=/i, "aona_processid =").replace(/aona_recid\s*=\s*'L'/i, "aona_recid = 'P'") : addonSql, book.values)))?.[0];
   if (addonRow) {
     const fields = (await loader.readTable(`SELECT fiel_key, fiel_save, fiel_type FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D'`)) ?? [];
     for (const item of fields) {
@@ -322,7 +345,8 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     const amount = toDecimal(field(jv, "amount"));
     if (amount > 0) tdsAmount = amount.toFixed(2);
   }
-  return { uniqueKey, ...(against ? { against } : {}), values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax, tdsAmount };
+  if (link) for (const name of ["cmb_series", "dtp_date", "tbx_number", "tbx_chlnno", "tbx_entryno", "dtp_chlndate", "dtp_entrydate"]) delete values[name];
+  return { uniqueKey: link ? 0 : uniqueKey, ...(against ? { against } : {}), values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax, tdsAmount };
 }
 
 /**

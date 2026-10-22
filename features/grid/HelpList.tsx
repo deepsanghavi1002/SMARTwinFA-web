@@ -25,7 +25,7 @@ const TYPE_PAUSE_MS = 1200;
 
 export function HelpList({
   help, focusRow, onFocusRow, onChoose, searchKey, note, onClose, onEscape, style, dragHandle, onResetPosition, formatCell, shown = SHOWN, title, highlight = "", freezeSearch = false,
-  onHeadingClick, sortMark, headingTools, filteredColumn, onKey, f1 = false,
+  onHeadingClick, sortMark, headingTools, filteredColumn, onKey, f1 = false, f7 = false, f8 = false, topSlot,
 }: {
   help: HelpData;
   /** The entry to highlight and bring into view; -1 for none. */
@@ -60,6 +60,12 @@ export function HelpList({
   onKey?: (event: ReactKeyboardEvent<HTMLDivElement>) => boolean;
   /** The help offers F1 (the master record of the row): said in the title's hint. */
   f1?: boolean;
+  /** Something shown at the top of the help, under its title (the product help's product-type filter): it moves with the window. */
+  topSlot?: ReactNode;
+  /** The help offers F7 (the Partywise Stock of the row's account). */
+  f7?: boolean;
+  /** The help offers F8 (the Ledger of the row's account): said in the title's hint. */
+  f8?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -209,9 +215,12 @@ export function HelpList({
           />
         </span>
         {f1 && <kbd className="mp-help-f1" title="F1 opens the whole master record of the highlighted entry"><b>F1</b> Master details</kbd>}
+        {f7 && <kbd className="mp-help-f1" title="F7 opens the Partywise Stock of the highlighted account"><b>F7</b> Partywise Stock</kbd>}
+        {f8 && <kbd className="mp-help-f1" title="F8 opens the Ledger of the highlighted account"><b>F8</b> Ledger</kbd>}
         <span className="mp-help-tip">type to search the marked column · ← → change column · Ctrl+F search box</span>
         {onClose && <button type="button" onClick={onClose} aria-label="Close help">×</button>}
       </div>
+      {topSlot}
       {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
       <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", width: tableWidth + sideBar + 2, maxWidth: "100%", height: ROW * (Math.min(shown, Math.max(1, count)) + 1) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table style={{ width: tableWidth }}>

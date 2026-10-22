@@ -1913,3 +1913,6 @@
 .ent-doc-view .mp-help-title .mp-help-name,.ent-doc-view .mp-help-title button{color:#ffe082}
 .ent-doc-view iframe,.ent-doc-view img{flex:1;min-height:0;width:100%;border:0;object-fit:contain;background:#f4f4f4}
 .ent-mode.ent-mode-add{background:#d8f5d8;border-color:#5aa85a;color:#14501a}
+.ent-filter-bar{display:flex;align-items:center;gap:8px;padding:5px 8px;background:#f5fffa;border-bottom:1px solid #1f64b8}
+.ent-filter-bar label{font-weight:700;white-space:nowrap}
+.ent-filter-bar .mp-combo{min-width:240px;flex:1}

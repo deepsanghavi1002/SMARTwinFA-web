@@ -207,11 +207,17 @@ export async function bookContext(loader: Loader, entryName: string, firstCombo:
   }
   // A note of a nature that takes no stock (Others: book_properties.stkm_stkentry N) has no product rows: its slab amounts are typed.
   const natureNoStock = agBook > 0 && type > 0 && text((await loader.readTable(`SELECT stkm_stkentry FROM |sys.db|book_properties WHERE book_key = $1`, [type]))?.[0], "stkm_stkentry").toUpperCase() === "N";
-  if (stkmFromShort !== "" && (stkmToShort !== "" || session.licence === 71)) warnings.push("A link register lists the entries to link first (the link panel); that panel is not ported yet.");
 
+  // A LINK register (licence 21) is not a book of its own: it makes the destination book's entry from a source entry (LINK ORDER SALE: a SALE invoice from a sale
+  // order), so the series, numbers and the saved book code are the destination's (C1dg_LinkEntry_KeyUp: the first account of the destination book).
+  let bookCode = toInt(field(row, "code"));
+  if (bookActual && session.licence === 21 && text(row, "stkm_fromshort") !== "" && toInt(field(row, "stkm_tobook")) > 0 && text(row, "book_desc").toUpperCase().startsWith("LINK")) {
+    const destination = toInt(field((await loader.readTable(`SELECT code FROM |sys.db|account WHERE book = $1 AND a_pos <> 'D' ORDER BY code LIMIT 1`, [bookKey]))?.[0], "code"));
+    if (destination > 0) bookCode = destination;
+  }
   const values: EntryValues = {
     ...blank,
-    bookKey, type, bookCode: toInt(field(row, "code")), bkDbcode, acDbcode, bookActual, forBook: toInt(field(row, "stkm_forbook")),
+    bookKey, type, bookCode, bkDbcode, acDbcode, bookActual, forBook: toInt(field(row, "stkm_forbook")),
     stkmShort, stkmFromShort,
     ...(agBook > 0 && against ? { agBook, agCode: against.code } : {}),
     ...extra,
