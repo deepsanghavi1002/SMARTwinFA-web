@@ -3019,7 +3019,7 @@ async function multiYearStockLedger(loader: Loader, plan: ReportPlan): Promise<R
 // 133: MULTI YEAR PARTY STOCK (SP_FRT_RPT_MULTI_YEAR_PARTY_STOCK_REP; ANALYSIS REP. > Multi Year > Party Wise Stock)
 // ======================================================================================
 //
-// One party (the Account group's single pick) through the company's years meeting From .. Upto: in each year's database the account of the
+// The parties of the Account group (one or many; the procedure took one) through the company's years meeting From .. Upto: in each year's database the account of the
 // same name, its stock lines between From and Upto (not the year's dates), one row each (quantity in or out, rate, unit, purchase / sale value),
 // in SORTING_COL order. The first combo is SALE (8: a debtor, its sale, purchase and credit note lines) or PURCHASE (13: a creditor, its
 // purchase, debit note and sale lines). As the procedure there is no heading, opening or total row; identical rows are dropped as its UNION does.
@@ -3028,21 +3028,25 @@ async function multiYearStockLedger(loader: Loader, plan: ReportPlan): Promise<R
 async function multiYearPartyStock(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { call } = plan;
   const key = call.selectKey[4];
-  if (key.includes(",")) throw new ReportRefusal("Multiple Account Selection Not Allowed", "INTERNAL PROGRAM FAILURE");
   if (key === "") throw new ReportRefusal("Select an account (Account group)", "INTERNAL PROGRAM FAILURE");
   const db = call.database;
-  const name = toText((await runReportSql(loader, `SELECT btrim(name) AS name FROM ${db}ACCOUNT WHERE a_pos = 'A' AND code IN ${key} ORDER BY code DESC LIMIT 1`)).rows[0]?.name);
+  // Any number of accounts may be ticked (the procedure took one): each one's lines run on, in the order of the name that starts the sort key.
+  const names = (await runReportSql(loader, `SELECT DISTINCT btrim(name) AS name FROM ${db}ACCOUNT WHERE a_pos = 'A' AND code IN ${key} ORDER BY 1`)).rows.map((row) => toText(row.name)).filter((name) => name !== "");
   const sale = call.fcValue === 8;
   const columns = ["SORTING_COL", "ROW_DATA_TYPE", "SMART_NAME", "selected_date", "FULL_DOCNO", "DOC_NO1", "NAME", "PROD_DESC", "ADD_QTY", "LESS_QTY"];
   const table = new ResultTable();
-  const years: { schema: string; code: number }[] = [];
+  const years: { schema: string; codes: number[] }[] = [];
   for (const year of await companyYears(loader, plan)) {
     const schema = toText(year.schema_name);
     if (!/^[a-z0-9_]+$/.test(schema)) continue;
     const exists = (await runReportSql(loader, "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('account','prod_ledger','product_master','prod_uom','setup')", [schema])).rows[0];
     if (num(exists?.n) < 5) continue;
-    const account = name === "" ? undefined : (await runReportSql(loader, `SELECT code FROM ${schema}.account WHERE btrim(name) = $1 AND a_pos <> 'D' ORDER BY code DESC LIMIT 1`, [name])).rows[0];
-    years.push({ schema, code: num(account?.code) });
+    const codes: number[] = [];
+    for (const name of names) {
+      const account = (await runReportSql(loader, `SELECT code FROM ${schema}.account WHERE btrim(name) = $1 AND a_pos <> 'D' ORDER BY code DESC LIMIT 1`, [name])).rows[0];
+      if (num(account?.code) > 0) codes.push(num(account?.code));
+    }
+    years.push({ schema, codes });
   }
   const mrp = years.length > 0 && ((await runReportSql(loader, `SELECT position('X_MRP,' in entry_para) AS at FROM ${years[0].schema}.setup`)).rows[0]?.at ?? 0) === 0;
   columns.push(...(mrp ? ["MRP_RATE"] : []), "RATE", "UOM_SHORT", "PURCH_VALUE", "SALE_VALUE");
@@ -3054,8 +3058,7 @@ async function multiYearPartyStock(loader: Loader, plan: ReportPlan): Promise<Re
     && num((await runReportSql(loader, `SELECT count(*)::int AS n FROM ${years[0].schema}.account WHERE a_pos <> 'D' AND strpos(a_short, 'CA_ENT') > 0`)).rows[0]?.n) === 0;
   const seen = new Set<string>();
   const rows: ResultRow[] = [];
-  for (const { schema, code } of years) {
-    if (code === 0) continue;
+  for (const { schema, codes } of years) for (const code of codes) {
     const lines = await runReportSql(loader, `SELECT ac.name || '   P' || to_char(prodled.il_date, 'YYYYMMDD') || prodled.full_docno || prodled.il_key::text || 'LED' AS "SORTING_COL", 'LED' AS "ROW_DATA_TYPE", ac.name AS "SMART_NAME",`
       + ` to_char(prodled.il_date, 'DD/MM/YYYY') AS "selected_date", prodled.full_docno AS "FULL_DOCNO", prodled.doc_no1 AS "DOC_NO1", ac.name AS "NAME", prodmas.prod_desc AS "PROD_DESC",`
       + ` CASE WHEN prodled.stock_nat = 'A' THEN prodled.quantity ELSE 0.00 END AS "ADD_QTY", CASE WHEN prodled.stock_nat = 'L' THEN prodled.quantity ELSE 0.00 END AS "LESS_QTY",`

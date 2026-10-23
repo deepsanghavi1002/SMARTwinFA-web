@@ -33,6 +33,8 @@ export type SecurityRow = Readonly<{
   rights: readonly boolean[];
   /** Whether each right has a password (the passwords themselves stay on the server). */
   passwords: readonly boolean[];
+  /** The saved passwords in clear, for the ADMIN user only (shown when a password cell is clicked); absent for everyone else. */
+  revealed?: readonly string[];
 }>;
 
 export type SecurityUser = Readonly<{ name: string; no: number }>;
@@ -81,7 +83,9 @@ export async function loadSecurityRows(client: Client, session: MasterSession, m
     const roll = row ? toText(row.u_roll_id) : "";
     const rights = RIGHTS.map((_, at) => (roll.length > at * 2 ? securityRead(roll.charAt(at * 2), at * 2 + 1) === "1" : false));
     const passwords = PASSWORD_COLUMNS.map((column) => (row ? securityRead(toText(row[column]), 0).trim() !== "" : false));
-    return { heading: entry.heading, name: entry.name, module: entry.module, key: row ? Number(row.security_key) : 0, rights, passwords };
+    const admin = session.loginName.trim().toUpperCase() === "ADMIN";
+    const revealed = admin ? PASSWORD_COLUMNS.map((column) => (row ? securityRead(toText(row[column]), 0).trim() : "")) : undefined;
+    return { heading: entry.heading, name: entry.name, module: entry.module, key: row ? Number(row.security_key) : 0, rights, passwords, ...(revealed ? { revealed } : {}) };
   });
 }
 

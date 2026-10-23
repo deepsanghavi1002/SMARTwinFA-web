@@ -33,6 +33,8 @@ import { GroupByPanel } from "./GroupByPanel";
 import { PivotPanel } from "./PivotPanel";
 import { applyPivot } from "../../lib/report/pivot";
 import type { PivotSpec } from "../../lib/report/pivot";
+import { computeSumif, pivotHintProblem, resolvePivotHint } from "../../lib/report/pivotHint";
+import type { PivotHint, SumifHint } from "../../lib/report/pivotHint";
 import { FormulaColumns } from "./FormulaColumns";
 import { cellValue, entryIndexes, excelFormulas, withFormulaColumns, workOut } from "../../lib/report/formulaColumns";
 import { listOpenReports, notifyOpenReports, openReportsVersion, registerOpenReport, subscribeOpenReports } from "../../lib/report/openReports";
@@ -97,7 +99,7 @@ function hexColour(colour: string): string {
   }
 }
 
-export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy }: {
+export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy, initialPivot, initialSumif }: {
   output: ReportOutput;
   fallbackTitle: string;
   companyName: string;
@@ -121,6 +123,10 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   onInfo: (rows: string, totals: string) => void;
   /** Group By to start with (a saved view), and told whenever it changes (to save it with a view). */
   initialGroupBy?: readonly GroupSpec[];
+  /** A pivot asked for in words (Ask AI): set up on the first output that has the columns it names. */
+  initialPivot?: PivotHint;
+  /** A SUMIF asked for in words (Ask AI): worked out once on the first output and shown as a message. */
+  initialSumif?: SumifHint;
   onGroupBy?: (specs: readonly GroupSpec[]) => void;
 }) {
   // ---- Create Group (C1_OUTPUT_GROUP) ----
@@ -463,6 +469,23 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const toggleNode = (index: number) => setClosed((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
   const showLevel = (level: number) => setClosed(new Set(output.rows.flatMap((row, index) => (row.kind === "subtotal" && row.level >= level ? [index] : []))));
   const resetView = () => { setTree(false); setClosed(new Set()); setCollapsed(false); setCursor({ row: 0, col: 0 }); setSelEnd(null); setPicked(new Set()); setBorders(new Set()); setDrawing(false); setHeaderSelected(false); };
+  // A pivot named in words is worked out once, on the first run that has the columns it names, and shown at once.
+  const sumifDone = useRef(false);
+  useEffect(() => {
+    if (!initialSumif || sumifDone.current || withAdded.columns.length === 0) return;
+    sumifDone.current = true;
+    const result = computeSumif(withAdded, initialSumif);
+    void messageBox.alert(result.text, "SUMIF", result.ok ? "info" : "warning");
+  }, [withAdded]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pivotHinted = useRef(false);
+  useEffect(() => {
+    if (!initialPivot || pivotHinted.current || withAdded.columns.length === 0) return;
+    pivotHinted.current = true;
+    const spec = resolvePivotHint(withAdded, initialPivot);
+    if (spec) { setPivoting({ forBase: base, spec }); resetView(); }
+    const problem = pivotHintProblem(withAdded, initialPivot);
+    if (problem !== "") void messageBox.alert(problem, "Pivot", "warning");
+  }, [withAdded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Buttons ----
   /** btnCreateTree_Click: the tree format on, or off again. */

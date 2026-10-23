@@ -7437,24 +7437,35 @@ export async function invalidGst(loader: Loader, plan: ReportPlan): Promise<Resu
 }
 
 /** The entries' CGST (link 0) or SGST (UTGST) lines of the book the choice names: the stock lines when the book's slabs are by product. */
-function gstrMismatchLines(db: string, choice: number, productWise: boolean, tax: "cgst" | "sgst", slab: number, from: string, upto: string): string {
+/**
+ * 132: ENTRY TAX MISMATCH (GST menu). An entry (an invoice, credit note, purchase ... of the chosen book) is listed when the tax it carries is not its taxable value at its GST rate:
+ * the taxable value is what the tax slab is applied to (the item value less every discount, before tax), the rate is that of the line's tax rows (CGST and SGST together, or IGST),
+ * the tax charged the amount of those rows. Where the book's slabs are by product each stock line is worked out (a line with no tax rows takes the product master's rate); otherwise the
+ * entry's own tax rows. An entry is listed when its tax charged is off by more than 1.50 in all (rounding is allowed for). The procedure listed an entry whose CGST and SGST lines differed;
+ * that comparison is replaced by this one.
+ */
+function gstrMismatchEntries(db: string, choice: number, productWise: boolean, from: string, upto: string): string {
   const books: Readonly<Record<number, number>> = { 1: 8, 2: 13, 3: 15, 4: 16, 5: 11 };
   const book = books[choice] ?? 8;
-  const taxName = tax === "cgst" ? `f.opt_Desc='CGST'` : `(f.opt_Desc='SGST' or f.opt_Desc='UTGST')`;
-  // The credit note's CGST lines of a product book are not limited to the CGST tax, as in the procedure.
-  const taxCondition = tax === "cgst" && productWise && choice === 4 ? "" : ` and ${taxName}`;
+  const gst = (stockLines: boolean) => `gst AS (SELECT ledext.${stockLines ? "il_id" : "led_id"} AS k, MAX(CASE WHEN idopt.opt_desc = 'IGST' THEN ledext.slab_perc::numeric ELSE ledext.slab_perc::numeric * 2 END) AS perc,`
+    + ` MAX(CASE WHEN idopt.opt_desc = 'IGST' THEN ledext.slab_amt::numeric ELSE ledext.slab_amt::numeric * 2 END) AS amt, MAX(ledext.s_lastot::numeric - ledext.slab_amt::numeric) AS taxable`
+    + ` FROM ${db}ledger_ext ledext JOIN ${db}slab_master slabmst ON ledext.slab_id = slabmst.slab_key JOIN ${db}tax_master taxmst ON ledext.tax_id = taxmst.tax_rec JOIN ${db}idopt_master idopt ON idopt.idopt_key = nullif(taxmst.tax_type,'')::int`
+    + ` WHERE ledext.tax_id > 0 AND slabmst.slab_link = 0 AND idopt.opt_desc IN ('IGST','CGST','SGST','UTGST') AND ${stockLines ? "ledext.il_id IS NOT NULL" : "ledext.il_id IS NULL AND ledext.led_id IS NOT NULL"} GROUP BY 1)`;
+  const outer = `SELECT t.name AS "name", t.full_docno AS "Invoice_Number", to_char(t.doc_date, 'DD/MM/YYYY') AS "Invoice_Date", t.amount AS "Amount",`
+    + ` CASE WHEN SUM(t.taxable) = 0 THEN 0 ELSE round(SUM(t.expected) / SUM(t.taxable) * 100, 2) END AS slab_perc, SUM(t.charged) AS slab_amt,`
+    + ` CASE WHEN SUM(t.charged) > SUM(t.expected) THEN 'Tax charged is more than at the rate' ELSE 'Tax charged is less than at the rate' END AS tax_desc,`
+    + ` SUM(t.taxable) AS "Taxable_Value", SUM(t.expected) AS "Tax_At_Rate", SUM(t.charged) - SUM(t.expected) AS "Difference"`
+    + ` FROM (INNER) t GROUP BY t.led_key, t.name, t.full_docno, t.doc_date, t.amount HAVING ABS(SUM(t.charged) - SUM(t.expected)) > 1.5 ORDER BY t.doc_date, t.full_docno`;
   if (productWise) {
-    return `select g.name as "name",a.full_docno as "Invoice_Number",to_char(a.il_date, 'DD/MM/YYYY') as "Invoice_Date",a.il_value::numeric as "Amount",b.slab_perc,b.slab_amt::numeric as slab_amt,c.tax_desc,b.il_id,b.led_id`
-      + ` from ${db}prod_ledger a left join ${db}ledger_ext b on a.il_key = b.il_id left join ${db}slab_master d on b.slab_id = d.slab_key left join ${db}tax_master c on c.tax_rec = b.tax_id left join ${db}idopt_master f on c.tax_type = f.idopt_key::text`
-      + ` left join ${db}account g on g.code = a.code left join ${db}Address h on h.code = g.code left join ${db}idopt_master i on i.idopt_key::text = h.state_id::text left join ${db}idopt_master j on j.idopt_key::text = h.p_reg::text`
-      + ` where a.IL_DATE between ${from} AND ${upto} and a.il_pos<>'D' and b.tax_id>0 and c.tax_perc>0 and a.book in (${book}) and h.address_id=1${taxCondition} and b.slab_id=${slab} and b.led_id is not null and b.il_id is not null`
-      + ` order by to_char(a.il_date, 'DD/MM/YYYY'),a.full_docno,b.il_id`;
+    const inner = `SELECT l.led_key, btrim(ac.name) AS name, l.full_docno, l.doc_date, l.amount::numeric AS amount, COALESCE(g.taxable, a.il_value::numeric) AS taxable, COALESCE(g.amt, 0) AS charged,`
+      + ` COALESCE(g.taxable, a.il_value::numeric) * COALESCE(g.perc, NULLIF(pm.tax_perc::numeric, 0), 0) / 100 AS expected`
+      + ` FROM ${db}prod_ledger a JOIN ${db}ledger l ON l.led_key = a.led_id LEFT JOIN ${db}product_master pm ON pm.prod_key = a.prod_id LEFT JOIN gst g ON g.k = a.il_key LEFT JOIN ${db}account ac ON ac.code = l.code`
+      + ` WHERE l.book = ${book} AND a.il_pos <> 'D' AND l.doc_pos <> 'D' AND l.doc_date BETWEEN ${from} AND ${upto}`;
+    return `WITH ${gst(true)} ${outer.replace("(INNER)", `(${inner})`)}`;
   }
-  return `select g.name as "name",a.full_docno as "Invoice_Number",to_char(a.doc_date, 'DD/MM/YYYY') as "Invoice_Date",a.amount::numeric as "Amount",b.slab_perc,b.slab_amt::numeric as slab_amt,e.tax_desc,b.il_id,b.led_id`
-    + ` from ${db}ledger a left join ${db}ledger_ext b on a.led_key = b.led_id left join ${db}slab_master d on b.slab_id = d.slab_key left join ${db}tax_master e on b.tax_id = e.tax_rec left join ${db}idopt_master f on e.tax_type = f.idopt_key::text`
-    + ` left join ${db}account g on g.code = a.code left join ${db}Address h on h.code = g.code left join ${db}idopt_master i on i.idopt_key::text = h.state_id::text left join ${db}idopt_master j on j.idopt_key::text = h.p_reg::text`
-    + ` where a.DOC_DATE between ${from} AND ${upto} and a.doc_pos<>'D' and b.tax_id>0 and e.tax_perc>0 and b.slab_id=${slab} and a.book in (${book}) and h.address_id=1 and ${taxName} and b.slab_id=${slab} and b.led_id is not null`
-    + ` order by to_char(a.doc_date, 'DD/MM/YYYY'),a.doc_no`;
+  const inner = `SELECT l.led_key, btrim(ac.name) AS name, l.full_docno, l.doc_date, l.amount::numeric AS amount, g.taxable AS taxable, g.amt AS charged, g.taxable * g.perc / 100 AS expected`
+    + ` FROM ${db}ledger l JOIN gst g ON g.k = l.led_key LEFT JOIN ${db}account ac ON ac.code = l.code WHERE l.book = ${book} AND l.doc_pos <> 'D' AND l.doc_date BETWEEN ${from} AND ${upto}`;
+  return `WITH ${gst(false)} ${outer.replace("(INNER)", `(${inner})`)}`;
 }
 
 export async function gstrTaxMismatch(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
@@ -7464,24 +7475,11 @@ export async function gstrTaxMismatch(loader: Loader, plan: ReportPlan): Promise
   const choice = call.fcValue;
   // The book whose slabs are read: the sale (and credit note) 8, the purchase (and debit note) 13, the expense 15.
   const slabBook = choice === 1 || choice === 4 ? 8 : choice === 2 || choice === 5 ? 13 : 15;
-  const slabOf = async (link: string): Promise<number> => num((await runReportSql(loader, `SELECT coalesce(SLAB_KEY,0) AS k FROM ${db}SLAB_MASTER WHERE SLAB_FROMDT = ${day(call.tarikh1)} AND SLAB_MASTER='Y' and slab_link${link} AND SLAB_ACTIVE = 'Y' and BOOK = ${slabBook} ORDER BY SLAB_KEY DESC LIMIT 1`)).rows[0]?.k);
   const productWise = num((await runReportSql(loader, `SELECT count(*) AS n FROM ${db}SLAB_MASTER WHERE SLAB_POS = 'P' and SLAB_FROMDT = ${day(call.tarikh1)} AND SLAB_MASTER='Y' AND SLAB_ACTIVE = 'Y' and BOOK = ${slabBook}`)).rows[0]?.n) > 0;
-  const sgst = await slabOf(">0");
-  const cgst = await slabOf("=0");
-  const cgstLines = (await runReportSql(loader, pgFragment(gstrMismatchLines(db, choice, productWise, "cgst", cgst, day(call.from), day(call.upto)), plan, loader.session.companySchema))).rows;
-  const sgstLines = (await runReportSql(loader, pgFragment(gstrMismatchLines(db, choice, productWise, "sgst", sgst, day(call.from), day(call.upto)), plan, loader.session.companySchema))).rows;
-
-  const table = gstrTable(["name", "Invoice_Number", "Invoice_Date", ["Amount", "decimal"], ["slab_perc", "decimal"], ["slab_amt", "decimal"], "tax_desc"]);
-  const key = productWise ? "il_id" : "led_id";
-  const differs = (x: unknown, y: unknown): boolean => x !== null && y !== null && x !== undefined && y !== undefined && num(x) !== num(y);
-  // The CGST line paired with the SGST line of the same entry (or stock line): a different rate or amount, or the same tax name.
-  for (const a of cgstLines) {
-    for (const b of sgstLines) {
-      if (a[key] === null || a[key] !== b[key]) continue;
-      if (differs(a.slab_perc, b.slab_perc) || differs(a.slab_amt, b.slab_amt) || (a.tax_desc !== null && a.tax_desc === b.tax_desc)) {
-        gstrInsert(table, { name: a.name, Invoice_Number: a.Invoice_Number, Invoice_Date: a.Invoice_Date, Amount: a.Amount, slab_perc: a.slab_perc, slab_amt: a.slab_amt, tax_desc: a.tax_desc });
-      }
-    }
+  const found = (await runReportSql(loader, pgFragment(gstrMismatchEntries(db, choice, productWise, day(call.from), day(call.upto)), plan, loader.session.companySchema))).rows;
+  const table = gstrTable(["name", "Invoice_Number", "Invoice_Date", ["Amount", "decimal"], ["slab_perc", "decimal"], ["slab_amt", "decimal"], "tax_desc", ["Taxable_Value", "decimal"], ["Tax_At_Rate", "decimal"], ["Difference", "decimal"]]);
+  for (const row of found) {
+    gstrInsert(table, { name: row.name, Invoice_Number: row.Invoice_Number, Invoice_Date: row.Invoice_Date, Amount: row.Amount, slab_perc: row.slab_perc, slab_amt: row.slab_amt, tax_desc: row.tax_desc, Taxable_Value: row.Taxable_Value, Tax_At_Rate: row.Tax_At_Rate, Difference: row.Difference });
   }
   return table;
 }

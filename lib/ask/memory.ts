@@ -57,13 +57,19 @@ export async function noteMissed(client: Client, session: MasterSession, questio
 }
 
 /** Forgets one remembered question (with its chosen party), or every answered question of the operator when none is given. */
-export async function forget(client: Client, session: MasterSession, question?: string): Promise<void> {
-  if (question === undefined) { await client.query(`DELETE FROM ${TABLE} WHERE company_key = $1 AND login_name = $2 AND template_id > 0`, [...who(session)]); return; }
+export async function forget(client: Client, session: MasterSession, question?: string, scope?: "recent" | "favourite"): Promise<void> {
+  // One list only (its Clear all): the most asked are the questions asked more than once, the recent ones the rest.
+  if (question === undefined) { await client.query(`DELETE FROM ${TABLE} WHERE company_key = $1 AND login_name = $2 AND template_id > 0${scope === "favourite" ? " AND times > 1" : scope === "recent" ? " AND times <= 1" : ""}`, [...who(session)]); return; }
   await client.query(`DELETE FROM ${TABLE} WHERE company_key = $1 AND login_name = $2 AND question_norm = $3 AND template_id > 0`, [...who(session), normalize(question)]);
 }
 
-/** The operator's last few and most asked questions that were answered. */
+/**
+ * The operator's most asked questions (asked more than once) and, apart from them, the last few asked. A question is in one list only, so the two
+ * never show the same thing: a question asked again and again is "most asked", the rest are "recent".
+ */
 export async function listMemory(client: Client, session: MasterSession): Promise<{ recent: string[]; favourite: string[] }> {
-  const pick = async (order: string) => (await client.query(`SELECT question FROM ${TABLE} WHERE company_key = $1 AND login_name = $2 AND template_id > 0 ORDER BY ${order} LIMIT 6`, [...who(session)])).rows.map((row) => String(row.question));
-  return { recent: await pick("last_used DESC"), favourite: await pick("times DESC, last_used DESC") };
+  const pick = async (where: string, order: string, limit: number) => (await client.query(`SELECT question FROM ${TABLE} WHERE company_key = $1 AND login_name = $2 AND template_id > 0${where} ORDER BY ${order} LIMIT ${limit}`, [...who(session)])).rows.map((row) => String(row.question));
+  const favourite = await pick(" AND times > 1", "times DESC, last_used DESC", 6);
+  const recent = (await pick("", "last_used DESC", 16)).filter((question) => !favourite.includes(question)).slice(0, 6);
+  return { recent, favourite };
 }

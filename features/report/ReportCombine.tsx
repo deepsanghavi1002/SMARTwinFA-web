@@ -11,6 +11,7 @@ import { reportCall, viewsCall } from "./api";
 import { SavedViews } from "./SavedViews";
 import type { SavedView } from "./SavedViews";
 import type { GroupSpec } from "../../lib/report/groupBy";
+import type { PivotHint, SumifHint } from "../../lib/report/pivotHint";
 import type { Refusal } from "./api";
 import { HelpGrid } from "./HelpGrid";
 import { OutputGrid } from "./OutputGrid";
@@ -87,7 +88,7 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
-export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo }: { autoRun?: boolean; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
+export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo, autoPivot, autoPick, autoParty, autoSumif }: { autoRun?: boolean; /** A SUMIF Ask AI asked for: worked out on the output when the report has run. */ autoSumif?: SumifHint; /** One account Ask AI named: the Account group is ticked and only this account is picked in its list. */ autoParty?: { code: number; name: string }; /** The question Ask AI was asked: the first combo (SALE, PURCHASE ...) is chosen from the words in it. */ autoPick?: string; /** A pivot Ask AI asked for, set up when the report has run. */ autoPivot?: PivotHint; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
   const [fatal, setFatal] = useState("");
@@ -113,6 +114,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   const [slabsTicked, setSlabsTicked] = useState<string[]>([]);
   /** A saved view's choice for the lost-focus combo, kept when that combo is refilled. */
   const viewChoice = useRef<string | null>(null);
+  /** What waits for the first combo's lists to be refilled (the run Ask AI asked for, on the register it named). */
+  const afterFirst = useRef<(() => void) | null>(null);
   const [viewsOpen, setViewsOpen] = useState(false);
   /** The Group By of the output on screen, and the one a saved view starts the next output with. */
   const groupByNow = useRef<readonly GroupSpec[]>([]);
@@ -194,7 +197,10 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
         if (reply.warnings && reply.warnings.length > 0) setMessage(`${name} : ${reply.warnings[0].slice(0, 400)}`);
         const kept = viewChoice.current;
         viewChoice.current = null;
+        const waiting = afterFirst.current;
+        afterFirst.current = null;
         setChoices((current) => ({ ...current, [name]: kept && reply.items.some((item) => itemKey(item) === kept) ? kept : reply.items[0] ? itemKey(reply.items[0]) : "" }));
+        waiting?.();
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
@@ -358,6 +364,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     if (!help || key === undefined || !group) { void messageBox.alert("The account is not in the Account help of this report.", "Zoom", "warning"); return; }
     setTicks((current) => ({ ...current, [help.grid]: new Set([key]) }));
     tickGroup(group, true);
+    // The dates of the answer the ledger was opened from (this month, the quarter ...); the run follows on the next render, when they are in.
+    if (autoFrom && autoTo) { setFrom(desktopDay(autoFrom)); setUpto(desktopDay(autoTo)); }
     setZoomRun(true);
   }, [zoomAccount, def]);
   useEffect(() => {
@@ -376,13 +384,37 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     autoStarted.current = true;
     // The dates the question named go in first; the run follows on the next render, when they are in.
     if (autoFrom && autoTo) { setFrom(desktopDay(autoFrom)); setUpto(desktopDay(autoTo)); }
+    // The register the question named (purchase, not the sale it opens on): the first combo is set first and the run waits for its lists.
+    const words = new Set((autoPick ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word !== "").map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word)));
+    const wanted = autoPick ? def.firstCombo.options
+      .map((option) => ({ option, parts: option.text.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word !== "").map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word)) }))
+      .filter((entry) => entry.parts.length > 0 && entry.parts.every((word) => words.has(word)))
+      .sort((a, b) => b.parts.length - a.parts.length)[0]?.option : undefined;
+    // A party the question named: the account group is ticked and that account alone picked in its list.
+    if (autoParty) {
+      const group = groupControl?.items.find((item) => /account|party/i.test(item.text)) ?? groupControl?.items[0];
+      const help = group ? def.helps.find((candidate) => candidate.grid === group.showControls) : undefined;
+      const row = help?.rows.find((candidate) => Object.values(candidate).some((value) => value.trim().toLowerCase() === autoParty.name.trim().toLowerCase()));
+      if (group && help && row) {
+        tickGroup(group, true);
+        setTicks((current) => ({ ...current, [help.grid]: new Set([row[help.keyColumn] ?? ""]) }));
+        setFirstEdited(wanted?.value ?? first);
+      }
+    }
+    if (wanted && wanted.value !== first && def.lostFocusControl !== "") { afterFirst.current = () => setAutoGo(true); setFirst(wanted.value); if (!autoParty) setFirstEdited(null); return; }
+    if (wanted && wanted.value !== first) setFirst(wanted.value);
     setAutoGo(true);
   }, [autoRun, def]);
   useEffect(() => {
     if (!autoGo || !def) return;
     setAutoGo(false);
-    void generate(true).then((done) => {
+    void generate(true).then(async (done) => {
       if (done) return;
+      // A pivot asked for in words cannot choose for the person: the report needs its own selection (one account, for example) made first.
+      if (autoPivot || autoSumif) {
+        await messageBox.alert(["This report needs its selection made first (for example one account, untick the rest).", `Make it and press Show: the ${autoPivot ? "pivot" : "SUMIF"} you asked for is done on the result.`].join("\n"), autoPivot ? "Pivot" : "SUMIF", "info");
+        return;
+      }
       const group = groupControl?.items[0];
       if (group) {
         tickGroup(group, true);
@@ -740,6 +772,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
           onStatus={onGridStatus}
           onInfo={onGridInfo}
           initialGroupBy={startGroupBy}
+          initialPivot={autoPivot}
+          initialSumif={autoSumif}
           onGroupBy={(specs) => { groupByNow.current = specs; }}
         />
       )}

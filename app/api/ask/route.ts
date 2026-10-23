@@ -4,7 +4,7 @@ import { trustedDevelopmentEnabled } from "@/lib/master-program/access";
 import { readSession } from "@/lib/master-program/session";
 import type { MasterSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
-import { ask, hasTemplate, matchedId, questionList, searchParties, searchProducts } from "@/lib/ask/ask";
+import { ask, hasTemplate, matchedId, partyScope, questionList, searchParties, searchProducts } from "@/lib/ask/ask";
 import { ensureMemory, forget, listMemory, noteMissed, recall, remember } from "@/lib/ask/memory";
 
 /**
@@ -12,7 +12,7 @@ import { ensureMemory, forget, listMemory, noteMissed, recall, remember } from "
  * (lib/ask/ask.ts). The work runs in a read-only transaction and nothing the browser sends reaches the SQL text.
  */
 
-type Body = Readonly<{ session: SessionKey; question?: string; templateId?: number; partyCode?: number; allParties?: boolean; /** A row of an answer opened for its parties. */ detail?: string; /** "parties": the party help; "memory": the recent and most asked questions; "forget": one remembered question (question) or all of them. */ action?: string; term?: string; /** The wording that was not understood, taught by picking this question. */ teach?: string }>;
+type Body = Readonly<{ session: SessionKey; question?: string; templateId?: number; partyCode?: number; allParties?: boolean; /** A row of an answer opened for its parties. */ detail?: string; /** "parties": the party help; "memory": the recent and most asked questions; "forget": one remembered question (question) or all of them. */ action?: string; /** "forget" of all: only the recent or only the most asked list. */ scope?: string; term?: string; /** The wording that was not understood, taught by picking this question. */ teach?: string }>;
 
 const headers = { "cache-control": "no-store" };
 
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
         return null;
       }
     };
-    if (body.action === "forget") { await memory((client, session) => forget(client, session, typeof body.question === "string" && body.question.trim() !== "" ? body.question : undefined)); return Response.json({ ok: true }, { headers }); }
+    if (body.action === "forget") { await memory((client, session) => forget(client, session, typeof body.question === "string" && body.question.trim() !== "" ? body.question : undefined, body.scope === "recent" || body.scope === "favourite" ? body.scope : undefined)); return Response.json({ ok: true }, { headers }); }
     if (body.action === "memory") return Response.json(await memory(listMemory) ?? { recent: [], favourite: [] }, { headers });
 
     const question = String(body.question ?? "").trim();
@@ -57,13 +57,17 @@ export async function POST(request: Request) {
     const reply = await transaction(async (client) => {
       const session = await readSession(client, key);
       if (body.action === "products") return { parties: await searchProducts(client, session, String(body.term ?? "").slice(0, 60)) };
-      if (body.action === "parties") return { parties: await searchParties(client, session, String(body.term ?? "").slice(0, 60)) };
+      if (body.action === "parties") {
+        const scope = typeof body.question === "string" && body.templateId !== undefined ? partyScope(session, body.question.slice(0, 300), Number(body.templateId)) : {};
+        return { parties: await searchParties(client, session, String(body.term ?? "").slice(0, 60), scope.period, scope.book) };
+      }
       return await ask(client, session, {
         question: body.question, detail: typeof body.detail === "string" ? body.detail : undefined,
         templateId: known ? recalled.templateId : body.templateId === undefined ? undefined : Number(body.templateId),
-        partyCode: known && recalled.partyCode !== null ? recalled.partyCode : body.partyCode === undefined ? undefined : Number(body.partyCode), allParties: body.allParties === true,
+        // The party or product chosen last time is not used again: a question that needs one shows the list to choose from every time.
+        partyCode: body.partyCode === undefined ? undefined : Number(body.partyCode), allParties: body.allParties === true,
       });
-    }, { readOnlyWork: true, timeoutMs: 20000 });
+    }, { readOnlyWork: true, timeoutMs: 90000 });
 
     if (!body.action && !body.detail && question !== "" && "kind" in reply) {
       if (reply.kind === "answer" && reply.used) {

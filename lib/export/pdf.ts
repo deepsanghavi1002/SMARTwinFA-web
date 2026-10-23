@@ -426,7 +426,41 @@ export function pdf(table: ExportTable, options: PdfOptions): Uint8Array {
     footerOps(table, options, text, pageWidth, margin, usable, pageLabel(layout, page));
     pages.push(ops.join("\n"));
   }
-  return assemble(table, pages, pageWidth, pageHeight);
+  return assemble(table, table.chart && table.chart.count > 0 && table.rows.length > 0 ? [chartPage(table, table.chart, options, pageWidth, pageHeight, margin, usable), ...pages] : pages, pageWidth, pageHeight);
+}
+
+/** A page of bars ahead of the table: each of the first rows' value as a bar with its figure over it and its label under it. */
+function chartPage(table: ExportTable, chart: NonNullable<ExportTable["chart"]>, options: PdfOptions, pageWidth: number, pageHeight: number, margin: number, usable: number): string {
+  const ops: string[] = [];
+  const text: TextOp = (value, x, y, fontSize, bold = false) => {
+    ops.push(`BT /${bold ? "F2" : "F1"} ${num(fontSize)} Tf ${num(x)} ${num(y)} Td (${escapePdf(value)}) Tj ET`);
+  };
+  const topLines = [table.company, table.title, ...table.subtitle].filter((line) => line.trim() !== "");
+  headingOps(table, topLines, text, pageWidth, pageHeight, margin, usable);
+  const bars = table.rows.slice(0, chart.count).map((row) => ({ label: cellText(row[chart.label] ?? null, table.columns[chart.label]), value: Number(row[chart.value]) || 0 }));
+  const top = Math.max(0, ...bars.map((bar) => bar.value));
+  const bottom = Math.min(0, ...bars.map((bar) => bar.value));
+  const span = top - bottom || 1;
+  const topY = pageHeight - margin - 90;
+  const plotHeight = Math.min(300, topY - margin - 70);
+  const zeroY = topY - 18 - ((top / span) * (plotHeight - 18));
+  const slot = usable / bars.length;
+  const barWidth = Math.min(46, slot * 0.62);
+  const short = (value: number) => (Math.abs(value) >= 1e7 ? `${(value / 1e7).toFixed(2)} Cr` : Math.abs(value) >= 1e5 ? `${(value / 1e5).toFixed(2)} L` : cellText(value, { caption: "", kind: "number", decimals: 0, align: "right", width: 0 }));
+  ops.push(`0.62 0.71 0.83 RG 0.6 w ${num(margin)} ${num(zeroY)} m ${num(margin + usable)} ${num(zeroY)} l S`);
+  bars.forEach((bar, at) => {
+    const x = margin + slot * at + (slot - barWidth) / 2;
+    const height = Math.max(1, (Math.abs(bar.value) / span) * (plotHeight - 18));
+    const y = bar.value >= 0 ? zeroY : zeroY - height;
+    ops.push(`${bar.value >= 0 ? "0.129 0.4 0.722" : "0.78 0.2 0.2"} rg ${num(x)} ${num(y)} ${num(barWidth)} ${num(height)} re f 0 g`);
+    const figure = short(bar.value);
+    text(figure, x + barWidth / 2 - textWidth(figure, 7, true) / 2, bar.value >= 0 ? y + height + 4 : y - 10, 7, true);
+    const label = fit(winAnsi(bar.label), slot - 2, 7, false);
+    text(label, x + barWidth / 2 - textWidth(label, 7, false) / 2, zeroY - (bar.value < 0 ? height + 22 : 14), 7);
+  });
+  ops.push("0.3 g");
+  footerOps(table, options, text, pageWidth, margin, usable, "Chart");
+  return ops.join("\n");
 }
 
 /** The PDF file around the pages' drawing operators. */

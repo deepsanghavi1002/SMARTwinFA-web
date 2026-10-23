@@ -6,6 +6,7 @@ import { SmallEntry } from "../features/small-entry/SmallEntry";
 import { Entry } from "../features/entry/Entry";
 import { ReportCombine } from "../features/report/ReportCombine";
 import { ZoomContext } from "../features/report/zoom";
+import type { PivotHint, SumifHint } from "../lib/report/pivotHint";
 import type { ZoomTarget } from "../features/report/zoom";
 import { PieChart } from "../features/piechart/PieChart";
 import { YearChart } from "../features/yearchart/YearChart";
@@ -18,6 +19,7 @@ import { TransportEntry } from "../features/transport/TransportEntry";
 import { Notepad } from "../features/utility/Notepad";
 import { CheckGstNo } from "../features/utility/CheckGstNo";
 import { RepostData } from "../features/utility/RepostData";
+import { TransferBalance } from "../features/utility/TransferBalance";
 import { AskAi } from "../features/ask/AskAi";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
@@ -63,7 +65,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "check-gst" | "repost" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "check-gst" | "repost" | "transfer" | "pending";
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
@@ -76,6 +78,14 @@ export interface WindowInstance extends MenuNode {
   /** The dates the report from Ask AI is run for. */
   autoFrom?: string;
   autoTo?: string;
+  /** A pivot Ask AI asked for, set up when the report has run. */
+  autoPivot?: PivotHint;
+  /** The question Ask AI was asked: the report picks its first combo (the register) from it. */
+  autoPick?: string;
+  /** The one account Ask AI named: ticked alone in the report. */
+  autoParty?: { code: number; name: string };
+  /** A SUMIF Ask AI asked for, worked out when the report has run. */
+  autoSumif?: SumifHint;
   /** The window this one was zoomed from (a report row's voucher or account). */
   zoomParent?: number;
 }
@@ -158,6 +168,7 @@ function screenOf(node: MenuNode | null): Screen {
   if (code === "U_NOTEPAD") return "notepad";
   if (code === "UTILITY_CHECK_GSTNO" && node.actionMenu) return "check-gst";
   if (code === "REPOST_DATA") return "repost";
+  if (code === "TRANSFER_DATA") return "transfer";
   if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
   if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";
   if ((code === "REP_DASHBOARD" || code === "YEAR_DASHBOARD") && node.actionMenu) return "dashboard";
@@ -324,7 +335,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     if (!node) { void messageBox.alert(`The ${wanted} program is not in this company's menu, so it cannot be opened.`, "Zoom", "warning"); return; }
     if (windows.length >= MAX_WINDOWS) { void messageBox.alert(`${MAX_WINDOWS} windows are open already.\nClose one (× on its tab) to open it.`, "Too Many Windows", "warning"); return; }
     const winId = nextWindowId.current++;
-    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode, ...(target.run ? { autoRun: true, ...(target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}) } : {}) }) }]);
+    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode, ...(target.acCode && target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}), ...(target.run ? { autoRun: true, ...(target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}), ...(target.pivot ? { autoPivot: target.pivot } : {}), ...(target.pick ? { autoPick: target.pick } : {}), ...(target.party ? { autoParty: target.party } : {}), ...(target.sumif ? { autoSumif: target.sumif } : {}) } : {}) }) }]);
     bringToFront(winId);
   };
 
@@ -688,7 +699,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       case "master": return <MasterProgram programName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "small-entry": return <SmallEntry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoom={(node as WindowInstance).zoomLedKey} />;
-      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} autoRun={(node as WindowInstance).autoRun} autoFrom={(node as WindowInstance).autoFrom} autoTo={(node as WindowInstance).autoTo} />;
+      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} autoRun={(node as WindowInstance).autoRun} autoFrom={(node as WindowInstance).autoFrom} autoTo={(node as WindowInstance).autoTo} autoPivot={(node as WindowInstance).autoPivot} autoPick={(node as WindowInstance).autoPick} autoParty={(node as WindowInstance).autoParty} autoSumif={(node as WindowInstance).autoSumif} />;
       case "pie-chart": return <PieChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "year-chart": return <YearChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "security": return node.actionCode?.toUpperCase() === "USER_DASHBOARD_RIGHTS"
@@ -701,6 +712,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       case "notepad": return <Notepad title={node.label} onClose={close} />;
       case "check-gst": return <CheckGstNo menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "repost": return <RepostData menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "transfer": return <TransferBalance menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "transport": return <TransportEntry menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "dashboard": return <Dashboard reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       default: return <NotBuiltYet node={node} />;
@@ -726,7 +738,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   return (
     <ZoomContext.Provider value={openZoom}>
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
-      {askOpen && <AskAi minimized={askMin} onMinimize={() => setAskMin(true)} onRestore={() => setAskMin(false)} onClose={() => { setAskOpen(false); setAskMin(false); }} onOpenLedger={(acCode) => { openZoom({ reportName: "REPORT_LEDGER", acCode }); setAskMin(true); }} onOpenReport={(name, from, to) => { openZoom({ reportName: name, run: true, from, to }); setAskMin(true); }} />}
+      {askOpen && <AskAi minimized={askMin} onMinimize={() => setAskMin(true)} onRestore={() => setAskMin(false)} onClose={() => { setAskOpen(false); setAskMin(false); }} onOpenLedger={(acCode, from, to) => { openZoom({ reportName: "REPORT_LEDGER", acCode, from, to }); setAskMin(true); }} onOpenReport={(name, from, to, pivot, pick, party, sumif) => { openZoom({ reportName: name, run: true, from, to, pivot, pick, party, sumif }); setAskMin(true); }} />}
       {selection && <IdleGuard companyGroup={selection.companyGroup} loginName={selection.loginName} locked={locked} onLock={lock} onUnlock={unlock} onLogoff={logoutNow} />}
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>

@@ -43,6 +43,8 @@ export type ExportTable = Readonly<{
    * export uses them, and writes the cell's value beside the formula so it shows before Excel works it out.
    */
   formulas?: readonly (readonly (string | null)[])[];
+  /** A bar chart of the first `count` rows (label column, value column): Excel gets a real chart beside the table, a PDF a chart page ahead of it. */
+  chart?: Readonly<{ label: number; value: number; count: number }>;
   /** The column that names a record on the "one record per page" layout (default: the first). */
   recordTitleColumn?: number;
 }>;

@@ -206,7 +206,7 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
     const on = targets(index);
     return current && current.map((row, i) => (on?.has(i) ? { ...row, rightsNow: row.rightsNow.map((old, j) => (j === at ? value : old)) } : row));
   });
-  const setPassword = (index: number, at: number, value: string) => setRows((current) => current && current.map((row, i) => (i === index ? { ...row, passwordNow: row.passwordNow.map((old, j) => (j === at ? { ...old, typed: value } : old)) } : row)));
+  const setPassword = (index: number, at: number, value: string | null) => setRows((current) => current && current.map((row, i) => (i === index ? { ...row, passwordNow: row.passwordNow.map((old, j) => (j === at ? { ...old, typed: value } : old)) } : row)));
   /** Ticks (or unticks) one right of every row, or with `at` null every right of every row. */
   const tickAll = (at: number | null, value: boolean) => setRows((current) => current && current.map((row, i) => ((several ? !picked.has(i) : filtered && !visible.includes(i)) ? row : { ...row, rightsNow: row.rightsNow.map((old, j) => (at === null || j === at ? value : old)) })));
   const scope = (rows ?? []).filter((_, i) => (several ? picked.has(i) : !filtered || visible.includes(i)));
@@ -277,7 +277,8 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
                     return [
                       <td key={`${right}c`} className="sec-check"><input type="checkbox" aria-label={`${right} ${row.name}`} checked={row.rightsNow[at]} onChange={(event) => setRight(index, at, event.target.checked)} /></td>,
                       <td key={`${right}p`} className="sec-pass"><input type="text" autoComplete="off" aria-label={`${right} password ${row.name}`} value={shown} maxLength={shown === MASK ? undefined : 9}
-                        onFocus={(event) => { if (shown === MASK) event.currentTarget.select(); }}
+                        onFocus={(event) => { if (shown === MASK) { const clear = row.revealed?.[at]; if (clear) { setPassword(index, at, clear); const box = event.currentTarget; requestAnimationFrame(() => box.select()); } else event.currentTarget.select(); } }}
+                        onBlur={() => { if (cell.typed !== null && cell.had && cell.typed === row.revealed?.[at]) setPassword(index, at, null); }}
                         onChange={(event) => { const next = event.target.value; setPassword(index, at, next.length > 9 && next !== MASK ? next.slice(0, 9) : next); }} /></td>,
                     ];
                   })}

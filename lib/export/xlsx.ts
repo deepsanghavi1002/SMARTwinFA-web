@@ -160,6 +160,47 @@ export function xlsxHeadRow(table: Pick<ExportTable, "company" | "title" | "titl
   return [table.company, table.title, table.titleRight ?? "", ...table.subtitle, table.footerCenter ?? ""].filter((line) => line.trim() !== "").length + 2;
 }
 
+/** The parts of a column chart beside the table: the drawing that places it, and the chart reading the label and value cells (with their values stored, so it shows before Excel works it out). */
+function chartParts(table: ExportTable, chart: NonNullable<ExportTable["chart"]>, sheet: string, headRow: number, columnCount: number): { name: string; data: Uint8Array }[] {
+  const encoder = new TextEncoder();
+  const first = headRow + 1;
+  const last = headRow + Math.min(chart.count, table.rows.length);
+  const book = `'${sheet.replace(/'/g, "''")}'`;
+  const labelLetter = columnLetter(chart.label + 1);
+  const valueLetter = columnLetter(chart.value + 1);
+  const picked = table.rows.slice(0, last - headRow);
+  const labels = picked.map((row, at) => `<c:pt idx="${at}"><c:v>${xml(String(row[chart.label] ?? ""))}</c:v></c:pt>`).join("");
+  const values = picked.map((row, at) => `<c:pt idx="${at}"><c:v>${Number(row[chart.value]) || 0}</c:v></c:pt>`).join("");
+  const heading = xml(table.columns[chart.value]?.caption ?? "");
+  const text = (size: number, bold: boolean) => `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="${size}" b="${bold ? 1 : 0}"/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>`;
+  const chartXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:roundedCorners val="0"/><c:chart>
+<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1200" b="1"/></a:pPr><a:r><a:rPr lang="en-US" sz="1200" b="1"/><a:t>${xml(table.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>
+<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>
+<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>
+<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>${book}!$${valueLetter}$${headRow}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${heading}</c:v></c:pt></c:strCache></c:strRef></c:tx>
+<c:spPr><a:solidFill><a:srgbClr val="2166B8"/></a:solidFill></c:spPr><c:invertIfNegative val="0"/>
+<c:dLbls><c:numFmt formatCode="#,##0" sourceLinked="0"/><c:spPr><a:noFill/></c:spPr>${text(800, true)}<c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>
+<c:cat><c:strRef><c:f>${book}!$${labelLetter}$${first}:$${labelLetter}$${last}</c:f><c:strCache><c:ptCount val="${picked.length}"/>${labels}</c:strCache></c:strRef></c:cat>
+<c:val><c:numRef><c:f>${book}!$${valueLetter}$${first}:$${valueLetter}$${last}</c:f><c:numCache><c:formatCode>#,##0</c:formatCode><c:ptCount val="${picked.length}"/>${values}</c:numCache></c:numRef></c:val></c:ser>
+<c:gapWidth val="60"/><c:axId val="111111111"/><c:axId val="222222222"/></c:barChart>
+<c:catAx><c:axId val="111111111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="low"/>${text(800, false)}<c:crossAx val="222222222"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>
+<c:valAx><c:axId val="222222222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="#,##0" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${text(800, false)}<c:crossAx val="111111111"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>
+</c:plotArea><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>`;
+  const from = columnCount + 1; // one empty column between the table and the chart
+  const drawing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:twoCellAnchor><xdr:from><xdr:col>${from}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${headRow - 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${from + 11}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${headRow + 22}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`;
+  const rels = (type: string, target: string) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/></Relationships>`;
+  return [
+    { name: "xl/worksheets/_rels/sheet1.xml.rels", data: encoder.encode(rels("drawing", "../drawings/drawing1.xml")) },
+    { name: "xl/drawings/drawing1.xml", data: encoder.encode(drawing) },
+    { name: "xl/drawings/_rels/drawing1.xml.rels", data: encoder.encode(rels("chart", "../charts/chart1.xml")) },
+    { name: "xl/charts/chart1.xml", data: encoder.encode(chartXml) },
+  ];
+}
+
 export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
   const count = Math.max(1, table.columns.length);
   const last = columnLetter(count);
@@ -205,6 +246,7 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
     }).join("")}</row>`);
   }
   const widths = table.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${Math.max(6, Math.min(80, Math.round(column.width / 6.5)))}" customWidth="1"/>`).join("");
+  const chart = table.chart && table.chart.count > 0 && table.rows.length > 0 ? table.chart : undefined;
   const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
@@ -217,7 +259,7 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
 <pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>
 <pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>
 <headerFooter><oddFooter>&amp;LPrinted &amp;D &amp;T&amp;RPage &amp;P of &amp;N</oddFooter></headerFooter>
-</worksheet>`;
+${chart ? '<drawing r:id="rId1"/>\n' : ""}</worksheet>`;
   const name = xml(sheetName.replace(/[[\]:*?/\\]/g, " ").slice(0, 31) || "Master");
   const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -225,9 +267,10 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
 <definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'${name.replace(/'/g, "''")}'!$A$${headRow}:$${last}$${Math.max(headRow, lastData)}</definedName><definedName name="_xlnm.Print_Titles" localSheetId="0">'${name.replace(/'/g, "''")}'!$${headRow}:$${headRow}</definedName></definedNames>
 </workbook>`;
   const encoder = new TextEncoder();
+  const chartFiles = chart ? chartParts(table, chart, name, headRow, count) : [];
   return zip([
     { name: "[Content_Types].xml", data: encoder.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`) },
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${chart ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/><Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>' : ""}</Types>`) },
     { name: "_rels/.rels", data: encoder.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`) },
     { name: "xl/workbook.xml", data: encoder.encode(workbook) },
@@ -235,5 +278,6 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`) },
     { name: "xl/styles.xml", data: encoder.encode(stylesXml(extras)) },
     { name: "xl/worksheets/sheet1.xml", data: encoder.encode(sheet) },
+    ...chartFiles,
   ]);
 }
