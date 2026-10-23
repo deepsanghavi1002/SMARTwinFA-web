@@ -14,6 +14,8 @@ services:
     command: ["-H", "unix:///var/run/docker.sock", "--admin-password-file", "/run/portainer-admin-password"]
     ports:
       - "${FLEET_BIND:-127.0.0.1}:9000:9000"
+      # Edge tunnel for on-prem support agents (ops/site). Behind Cloudflare publish it as its own hostname.
+      - "${FLEET_BIND:-127.0.0.1}:8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data

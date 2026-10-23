@@ -63,6 +63,41 @@ Windows needs one or two restarts (after WSL and after Docker Desktop); run the 
 | Logs | Grafana > SMARTwinFA Clients, pick the client; or `ops/smartwinfa.sh client logs <id>` |
 | Stop / start | `ops/smartwinfa.sh client down <id>` / `client up <id>`, or the buttons in Portainer |
 
+## Site kit: a client that keeps SMARTwinFA on their own machine (on-prem)
+
+`ops/site/compose.yaml` is added on top of the client stack and gives you control of the client's machine
+without opening any port there. Every part connects **out**:
+
+| Part | What it does | Runs when (in `ops/clients/<id>.env`) |
+|---|---|---|
+| `support-agent` (Portainer Edge Agent) | The machine appears in your Portainer: containers, logs, console, update, restart | `EDGE_KEY` set and `SUPPORT_MODE=on` |
+| `log-agent` (Alloy) | Sends only this client's container logs to your Grafana, labelled `client=<id>`, `site=on-prem` | `LOKI_PUSH_URL` set |
+| `cloudflared` | The client's users open `https://<id>.your-domain.com` | `SITE_TUNNEL_TOKEN` set |
+| `offsite-backup` (rclone) | Copies the nightly backups to cloud storage every hour | `OFFSITE_BUCKET` set |
+
+Onboarding an on-prem client:
+
+```bash
+# on your control panel
+ops/smartwinfa.sh fleet enroll vaishali      # creates ops/clients/vaishali.env with the agent keys and log address
+#   edit it: CLIENT_NAME, COMPANY_SCHEMA, SITE_TUNNEL_TOKEN, OFFSITE_* ...; send the file to the client securely
+
+# on the client's machine (Linux)
+ops/smartwinfa.sh build-local                # or set SMARTWINFA_VERSION to a registry image
+ops/smartwinfa.sh site up vaishali
+# on the client's machine (Windows, Administrator PowerShell)
+.\setup-windows.ps1 -SiteEnv C:\path\vaishali.env
+```
+
+The client controls your access: `ops/smartwinfa.sh site support vaishali off` stops the support agent (the app,
+logs and backups keep running); `... on` lets you in again.
+
+In production set in `ops/fleet/.env` before enrolling: `PORTAINER_EDGE_URL=https://ops.your-domain.com`,
+`PORTAINER_EDGE_TUNNEL=<host:port of the Portainer edge tunnel, port 8000>` and
+`LOKI_PUSH_URL=https://logs-in.your-domain.com/loki/api/v1/push` (a tunnel hostname to `http://loki:3100` protected by a
+Cloudflare Access service token; put the token in each site's `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`).
+The Portainer edge tunnel (port 8000) needs its own route; test it with one site before rolling out.
+
 ## Going live behind Cloudflare
 
 1. Cloudflare Zero Trust > Networks > Tunnels: create a tunnel, copy its token into `ops/fleet/.env` as `TUNNEL_TOKEN`.

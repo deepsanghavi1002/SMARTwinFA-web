@@ -1,12 +1,19 @@
 // Reads the log of every container on this Docker host and sends it to Loki.
 // Labels: client (from the smartwinfa.client container label), service (web, api, db ...), container, stack.
 discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
 }
 
 discovery.relabel "containers" {
   targets = discovery.docker.containers.targets
 
+  // On-prem site containers send their own logs (ops/site); skip them if a site runs on this machine too.
+  rule {
+    source_labels = ["__meta_docker_container_label_smartwinfa_site"]
+    regex         = "on-prem"
+    action        = "drop"
+  }
   rule {
     source_labels = ["__meta_docker_container_name"]
     regex         = "/(.*)"

@@ -1,0 +1,68 @@
+// Site log agent: every container log of this client box goes to the central Loki (your Grafana).
+// Every line carries client=<CLIENT_ID>, service and level; the box can be anywhere, it only connects out.
+// Only this client's containers (label smartwinfa.client=<CLIENT_ID>); nothing else on the machine is sent.
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+  filter {
+    name   = "label"
+    values = ["smartwinfa.client=" + sys.env("CLIENT_ID")]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "stack"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.containers.output
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.level.receiver]
+}
+
+loki.process "level" {
+  stage.static_labels {
+    values = { client = sys.env("CLIENT_ID"), site = "on-prem" }
+  }
+  stage.regex {
+    expression = "(?i)(?P<level>error|fatal|panic|warn(?:ing)?)"
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ if .Value }}{{ ToLower .Value }}{{ else }}info{{ end }}"
+  }
+  stage.replace {
+    source     = "level"
+    expression = "(warning)"
+    replace    = "warn"
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.central.receiver]
+}
+
+loki.write "central" {
+  endpoint {
+    url     = sys.env("LOKI_PUSH_URL")
+    headers = {
+      "CF-Access-Client-Id"     = sys.env("CF_ACCESS_CLIENT_ID"),
+      "CF-Access-Client-Secret" = sys.env("CF_ACCESS_CLIENT_SECRET"),
+    }
+  }
+}

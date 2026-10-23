@@ -15,7 +15,8 @@ param(
   [string]$Folder = $(if (Test-Path 'D:\') { 'D:\SMARTwinFA-web' } else { 'C:\SMARTwinFA-web' }),
   [string]$Repo = 'https://github.com/deepsanghavi1002/SMARTwinFA-web.git',
   [string]$Branch = 'ops-fleet-dashboard',
-  [string]$SeedDump = ''   # optional: path to rishabh-plastic27.dump, copied into the private fixtures folder
+  [string]$SeedDump = '',  # optional: path to rishabh-plastic27.dump, copied into the private fixtures folder
+  [string]$SiteEnv = ''    # client's own machine (on-prem): the <client>.env made by "ops/smartwinfa.sh fleet enroll <client>"
 )
 $ErrorActionPreference = 'Stop'
 
@@ -100,7 +101,17 @@ if ($SeedDump -ne '') {
   Done 'dump copied; it is restored on the first start of the Rishabh stack'
 }
 
-# 7. Client settings with a random database password
+# 7. Client settings: the enrolled site file (on-prem install) or the Rishabh demo with a random database password
+$siteId = ''
+if ($SiteEnv -ne '') {
+  Step 'Client site settings'
+  if (-not (Test-Path $SiteEnv)) { Stop-With "Site settings file not found: $SiteEnv" }
+  $siteId = ((Select-String -Path $SiteEnv -Pattern '^CLIENT_ID=(.*)$').Matches[0].Groups[1].Value).Trim()
+  if ($siteId -notmatch '^[a-z0-9][a-z0-9-]{1,30}$') { Stop-With "CLIENT_ID missing or invalid in $SiteEnv" }
+  $text = (Get-Content $SiteEnv) -join "`n"
+  [IO.File]::WriteAllText("$Folder\ops\clients\$siteId.env", $text + "`n")
+  Done "ops\clients\$siteId.env installed"
+}
 Step 'Rishabh Plastic settings'
 $envFile = "$Folder\ops\clients\rishabh.env"
 if (-not (Test-Path $envFile)) {
@@ -116,6 +127,14 @@ $posix = $Folder -replace '\\','/'
 function Ops($cmd) { & $bash -c "cd '$posix' && ops/smartwinfa.sh $cmd"; if ($LASTEXITCODE -ne 0) { throw "ops/smartwinfa.sh $cmd failed" } }
 try {
   Ops 'build-local'
+  if ($siteId -ne '') {
+    Step "Starting client site $siteId (app, support agent, log agent, tunnel, offsite backup as configured)"
+    Ops "site up $siteId"
+    Ops "site status $siteId"
+    Write-Host "`nSite $siteId is running: http://localhost (port in ops\clients\$siteId.env). It now shows in your Portainer." -ForegroundColor Green
+    Write-Host "Switch vendor support off/on:  & `"$bash`" -c `"cd '$posix' && ops/smartwinfa.sh site support $siteId off`"" -ForegroundColor Green
+    exit 0
+  }
   Step 'Starting the dashboard'
   Ops 'fleet up'
   Step 'Starting Rishabh Plastic'

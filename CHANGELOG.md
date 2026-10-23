@@ -3,6 +3,13 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-23 (Site kit for on-prem clients)
+- `ops/site/compose.yaml` + `ops/site/alloy/config.alloy`: added on top of a client stack on the client's own machine: Portainer Edge Agent (support, client can switch it off), Alloy log agent (only that client's containers, `site=on-prem`), cloudflared, rclone offsite copy of the nightly backups. Each part runs only when its settings are filled.
+- `ops/smartwinfa.sh`: `fleet enroll <id>` (creates the Portainer edge environment and writes EDGE_ID/EDGE_KEY/LOKI_PUSH_URL into `ops/clients/<id>.env`), `site up|down|status <id>`, `site support <id> on|off`; settings reader no longer stops on a missing key.
+- `ops/fleet`: Portainer edge tunnel port 8000 published, edge/log addresses in `fleet.env.example` (renamed from `.env.example`, which the `.env*` ignore rule had kept out of Git, so `fleet up` failed on a fresh checkout), fleet Alloy skips on-prem containers; both Alloy configs refresh containers every 15 s.
+- `ops/windows/setup-windows.ps1 -SiteEnv <file>`: installs an enrolled client site on a Windows machine.
+- Tested locally: Vaishali as an on-prem site appears in Portainer as an Edge environment (heartbeat), its logs reach Grafana as client=vaishali, support off/on works.
+
 ## 2026-10-23 (Fleet dashboard + client stacks)
 - New `ops/` setup for running many clients on one Docker host: `ops/smartwinfa.sh` (fleet up/down/tunnel, client new/up/down/status/logs/backup/restore/update, list, build-local).
   - `ops/fleet/compose.yaml`: Portainer CE (stacks and containers), Grafana + Loki + Alloy (every container's log labelled client / service / level, "SMARTwinFA Clients" dashboard), Uptime Kuma, cloudflared (profile `tunnel`).
