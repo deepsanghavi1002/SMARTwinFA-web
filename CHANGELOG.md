@@ -3,6 +3,13 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-23 (Fleet dashboard + client stacks)
+- New `ops/` setup for running many clients on one Docker host: `ops/smartwinfa.sh` (fleet up/down/tunnel, client new/up/down/status/logs/backup/restore/update, list, build-local).
+  - `ops/fleet/compose.yaml`: Portainer CE (stacks and containers), Grafana + Loki + Alloy (every container's log labelled client / service / level, "SMARTwinFA Clients" dashboard), Uptime Kuma, cloudflared (profile `tunnel`).
+  - `ops/client/compose.yaml`: one stack per client (web, api, postgres, nightly backup) from `ops/clients/<id>.env`; restores the client's dump on first start or starts empty.
+  - `ops/clients/rishabh.env.example`: Rishabh Plastic demo client (web on http://localhost:4101). Secrets (`*.env`, Portainer password) are git-ignored.
+  - `ops/README.md`: demo, daily use and going live behind Cloudflare Tunnel + Access.
+
 ## 2026-10-21 (Ask AI: 50 questions, no model)
 - New: `lib/ask/ask.ts`, `app/api/ask/route.ts`, `features/ask/AskAi.tsx`, `app/page.tsx`, `app/globals.css`. An Ask AI panel (button in the top strip, minimizable) answers 50 questions from the open company's own data with fixed read-only queries and no model: accounts and outstanding (balances as the Outstanding Agewise report takes them; overdue = bill date + the account's credit days), sales and purchase (sales before tax, less credit notes against the Sale book, with debit notes against it adding), inventory and stock (PROD_BALANCE closing; valuation at average cost), banking, cash and expenses, and financial analysis (Trial Balance, Profit / Loss, Balance Sheet and Fund Flow open the existing reports). Rows of party answers open that party's Ledger on a double-click or Enter; party and product help lists narrow as they are typed; a question it does not know is refused with the nearest ones listed.
 
