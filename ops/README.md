@@ -39,6 +39,19 @@ ops/smartwinfa.sh list
 - **Uptime check:** in Uptime Kuma add an HTTP monitor `http://rishabh-web:3000/api/health` (every client's web
   container is reachable by `<id>-web` on the shared `smartwinfa-fleet` network).
 
+## Windows PC with nothing installed
+
+`ops/windows/setup-windows.ps1` does everything: checks Windows (10 22H2 / 11), installs WSL 2, Git and Docker Desktop
+with winget, clones this repository (branch `ops-fleet-dashboard`), creates the Rishabh settings, builds the images and
+starts the dashboard and the Rishabh stack. In an Administrator PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\setup-windows.ps1                                   # optional: -Folder D:\SMARTwinFA-web -SeedDump C:\path\rishabh-plastic27.dump
+```
+
+Windows needs one or two restarts (after WSL and after Docker Desktop); run the script again after each and it continues.
+
 ## Daily use
 
 | Task | Command |

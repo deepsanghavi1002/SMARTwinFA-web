@@ -12,8 +12,11 @@
 #   ops/smartwinfa.sh build-local                   build the app images from this repository (tag "local")
 set -euo pipefail
 
-OPS="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$OPS/.." && pwd)"
+# On Windows (Git Bash) give docker real Windows paths (D:/...) and stop Git Bash rewriting "/..." arguments.
+winpwd() { pwd -W 2>/dev/null || pwd; }
+export MSYS_NO_PATHCONV=1
+OPS="$(cd "$(dirname "$0")" && winpwd)"
+ROOT="$(cd "$OPS/.." && winpwd)"
 FLEET="$OPS/fleet"
 CLIENTS="$OPS/clients"
 
