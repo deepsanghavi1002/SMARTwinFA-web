@@ -257,9 +257,10 @@ export async function POST(request: Request) {
           return { details: await masterDetails(loader, body.kind, key), warnings: loader.warnings };
         }
         case "party-stock": {
-          const code = Number(body.code);
-          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose an account row");
-          return { stock: await partyStock(loader, code), warnings: loader.warnings };
+          const code = Number(body.code ?? 0);
+          const prodKey = Number(body.prodKey ?? 0);
+          if (!Number.isInteger(code) || code < 0 || !Number.isInteger(prodKey) || prodKey < 0 || (code === 0 && prodKey === 0)) throw new Error("Choose an account or a product row");
+          return { stock: await partyStock(loader, code, prodKey, typeof body.date === "string" ? body.date : ""), warnings: loader.warnings };
         }
         case "ledger": {
           const code = Number(body.code);

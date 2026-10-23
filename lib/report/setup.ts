@@ -276,7 +276,7 @@ async function reportRights(loader: Loader, menuShortName: string) {
   const encoded = securityWrite(`Menu-${menuShortName}`, 0);
   const row = (await loader.readTable(`SELECT u_roll_id FROM ${SYSTEM_SCHEMA}.security WHERE u_id = $1 AND u_module = $2 LIMIT 1`, [session.userNo, encoded]))?.[0];
   const at = (position: number) => {
-    if (!row) return true;
+    if (!row || session.userType.trim().toUpperCase() === "AD") return true;
     const roll = text(row, "u_roll_id");
     return roll.length > position ? securityRead(roll.charAt(position), position + 1) === "1" : true;
   };

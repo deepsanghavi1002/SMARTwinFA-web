@@ -230,6 +230,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const keepHelpAt = useRef(false);
   /** The F7 window of an account help row: that party's stock lines (Partywise Stock). */
   const [stockView, setStockView] = useState<PartyStockData | null>(null);
+  /** The cell the keyboard returns to when the product-fixed stock window closes ("" for the account help's F7). */
+  const stockBack = useRef("");
+  /** The product the F7 stock window was opened from: the product help lands on it when the keyboard comes back. */
+  const stockLand = useRef<number | null>(null);
+  /** The cursor is in a Rate cell: the status line names its F7. */
+  const [onRate, setOnRate] = useState(false);
   /** A LINK register: the pending source entries, then their lines, are ticked in a list before the entry is made from them. */
   const [linkPick, setLinkPick] = useState<{ step: "entries" | "lines"; list: LinkListData; processKeys: number[] } | null>(null);
   const [ledgerView, setLedgerView] = useState<AccountLedgerData | null>(null);
@@ -568,9 +574,36 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setBusy("");
     }
   };
+  /** F7 on the product help (this party, the highlighted product) or on a Rate cell (that row's product, every party): newest first. */
+  const showProductStock = async (prodKey: number, withParty: boolean, backTo: string) => {
+    if (!prodKey) return;
+    setBusy("Product Stock");
+    try {
+      const body = await call<{ stock: PartyStockData }>("party-stock", { code: withParty ? party?.code ?? 0 : 0, prodKey, date: values.dtp_date ?? "" });
+      stockBack.current = backTo;
+      stockLand.current = withParty ? prodKey : null;
+      setStockView(body.stock);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  const productHelpStock = () => {
+    const rows = shownHelp?.rows ?? [];
+    const row = rows[Math.min(helpAt, rows.length - 1)];
+    if (row && productRow !== null) void showProductStock(Number(row.prod_key), true, `${productRow}:prod_key`);
+  };
+  const rateStock = (row: number) => {
+    const key = lines[row]?.product?.key;
+    if (key) void showProductStock(Number(key), false, `${row}:rate`);
+  };
   const closeStock = () => {
     setStockView(null);
     keepHelpAt.current = true;
+    const back = stockBack.current;
+    stockBack.current = "";
+    if (back) { setTimeout(() => focusEntryCell(formRef.current, back), 0); return; }
     setTimeout(() => { if (voucher) { if (voucherRow !== null) focusEntryCell(formRef.current, `${voucherRow}:name`); } else partyRef.current?.focus(); }, 0);
   };
   const closeLedger = () => {
@@ -619,6 +652,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     const open = helpKind === kind && shownHelp !== null;
     if (event.key === "F1" && open) { event.preventDefault(); void showDetails(kind); return true; }
     if (event.key === "F7" && open && kind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+    if (event.key === "F7" && open && kind === "product") { event.preventDefault(); productHelpStock(); return true; }
     if (event.key === "F8" && open && kind === "account") { event.preventDefault(); void showLedger(); return true; }
     if (event.key === "ArrowDown" || event.key === "F2") {
       event.preventDefault();
@@ -895,7 +929,9 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setProductRow(row);
     if (productText && productText.row !== row) setProductText(null);
     setHelpAt(0);
-    helpLandOn.current = lines[row]?.product?.key ?? null;
+    // Back from the F7 stock window: the help stops on the product it was opened from, not the first one.
+    helpLandOn.current = stockLand.current ?? lines[row]?.product?.key ?? null;
+    stockLand.current = null;
     setLandTick((now) => now + 1);
     // The keyboard goes into the product help (it is read already); Esc brings it back to this cell.
     // A book with a product filter (PGFILT) asks the product type first, for each new row.
@@ -1916,6 +1952,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 // The product-type filter sits above the first row: ↑ on it goes there.
                 if (helpKind === "product" && productHelp?.filter && event.key === "ArrowUp" && helpAt === 0) { event.preventDefault(); formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(); return true; }
                 if (event.key === "F7" && helpKind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+                if (event.key === "F7" && helpKind === "product") { event.preventDefault(); productHelpStock(); return true; }
                 if (event.key === "F8" && helpKind === "account") { event.preventDefault(); void showLedger(); return true; }
                 if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; }
                 // The product help has the keyboard while a row is being filled: "+" or "-" before any search text marks the row (stock in / out).
@@ -1934,7 +1971,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               onResetPosition={helpKind === "account" ? accountDrag.reset : productDrag.reset}
               formatCell={helpCell}
               f1
-              f7={helpKind === "account"}
+              f7={helpKind === "account" ? true : "Party-Product"}
               topSlot={helpKind === "product" && productHelp?.filter && productHelp.filter.options.length > 0 ? (
                 <div className="ent-filter-bar" onKeyDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
                   if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); void endProducts(); }
@@ -1999,6 +2036,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                         onCell={editCell}
                         onProductText={(row, text) => { setProductText({ row, text }); setProductRow(row); setHelpAt(0); if (helpKind !== "product") void openHelp("product"); }}
                         onProductKeys={productKeys}
+                        onRateStock={rateStock}
+                        onRateFocus={setOnRate}
                         onProductFocus={productFocus}
                         onProductBlur={(event) => leaveField(event, "product")}
                         tools={tools}
@@ -2119,6 +2158,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" />Log</button>}
         <div className="ent-status" aria-live="polite">
           {busy && <span className="mp-busy">{busy}…</span>}
+          {onRate && <span title="F7 in the Rate cell shows this product's rate in every book and party, newest first"><b>F7</b>-Product Rate</span>}
           {book && <span>{def?.statusHead} · {register?.text} · {voucher ? values.cmb_side : book.entryFor}{book.slab && !voucher ? ` · ${book.taxGroup === "G" ? "CGST" : book.taxGroup === "I" ? "IGST" : "VAT"}` : ""}{isRestored ? " · Edit" : ""}</span>}
           {warnings.map((warning) => <span key={warning} className="ent-warning" title={warning}>⚠ {warning}</span>)}
         </div>

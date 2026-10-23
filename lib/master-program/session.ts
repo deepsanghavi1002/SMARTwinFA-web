@@ -192,12 +192,14 @@ export async function readRights(client: Client, session: MasterSession, moduleN
     return roll.length > position ? securityRead(roll.charAt(position), position + 1) === "1" : true;
   };
   const password = (value: string | null | undefined) => (toText(value) === "" ? "" : securityRead(toText(value), 0));
+  // Admin (AD) is a super user: every right is allowed, but any password kept on the module still applies.
+  const admin = session.userType.trim().toUpperCase() === "AD";
   return {
-    restricted: all.length > 0,
-    entry: flag(0),
-    add: flag(2),
-    edit: flag(4),
-    delete: flag(6),
+    restricted: !admin && all.length > 0,
+    entry: admin || flag(0),
+    add: admin || flag(2),
+    edit: admin || flag(4),
+    delete: admin || flag(6),
     modulePassword: password(row?.u_module_pass),
     addPassword: password(row?.u_pass_1),
     editPassword: password(row?.u_pass_2),

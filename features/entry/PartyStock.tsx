@@ -13,7 +13,7 @@ import { useHelpView } from "../grid/useHelpView";
  * are the ones the party's data has. Esc, or ×, gives the keyboard back to the help.
  */
 const plain = (value: string) => value;
-const WIDTH: Record<string, number> = { date: 90, docNo: 140, product: 260, addQty: 90, lessQty: 90, rate: 90, value: 110 };
+const WIDTH: Record<string, number> = { date: 90, docNo: 140, party: 220, book: 150, product: 260, addQty: 90, lessQty: 90, rate: 90, value: 110 };
 
 export function PartyStock({ stock, onClose }: { stock: PartyStockData; onClose: () => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -42,8 +42,8 @@ export function PartyStock({ stock, onClose }: { stock: PartyStockData; onClose:
           help={shown}
           focusRow={Math.min(focusRow, shown.rows.length - 1)}
           onFocusRow={setFocusRow}
-          searchKey="product"
-          title="PARTYWISE STOCK"
+          searchKey={stock.columns.some((column) => column.key === "product") ? "product" : "party"}
+          title={stock.caption ?? "PARTYWISE STOCK"}
           onClose={onClose}
           onEscape={onClose}
           style={{ position: "relative", right: "auto", bottom: "auto", top: "auto", left: "auto", maxHeight: "none", maxWidth: "calc(100vw - 32px)", ...(drag.style ?? {}) }}
