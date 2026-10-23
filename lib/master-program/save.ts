@@ -84,7 +84,8 @@ async function checkRights(loader: Loader, programId: number, menuShortName: str
     const encoded = securityWrite(moduleName, 0);
     const row = rows.find((candidate) => toText(field(candidate, "u_module")) === encoded);
     const roll = toText(field(row, "u_roll_id"));
-    const granted = !row || roll.length <= position || securityRead(roll.charAt(position), position + 1) !== "0";
+    const admin = loader.session.userType.trim().toUpperCase() === "AD"; // super user: rights allowed, passwords still asked
+    const granted = admin || !row || roll.length <= position || securityRead(roll.charAt(position), position + 1) !== "0";
     if (!granted) return denied(message);
     const stored = toText(field(row, passColumn));
     if (row && stored !== "") {

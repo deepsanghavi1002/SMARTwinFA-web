@@ -62,8 +62,8 @@ export function HelpList({
   f1?: boolean;
   /** Something shown at the top of the help, under its title (the product help's product-type filter): it moves with the window. */
   topSlot?: ReactNode;
-  /** The help offers F7 (the Partywise Stock of the row's account). */
-  f7?: boolean;
+  /** The help offers F7: true is the Partywise Stock of the row's account; a text is the tag of another F7 view ("Party-Product"). */
+  f7?: boolean | string;
   /** The help offers F8 (the Ledger of the row's account): said in the title's hint. */
   f8?: boolean;
 }) {
@@ -215,7 +215,8 @@ export function HelpList({
           />
         </span>
         {f1 && <kbd className="mp-help-f1" title="F1 opens the whole master record of the highlighted entry"><b>F1</b> Master details</kbd>}
-        {f7 && <kbd className="mp-help-f1" title="F7 opens the Partywise Stock of the highlighted account"><b>F7</b> Partywise Stock</kbd>}
+        {f7 === true && <kbd className="mp-help-f1" title="F7 opens the Partywise Stock of the highlighted account"><b>F7</b> Partywise Stock</kbd>}
+        {typeof f7 === "string" && f7 !== "" && <kbd className="mp-help-f1" title={`F7 opens the ${f7} stock of the highlighted row`}><b>F7</b>-{f7}</kbd>}
         {f8 && <kbd className="mp-help-f1" title="F8 opens the Ledger of the highlighted account"><b>F8</b> Ledger</kbd>}
         <span className="mp-help-tip">type to search the marked column · ← → change column · Ctrl+F search box</span>
         {onClose && <button type="button" onClick={onClose} aria-label="Close help">×</button>}

@@ -29,7 +29,7 @@ const BLANK_WINDOW = 30;
  */
 export function ProductGrid({
   columns, frozen, lines, uoms, totals, decimals, style, totalsStyle, productText, locked, tools, amountOpen, beforeLeave,
-  onCell, onProductText, onProductKeys, onProductFocus, onProductBlur, onDeleteRow, lastEditRow, onLeaveProducts, onProductClick,
+  onCell, onProductText, onProductKeys, onRateStock, onRateFocus, onProductFocus, onProductBlur, onDeleteRow, lastEditRow, onLeaveProducts, onProductClick,
 }: {
   columns: readonly EntryColumn[];
   frozen: number;
@@ -51,6 +51,10 @@ export function ProductGrid({
   onProductText: (row: number, text: string) => void;
   /** Keys in a Product cell: the screen moves the help with them; returns true when it took the key. */
   onProductKeys: (event: ReactKeyboardEvent<HTMLInputElement>, row: number) => boolean;
+  /** F7 in a Rate cell: the screen shows that row's product stock across every party. */
+  onRateStock?: (row: number) => void;
+  /** The keyboard entered (true) or left (false) a Rate cell. */
+  onRateFocus?: (on: boolean) => void;
   /** A Product cell got the keyboard: the screen shows the product help beside it. */
   onProductFocus: (row: number) => void;
   onProductBlur: (event: React.FocusEvent<HTMLInputElement>) => void;
@@ -114,6 +118,8 @@ export function ProductGrid({
       else next(row, key);
       return true;
     }
+    // F7 in the Rate cell: the stock of the row's product across every party, newest first.
+    if (event.key === "F7" && key.toLowerCase() === "rate" && onRateStock) { event.preventDefault(); onRateStock(row); return true; }
     if (event.altKey) return false;
     if (event.key === "ArrowDown" && row + 1 < rowCount) { event.preventDefault(); focusCell(row + 1, key); return true; }
     if (event.key === "ArrowUp" && row > 0) { event.preventDefault(); focusCell(row - 1, key); return true; }
@@ -171,7 +177,9 @@ export function ProductGrid({
           const key = (id?.getAttribute("data-cell") ?? id?.getAttribute("data-cell-wrap") ?? "").split(":")[1];
           const at = columns.findIndex((column) => column.key === key);
           if (at >= 0 && at >= columns.length - 2 && grid.current) grid.current.scrollLeft = grid.current.scrollWidth;
+          onRateFocus?.(key?.toLowerCase() === "rate");
         }}
+        onBlurCapture={() => onRateFocus?.(false)}
         onScroll={(event) => { if (totalsBox.current) totalsBox.current.scrollLeft = event.currentTarget.scrollLeft; setTopRow(Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT)); }}>
         <table style={{ width: tableWidth }}>
           {colgroup}
