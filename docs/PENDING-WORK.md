@@ -106,15 +106,22 @@ two-sided table (debit left, credit right) with the procedure's own SR_NO / row 
 profit & loss levels, gross and net profit / loss lines, appropriation (level 3), Profit Transfer lines,
 Profit Percentage. Checked on live data: trading and profit & loss each balance (10,54,84,608.47 and
 6,13,26,255.21); a typed Closing Amount adds the CLOSING STOCK line and moves the gross profit by it.
-- [ ] Options refused: Previous Year Balance (CHK_PREV_BAL), Cash / Cheque (CHK_CASH_CHQ), Cash Sale
-  (CHK_CSPLREQ). Each has its own cursor query and extra columns. (2026-10-08)
-- [ ] Closing stock from the stock report (CHK_UPD_MASTER, Report 17 engine, not ported): only a typed
-  Closing / Opening Amount is used. The selection screen does not fill the Closing Amount box from
-  `txt_ClosingAmt` the way the desktop does, so with "Closing Amount" chosen it must be typed. (2026-10-08)
+- [x] Previous Year Balance (CHK_PREV_BAL), Cash / Cheque (CHK_CASH_CHQ) and Cash Sale (CHK_CSPLREQ) ported
+  from the procedure the owner supplied (2026-10-24). Previous Year Balance checked on live data (up-to and
+  between dates); Cash / Cheque and Cash Sale are only reachable where the company's print parameters list them
+  (not in RISHABH PLASTIC), so they are written from the procedure and not run. Two of the three together are
+  refused: the procedure's SELECT and FETCH column lists disagree and the desktop fails on them.
+- [x] Closing stock from the stock report (CHK_UPD_MASTER without CHK_STOCK_VAL_MANUAL, selection not None) done
+  2026-10-24: the Stock report (Summary, valuation Actual, the options of this report, every inventory product) is run
+  and its VALUE total is the Closing Amount; a between-date report takes the OPEN_VALUE total (Between Date Opening Stock
+  Value Required ticked) as the Opening Amount. The value is used in the report, not stored (see next item).
 - [ ] The procedure's writes to AC_BALANCE.OS_BILLDIFF (profit shared to the partners, closing stock)
   are not done: the web report only reads. (2026-10-08)
-- [ ] Year-ending entry checks ("Opening / Closing Figure Change Not Allowed After Year Ending Entry
-  Pass", END- journals) not ported. (2026-10-08)
+- [x] Year-ending entry checks ported (2026-10-24): with an END- journal of book 19 in the year, a typed
+  Closing / Opening figure that differs from it is refused and Profit Transferred To Partner is dropped.
+  RISHABH PLASTIC has such an entry, so its Profit Transfer lines (0% per partner) no longer show.
+- [ ] Licence 29 / 73 leave out entries booked against the CA_ENT account and licence 34 drops the A_POSTING <> N
+  filter, as the procedure does; not run (no such company here). (2026-10-24)
 - [ ] This company has capital heads 0902, 0903 and 0905 together, so both the 0903 and the partnership
   blocks run (NET PROFIT before and after the appropriation lines, and 0%-lines per partner for Profit
   Transfer). Probably what the desktop does here; confirm with a desktop run. (2026-10-08)

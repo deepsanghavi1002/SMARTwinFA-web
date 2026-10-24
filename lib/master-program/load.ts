@@ -29,6 +29,8 @@ type Row = Record<string, unknown>;
 
 export class Loader {
   readonly warnings: string[] = [];
+  /** Writes a report asks for (Update Value In Master): the report runs read-only, the request carries them out afterwards in a transaction of their own. */
+  readonly writes: { sql: string; params: unknown[] }[] = [];
   private savepoint = 0;
 
   constructor(readonly client: Client, readonly session: MasterSession) {

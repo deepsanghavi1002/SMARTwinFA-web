@@ -149,7 +149,7 @@ function AskBusy() {
   );
 }
 
-export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger, onOpenReport }: { minimized: boolean; onMinimize: () => void; onRestore: () => void; onClose: () => void; onOpenLedger: (code: number, from?: string, to?: string) => void; onOpenReport: (name: string, from?: string, to?: string, pivot?: PivotHint, pick?: string, party?: { code: number; name: string }, sumif?: SumifHint) => void }) {
+export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger, onOpenReport }: { minimized: boolean; onMinimize: () => void; onRestore: () => void; onClose: () => void; onOpenLedger: (code: number, from?: string, to?: string) => void; onOpenReport: (name: string, from?: string, to?: string, pivot?: PivotHint, pick?: string, party?: { code: number; name: string }, sumif?: SumifHint, setup?: { choices: Readonly<Record<string, string>>; checks: readonly string[] }) => void }) {
   const selection = useStartupSelection();
   const [questions, setQuestions] = useState<Question[]>([]);
   const [text, setText] = useState("");
@@ -260,6 +260,20 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
   };
   const group = (from: number, to: number) => questions.filter((item) => item.id >= from && item.id <= to);
   const some = (ids: readonly number[]) => ids.map((id) => questions.find((item) => item.id === id)).filter((item): item is Question => item !== undefined);
+  /** The list of questions by heading; what is typed in the box narrows it to the questions that have every word of it (in the question or its heading). */
+  const sections: { title: string; list: Question[] }[] = [
+    { title: "Accounts and outstanding", list: group(1, 10) }, { title: "Sales and purchase", list: [...group(11, 20), ...group(61, 69)] }, { title: "Profit, returns and costing", list: group(70, 77) },
+    { title: "Collection and payments", list: some([80, 90, 91, 92, 93, 94, 95, 96]) }, { title: "Customers and suppliers", list: some([83, 84, 85, 86, 87, 88, 89, 100]) }, { title: "Entry control", list: some([81, 82, 97, 98, 99]) },
+    { title: "Trends and concerns", list: some([101, 102, 103, 104, 105]) }, { title: "GST checks", list: some([106, 107, 108, 109, 110]) }, { title: "Management review and forecast", list: some([111, 112, 113, 114, 115, 116, 138, 139]) },
+    { title: "Cash flow, credit and collection", list: some([117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 140]) }, { title: "Suppliers, purchase orders and stock holding", list: some([127, 128, 129, 130, 131, 132]) },
+    { title: "Expenses and overheads", list: some([133, 134, 135, 136, 137]) }, { title: "Manufacturing and finished-product costing", list: some([141, 142, 143, 144, 145, 146, 147, 148, 149]) },
+    { title: "Inventory and stock", list: group(31, 40) }, { title: "Banking, cash and expenses", list: group(41, 50) }, { title: "Financial reports and analysis", list: group(51, 60) },
+  ];
+  const words = text.toLowerCase().split(/[^a-z0-9%]+/).filter((word) => word !== "");
+  const searching = words.length > 0;
+  const searched = searching
+    ? sections.map((section) => ({ title: section.title, list: section.list.filter((item) => words.every((word) => `${item.question} ${section.title}`.toLowerCase().includes(word))) })).filter((section) => section.list.length > 0)
+    : sections;
 
   const answer: AskAnswer | null = reply?.kind === "answer" ? reply.answer : null;
   /** What is typed (or picked) over each column of the answer's table. */
@@ -286,7 +300,7 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
         </span>
       </header>
       <form className="ask-form" hidden={minimized} onSubmit={(event) => { event.preventDefault(); void send(text); }}>
-        <input ref={box} value={text} maxLength={300} placeholder="Ask about your accounts, e.g. top 10 outstanding customers" aria-label="Question" onChange={(event) => setText(event.target.value)} />
+        <input ref={box} value={text} maxLength={300} placeholder="Type to search the questions, or ask, e.g. top 10 outstanding customers" aria-label="Question" onChange={(event) => setText(event.target.value)} />
         <button type="submit" disabled={busy || text.trim() === ""}>{busy ? <span className="ask-spin" aria-label="Working" /> : "Ask"}</button>
       </form>
       <div className={`ask-body${busy ? " ask-body-busy" : ""}`} hidden={minimized}>
@@ -389,14 +403,14 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
             {filtering && <p className="ask-note ask-filter-count">Showing {shown.length.toLocaleString("en-IN")} of {answer.rows.filter((row) => !isTotalRow(row)).length.toLocaleString("en-IN")} rows (the total line is hidden while a filter is on). <button type="button" className="ask-clear" onClick={() => setFilters({})}>Clear filters</button></p>}
             {answer.note && <p className="ask-note">{answer.note}</p>}
             {answer.rows.some((row) => typeof row.code === "number" && row.code > 0) && <p className="ask-note">Double-click a row, or press Enter on it, to open the ledger of that party.</p>}
-            {answer.report && <button type="button" className="ask-open" onClick={() => onOpenReport(answer.report!.name, answer.report!.from, answer.report!.to, answer.report!.pivot, answer.report!.pick, answer.report!.party, answer.report!.sumif)}>{answer.report.label}</button>}
+            {answer.report && <button type="button" className="ask-open" onClick={() => onOpenReport(answer.report!.name, answer.report!.from, answer.report!.to, answer.report!.pivot, answer.report!.pick, answer.report!.party, answer.report!.sumif, answer.report!.setup)}>{answer.report.label}</button>}
             {answer.ledger && <button type="button" className="ask-open" onClick={() => onOpenLedger(answer.ledger!.code, answer.period?.from, answer.period?.to)}>Open ledger report</button>}
           </div>
         )}
         {!reply && !error && (
           <div className="ask-card" ref={listed}>
             <p className="ask-note">Pick a question, or type your own in plain words. Answers come straight from your data; nothing is guessed.</p>
-            {(memory.recent.length > 0 || memory.favourite.length > 0) && (
+            {!searching && (memory.recent.length > 0 || memory.favourite.length > 0) && (
               <div className="ask-memory">
                 {([["Recently asked", memory.recent, "r"], ["Most asked", memory.favourite, "f"]] as const).map(([heading, list, tag]) => list.length > 0 && (
                   <Fragment key={tag}>
@@ -411,28 +425,14 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
                 ))}
               </div>
             )}
-            <h4>Accounts and outstanding</h4>
-            <ul className="ask-list">{group(1, 10).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Sales and purchase</h4>
-            <ul className="ask-list">{[...group(11, 20), ...group(61, 69)].map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Profit, returns and costing</h4>
-            <ul className="ask-list">{group(70, 77).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Collection and payments</h4>
-            <ul className="ask-list">{some([80, 90, 91, 92, 93, 94, 95, 96]).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Customers and suppliers</h4>
-            <ul className="ask-list">{some([83, 84, 85, 86, 87, 88, 89, 100]).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Entry control</h4>
-            <ul className="ask-list">{some([81, 82, 97, 98, 99]).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Trends and concerns</h4>
-            <ul className="ask-list">{some([101, 102, 103, 104, 105]).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>GST checks</h4>
-            <ul className="ask-list">{some([106, 107, 108, 109, 110]).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Inventory and stock</h4>
-            <ul className="ask-list">{group(31, 40).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Banking, cash and expenses</h4>
-            <ul className="ask-list">{group(41, 50).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
-            <h4>Financial reports and analysis</h4>
-            <ul className="ask-list">{group(51, 60).map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
+            {searched.length === 0 && <p className="ask-note">No listed question has "{text.trim()}" in it. Press Ask to put the question in your own words.</p>}
+            {searched.length > 0 && searching && <p className="ask-note">{searched.reduce((total, section) => total + section.list.length, 0)} listed questions have all of these words. Press Ask to put your own wording.</p>}
+            {searched.map((section) => (
+              <Fragment key={section.title}>
+                <h4>{section.title}</h4>
+                <ul className="ask-list">{section.list.map((item) => <li key={item.id}><button type="button" data-question={item.question} onClick={() => ask(item.question)}>{item.question}</button></li>)}</ul>
+              </Fragment>
+            ))}
           </div>
         )}
       </div>

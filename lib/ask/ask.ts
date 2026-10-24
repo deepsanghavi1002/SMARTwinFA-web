@@ -44,7 +44,7 @@ export type AskAnswer = Readonly<{
   /** The dates the answer is for (a ledger or report opened from it uses them). */
   period?: Readonly<{ from: string; to: string }>;
   /** The answer is a report of the program: this button opens it (name is the report's menu action). */
-  report?: Readonly<{ name: string; label: string; /** The dates the question named (YYYY-MM-DD): the report opens for them. */ from?: string; to?: string; /** A pivot to set up on the report once it has run (what the question asked for, by the names used). */ pivot?: PivotHint; /** The question, for the report to choose its first combo from (purchase register, not the sale one it opens on). */ sumif?: SumifHint; pick?: string; /** The party the question named (for single-account reports, and to narrow any other): ticked as the only account. */ party?: Readonly<{ code: number; name: string }> }>;
+  report?: Readonly<{ name: string; label: string; /** The dates the question named (YYYY-MM-DD): the report opens for them. */ from?: string; to?: string; /** A pivot to set up on the report once it has run (what the question asked for, by the names used). */ pivot?: PivotHint; /** The question, for the report to choose its first combo from (purchase register, not the sale one it opens on). */ sumif?: SumifHint; /** Choices (control name to item text) and options to tick as the report opens. */ setup?: Readonly<{ choices: Readonly<Record<string, string>>; checks: readonly string[] }>; pick?: string; /** The party the question named (for single-account reports, and to narrow any other): ticked as the only account. */ party?: Readonly<{ code: number; name: string }> }>;
 }>;
 export type AskReply =
   | Readonly<{ kind: "answer"; answer: AskAnswer; /** What answered it (for the memory): the template and the party or product chosen. */ used?: Readonly<{ templateId: number; partyCode?: number }> }>
@@ -195,6 +195,26 @@ async function summaryDetail(ctx: Ctx, detail: string): Promise<AskAnswer | null
     return { id: 0, title: `${side === "sale" ? "Sales" : "Purchases"} of HSN ${code} (${out.length})`, columns: [date("d", "Date"), text("doc", "Bill"), text("party", side === "sale" ? "Customer" : "Supplier"), text("product", "Product"), qty("qty", "Quantity"), money("value", "Taxable Value")],
       rows: out.length === 0 ? [] : [...out, { d: "", doc: "", party: "Total", product: "", qty: out.reduce((t, r) => t + r.qty, 0), value: out.reduce((t, r) => t + r.value, 0) }] };
   }
+  // A row of the dependence on major customers: the customers ranked from..to by net sales.
+  const bandOf = /^conc:(\d+):(\d+):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(detail);
+  if (bandOf) {
+    const all = (await netSales(ctx, bandOf[3], bandOf[4], true)).filter((row) => row.net > 0).sort((a, b) => b.net - a.net);
+    const total = sumOf(all, (row) => row.net);
+    const first = Number(bandOf[1]);
+    const list = all.slice(first, Number(bandOf[2]));
+    const band = sumOf(list, (row) => row.net);
+    return {
+      id: 0, title: `Customers ranked ${first + 1} to ${first + list.length} (${list.length})`, columns: [int("no", "Rank"), text("name", "Customer"), int("entries", "Entries"), ...salesColumns, money("share", "Share of All Sales %")],
+      rows: list.length === 0 ? [] : [...list.slice(0, 500).map((row, at) => ({ no: first + at + 1, name: row.name, entries: row.entries, sales: row.sales, returns: -row.returns, net: row.net, share: pctOf(row.net, total), code: row.code })), { no: "", name: "Total", entries: sumOf(list, (row) => row.entries), sales: sumOf(list, (row) => row.sales), returns: -sumOf(list, (row) => row.returns), net: band, share: pctOf(band, total) }],
+      note: `${dmy(bandOf[3])} to ${dmy(bandOf[4])}. ${SALES_NOTE} Double-click a row to open the customer's ledger.${list.length > 500 ? " The first 500 are shown." : ""}`,
+    };
+  }
+  // A row of the revenue by Sales Man / Area ...: its customers.
+  const groupOf = /^grp:(\d+):([^:]*):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(detail);
+  if (groupOf) return groupCustomers(ctx, Number(groupOf[1]), decodeURIComponent(groupOf[2]), groupOf[3], groupOf[4]);
+  // A line of the payables to suppliers: the bills falling due in its days.
+  const supplierDue = /^supdue:(-?\d+):(-?\d+)$/.exec(detail);
+  if (supplierDue) return supplierDueDetail(ctx, Number(supplierDue[1]), Number(supplierDue[2]));
   // A row of the expense questions: that expense account's entries in this month and in the days of last month it is compared with.
   const expenseOf = /^exp:([^:]*):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(detail);
   if (expenseOf) {
@@ -348,25 +368,25 @@ T.push({
  */
 type Bill = Readonly<{ code: number; name: string; doc: string; billDate: string; due: string; pending: number; overdueDays: number; billIso: string; dueIso: string; credit: number }>;
 
-async function agewiseBills(ctx: Ctx): Promise<Bill[]> {
+async function agewiseBills(ctx: Ctx, book: 2 | 3 = 2): Promise<Bill[]> {
   const open = await rows(ctx,
     `SELECT ac.code, btrim(ac.name) AS name, COALESCE(ac.credit_days, 0)::int AS credit_days, o.out_key, o.out_fulldocno AS doc, led.doc_date AS bill_date, led.doc_no, to_char(led.doc_date, 'YYYYMMDD') AS sortdate,`
     + ` (o.out_entryamt::numeric - COALESCE(s.setoff, 0) - o.out_ly_setoff::numeric) AS pending`
     + ` FROM ${ctx.sch}.outclear o JOIN ${ctx.sch}.account ac ON ac.code = o.code JOIN ${ctx.sch}.ledger led ON led.led_key = o.out_ledid`
     + ` LEFT JOIN (SELECT out_ag_outid, SUM(out_setoff::numeric) AS setoff FROM ${ctx.sch}.outclear WHERE out_date <= $1::date GROUP BY out_ag_outid) s ON s.out_ag_outid = o.out_key`
-    + ` WHERE o.out_dbcode = 1 AND ac.book = 2 AND ac.os_flag <> 'N' AND ac.a_pos <> 'D' AND led.doc_pos <> 'D' AND led.doc_date <= $1::date`
+    + ` WHERE o.out_dbcode = ${book === 2 ? 1 : 2} AND ac.book = ${book} AND ac.os_flag <> 'N' AND ac.a_pos <> 'D' AND led.doc_pos <> 'D' AND led.doc_date <= $1::date`
     + ` AND ((led.doc_posting = 'L' AND o.out_entryamt::numeric - o.out_ly_setoff::numeric <> 0) OR led.doc_posting <> 'L')`
     + ` AND (o.out_entryamt::numeric - COALESCE(s.setoff, 0) - o.out_ly_setoff::numeric) > 0`, [ctx.today]);
   const byParty = new Map<number, Record<string, unknown>[]>();
   for (const row of open) { const code = num(row.code); (byParty.get(code) ?? byParty.set(code, []).get(code)!).push(row); }
-  const bal = new Map((await balances(ctx, 2, [...byParty.keys()])).map((row) => [row.code, row]));
+  const bal = new Map((await balances(ctx, book, [...byParty.keys()])).map((row) => [row.code, row]));
   const today = new Date(`${ctx.today}T00:00:00`).getTime();
   const yearStart = new Date(ctx.session.tarikh1.getFullYear(), ctx.session.tarikh1.getMonth(), ctx.session.tarikh1.getDate());
   const out: Bill[] = [];
   for (const [code, list] of byParty) {
     const party = bal.get(code);
     if (!party) continue;
-    let left = party.closing;
+    let left = owed(book, party);
     if (left <= 0) continue;
     const credit = num(list[0].credit_days);
     const dueOf = (when: Date) => { const due = new Date(when.getFullYear(), when.getMonth(), when.getDate() + credit); return { due, days: Math.round((today - due.getTime()) / 86400000) }; };
@@ -1347,7 +1367,7 @@ T.push({
     const last = new Map<string, { name: string; day: string }>();
     const schemas = [ctx.sch, await previousYearSchema(ctx, ctx.session.tarikh1)].filter((schema): schema is string => schema !== null);
     for (const schema of schemas) {
-      for (const row of await rows(ctx, `SELECT btrim(ac.name) AS name, to_char(MAX(l.doc_date), 'YYYY-MM-DD') AS day FROM ${schema}.ledger l JOIN ${schema}.account ac ON ac.code = l.code WHERE l.book = ${SALE} AND l.doc_pos = 'A' AND ac.book = 2 GROUP BY ac.name`)) {
+      for (const row of await rows(ctx, `SELECT btrim(ac.name) AS name, to_char(MAX(l.doc_date), 'YYYY-MM-DD') AS day FROM ${schema}.ledger l JOIN ${schema}.account ac ON ac.code = l.code WHERE l.book = ${SALE} AND l.doc_pos = 'A' AND l.doc_posting = 'P' AND ac.book = 2 GROUP BY ac.name`)) {
         const key = String(row.name).toLowerCase();
         const kept = last.get(key);
         if (!kept || String(row.day) > kept.day) last.set(key, { name: String(row.name), day: String(row.day) });
@@ -2228,7 +2248,6 @@ const openReport = (id: number, title: string, report: string, label: string, no
 
 T.push({ id: 51, question: "Show the trial balance.", defaultPeriod: "none", terms: [/trial/, /balance/], run: async () => openReport(51, "Trial balance", "REPORT_TRIAL_BALANCE", "Open Trial Balance", "The Trial Balance report gives every account's opening, debit, credit and closing. Open it and press Show.") });
 T.push({ id: 52, question: "What is my net profit this year?", defaultPeriod: "none", terms: [/net/, /profit|loss/], not: [/customer|party|product|each|gross|margin/], run: async () => openReport(52, "Net profit", "REPORT_PROFIT_LOSS", "Open Profit / Loss", "The net profit is the result of the Profit / Loss report for the year. Open it and press Show.") });
-T.push({ id: 53, question: "Show the profit and loss account.", defaultPeriod: "none", terms: [/profit/, /loss/, /account|statement|p ?& ?l|and loss/], not: [/customer|party|product|each|net profit/], run: async () => openReport(53, "Profit and loss account", "REPORT_PROFIT_LOSS", "Open Profit / Loss", "Open the Profit / Loss report and press Show.") });
 T.push({ id: 54, question: "What are my total assets and liabilities?", defaultPeriod: "none", terms: [/assets?/, /liabilit/], run: async () => openReport(54, "Assets and liabilities", "REPORT_BAL_SHEET", "Open Balance Sheet", "The Balance Sheet report gives the totals of assets and liabilities. Open it and press Show.") });
 T.push({ id: 56, question: "Show the balance sheet as of today.", defaultPeriod: "none", terms: [/balance sheet|balancesheet/], run: async () => openReport(56, "Balance sheet", "REPORT_BAL_SHEET", "Open Balance Sheet", "Open the Balance Sheet report, set Report Upto to the date you want and press Show.") });
 T.push({ id: 59, question: "Show the monthly fund flow.", defaultPeriod: "none", terms: [/fund/, /flow/], run: async () => openReport(59, "Fund flow", "REPORT_FUND_FLOW", "Open Fund Flow", "Open the Fund Flow report and press Show.") });
@@ -2432,6 +2451,1226 @@ T.push({
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
+// Management review, cash flow, suppliers, expenses and manufacturing costing (L)
+//
+// Questions an owner asks of the whole business. Each one is a fixed read-only query over the company's own tables, built from the pieces above
+// (sales, balances, the bills of the Outstanding Agewise report, cash and bank, purchases, expenses, the bill of material). Where the books do not
+// hold what a question needs (delivery dates, production orders), the answer says so instead of guessing.
+
+const addDays = (day: string, days: number) => { const at = new Date(`${day}T00:00:00`); return iso(new Date(at.getFullYear(), at.getMonth(), at.getDate() + days)); };
+const spanDays = (from: string, to: string) => Math.max(1, Math.round((new Date(`${to}T00:00:00`).getTime() - new Date(`${from}T00:00:00`).getTime()) / 86400000) + 1);
+const pctOf = (part: number, whole: number) => (whole === 0 ? 0 : (part / whole) * 100);
+const round2 = (value: number) => Math.round(value * 100) / 100;
+const asRows = (list: Record<string, string | number>[]) => list;
+const monthLabel = (day: Date) => `${MONTHS_SHORT[day.getMonth()]}-${day.getFullYear()}`;
+const sumOf = <Row>(list: readonly Row[], pick: (row: Row) => number) => list.reduce((total, row) => total + pick(row), 0);
+
+/** An amount written in the question: 500000, 5,00,000, 5 lakh, 2.5 crore, 50k (a number followed by days, months, weeks or % is not one). */
+function amountIn(question: string): number | null {
+  const pattern = /(\d[\d,]*(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|lacs?|thousand|k\b)?/gi;
+  for (let found = pattern.exec(question); found; found = pattern.exec(question)) {
+    const after = question.slice(found.index + found[0].length);
+    if (/^\s*(days?|months?|weeks?|years?|%|percent|per cent)/i.test(after)) continue;
+    const unit = (found[2] ?? "").toLowerCase();
+    const factor = unit.startsWith("cr") ? 10000000 : unit.startsWith("lakh") || unit.startsWith("lac") ? 100000 : unit === "thousand" || unit === "k" ? 1000 : 1;
+    const value = Number(found[1].replace(/,/g, "")) * factor;
+    if (Number.isFinite(value) && value >= 1) return value;
+  }
+  return null;
+}
+
+/** Cash in hand and at the banks: each account's opening with its entries up to today. */
+async function cashPosition(ctx: Ctx) {
+  const total = async (book: 4 | 6) => sumOf(await cashAccounts(ctx, book, ctx.today), (row) => row.opening + row.movement);
+  const cash = await total(4);
+  const bank = await total(6);
+  return { cash, bank, total: cash + bank };
+}
+
+const receivableTotal = async (ctx: Ctx) => sumOf((await balances(ctx, 2)).filter((row) => row.closing > 0), (row) => row.closing);
+const payableTotal = async (ctx: Ctx) => sumOf((await balances(ctx, 3)).filter((row) => row.closing < 0), (row) => -row.closing);
+const expenseTotal = async (ctx: Ctx, from: string, to: string) => num((await rows(ctx, `SELECT COALESCE(SUM(amount::numeric), 0) AS total FROM ${ctx.sch}.ledger WHERE book = 15 AND doc_pos = 'A' AND doc_date >= $1::date AND doc_date <= $2::date`, [from, to]))[0]?.total);
+/** Bills falling due after `after` (exclusive; none: from the beginning) up to `upto` (inclusive), by their due date. */
+const dueBetween = (bills: readonly Bill[], upto: string, after?: string) => round2(sumOf(bills.filter((bill) => bill.dueIso <= upto && (after === undefined || bill.dueIso > after)), (bill) => bill.pending));
+
+/** The months of the year so far (a fraction), for turning a year's total into a monthly average. */
+const monthsSoFar = (from: string, to: string) => Math.max(1, spanDays(from, to) / 30.4375);
+
+const supplierBillColumns = [text("name", "Supplier"), text("doc", "Bill"), date("billDate", "Bill Date"), date("due", "Due Date"), money("pending", "Pending"), int("overdueDays", "Days Overdue")];
+
+/** The supplier bills falling due in a window of days from today (offsets, the first exclusive): a row of the payables answers opens them. */
+async function supplierDueDetail(ctx: Ctx, after: number, upto: number): Promise<AskAnswer> {
+  const low = addDays(ctx.today, after);
+  const high = addDays(ctx.today, upto);
+  const list = (await agewiseBills(ctx, 3)).filter((bill) => bill.dueIso > low && bill.dueIso <= high).sort((a, b) => a.dueIso.localeCompare(b.dueIso) || b.pending - a.pending);
+  const shown = list.slice(0, 500).map((bill) => ({ name: bill.name, doc: bill.doc, billDate: bill.billDate, due: bill.due, pending: bill.pending, overdueDays: bill.overdueDays, code: bill.code }));
+  return { id: 0, title: `Supplier bills due (${list.length})`, columns: supplierBillColumns, rows: list.length === 0 ? [] : [...shown, { name: "Total", doc: "", billDate: "", due: "", pending: sumOf(list, (bill) => bill.pending), overdueDays: "" }], note: `${AGEWISE_NOTE.replace("(a party's", "(a supplier's")} ${list.length > 500 ? "The first 500 are shown." : ""}` };
+}
+
+// --- 111: where to look first
+
+T.push({
+  id: 111, question: "Which areas of the business need immediate attention?", defaultPeriod: "none",
+  terms: [/areas?|parts?|aspects?|things?/, /business|company|firm/, /immediate|urgent|attention|priority|first|critical/, /need|require|which|what/],
+  run: async (ctx) => ({ ...(await (T.find((template) => template.id === 105) as Template).run(ctx)), id: 111, title: "Areas of the business that need immediate attention" }),
+});
+
+// --- 112: next month's sales
+
+T.push({
+  id: 112, question: "Forecast next month's sales using historical data.", defaultPeriod: "none",
+  terms: [/forecast|predict|projection|project|expected|estimate|anticipate/, /sales?|revenue|turnover/, /next|coming|upcoming|future/], not: [/payment|collection|receipt|cash|expense|purchase/],
+  run: async (ctx) => {
+    const all = await recentSales(ctx, 12);
+    const list = all.filter((row) => !row.partial);
+    const columns = [text("month", "Month"), money("net", "Net Sales"), text("basis", "Basis")];
+    if (list.length < 3) return { id: 112, title: "Sales forecast", columns, rows: [], note: "There are fewer than three complete months of sales to forecast from." };
+    const today = new Date(`${ctx.today}T00:00:00`);
+    const steps = all.length > 0 && all[all.length - 1].partial ? 2 : 1;
+    const target = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    // A straight line through the months (least squares) carried on to next month, and the average of the last three months; the forecast is the two together.
+    const ys = list.map((row) => row.net);
+    const n = ys.length;
+    const meanX = (n - 1) / 2;
+    const meanY = sumOf(ys, (value) => value) / n;
+    const slope = sumOf(ys, (value) => value) === 0 ? 0 : ys.reduce((total, value, at) => total + (at - meanX) * (value - meanY), 0) / ys.reduce((total, _value, at) => total + (at - meanX) ** 2, 0);
+    const trend = Math.max(0, meanY + slope * (n - 1 + steps - meanX));
+    const recent = sumOf(ys.slice(-3), (value) => value) / 3;
+    const forecast = (trend + recent) / 2;
+    const spread = Math.sqrt(sumOf(ys, (value) => (value - meanY) ** 2) / n);
+    const label = monthLabel(target);
+    const history = list.map((row) => ({ month: row.month, net: row.net, basis: "Actual" }));
+    const change = recent === 0 ? 0 : pctOf(forecast - recent, recent);
+    return {
+      id: 112, title: `Sales forecast for ${label}`, columns,
+      summary: `Sales for ${label} are forecast at about ${grouping.format(forecast)} (${change >= 0 ? "+" : ""}${change.toFixed(1)}% on the last three months' average of ${grouping.format(recent)}), most likely between ${grouping.format(Math.max(0, forecast - spread))} and ${grouping.format(forecast + spread)}.`,
+      rows: [...history, { month: label, net: recent, basis: "Average of the last 3 months" }, { month: label, net: trend, basis: `Trend line through ${n} months (${slope >= 0 ? "rising" : "falling"} ${grouping.format(Math.abs(slope))} a month)` }, { month: label, net: forecast, basis: "Forecast (the two together)" }],
+      chart: { label: "month", value: "net", count: history.length },
+      note: `Net sales of the last ${n} complete months${steps === 2 ? " (this month is not complete, so it is left out)" : ""}. The range is the usual month-to-month swing of those months. A forecast from history only: it does not know of new orders, price changes or seasons. ${SALES_NOTE}`,
+    };
+  },
+});
+
+// --- 113: sales by region, branch, salesman and area
+
+const DIMENSIONS: readonly { label: string; pattern: string }[] = [
+  { label: "Salesman", pattern: "sales ?m[ae]n|sales ?person|sales ?rep|\\msalesm" }, { label: "Area", pattern: "\\marea" }, { label: "Region", pattern: "region" }, { label: "Branch", pattern: "branch" }, { label: "Zone", pattern: "\\mzone" },
+];
+
+/** Each customer's value of an account master add-on field (Sales Man, Area ...): the field's caption and the group name by customer code; null when the company has no such field. */
+async function dimensionGroups(ctx: Ctx, dimension: { label: string; pattern: string }): Promise<{ label: string; of: Map<number, string> } | null> {
+  const field = (await rows(ctx, `SELECT fiel_key, btrim(fiel_desc) AS fiel_desc, lower(btrim(fiel_save)) AS fiel_save, upper(btrim(fiel_type)) AS fiel_type FROM ${ctx.sch}.addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D' AND (fiel_desc ~* $1 OR fiel_save ~* $1) AND fiel_save ~ '^[A-Za-z0-9_]+$' ORDER BY fiel_serial, fiel_key LIMIT 1`, [dimension.pattern]))[0];
+  const save = field ? String(field.fiel_save) : "";
+  // The account master keeps an add-on field in addon_data as txt_<field> (the name) and key_<field> (the code of the choice in addon_sub).
+  const named = field && await hasColumn(ctx, "addon_data", `txt_${save}`);
+  const keyed = field && !named && await hasColumn(ctx, "addon_data", `key_${save}`);
+  const plain = field && !named && !keyed && await hasColumn(ctx, "addon_data", save);
+  if (!field || (!named && !keyed && !plain)) return null;
+  const group = named ? `COALESCE(NULLIF(btrim(ad.txt_${save}::text), ''), '(not set)')`
+    : keyed ? `COALESCE(NULLIF(btrim(s.sub_name), ''), '(not set)')` : `COALESCE(NULLIF(btrim(ad.${save}::text), ''), '(not set)')`;
+  const found = await rows(ctx, `SELECT DISTINCT ON (ad.code) ad.code, ${group} AS grp FROM ${ctx.sch}.addon_data ad ${keyed ? `LEFT JOIN ${ctx.sch}.addon_sub s ON s.sub_code::text = ad.key_${save}::text AND s.para_id = ${num(field.fiel_key)}` : ""} WHERE ad.code IS NOT NULL ORDER BY ad.code, ad.aon_key DESC`);
+  return { label: String(field.fiel_desc) || dimension.label, of: new Map(found.map((row) => [num(row.code), String(row.grp)] as const)) };
+}
+
+/** A row of the revenue-by-group answer: the customers of that Sales Man / Area ... with their net sales. */
+async function groupCustomers(ctx: Ctx, index: number, name: string, from: string, to: string): Promise<AskAnswer | null> {
+  const dimension = DIMENSIONS[index];
+  const groups = dimension ? await dimensionGroups(ctx, dimension) : null;
+  if (!groups) return null;
+  const list = (await netSales(ctx, from, to, true)).filter((row) => row.net !== 0 && (groups.of.get(row.code) ?? "(not set)") === name).sort((a, b) => b.net - a.net);
+  const total = sumOf(list, (row) => row.net);
+  return {
+    id: 0, title: `${groups.label} ${name}: customers (${list.length})`, columns: [int("no", "No."), text("name", "Customer"), int("entries", "Entries"), ...salesColumns, money("share", "Share %")],
+    rows: list.length === 0 ? [] : [...list.map((row, at) => ({ no: at + 1, name: row.name, entries: row.entries, sales: row.sales, returns: -row.returns, net: row.net, share: pctOf(row.net, total), code: row.code })), { no: "", name: "Total", entries: sumOf(list, (row) => row.entries), sales: sumOf(list, (row) => row.sales), returns: -sumOf(list, (row) => row.returns), net: total, share: 100 }],
+    note: `${dmy(from)} to ${dmy(to)}. ${SALES_NOTE} Double-click a row to open the customer's ledger.`,
+  };
+}
+
+T.push({
+  id: 113, question: "Which regions, branches or salesmen or area generate the most revenue?", defaultPeriod: "year",
+  terms: [/regions?|branch(?:es)?|salesm[ae]n|sales ?persons?|areas?|zones?|territor/, /revenue|sales|turnover|generat|business|most/], not: [/profit|outstanding|overdue|party|product/],
+  run: async (ctx) => {
+    const sales = await netSales(ctx, ctx.period.from, ctx.period.to, true);
+    const total = sumOf(sales, (row) => row.net);
+    const out: Record<string, string | number>[] = [];
+    const missing: string[] = [];
+    for (const dimension of DIMENSIONS) {
+      try {
+        const groups = await dimensionGroups(ctx, dimension);
+        if (!groups) { missing.push(dimension.label); continue; }
+        const of = groups.of;
+        const totals = new Map<string, { net: number; customers: number }>();
+        for (const row of sales) {
+          if (row.net === 0) continue;
+          const name = of.get(row.code) ?? "(not set)";
+          const entry = totals.get(name) ?? totals.set(name, { net: 0, customers: 0 }).get(name)!;
+          entry.net += row.net; entry.customers += 1;
+        }
+        for (const [name, entry] of [...totals].sort((a, b) => b[1].net - a[1].net).slice(0, 25)) out.push({ dimension: groups.label, name, customers: entry.customers, net: entry.net, share: pctOf(entry.net, total), detail: `grp:${DIMENSIONS.indexOf(dimension)}:${encodeURIComponent(name)}:${ctx.period.from}:${ctx.period.to}` });
+      } catch { missing.push(dimension.label); }
+    }
+    return {
+      id: 113, title: "Revenue by region, branch, salesman and area", columns: [text("dimension", "Grouped By"), text("name", "Name"), int("customers", "Customers"), money("net", "Net Sales"), money("share", "Share %")],
+      rows: out,
+      note: `${ctx.period.label}. Each customer's net sales are put under the value set on its account master (the add-on field), largest first; "(not set)" are customers without one. Click a row to show its customers.${missing.length > 0 ? ` No field was found for: ${missing.join(", ")}.` : ""} ${SALES_NOTE}`,
+    };
+  },
+});
+
+// --- 114, 115: dependence on the biggest customers
+
+async function concentration(ctx: Ctx, id: number, title: string, bands: boolean): Promise<AskAnswer> {
+  const list = (await netSales(ctx, ctx.period.from, ctx.period.to, true)).filter((row) => row.net > 0).sort((a, b) => b.net - a.net);
+  const total = sumOf(list, (row) => row.net);
+  const share = (count: number) => pctOf(sumOf(list.slice(0, count), (row) => row.net), total);
+  const topN = ctx.top;
+  const verdict = share(1) >= 25 || share(10) >= 70 ? "High dependence: a few customers carry most of the sales, so losing one would hurt." : share(1) >= 15 || share(10) >= 50 ? "Moderate dependence: watch the biggest customers." : "Healthy spread: no small group of customers carries the sales.";
+  const summary = `The top ${topN} customers bring ${share(topN).toFixed(1)}% of net sales (${grouping.format(sumOf(list.slice(0, topN), (row) => row.net))} of ${grouping.format(total)}); the biggest alone ${share(1).toFixed(1)}%. ${verdict}`;
+  if (bands) {
+    const span = `${ctx.period.from}:${ctx.period.to}`;
+    const band = (item: string, count: number) => ({ item, customers: Math.min(count, list.length), net: sumOf(list.slice(0, count), (row) => row.net), share: share(count), detail: `conc:0:${count}:${span}` });
+    let cumulative = 0; let eighty = 0;
+    for (const row of list) { cumulative += row.net; eighty += 1; if (cumulative >= total * 0.8) break; }
+    return {
+      id, title, summary, columns: [text("item", "Group"), int("customers", "Customers"), money("net", "Net Sales"), money("share", "Share of Sales %")],
+      rows: [band("Biggest customer", 1), band("Top 3 customers", 3), band("Top 5 customers", 5), band("Top 10 customers", 10), band("Top 20 customers", 20), { item: "All other customers", customers: Math.max(0, list.length - 20), net: sumOf(list.slice(20), (row) => row.net), share: pctOf(sumOf(list.slice(20), (row) => row.net), total), detail: `conc:20:99999:${span}` },
+        { item: `Customers that make 80% of sales`, customers: eighty, net: sumOf(list.slice(0, eighty), (row) => row.net), share: share(eighty), detail: `conc:0:${eighty}:${span}` }],
+      note: `${ctx.period.label}. ${list.length} customers bought. Dependence is high when the biggest customer is 25% of sales or the top 10 are 70%. Click a row to show its customers. ${SALES_NOTE}`,
+    };
+  }
+  let running = 0;
+  const top = list.slice(0, topN).map((row, at) => { running += row.net; return { no: at + 1, name: row.name, net: row.net, share: pctOf(row.net, total), cumulative: pctOf(running, total), code: row.code }; });
+  return {
+    id, title, summary, columns: [int("no", "No."), text("name", "Customer"), money("net", "Net Sales"), money("share", "Share %"), money("cumulative", "Cumulative %")],
+    rows: top.length === 0 ? [] : [...top, { no: "", name: `Top ${top.length} together`, net: sumOf(top, (row) => row.net), share: share(topN), cumulative: "" }, { no: "", name: "All customers", net: total, share: 100, cumulative: "" }],
+    note: `${ctx.period.label}. ${SALES_NOTE}`,
+  };
+}
+
+T.push({
+  id: 114, question: "Are we too dependent on a few major customers?", defaultPeriod: "year",
+  terms: [/depend|concentrat|relian|reliant|too much|too many|few/, /customers?|clients?/, /few|major|key|top|big|main|handful|small number/], not: [/outstanding|overdue|credit|profit|percent|%/],
+  run: (ctx) => concentration(ctx, 114, "Dependence on major customers", true),
+});
+
+T.push({
+  id: 115, question: "What percentage of total sales comes from our top 10 customers?", defaultPeriod: "year",
+  terms: [/percent|%|share|proportion|how much/, /sales|revenue|turnover/, /top|biggest|largest|major|key|best/, /customers?|clients?/], not: [/outstanding|overdue|profit|supplier|product|depend/],
+  run: (ctx) => concentration(ctx, 115, `Share of sales from the top ${ctx.top} customers`, false),
+});
+
+// --- 116: sales needed to cover the monthly expenses
+
+T.push({
+  id: 116, question: "What sales amount is required to cover our monthly expenses?", defaultPeriod: "year",
+  terms: [/sales?|revenue|turnover/, /required|needed|need|break[- ]?even|cover|target|enough/, /monthly|month|expenses?|overheads?|costs?/], not: [/forecast|compar|increas|top|which/],
+  run: async (asked) => {
+    // The year so far, whatever the wording says ("monthly" would make the period a month).
+    const ctx: Ctx = { ...asked, period: { from: iso(asked.session.tarikh1), to: asked.today, label: `This financial year (${dmy(asked.session.tarikh1)} to ${dmy(asked.today)})` } };
+    const months = monthsSoFar(ctx.period.from, ctx.period.to);
+    const expenses = await expenseTotal(ctx, ctx.period.from, ctx.period.to);
+    const monthly = expenses / months;
+    const profit = await (T.find((template) => template.id === 58) as Template).run(ctx);
+    const margin = num(profit.rows.find((row) => String(row.item) === "Gross profit margin %")?.value);
+    const net = num(profit.rows.find((row) => String(row.item) === "Net sales")?.value);
+    const required = margin > 0 ? monthly / (margin / 100) : 0;
+    const actual = net / months;
+    return {
+      id: 116, title: "Sales needed each month to cover the expenses",
+      columns: [text("item", "Item"), money("value", "Value")],
+      ...(margin > 0 ? { summary: `To cover ${grouping.format(monthly)} of expenses a month at a gross margin of ${margin.toFixed(1)}%, net sales of about ${grouping.format(required)} a month are needed; the business sells ${grouping.format(actual)} a month, which is ${actual >= required ? `${grouping.format(actual - required)} above` : `${grouping.format(required - actual)} below`} that.` } : {}),
+      rows: [{ item: "Expenses of the period (with tax)", value: expenses }, { item: "Months in the period", value: round2(months) }, { item: "Average expenses a month", value: monthly }, { item: "Gross profit margin %", value: margin },
+        { item: "Net sales needed a month to cover the expenses", value: required }, { item: "Average net sales a month so far", value: actual }, { item: margin > 0 && actual >= required ? "Cushion above break-even a month" : "Shortfall below break-even a month", value: Math.abs(actual - required) }],
+      note: `${ctx.period.label}. Expenses are the Expense book (book 15). Break-even sales are the monthly expenses divided by the gross profit margin of the year so far (from "What is my gross profit margin?"; a product with no cost counts at 0, so the margin is on the high side).`,
+    };
+  },
+});
+
+// --- 117: working capital
+
+T.push({
+  id: 117, question: "What is our working capital position?", defaultPeriod: "none",
+  terms: [/working capital/, /position|status|health|adequate|level|situation/, /what|how|show|our|is|are|do/], not: [/tying|tied|blocked|locked|stuck|most|biggest/],
+  run: async (ctx) => {
+    const cash = await cashPosition(ctx);
+    const receivable = await receivableTotal(ctx);
+    const payable = await payableTotal(ctx);
+    const stock = await stockValue(ctx, 0, "", true);
+    const stockTotal = num(stock.rows[stock.rows.length - 1]?.value);
+    const assets = cash.total + receivable + stockTotal;
+    const capital = assets - payable;
+    const ratio = payable === 0 ? 0 : assets / payable;
+    const quick = payable === 0 ? 0 : (cash.total + receivable) / payable;
+    return {
+      id: 117, title: "Working capital position",
+      summary: payable === 0 ? `Working capital is ${grouping.format(capital)}; there is nothing owed to suppliers.` : `Working capital is ${grouping.format(capital)}: current assets are ${ratio.toFixed(2)} times the amount owed to suppliers (quick ratio ${quick.toFixed(2)}). ${ratio >= 1.5 ? "The position is comfortable." : ratio >= 1 ? "The position is adequate but not wide." : "Current assets do not cover what is owed: payments may be hard to meet."}`,
+      columns: [text("item", "Item"), money("value", "Amount")],
+      rows: asRows([{ item: "Cash in hand", value: cash.cash }, { item: "Bank balances", value: cash.bank, }, { item: "Customers owe (receivable)", value: receivable, detail: "owe:2" }, { item: "Stock on hand, at cost", value: stockTotal, detail: "stock" },
+        { item: "Current assets", value: assets }, { item: "Less: owed to suppliers (payable)", value: -payable, detail: "owe:3" }, { item: "Working capital", value: capital }, { item: "Current ratio (assets over payable)", value: round2(ratio) }, { item: "Quick ratio (cash, bank and receivable over payable)", value: round2(quick) }]),
+      note: `As on ${dmy(ctx.today)}. Only what the books hold is counted: other short-term liabilities (taxes, salaries due, loans) are not, so the real position is lower by those. Stock is valued at average cost; customers in credit and suppliers in debit are not counted.`,
+    };
+  },
+});
+
+// --- 118: can a purchase be afforded
+
+/** Cash and bank now, the customer bills falling due in `days` days (not yet overdue) and the supplier bills due by then (including those already due). */
+async function cashOutlook(ctx: Ctx, days: number) {
+  const cash = await cashPosition(ctx);
+  const horizon = addDays(ctx.today, days);
+  const inflow = round2(sumOf((await agewiseBills(ctx)).filter((bill) => bill.dueIso > ctx.today && bill.dueIso <= horizon), (bill) => bill.pending));
+  const outflow = dueBetween(await agewiseBills(ctx, 3), horizon);
+  return { cash, inflow, outflow, horizon, net: cash.total + inflow - outflow };
+}
+
+T.push({
+  id: 118, question: "Can we afford a proposed purchase based on current cash flow?", defaultPeriod: "none",
+  terms: [/afford|can we (?:buy|purchase|pay|spend)|enough (?:cash|money)|manage to (?:buy|pay)/, /purchase|buy|buying|expense|spend|investment|equipment|machine|proposed/], not: [/upcoming|payments?\b.*meet/],
+  run: async (ctx) => {
+    const amount = amountIn(ctx.question ?? "");
+    const outlook = await cashOutlook(ctx, 30);
+    const buffer = (await expenseTotal(ctx, iso(ctx.session.tarikh1), ctx.today)) / monthsSoFar(iso(ctx.session.tarikh1), ctx.today);
+    const free = outlook.net - buffer;
+    const rowsOut: Record<string, string | number>[] = [{ item: "Cash in hand and at the banks", value: outlook.cash.total }, { item: "Add: customer bills falling due in the next 30 days", value: outlook.inflow }, { item: "Less: supplier bills due by then (including those already due)", value: -outlook.outflow },
+      { item: "Less: one month's average expenses kept aside", value: -buffer }, { item: "Cash that can be spent on the purchase", value: free }];
+    if (amount === null) return { id: 118, title: "Can we afford the purchase?", columns: [text("item", "Item"), money("value", "Amount")], summary: "Say the amount of the purchase in the question, for example: Can we afford a purchase of 5 lakh based on current cash flow?", rows: rowsOut, note: `As on ${dmy(ctx.today)}. This is the cash that is free for a purchase, before the amount is known.` };
+    const left = free - amount;
+    rowsOut.push({ item: "Proposed purchase", value: -amount }, { item: left >= 0 ? "Cash left after the purchase" : "Shortfall after the purchase", value: left });
+    return {
+      id: 118, title: `Can we afford a purchase of ${grouping.format(amount)}?`, columns: [text("item", "Item"), money("value", "Amount")],
+      summary: left >= 0 ? `Yes: after supplier payments and a month's expenses there is ${grouping.format(free)} free, so ${grouping.format(left)} is left after the purchase.` : `Not comfortably: only ${grouping.format(Math.max(0, free))} is free after supplier payments and a month's expenses, ${grouping.format(-left)} short of the purchase. Collecting ${grouping.format(-left)} of the overdue bills, or paying in instalments, would cover it.`,
+      rows: rowsOut, note: `As on ${dmy(ctx.today)}. Customer bills are counted when they fall due in the next 30 days (overdue bills are not counted as they may not come); supplier bills when due by ${dmy(outlook.horizon)}, including those already due. Expenses are the year's average a month.`,
+    };
+  },
+});
+
+// --- 119: the largest customer pays late
+
+T.push({
+  id: 119, question: "What happens to cash flow if our largest customer pays 30 days late?", defaultPeriod: "year",
+  terms: [/largest|biggest|top|major|main|key/, /customer|client/, /late|delay|defer|postpone|slow|\d+\s*days/, /cash ?flow|cash|payment|pays?|money/], not: [/outstanding|overdue bills/],
+  run: async (ctx) => {
+    const days = numberAfter(ctx.question ?? "", /(\d+)\s*days?/) ?? 30;
+    const sales = (await netSales(ctx, ctx.period.from, ctx.period.to, true)).sort((a, b) => b.net - a.net);
+    const top = sales[0];
+    if (!top) return { id: 119, title: "A late payment from the largest customer", columns: [text("item", "Item")], rows: [], note: "There are no sales in the period." };
+    const outlook = await cashOutlook(ctx, days);
+    const mine = (await agewiseBills(ctx)).filter((bill) => bill.code === top.code);
+    const slipping = round2(sumOf(mine.filter((bill) => bill.dueIso > ctx.today && bill.dueIso <= outlook.horizon), (bill) => bill.pending));
+    const already = round2(sumOf(mine.filter((bill) => bill.dueIso <= ctx.today), (bill) => bill.pending));
+    const received = num((await rows(ctx, `SELECT COALESCE(SUM(amount::numeric), 0) AS total FROM ${ctx.sch}.ledger WHERE book IN (4, 6) AND ac_dbcode = 2 AND doc_pos = 'A' AND code = $1 AND doc_date >= $2::date AND doc_date <= $3::date`, [top.code, ctx.period.from, ctx.period.to]))[0]?.total);
+    const monthly = received / monthsSoFar(ctx.period.from, ctx.period.to);
+    const delayed = Math.max(slipping, monthly * (days / 30));
+    const after = outlook.net - delayed;
+    return {
+      id: 119, title: `If ${top.name} pays ${days} days late`, columns: [text("item", "Item"), money("value", "Amount")],
+      summary: after >= 0 ? `The cash flow of the next ${days} days stays positive (${grouping.format(after)}), though ${grouping.format(delayed)} of the inflow slips out of the window.` : `The next ${days} days turn negative: ${grouping.format(-after)} short, because ${grouping.format(delayed)} of the inflow slips out of the window.`,
+      rows: asRows([{ item: `Largest customer: ${top.name}`, value: top.net }, { item: "Share of net sales %", value: pctOf(top.net, sumOf(sales, (row) => row.net)) }, { item: "Its average receipts a month", value: monthly }, { item: "Its bills already due (unpaid)", value: already, detail: `bills:${top.code}` }, { item: `Its bills falling due in the next ${days} days`, value: slipping },
+        { item: "Cash in hand and at the banks", value: outlook.cash.total }, { item: `Customer bills falling due in the next ${days} days (all)`, value: outlook.inflow }, { item: `Supplier bills due in the next ${days} days (and already due)`, value: -outlook.outflow }, { item: "Cash position at the end, as things stand", value: outlook.net },
+        { item: `Less: cash that slips by ${days} days (the larger of its bills due and its usual receipts)`, value: -delayed }, { item: "Cash position at the end, if it pays late", value: after }]),
+      note: `${ctx.period.label} for the sales and receipts; bills as on ${dmy(ctx.today)}, looking ${days} days ahead (say another number of days in the question). The largest customer is the one with the most net sales.`,
+    };
+  },
+});
+
+// --- 120: customers who delay the cash flow
+
+T.push({
+  id: 120, question: "Which customers are delaying our cash flow the most?", defaultPeriod: "none",
+  terms: [/customers?|clients?|parties/, /delay|late|slow|holding|withholding|stuck/, /cash ?flow|cash|money|collection|payments?/], not: [/exceed|limit|risk|oldest|call/],
+  run: async (ctx) => {
+    const byParty = new Map<number, { code: number; name: string; bills: number; pending: number; weight: number; days: number }>();
+    for (const bill of await agewiseBills(ctx)) {
+      if (bill.overdueDays <= 0) continue;
+      const entry = byParty.get(bill.code) ?? byParty.set(bill.code, { code: bill.code, name: bill.name, bills: 0, pending: 0, weight: 0, days: 0 }).get(bill.code)!;
+      entry.bills += 1; entry.pending += bill.pending; entry.weight += bill.pending * bill.overdueDays; entry.days = Math.max(entry.days, bill.overdueDays);
+    }
+    const list = [...byParty.values()].sort((a, b) => b.weight - a.weight);
+    const total = sumOf(list, (row) => row.pending);
+    return {
+      id: 120, title: "Customers holding back the cash flow", columns: [int("no", "No."), text("name", "Customer"), int("bills", "Overdue Bills"), money("pending", "Overdue Amount"), money("average", "Average Days Late"), int("days", "Max Days Late"), money("share", "Share of Overdue %")],
+      rows: list.slice(0, 100).map((row, at) => ({ no: at + 1, name: row.name, bills: row.bills, pending: round2(row.pending), average: round2(row.weight / row.pending), days: row.days, share: pctOf(row.pending, total), code: row.code, detail: `bills:${row.code}` })),
+      note: `Ranked by amount times days late, so a big old debt comes before a small recent one. ${grouping.format(total)} is overdue in all, from ${list.length} customers. Click a customer to show its open bills. ${AGEWISE_NOTE}`,
+    };
+  },
+});
+
+// --- 121, 122: payables to suppliers and the cash to meet them
+
+T.push({
+  id: 121, question: "How much money is payable to suppliers in the next 7, 15 and 30 days?", defaultPeriod: "none",
+  terms: [/payable|\bowe\b|\bdue\b|\bpay\b|to be paid|payments?/, /suppliers?|vendors?|creditors?/, /next|within|coming|upcoming/, /\bdays?\b/],
+  run: async (ctx) => {
+    const bills = await agewiseBills(ctx, 3);
+    const today = ctx.today;
+    const windows = [{ item: "Already due (before today)", after: -99999, upto: -1 }, { item: "Due in the next 7 days", after: -1, upto: 7 }, { item: "Due in 8 to 15 days", after: 7, upto: 15 }, { item: "Due in 16 to 30 days", after: 15, upto: 30 }, { item: "Due after 30 days", after: 30, upto: 99999 }];
+    let cumulative = 0;
+    const out = windows.map((window) => {
+      const amount = dueBetween(bills.filter((bill) => bill.dueIso > addDays(today, window.after)), addDays(today, window.upto));
+      cumulative += amount;
+      return { item: window.item, amount, cumulative: round2(cumulative), bills: bills.filter((bill) => bill.dueIso > addDays(today, window.after) && bill.dueIso <= addDays(today, window.upto)).length, detail: `supdue:${window.after}:${window.upto}` };
+    });
+    const upTo = (days: number) => dueBetween(bills, addDays(today, days));
+    return {
+      id: 121, title: "Payable to suppliers by due date",
+      summary: `Payable by ${dmy(addDays(today, 7))}: ${grouping.format(upTo(7))}; by ${dmy(addDays(today, 15))}: ${grouping.format(upTo(15))}; by ${dmy(addDays(today, 30))}: ${grouping.format(upTo(30))} (each including what is already due).`,
+      columns: [text("item", "When"), money("amount", "Amount"), money("cumulative", "Total Up To Here"), int("bills", "Bills")],
+      rows: [...out, { item: "Total payable (open bills)", amount: round2(sumOf(out, (row) => row.amount)), cumulative: "", bills: sumOf(out, (row) => row.bills) }],
+      note: `As on ${dmy(today)}. Open supplier bills laid as the Outstanding Agewise report does for customers (a supplier's balance spread over its newest bills first, the rest as Opening), each due on its date plus the supplier's credit days. Click a line to show its bills.`,
+    };
+  },
+});
+
+T.push({
+  id: 122, question: "Do we have enough cash to meet upcoming payments?", defaultPeriod: "none",
+  terms: [/enough|sufficient|adequate|cover|meet|afford|able to/, /cash|funds|money|bank/, /upcoming|payments?|commitments?|dues?|obligations?|bills?/], not: [/purchase|buy|proposed/],
+  run: async (ctx) => {
+    const cash = await cashPosition(ctx);
+    const suppliers = await agewiseBills(ctx, 3);
+    const customers = (await agewiseBills(ctx)).filter((bill) => bill.dueIso > ctx.today);
+    const line = (days: number) => {
+      const upto = addDays(ctx.today, days);
+      const due = dueBetween(suppliers, upto);
+      const coming = round2(sumOf(customers.filter((bill) => bill.dueIso <= upto), (bill) => bill.pending));
+      return { item: `Next ${days} days`, due, cash: cash.total, surplus: cash.total - due, coming, withComing: cash.total + coming - due };
+    };
+    const lines = [7, 15, 30].map(line);
+    const worst = lines.find((row) => row.surplus < 0);
+    return {
+      id: 122, title: "Cash against the payments due",
+      summary: worst ? `Not by cash alone: the cash of ${grouping.format(cash.total)} falls short by ${grouping.format(-worst.surplus)} for the supplier bills due in the ${worst.item.toLowerCase()}${lines.every((row) => row.withComing >= 0) ? "; the customer bills falling due in that time would cover it" : ", and even the customer bills falling due would not cover it"}.` : `Yes: the cash of ${grouping.format(cash.total)} covers every supplier bill due in the next 30 days (${grouping.format(lines[2].due)}), leaving ${grouping.format(lines[2].surplus)}.`,
+      columns: [text("item", "Window"), money("due", "Supplier Bills Due"), money("cash", "Cash and Bank"), money("surplus", "Cash Left / Short"), money("coming", "Customer Bills Falling Due"), money("withComing", "Left / Short With Them")],
+      rows: lines, note: `As on ${dmy(ctx.today)}. Supplier bills due by the end of each window include those already due. Customer bills are counted when they fall due inside the window (overdue ones are not counted, they may not come). Cash is cash in hand plus the bank balances as the books show them.`,
+    };
+  },
+});
+
+// --- 123, 124: risky customers
+
+T.push({
+  id: 123, question: "Which customers are becoming risky for credit?", defaultPeriod: "none",
+  terms: [/customers?|clients?|parties/, /risk|risky|bad debts?|doubtful|default|unsafe|dangerous/, /credit|payment|dues?|becoming|getting|growing/],
+  run: async (ctx) => {
+    const bills = await agewiseBills(ctx);
+    const limits = new Map((await rows(ctx, `SELECT code, "LIMIT"::numeric AS lim FROM ${ctx.sch}.account WHERE book = 2 AND a_pos <> 'D' AND COALESCE("LIMIT"::numeric, 0) > 0`)).map((row) => [num(row.code), num(row.lim)] as const));
+    const now = (await balances(ctx, 2)).filter((row) => row.closing > 0);
+    const before = new Map((await balances({ ...ctx, today: addDays(ctx.today, -30) }, 2, now.map((row) => row.code))).map((row) => [row.code, row.closing] as const));
+    const list = now.map((party) => {
+      const mine = bills.filter((bill) => bill.code === party.code);
+      const overdue = sumOf(mine.filter((bill) => bill.overdueDays > 0), (bill) => bill.pending);
+      const old = sumOf(mine.filter((bill) => bill.overdueDays > 90), (bill) => bill.pending);
+      const days = mine.reduce((most, bill) => Math.max(most, bill.overdueDays), 0);
+      const limit = limits.get(party.code) ?? 0;
+      const grew = before.has(party.code) ? party.closing - (before.get(party.code) ?? 0) : party.closing;
+      const reasons: string[] = [];
+      let score = 0;
+      if (old > 0) { score += 40 + Math.min(20, pctOf(old, party.closing) / 5); reasons.push(`${grouping.format(old)} over 90 days`); }
+      else if (overdue > 0) { score += 15 + Math.min(15, pctOf(overdue, party.closing) / 5); reasons.push("overdue bills"); }
+      if (limit > 0 && party.closing > limit) { score += 25; reasons.push("over its credit limit"); }
+      if (grew > 0 && party.closing >= 10000 && grew >= party.closing * 0.25) { score += 15; reasons.push("balance up 25% in 30 days"); }
+      if (days > 60) { score += 10; reasons.push(`oldest bill ${days} days late`); }
+      return { code: party.code, name: party.name, outstanding: party.closing, overdue, old, limit, grew, days, score, reasons };
+    }).filter((row) => row.score >= 40).sort((a, b) => b.score - a.score || b.outstanding - a.outstanding);
+    return {
+      id: 123, title: `Customers becoming risky for credit (${list.length})`, columns: [int("no", "No."), text("name", "Customer"), money("outstanding", "Outstanding"), money("overdue", "Overdue"), money("old", "Over 90 Days"), money("limit", "Credit Limit"), money("grew", "Change in 30 Days"), text("risk", "Risk"), text("why", "Why")],
+      rows: list.slice(0, 200).map((row, at) => ({ no: at + 1, name: row.name, outstanding: row.outstanding, overdue: round2(row.overdue), old: round2(row.old), limit: row.limit, grew: round2(row.grew), risk: row.score >= 60 ? "High" : "Medium", why: row.reasons.join("; "), code: row.code, detail: `bills:${row.code}` })),
+      note: `As on ${dmy(ctx.today)}. A customer scores for bills over 90 days (most), other overdue bills, being over its credit limit, a balance up 25% in 30 days and an oldest bill over 60 days late; 60 and above is High, 40 and above Medium (overdue bills alone do not reach it). Click a customer to show its open bills.`,
+    };
+  },
+});
+
+T.push({
+  id: 124, question: "Which major customers have not paid despite repeated transactions?", defaultPeriod: "none",
+  terms: [/customers?|clients?|parties/, /not paid|unpaid|no payments?|not made|without pay|haven'?t paid|not paying|never paid|not received/, /repeat|despite|again|continue|regular|transactions?|still|buying/],
+  run: async (ctx) => {
+    const days = ctx.days;
+    const from = addDays(ctx.today, -days);
+    const bought = await rows(ctx,
+      `SELECT l.code, btrim(ac.name) AS name, COUNT(DISTINCT l.full_docno) AS entries, SUM(l.amount::numeric) AS amount, MAX(l.doc_date) AS last_sale FROM ${ctx.sch}.ledger l JOIN ${ctx.sch}.account ac ON ac.code = l.code`
+      + ` WHERE l.book = ${SALE} AND l.doc_pos = 'A' AND l.doc_posting = 'P' AND l.doc_date >= $1::date AND l.doc_date <= $2::date AND ac.book = 2 GROUP BY l.code, ac.name HAVING COUNT(DISTINCT l.full_docno) >= 3`, [from, ctx.today]);
+    const paid = new Map((await rows(ctx, `SELECT code, SUM(amount::numeric) AS total, MAX(doc_date) AS last_receipt FROM ${ctx.sch}.ledger WHERE book IN (4, 6) AND ac_dbcode = 2 AND doc_pos = 'A' AND doc_date >= $1::date AND doc_date <= $2::date GROUP BY code`, [iso(ctx.session.tarikh1), ctx.today])).map((row) => [num(row.code), row] as const));
+    const owing = new Map((await balances(ctx, 2, bought.map((row) => num(row.code)))).map((row) => [row.code, row.closing] as const));
+    const list = bought.filter((row) => (owing.get(num(row.code)) ?? 0) > 0)
+      .filter((row) => { const last = paid.get(num(row.code))?.last_receipt; return !last || new Date(String(last)).getTime() < new Date(`${from}T00:00:00`).getTime(); })
+      .map((row) => ({ code: num(row.code), name: String(row.name), entries: num(row.entries), amount: num(row.amount), last: dmy(row.last_sale), receipt: paid.get(num(row.code))?.last_receipt ? dmy(paid.get(num(row.code))?.last_receipt) : "None this year", outstanding: owing.get(num(row.code)) ?? 0 }))
+      .sort((a, b) => b.amount - a.amount);
+    return {
+      id: 124, title: `Customers who kept buying but paid nothing in ${days} days (${list.length})`, columns: [int("no", "No."), text("name", "Customer"), int("entries", "Sale Entries"), money("amount", `Sales in ${days} Days`), date("last", "Last Sale"), text("receipt", "Last Receipt"), money("outstanding", "Outstanding")],
+      rows: list.slice(0, 200).map((row, at) => ({ no: at + 1, name: row.name, entries: row.entries, amount: row.amount, last: row.last, receipt: row.receipt, outstanding: row.outstanding, code: row.code, detail: `bills:${row.code}` })),
+      note: `Customers with at least 3 sale entries in the last ${days} days (say another number of days in the question), no money received from them in those days and a balance still owing, biggest buyers first. Click a customer to show its open bills.`,
+    };
+  },
+});
+
+// --- 125, 126: collection
+
+T.push({
+  id: 125, question: "What is our average collection period?", defaultPeriod: "year",
+  terms: [/average|avg|mean|typical/, /collection|recovery|receivable|debtors?|realis|realiz/, /period|days|time|take|long/], not: [/target|week|should/],
+  run: async (ctx) => {
+    const receivable = await receivableTotal(ctx);
+    const span = spanDays(ctx.period.from, ctx.period.to);
+    const sold = (await bookTotal(ctx, SALE, ctx.period.from, ctx.period.to)).total;
+    const perDay = sold / span;
+    const period = perDay === 0 ? 0 : receivable / perDay;
+    const customers = (await balances(ctx, 2)).filter((row) => row.closing > 0);
+    const allowed = sumOf(customers, (row) => row.creditDays * row.closing) / Math.max(1, sumOf(customers, (row) => row.closing));
+    return {
+      id: 125, title: "Average collection period",
+      summary: `Customers take about ${period.toFixed(0)} days to pay (receivable over sales a day), against ${allowed.toFixed(0)} days of credit allowed on their accounts${period > allowed + 5 ? `: ${(period - allowed).toFixed(0)} days slower than agreed.` : "."}`,
+      columns: [text("item", "Item"), money("value", "Value")],
+      rows: asRows([{ item: "Customers owe (receivable)", value: receivable, detail: "owe:2" }, { item: "Days in the period", value: span }, { item: "Sales in the period (with tax)", value: sold }, { item: "Sales a day", value: perDay }, { item: "Average collection period (days)", value: round2(period) }, { item: "Average credit days allowed (weighted by balance)", value: round2(allowed) }]),
+      note: `${ctx.period.label}. Days of sales outstanding: the receivable now divided by the Sale book's sales (with tax) a day. Credit days are those set on each customer's account.`,
+    };
+  },
+});
+
+T.push({
+  id: 126, question: "How much collection should we target this week to meet our cash requirements?", defaultPeriod: "none",
+  terms: [/collection|collect|recover|receive|realise|realize/, /target|should|need|require|goal|aim/, /week|cash|requirements?|needs?/], not: [/expected|predict|average|period/],
+  run: async (ctx) => {
+    const cash = await cashPosition(ctx);
+    const supplierDue = dueBetween(await agewiseBills(ctx, 3), addDays(ctx.today, 7));
+    const weekly = ((await expenseTotal(ctx, iso(ctx.session.tarikh1), ctx.today)) / spanDays(iso(ctx.session.tarikh1), ctx.today)) * 7;
+    const need = supplierDue + weekly;
+    const target = Math.max(0, need - cash.total);
+    const bills = (await agewiseBills(ctx)).filter((bill) => bill.dueIso <= addDays(ctx.today, 7));
+    const byParty = new Map<number, { code: number; name: string; pending: number; days: number }>();
+    for (const bill of bills) { const entry = byParty.get(bill.code) ?? byParty.set(bill.code, { code: bill.code, name: bill.name, pending: 0, days: 0 }).get(bill.code)!; entry.pending += bill.pending; entry.days = Math.max(entry.days, bill.overdueDays); }
+    const chase = [...byParty.values()].sort((a, b) => b.pending - a.pending).slice(0, 10);
+    const available = sumOf(bills, (bill) => bill.pending);
+    return {
+      id: 126, title: "Collection to target this week",
+      summary: target === 0 ? `No collection is needed to meet this week's needs: cash of ${grouping.format(cash.total)} covers the ${grouping.format(need)} required.` : `Target a collection of about ${grouping.format(target)} this week: ${grouping.format(need)} is needed for supplier bills and expenses against ${grouping.format(cash.total)} of cash. ${available >= target ? `Bills due or overdue from customers come to ${grouping.format(available)}, so it is within reach.` : `Bills due or overdue from customers come to only ${grouping.format(available)}.`}`,
+      columns: [text("item", "Item"), money("value", "Amount"), int("days", "Days Overdue")],
+      rows: [{ item: "Supplier bills due by next week (including those already due)", value: supplierDue, days: "" }, { item: "Add: a week's average expenses", value: weekly, days: "" }, { item: "Cash needed this week", value: need, days: "" }, { item: "Less: cash in hand and at the banks", value: -cash.total, days: "" }, { item: "Collection to target this week", value: target, days: "" },
+        { item: "Customer bills due or overdue (what can be collected)", value: available, days: "" }, { item: "Collect first from:", value: "", days: "" }, ...chase.map((row) => ({ item: `  ${row.name}`, value: round2(row.pending), days: row.days, code: row.code, detail: `bills:${row.code}` }))],
+      note: `As on ${dmy(ctx.today)}. The cash needed is the supplier bills due within 7 days plus a week of the year's average expenses (Expense book); customers are listed by the amount due or overdue.`,
+    };
+  },
+});
+
+// --- 127 to 130: suppliers
+
+/** Each product's purchases by supplier (name) in the dates: quantity and value, from the Purchase book's stock lines. */
+async function supplierPurchases(ctx: Ctx, from: string, to: string, product?: number) {
+  const found = await rows(ctx,
+    `SELECT pl.prod_id, btrim(pm.prod_desc) AS product, lower(btrim(ac.name)) AS key, btrim(ac.name) AS supplier, to_char(l.doc_date, 'YYYY-MM') AS month, SUM(pl.il_value::numeric) AS value, SUM(pl.quantity::numeric) AS qty`
+    + ` FROM ${ctx.sch}.prod_ledger pl JOIN ${ctx.sch}.ledger l ON l.led_key = pl.led_id JOIN ${ctx.sch}.product_master pm ON pm.prod_key = pl.prod_id JOIN ${ctx.sch}.account ac ON ac.code = l.code`
+    + ` WHERE pl.book = ${PURCHASE} AND pl.il_pos = 'A' AND pl.inventory = 'Y' AND l.doc_pos = 'A' AND pl.quantity::numeric > 0 AND l.doc_date >= $1::date AND l.doc_date <= $2::date${product ? " AND pl.prod_id = $3" : ""} GROUP BY pl.prod_id, pm.prod_desc, ac.name, to_char(l.doc_date, 'YYYY-MM')`,
+    product ? [from, to, product] : [from, to]);
+  return found.map((row) => ({ prod: num(row.prod_id), product: String(row.product), key: String(row.key), supplier: String(row.supplier), month: String(row.month), value: num(row.value), qty: num(row.qty) }));
+}
+
+T.push({
+  id: 127, question: "Which suppliers offer the best prices for comparable products?", defaultPeriod: "year",
+  terms: [/suppliers?|vendors?/, /best|lowest|cheapest|cheap|better|competitive|offer/, /prices?|rates?|cost/, /products?|items?|comparable|same|goods/], not: [/compar.*(?:six|6)|last (?:six|6)|months/],
+  run: async (ctx) => {
+    const bought = await supplierPurchases(ctx, ctx.period.from, ctx.period.to);
+    const byProduct = new Map<number, { product: string; suppliers: Map<string, { supplier: string; value: number; qty: number }> }>();
+    for (const row of bought) {
+      const entry = byProduct.get(row.prod) ?? byProduct.set(row.prod, { product: row.product, suppliers: new Map() }).get(row.prod)!;
+      const supplier = entry.suppliers.get(row.key) ?? entry.suppliers.set(row.key, { supplier: row.supplier, value: 0, qty: 0 }).get(row.key)!;
+      supplier.value += row.value; supplier.qty += row.qty;
+    }
+    const list = [...byProduct.values()].filter((entry) => entry.suppliers.size >= 2).map((entry) => {
+      const rated = [...entry.suppliers.values()].filter((supplier) => supplier.qty > 0).map((supplier) => ({ ...supplier, rate: supplier.value / supplier.qty })).sort((a, b) => a.rate - b.rate);
+      const best = rated[0]; const dearest = rated[rated.length - 1];
+      const saving = sumOf(rated, (supplier) => supplier.qty * (supplier.rate - best.rate));
+      return { product: entry.product, best: best.supplier, bestRate: best.rate, dearest: dearest.supplier, dearestRate: dearest.rate, gap: pctOf(dearest.rate - best.rate, best.rate), suppliers: rated.length, saving };
+    }).filter((row) => row.saving > 0).sort((a, b) => b.saving - a.saving);
+    return {
+      id: 127, title: `Best supplier price for products bought from more than one supplier (${list.length})`, columns: [int("no", "No."), text("product", "Product"), int("suppliers", "Suppliers"), text("best", "Cheapest Supplier"), money("bestRate", "Its Rate"), text("dearest", "Dearest Supplier"), money("dearestRate", "Its Rate"), money("gap", "Gap %"), money("saving", "Possible Saving")],
+      rows: list.slice(0, 200).map((row, at) => ({ no: at + 1, ...row })),
+      note: `${ctx.period.label}. Rates are the value over the quantity bought from each supplier (before tax). Possible saving is what the quantity bought from the dearer suppliers would have cost less at the cheapest supplier's rate. Prices are compared for the same product only; units and quality are as the stock entry has them.`,
+    };
+  },
+});
+
+/** The purchase order lines still to be received (the order module ORD-IN of the Purchase book), with the date they are scheduled for where the entry addon has it. */
+async function pendingPurchaseOrders(ctx: Ctx) {
+  const scheduled = await hasColumn(ctx, "addon_ientry", "input_sch_date");
+  const found = await rows(ctx,
+    `SELECT pl.full_docno AS doc, pl.il_date AS d, pl.code, btrim(COALESCE(ac.name, '')) AS supplier, btrim(pm.prod_desc) AS product, pl.quantity::numeric AS qty, (pl.ag_qty::numeric + COALESCE(pl.setof_qty::numeric, 0)) AS got, pl.rate::numeric AS rate,`
+    + ` ${scheduled ? "ient.input_sch_date" : "NULL::date"} AS scheduled FROM ${ctx.sch}.prod_ledger pl JOIN ${ctx.sch}.process proce ON proce.process_key = pl.process_id AND proce.il_pos = 'A' LEFT JOIN ${ctx.sch}.account ac ON ac.code = pl.code`
+    + ` JOIN ${ctx.sch}.product_master pm ON pm.prod_key = pl.prod_id${scheduled ? ` LEFT JOIN ${ctx.sch}.addon_ientry ient ON ient.aoni_il_id = pl.il_key` : ""}`
+    + ` WHERE pl.il_pos = 'A' AND pl.book = ${PURCHASE} AND btrim(pl.trn_module) = 'ORD-IN' AND pl.quantity::numeric - (pl.ag_qty::numeric + COALESCE(pl.setof_qty::numeric, 0)) > 0 AND pl.il_date <= $1::date ORDER BY COALESCE(${scheduled ? "ient.input_sch_date" : "NULL::date"}, pl.il_date), pl.il_key`, [ctx.today]);
+  const today = new Date(`${ctx.today}T00:00:00`).getTime();
+  return { scheduled, list: found.map((row) => {
+    const due = row.scheduled ? new Date(String(row.scheduled)) : null;
+    const pending = num(row.qty) - num(row.got);
+    return { doc: String(row.doc ?? ""), ordered: dmy(row.d), code: num(row.code), supplier: String(row.supplier), product: String(row.product), qty: num(row.qty), got: num(row.got), pending, rate: num(row.rate), value: pending * num(row.rate), due: due ? dmy(due) : "", late: due ? Math.max(0, Math.round((today - due.getTime()) / 86400000)) : 0 };
+  }) };
+}
+
+T.push({
+  id: 128, question: "Which suppliers have frequent delivery delays, if delivery data is available?", defaultPeriod: "none",
+  terms: [/suppliers?|vendors?/, /delay|late|delayed|slow|overdue|on time|punctual/, /deliver|delivery|supply|supplies|orders?|receiv/],
+  run: async (ctx) => {
+    const { scheduled, list } = await pendingPurchaseOrders(ctx);
+    const columns = [int("no", "No."), text("supplier", "Supplier"), int("lines", "Pending Order Lines"), int("late", "Past Scheduled Date"), money("average", "Average Days Late"), int("most", "Most Days Late"), money("value", "Pending Value")];
+    if (!scheduled) return { id: 128, title: "Supplier delivery delays", columns, rows: [], note: "This company's purchase orders carry no scheduled delivery date (the order entry has no such field), and the books record no delivery against an order, so delays cannot be measured. The pending purchase orders can be seen with \"Which purchase orders are pending delivery?\"." };
+    const bySupplier = new Map<string, { code: number; supplier: string; lines: number; late: number; days: number; most: number; value: number }>();
+    for (const row of list) {
+      const entry = bySupplier.get(row.supplier) ?? bySupplier.set(row.supplier, { code: row.code, supplier: row.supplier, lines: 0, late: 0, days: 0, most: 0, value: 0 }).get(row.supplier)!;
+      entry.lines += 1; entry.value += row.value;
+      if (row.late > 0) { entry.late += 1; entry.days += row.late; entry.most = Math.max(entry.most, row.late); }
+    }
+    const out = [...bySupplier.values()].filter((entry) => entry.late > 0).sort((a, b) => b.late - a.late || b.days - a.days);
+    return {
+      id: 128, title: `Suppliers with orders past their scheduled date (${out.length})`, columns,
+      rows: out.map((entry, at) => ({ no: at + 1, supplier: entry.supplier, lines: entry.lines, late: entry.late, average: round2(entry.days / entry.late), most: entry.most, value: round2(entry.value), code: entry.code })),
+      note: `As on ${dmy(ctx.today)}. Delivery is measured from the purchase orders still pending: a line is late when its scheduled date has passed and it has not been received in full. Orders already received are not kept with a receipt date, so past delays cannot be counted.`,
+    };
+  },
+});
+
+T.push({
+  id: 129, question: "Which purchase orders are pending delivery?", defaultPeriod: "none",
+  terms: [/purchase orders?|\bpos?\b|orders?/, /pending|outstanding|not (?:yet )?(?:received|delivered)|awaiting|open|undelivered/, /deliver|received|supply|supplied|pending/],
+  not: [/sales? orders?|production|customers?/],
+  run: async (ctx) => {
+    const { list } = await pendingPurchaseOrders(ctx);
+    const shown = list.slice(0, 500).map((row) => ({ ordered: row.ordered, doc: row.doc, supplier: row.supplier, product: row.product, qty: row.qty, got: row.got, pending: row.pending, value: round2(row.value), due: row.due, late: row.late || "", code: row.code }));
+    return {
+      id: 129, title: `Purchase orders pending delivery (${list.length} lines)`, columns: [date("ordered", "Order Date"), text("doc", "Order"), text("supplier", "Supplier"), text("product", "Product"), qty("qty", "Ordered"), qty("got", "Received"), qty("pending", "Pending"), money("value", "Pending Value"), date("due", "Scheduled"), int("late", "Days Late")],
+      rows: list.length === 0 ? [] : [...shown, { ordered: "", doc: "", supplier: "Total", product: "", qty: "", got: "", pending: "", value: round2(sumOf(list, (row) => row.value)), due: "", late: "" }],
+      note: `As on ${dmy(ctx.today)}. Order lines of the Purchase book whose received quantity is less than the ordered one; the value is the pending quantity at the order rate.${list.length > 500 ? " The first 500 are shown." : ""}`,
+    };
+  },
+});
+
+T.push({
+  id: 130, question: "Compare supplier prices for the same product over the last six months.", defaultPeriod: "none", needsProduct: true,
+  terms: [/compar|against|versus|\bvs\b|difference|trend|wise/, /suppliers?|vendors?/, /prices?|rates?|cost/, /months?|six|6/],
+  run: async (ctx) => {
+    const product = ctx.product as Party;
+    const today = new Date(`${ctx.today}T00:00:00`);
+    const months = Array.from({ length: 6 }, (_unused, at) => new Date(today.getFullYear(), today.getMonth() - 5 + at, 1));
+    const from = iso(months[0]);
+    const lastYear = months[0] < ctx.session.tarikh1 ? await previousYearSchema(ctx, ctx.session.tarikh1) : null;
+    const bought = [...(lastYear ? await supplierPurchases({ ...ctx, sch: lastYear }, from, iso(new Date(ctx.session.tarikh1.getFullYear(), ctx.session.tarikh1.getMonth(), ctx.session.tarikh1.getDate() - 1)), product.code) : []),
+      ...await supplierPurchases(ctx, from < iso(ctx.session.tarikh1) ? iso(ctx.session.tarikh1) : from, ctx.today, product.code)];
+    const keys = months.map((month) => `${month.getFullYear()}-${pad(month.getMonth() + 1)}`);
+    const suppliers = new Map<string, { supplier: string; cells: Map<string, { value: number; qty: number }> }>();
+    for (const row of bought) {
+      const entry = suppliers.get(row.key) ?? suppliers.set(row.key, { supplier: row.supplier, cells: new Map() }).get(row.key)!;
+      const cell = entry.cells.get(row.month) ?? entry.cells.set(row.month, { value: 0, qty: 0 }).get(row.month)!;
+      cell.value += row.value; cell.qty += row.qty;
+    }
+    const out = [...suppliers.values()].map((entry) => {
+      const cells = Object.fromEntries(keys.map((key, at) => { const cell = entry.cells.get(key); return [`m${at}`, cell && cell.qty > 0 ? cell.value / cell.qty : ""] as const; }));
+      const value = sumOf([...entry.cells.values()], (cell) => cell.value); const quantity = sumOf([...entry.cells.values()], (cell) => cell.qty);
+      return { supplier: entry.supplier, ...cells, average: quantity > 0 ? value / quantity : 0, qty: quantity };
+    }).filter((row) => row.qty > 0).sort((a, b) => a.average - b.average);
+    return {
+      id: 130, title: `Supplier rates for ${product.name}, last six months`, columns: [text("supplier", "Supplier"), ...months.map((month, at) => money(`m${at}`, monthLabel(month))), money("average", "Average Rate"), qty("qty", "Quantity Bought")],
+      rows: out, ...(out.length > 1 ? { summary: `${out[0].supplier} has been the cheapest at an average of ${grouping.format(out[0].average)}; ${out[out.length - 1].supplier} the dearest at ${grouping.format(out[out.length - 1].average)} (${pctOf(out[out.length - 1].average - out[0].average, out[0].average).toFixed(1)}% more).` } : {}),
+      note: `Purchase rates (value before tax over quantity) of each supplier for each month from ${dmy(from)}; a blank month means nothing was bought from that supplier then. Cheapest average first.${out.length === 0 ? " Nothing was bought of this product in these six months." : ""}${lastYear ? " Months before this year's start are read from last year's database." : ""}`,
+    };
+  },
+});
+
+// --- 131, 132: stock held and stock that does not sell
+
+T.push({
+  id: 131, question: "How many days of stock do we currently hold?", defaultPeriod: "none",
+  terms: [/how many|days?|number of days|cover/, /stock|inventory/, /hold|have|held|currently|cover|last|worth|lasts?/], not: [/no sales|not sold|without|negative|zero|valuation|godown|minimum|below/],
+  run: async (ctx) => {
+    const window = 90;
+    // The 90 days up to the last sale (today, unless nothing has been sold lately).
+    const lastSale = (await rows(ctx, `SELECT to_char(MAX(doc_date), 'YYYY-MM-DD') AS d FROM ${ctx.sch}.ledger WHERE book = ${SALE} AND doc_pos = 'A' AND doc_date <= $1::date`, [ctx.today]))[0]?.d;
+    const end = typeof lastSale === "string" && lastSale < ctx.today ? lastSale : ctx.today;
+    const from = addDays(end, -window + 1);
+    const stock = await stockValue(ctx, 0, "", true);
+    const valued = stock.rows.slice(0, -1);
+    const total = num(stock.rows[stock.rows.length - 1]?.value);
+    const sold = new Map((await rows(ctx,
+      `SELECT pl.prod_id, SUM(CASE WHEN pl.book = ${SALE} THEN pl.quantity::numeric ELSE -pl.quantity::numeric END) AS qty FROM ${ctx.sch}.prod_ledger pl JOIN ${ctx.sch}.ledger l ON l.led_key = pl.led_id`
+      + ` WHERE pl.book IN (${SALE}, ${CREDIT_NOTE}) AND pl.il_pos = 'A' AND pl.inventory = 'Y' AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date GROUP BY pl.prod_id`, [from, end])).map((row) => [num(row.prod_id), num(row.qty)] as const));
+    const costOfSales = sumOf(await productProfits({ ...ctx, period: { ...ctx.period, from, to: end } }), (row) => (row.qty > 0 ? row.cost : 0));
+    const perDay = costOfSales / window;
+    const days = perDay === 0 ? 0 : total / perDay;
+    const products = valued.map((row) => { const perDayQty = Math.max(0, sold.get(num(row.pk)) ?? 0) / window; return { name: String(row.name), cq: num(row.cq), value: num(row.value), perDay: perDayQty, days: perDayQty > 0 ? num(row.cq) / perDayQty : "", pk: num(row.pk) }; });
+    return {
+      id: 131, title: "Days of stock held",
+      summary: perDay === 0 ? "Nothing was sold in the last 90 days, so the days of stock cannot be worked out." : `The stock of ${grouping.format(total)} would last about ${days.toFixed(0)} days at the pace of the ${window} days up to ${dmy(end)} (${grouping.format(perDay)} of cost sold a day).${end < ctx.today ? ` Nothing has been sold since ${dmy(end)}.` : ""}`,
+      columns: [text("item", "Item"), qty("cq", "Stock"), money("value", "Stock Value"), qty("perDay", "Sold a Day"), money("days", "Days of Stock")],
+      rows: [{ item: "All stock", cq: "", value: total, perDay: "", days: perDay === 0 ? "" : round2(days) }, { item: `Cost of goods sold in the ${window} days up to ${dmy(end)}`, cq: "", value: costOfSales, perDay: "", days: "" }, { item: "Largest stocks, product by product:", cq: "", value: "", perDay: "", days: "" },
+        ...products.slice(0, 30).map((row) => ({ item: `  ${row.name}`, cq: row.cq, value: row.value, perDay: round2(row.perDay), days: typeof row.days === "number" ? round2(row.days) : "", detail: `prod:${row.pk}` }))],
+      note: `As on ${dmy(ctx.today)}. Stock at average cost over the cost of what was sold in the ${window} days up to the last sale (${dmy(end)}) a day; per product, its quantity over the quantity sold a day (blank where none was sold). ${stock.note ?? ""}`,
+    };
+  },
+});
+
+T.push({
+  id: 132, question: "Which products have not sold in the last 6 months?", defaultPeriod: "none",
+  terms: [/products?|items?|stock|goods/, /not sold|no sales?|unsold|not been sold|without sales?|haven'?t sold|not selling|dead|non[- ]?moving/, /months?|six|6/],
+  run: async (ctx) => {
+    const months = numberAfter(ctx.question ?? "", /(\d+)\s*months?/) ?? 6;
+    const today = new Date(`${ctx.today}T00:00:00`);
+    const since = iso(new Date(today.getFullYear(), today.getMonth() - months, today.getDate()));
+    const found = await rows(ctx,
+      `WITH ${STOCK_CTE(ctx.sch, "$3")}, ${COST_CTES(ctx.sch, "$4", "$2", "$3")}, sold AS (SELECT pl.prod_id, MAX(l.doc_date) AS last_sale FROM ${ctx.sch}.prod_ledger pl JOIN ${ctx.sch}.ledger l ON l.led_key = pl.led_id`
+      + ` WHERE pl.book = ${SALE} AND pl.il_pos = 'A' AND pl.inventory = 'Y' AND l.doc_pos = 'A' AND l.doc_date <= $2::date GROUP BY pl.prod_id)`
+      + ` SELECT btrim(pm.prod_desc) AS name, stk.cq, avgc.cost, stk.cq * avgc.cost AS value, sold.last_sale FROM stk JOIN ${ctx.sch}.product_master pm ON pm.prod_key = stk.prod_id LEFT JOIN sold ON sold.prod_id = stk.prod_id LEFT JOIN avgc ON avgc.prod_id = stk.prod_id`
+      + ` WHERE pm.prod_pos <> 'D' AND stk.cq > 0 AND (sold.last_sale IS NULL OR sold.last_sale < $1::date) ORDER BY stk.cq * COALESCE(avgc.cost, 0) DESC, stk.cq DESC LIMIT 500`, [since, ctx.today, ctx.session.yearId, iso(ctx.session.tarikh1)]);
+    const out = found.map((row) => ({ name: String(row.name), cq: num(row.cq), cost: num(row.cost), value: num(row.value), last: row.last_sale ? dmy(row.last_sale) : "Not this year" }));
+    return {
+      id: 132, title: `Products with stock and no sale in ${months} months (${out.length})`, columns: [int("no", "No."), text("name", "Product"), qty("cq", "Stock"), money("cost", "Average Cost"), money("value", "Stock Value"), text("last", "Last Sale")],
+      rows: out.length === 0 ? [] : [...out.map((row, at) => ({ no: at + 1, ...row })), { no: "", name: "Total tied up", cq: "", cost: "", value: sumOf(out, (row) => row.value), last: "" }],
+      note: `Products with stock on hand and no sale since ${dmy(since)} (say another number of months in the question), the most money tied up first. The first 500 are shown. Stock at average cost.`,
+    };
+  },
+});
+
+// --- 133 to 137: expenses and overheads
+
+/** The expense accounts' totals by name for the dates of a database. */
+async function expensesByName(ctx: Ctx, sch: string, from: string, to: string) {
+  const found = await rows(ctx, `SELECT btrim(ac.name) AS name, MAX(ac.code) AS code, SUM(l.amount::numeric) AS amount FROM ${sch}.ledger l JOIN ${sch}.account ac ON ac.code = l.code WHERE l.book = 15 AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date GROUP BY btrim(ac.name)`, [from, to]);
+  return new Map(found.map((row) => [String(row.name).toLowerCase(), { name: String(row.name), code: num(row.code), amount: num(row.amount) }] as const));
+}
+
+/** This year's expenses so far against the same days of last year (from its own database), by expense account. */
+async function expenseYears(ctx: Ctx) {
+  const from = iso(ctx.session.tarikh1);
+  const back = (day: string) => { const at = new Date(`${day}T00:00:00`); return iso(new Date(at.getFullYear() - 1, at.getMonth(), at.getDate())); };
+  const lastSchema = await previousYearSchema(ctx, ctx.session.tarikh1);
+  const now = await expensesByName(ctx, ctx.sch, from, ctx.today);
+  const before = lastSchema ? await expensesByName(ctx, lastSchema, back(from), back(ctx.today)) : new Map<string, { name: string; code: number; amount: number }>();
+  const list = [...new Set([...now.keys(), ...before.keys()])].map((key) => {
+    const current = now.get(key)?.amount ?? 0; const last = before.get(key)?.amount ?? 0;
+    return { name: now.get(key)?.name ?? before.get(key)?.name ?? "", code: now.get(key)?.code ?? 0, current, last, change: current - last, pct: last === 0 ? (current === 0 ? 0 : 100) : ((current - last) / last) * 100 };
+  });
+  return { list, lastSchema, from, back };
+}
+
+T.push({
+  id: 133, question: "Which expenses are higher than the previous financial year?", defaultPeriod: "none",
+  terms: [/expenses?|expenditure|costs?|overheads?/, /previous|last|prior|earlier/, /year|financial|fy/, /higher|more|increase|greater|above|rose|up\b/], not: [/month/],
+  run: async (ctx) => {
+    const { list, lastSchema, from, back } = await expenseYears(ctx);
+    const up = list.filter((row) => row.change > 0).sort((a, b) => b.change - a.change);
+    return {
+      id: 133, title: `Expenses higher than the same days of last year (${up.length})`, columns: [int("no", "No."), text("name", "Expense"), money("last", "Last Year"), money("current", "This Year"), money("change", "Increase"), money("pct", "Increase %")],
+      rows: up.length === 0 ? [] : [...up.slice(0, 300).map((row, at) => ({ no: at + 1, name: row.name, last: row.last, current: row.current, change: row.change, pct: row.pct, code: row.code })), { no: "", name: "Total of these", last: sumOf(up, (row) => row.last), current: sumOf(up, (row) => row.current), change: sumOf(up, (row) => row.change), pct: pctOf(sumOf(up, (row) => row.change), sumOf(up, (row) => row.last)) }],
+      note: `${dmy(from)} to ${dmy(ctx.today)} against ${dmy(back(from))} to ${dmy(back(ctx.today))}. ${lastSchema ? "Last year is read from its own database." : "Last year's database was not found on this server, so every expense shows as new."} An expense that is new this year shows 100%. Expense book, with tax.`,
+    };
+  },
+});
+
+const EXPENSE_GROUPS: readonly { label: string; pattern: RegExp }[] = [
+  { label: "Salaries and wages", pattern: /salar|wage|staff|bonus|payroll|labou?r|\bpf\b|\besi\b|provident|gratuity|incentive|commission|allowance/i },
+  { label: "Rent", pattern: /\brent|lease/i },
+  { label: "Administration", pattern: /admin|office|telephone|phone|mobile|internet|printing|stationer|postage|courier|electric|power|water|travel|conveyance|insurance|repair|maintenance|legal|audit|professional|consult|bank charge|misc|general|subscription|software|security|cleaning|canteen|tea|entertain|petrol|vehicle|fuel/i },
+];
+
+T.push({
+  id: 134, question: "What percentage of turnover is spent on salaries, rent and administration?", defaultPeriod: "year",
+  terms: [/percent|%|share|proportion|ratio|how much/, /turnover|sales|revenue/, /salar|rent|admin|overheads?|wages/, /spent|spend|expense|cost|spending/],
+  run: async (ctx) => {
+    const turnover = (await netSales(ctx, ctx.period.from, ctx.period.to, false))[0].net;
+    const expenses = [...(await expensesByName(ctx, ctx.sch, ctx.period.from, ctx.period.to)).values()];
+    const groups = [...EXPENSE_GROUPS.map((group) => ({ label: group.label, pattern: group.pattern as RegExp | null })), { label: "Other expenses", pattern: null }];
+    const placed = new Map<string, typeof expenses>(groups.map((group) => [group.label, []]));
+    for (const expense of expenses) placed.get((EXPENSE_GROUPS.find((group) => group.pattern.test(expense.name)) ?? { label: "Other expenses" }).label)!.push(expense);
+    const out: Record<string, string | number>[] = [];
+    for (const group of groups) {
+      const list = (placed.get(group.label) ?? []).sort((a, b) => b.amount - a.amount);
+      const total = sumOf(list, (row) => row.amount);
+      out.push({ item: group.label, amount: total, share: pctOf(total, turnover) });
+      for (const row of list.slice(0, 5)) out.push({ item: `  ${row.name}`, amount: row.amount, share: pctOf(row.amount, turnover), code: row.code });
+    }
+    const all = sumOf(expenses, (row) => row.amount);
+    const named = EXPENSE_GROUPS.map((group) => sumOf(placed.get(group.label) ?? [], (row) => row.amount));
+    return {
+      id: 134, title: "Salaries, rent and administration against turnover", columns: [text("item", "Expense"), money("amount", "Amount"), money("share", "% of Turnover")],
+      summary: `Salaries, rent and administration take ${pctOf(sumOf(named, (value) => value), turnover).toFixed(1)}% of turnover (salaries ${pctOf(named[0], turnover).toFixed(1)}%, rent ${pctOf(named[1], turnover).toFixed(1)}%, administration ${pctOf(named[2], turnover).toFixed(1)}%); all expenses ${pctOf(all, turnover).toFixed(1)}%.`,
+      rows: [{ item: "Turnover (net sales before tax)", amount: turnover, share: 100 }, ...out, { item: "All expenses", amount: all, share: pctOf(all, turnover) }],
+      note: `${ctx.period.label}. Expense accounts (Expense book, with tax) are put under a heading by words in their names (salary, wage ... rent, lease ... office, telephone, electricity, travel, insurance, repair ...); anything else is under Other expenses. The five largest accounts of each heading are shown. ${SALES_NOTE}`,
+    };
+  },
+});
+
+T.push({
+  id: 135, question: "Where can we reduce costs without affecting sales?", defaultPeriod: "none",
+  terms: [/reduc|cut|save|saving|lower|trim|control|curb/, /costs?|expenses?|spending|expenditure/, /without|where|affect|impact|can we/], not: [/material|raw|production|manufactur/],
+  run: async (ctx) => {
+    const { list, lastSchema } = await expenseYears(ctx);
+    const essential = /salar|wage|\brent|lease|interest|tax|gst|tds|insurance|loan|depreciation|freight|carriage|packing|commission|discount|bank charge/i;
+    const total = sumOf(list, (row) => row.current);
+    const out = list.filter((row) => row.current > 0).map((row) => {
+      const fixed = essential.test(row.name);
+      const grew = lastSchema ? Math.max(0, row.change) : 0;
+      const saving = fixed ? 0 : Math.max(grew, row.current * 0.1);
+      return { name: row.name, code: row.code, kind: fixed ? "Needed to run or sell" : "Can be controlled", current: row.current, last: row.last, pct: row.pct, share: pctOf(row.current, total), saving };
+    }).filter((row) => row.saving > 0).sort((a, b) => b.saving - a.saving);
+    return {
+      id: 135, title: "Where costs can be reduced", summary: `Expenses that can be controlled without touching the selling effort could save about ${grouping.format(sumOf(out.slice(0, 10), (row) => row.saving))} (the ten biggest below).`,
+      columns: [int("no", "No."), text("name", "Expense"), text("kind", "Type"), money("last", "Last Year"), money("current", "This Year"), money("pct", "Change %"), money("share", "Share of Expenses %"), money("saving", "Possible Saving")],
+      rows: out.slice(0, 40).map((row, at) => ({ no: at + 1, ...row })),
+      note: `This year's expenses so far against the same days of last year. Salaries, rent, interest, taxes, insurance, loan costs, freight, packing, commission, discounts and bank charges are treated as needed to run or sell and are left out. For the others the possible saving is the larger of what they grew over last year and 10% of this year's amount. A guide to where to look, not a decision: check each head.${lastSchema ? "" : " Last year's database was not found, so only the 10% is used."}`,
+    };
+  },
+});
+
+T.push({
+  id: 136, question: "Are overheads increasing faster than revenue?", defaultPeriod: "none",
+  terms: [/overheads?|expenses?|costs?|expenditure/, /faster|more than|quicker|outpac|growing|rate|increasing|rising|compared/, /revenue|sales|turnover|income/],
+  run: async (ctx) => {
+    const { list, lastSchema, from, back } = await expenseYears(ctx);
+    const current = (await netSales(ctx, from, ctx.today, false))[0].net;
+    const last = lastSchema ? (await netSales({ ...ctx, sch: lastSchema }, back(from), back(ctx.today), false))[0].net : 0;
+    const expensesNow = sumOf(list, (row) => row.current); const expensesLast = sumOf(list, (row) => row.last);
+    const salesGrowth = pctOf(current - last, last); const expenseGrowth = pctOf(expensesNow - expensesLast, expensesLast);
+    const line = (item: string, before: number, now: number) => ({ item, last: before, current: now, change: now - before, pct: pctOf(now - before, before) });
+    return {
+      id: 136, title: "Overheads and revenue against last year",
+      ...(lastSchema && last > 0 && expensesLast > 0 ? { summary: expenseGrowth > salesGrowth ? `Yes: expenses grew ${expenseGrowth.toFixed(1)}% while net sales grew ${salesGrowth.toFixed(1)}%, so overheads now take ${pctOf(expensesNow, current).toFixed(1)}% of sales against ${pctOf(expensesLast, last).toFixed(1)}% last year.` : `No: expenses grew ${expenseGrowth.toFixed(1)}% against ${salesGrowth.toFixed(1)}% for net sales; overheads take ${pctOf(expensesNow, current).toFixed(1)}% of sales against ${pctOf(expensesLast, last).toFixed(1)}% last year.` } : {}),
+      columns: [text("item", "Item"), money("last", "Last Year"), money("current", "This Year"), money("change", "Change"), money("pct", "Change %")],
+      rows: [line("Net sales (before tax)", last, current), line("Expenses (with tax)", expensesLast, expensesNow), { item: "Expenses as % of net sales", last: pctOf(expensesLast, last), current: pctOf(expensesNow, current), change: pctOf(expensesNow, current) - pctOf(expensesLast, last), pct: "" }],
+      note: `${dmy(from)} to ${dmy(ctx.today)} against ${dmy(back(from))} to ${dmy(back(ctx.today))}. ${lastSchema ? "Last year is read from its own database." : "Last year's database was not found on this server, so no comparison can be made."} ${SALES_NOTE}`,
+    };
+  },
+});
+
+T.push({
+  id: 137, question: "Show the top 10 expense categories by amount.", defaultPeriod: "year",
+  terms: [/expenses?|expenditure|spending|costs?/, /top|biggest|largest|highest|categories|category|major/, /amount|categories|category|heads?|accounts?|by/], not: [/increase|compar|last month|salary|current month/],
+  run: async (ctx) => {
+    const all = [...(await expensesByName(ctx, ctx.sch, ctx.period.from, ctx.period.to)).values()].sort((a, b) => b.amount - a.amount);
+    const total = sumOf(all, (row) => row.amount);
+    let running = 0;
+    const top = all.slice(0, ctx.top).map((row, at) => { running += row.amount; return { no: at + 1, name: row.name, amount: row.amount, share: pctOf(row.amount, total), cumulative: pctOf(running, total), code: row.code }; });
+    return {
+      id: 137, title: `Top ${top.length} expense categories`, columns: [int("no", "No."), text("name", "Expense"), money("amount", "Amount"), money("share", "Share %"), money("cumulative", "Cumulative %")],
+      rows: top.length === 0 ? [] : [...top, { no: "", name: "All expenses", amount: total, share: 100, cumulative: "" }],
+      note: `${ctx.period.label}. Expense accounts of the Expense book, with tax; ${all.length} accounts had entries. Click or double-click a row to open its ledger.`,
+    };
+  },
+});
+
+// --- 138, 149: which products to push
+
+T.push({
+  id: 138, question: "Which products should we focus on to achieve our profit target?", defaultPeriod: "year",
+  terms: [/products?|items?/, /focus|prioriti[sz]e|push|promote|concentrate|emphasi[sz]e/, /profit/, /target|goal|achieve|reach|meet/],
+  run: async (ctx) => {
+    const target = amountIn(ctx.question ?? "");
+    const list = (await productProfits(ctx)).filter((row) => row.profit > 0).sort((a, b) => b.profit - a.profit);
+    const profit = sumOf(list, (row) => row.profit);
+    let running = 0; let needed = 0;
+    const out = list.slice(0, 50).map((row, at) => { running += row.profit; if (target !== null && needed === 0 && running >= target) needed = at + 1; return { no: at + 1, name: row.name, qty: row.qty, value: row.value, profit: row.profit, margin: row.margin, share: pctOf(row.profit, profit), cumulative: running }; });
+    return {
+      id: 138, title: "Products that earn the profit", columns: [int("no", "No."), text("name", "Product"), qty("qty", "Quantity"), money("value", "Net Sales"), money("profit", "Profit"), money("margin", "Margin %"), money("share", "Share of Profit %"), money("cumulative", "Cumulative Profit")],
+      summary: target === null ? `Profit so far is ${grouping.format(profit)}, ${pctOf(sumOf(list.slice(0, 10), (row) => row.profit), profit).toFixed(0)}% of it from the ten products below. Say a target in the question (for example: ... to achieve a profit target of 20 lakh) to see how many products reach it.` : needed > 0 ? `The top ${needed} products already earn ${grouping.format(out[needed - 1].cumulative)}, which meets the target of ${grouping.format(target)}; keep these in stock and push them.` : `All profitable products together earn ${grouping.format(profit)}, ${grouping.format(target - profit)} short of the target of ${grouping.format(target)}: sales of the high-margin products need to grow, not just be kept.`,
+      rows: out, note: `${ctx.period.label}. Products with a profit, best first. ${PROFIT_NOTE}`,
+    };
+  },
+});
+
+T.push({
+  id: 149, question: "Which products should we prioritize based on margin and demand?", defaultPeriod: "year",
+  terms: [/products?|items?/, /prioriti[sz]e|focus|push|promote|concentrate|rank/, /margin|profit/, /demand|selling|volume|sales|movement/], not: [/target|achieve|goal/],
+  run: async (ctx) => {
+    const list = (await productProfits(ctx)).filter((row) => row.qty > 0 && row.value > 0);
+    const rank = (key: "margin" | "qty") => { const sorted = [...list].sort((a, b) => a[key] - b[key]); return new Map(sorted.map((row, at) => [row.prod, sorted.length <= 1 ? 1 : at / (sorted.length - 1)] as const)); };
+    const margins = rank("margin"); const demands = rank("qty");
+    const out = list.map((row) => {
+      const high = (margins.get(row.prod) ?? 0) >= 0.5; const busy = (demands.get(row.prod) ?? 0) >= 0.5;
+      return { ...row, score: ((margins.get(row.prod) ?? 0) + (demands.get(row.prod) ?? 0)) * 50, action: high && busy ? "Push: high margin, high demand" : high ? "Grow demand: good margin, low sales" : busy ? "Raise price or cut cost: busy, thin margin" : "Review: low margin and low demand" };
+    }).sort((a, b) => b.score - a.score).slice(0, 100);
+    return {
+      id: 149, title: "Products to prioritise by margin and demand", columns: [int("no", "No."), text("name", "Product"), qty("qty", "Quantity Sold"), money("value", "Net Sales"), money("margin", "Margin %"), money("profit", "Profit"), money("score", "Score"), text("action", "What to do")],
+      rows: out.map((row, at) => ({ no: at + 1, name: row.name, qty: row.qty, value: row.value, margin: row.margin, profit: row.profit, score: round2(row.score), action: row.action })),
+      note: `${ctx.period.label}. The score ranks each product by margin % and by quantity sold (each from 0 to 50, so 100 is the best of both); the half above the middle on a measure counts as high. ${PROFIT_NOTE}`,
+    };
+  },
+});
+
+// --- 139, 140: unusual entries
+
+T.push({
+  id: 139, question: "Which transactions are unusually large compared with normal activity?", defaultPeriod: "year",
+  terms: [/transactions?|entries|vouchers?|invoices?|bills?|payments?/, /unusual|abnormal|large|big|huge|exceptional|outlier|odd|suspicious|spike/, /normal|usual|typical|compared|average|activity|regular/],
+  run: async (ctx) => {
+    const found = await rows(ctx,
+      `WITH e AS (SELECT l.led_key, l.code, l.book, l.doc_date, l.full_docno, l.amount::numeric AS amt, AVG(l.amount::numeric) OVER (PARTITION BY l.book) AS mean, STDDEV_POP(l.amount::numeric) OVER (PARTITION BY l.book) AS sd, COUNT(*) OVER (PARTITION BY l.book) AS n`
+      + ` FROM ${ctx.sch}.ledger l WHERE l.doc_pos = 'A' AND l.doc_posting = 'P' AND l.book IN (${SALE}, ${PURCHASE}, 4, 6, 15, ${CREDIT_NOTE}, 11) AND l.amount::numeric > 0 AND l.doc_date >= $1::date AND l.doc_date <= $2::date)`
+      + ` SELECT e.code, e.doc_date AS d, e.full_docno AS doc, btrim(COALESCE(bp.book_desc, 'Book ' || e.book::text)) AS book, btrim(COALESCE(ac.name, '')) AS party, e.amt, e.mean, e.amt / NULLIF(e.mean, 0) AS times`
+      + ` FROM e LEFT JOIN ${ctx.sch}.book_properties bp ON bp.book_key = e.book LEFT JOIN ${ctx.sch}.account ac ON ac.code = e.code WHERE e.n >= 10 AND e.amt > e.mean + 3 * e.sd AND e.amt >= 3 * e.mean ORDER BY e.amt / NULLIF(e.mean, 0) DESC LIMIT 100`, [ctx.period.from, ctx.period.to]);
+    return {
+      id: 139, title: `Unusually large transactions (${found.length})`, columns: [date("d", "Date"), text("doc", "Voucher"), text("book", "Book"), text("party", "Party"), money("amt", "Amount"), money("mean", "Usual Amount in the Book"), money("times", "Times the Usual")],
+      rows: found.map((row) => ({ d: dmy(row.d), doc: String(row.doc ?? ""), book: String(row.book), party: String(row.party), amt: num(row.amt), mean: num(row.mean), times: round2(num(row.times)), code: num(row.code) })),
+      note: `${ctx.period.label}. Entries of the sale, purchase, cash, bank, expense, credit note and debit note books whose amount is more than 3 standard deviations above the average of their book and at least 3 times that average; books with fewer than 10 entries are not judged. The 100 most unusual are shown. An unusual entry is a reason to look, not a mistake.`,
+    };
+  },
+});
+
+T.push({
+  id: 140, question: "Which customers have sudden increases in outstanding?", defaultPeriod: "none",
+  terms: [/customers?|clients?|parties/, /sudden|sharp|jump|spike|surge|rapid|suddenly|big increase|increases?|rise|rose/, /outstanding|balance|receivable|owe|dues?/], not: [/top|overdue|credit limit|why|explain|supplier/],
+  run: async (ctx) => {
+    const days = numberAfter(ctx.question ?? "", /(\d+)\s*days?/) ?? 30;
+    const now = (await balances(ctx, 2)).filter((row) => row.closing > 0);
+    const before = new Map((await balances({ ...ctx, today: addDays(ctx.today, -days) }, 2, now.map((row) => row.code))).map((row) => [row.code, row.closing] as const));
+    const list = now.map((row) => { const was = Math.max(0, before.get(row.code) ?? 0); return { code: row.code, name: row.name, was, now: row.closing, change: row.closing - was, pct: was === 0 ? 100 : ((row.closing - was) / was) * 100 }; })
+      .filter((row) => row.change >= 10000 && (row.was === 0 || row.pct >= 50)).sort((a, b) => b.change - a.change);
+    return {
+      id: 140, title: `Customers whose outstanding jumped in ${days} days (${list.length})`, columns: [int("no", "No."), text("name", "Customer"), money("was", `${days} Days Ago`), money("now", "Now"), money("change", "Increase"), money("pct", "Increase %")],
+      rows: list.slice(0, 200).map((row, at) => ({ no: at + 1, name: row.name, was: row.was, now: row.now, change: row.change, pct: row.pct, code: row.code, detail: `bills:${row.code}` })),
+      note: `Balances as on ${dmy(addDays(ctx.today, -days))} and ${dmy(ctx.today)} (say another number of days in the question), as the Outstanding Agewise report takes them. A jump is an increase of at least 10,000 that is also at least 50% (a customer who owed nothing before counts as 100%). Click a customer to show its open bills.`,
+    };
+  },
+});
+
+// --- 141 to 149: manufacturing and finished-product costing
+//
+// A product made in the factory has a bill of material (MFG-BOM voucher); its standard cost is that bill's materials at the rates costed as the Finish Product
+// Costing report does (see bomCosts). The production itself is not entered as separate vouchers, so the quantity made is taken as the quantity sold.
+
+type BomModel = Readonly<{ latest: Map<number, { doc: string; qty: number }>; lines: Map<string, { prod: number; qty: number; rate: number }[]>; standard: (prod: number) => number }>;
+
+/** The bills of material as bomCosts reads them, to cost again with other rates. */
+async function bomModel(ctx: Ctx): Promise<BomModel | null> {
+  const found = await rows(ctx, `SELECT full_docno AS doc, prod_id, stock_nat AS nature, quantity::numeric AS qty, rate::numeric AS rate, il_date FROM ${ctx.sch}.prod_ledger WHERE btrim(trn_module) = 'MFG-BOM' AND il_pos <> 'D'`);
+  const latest = new Map<number, { doc: string; qty: number; date: number }>();
+  const lines = new Map<string, { prod: number; qty: number; rate: number }[]>();
+  for (const row of found) {
+    if (String(row.nature) === "A") {
+      const header = { doc: String(row.doc), qty: num(row.qty), date: row.il_date instanceof Date ? row.il_date.getTime() : 0 };
+      const current = latest.get(num(row.prod_id));
+      if (!current || header.date > current.date || (header.date === current.date && header.doc > current.doc)) latest.set(num(row.prod_id), header);
+    } else if (String(row.nature) === "L") lines.set(String(row.doc), [...(lines.get(String(row.doc)) ?? []), { prod: num(row.prod_id), qty: num(row.qty), rate: num(row.rate) }]);
+  }
+  if (latest.size === 0) return null;
+  const purchase = new Map((await rows(ctx, `SELECT DISTINCT ON (prod_id) prod_id, rate::numeric AS rate FROM ${ctx.sch}.prod_ledger WHERE il_pos = 'A' AND il_date BETWEEN $1::date AND $2::date AND book = ${PURCHASE} AND led_id IS NOT NULL ORDER BY prod_id, il_date DESC`, [iso(ctx.session.tarikh1), ctx.today])).map((row) => [num(row.prod_id), num(row.rate)] as const));
+  const balance = new Map((await rows(ctx, `SELECT DISTINCT ON (prod_id) prod_id, open_rate::numeric AS open_rate, rep_rate::numeric AS rep_rate FROM ${ctx.sch}.prod_balance WHERE prec_flag = 'RP' ORDER BY prod_id`)).map((row) => [num(row.prod_id), row] as const));
+  return { latest, lines, standard: (prod) => purchase.get(prod) || num(balance.get(prod)?.open_rate) || num(balance.get(prod)?.rep_rate) || 0 };
+}
+
+/**
+ * The cost of one piece of a made product. A material that is made from its own bill (and has no rate on the line) is costed from that; any other takes the
+ * rate `pick` gives for it, else the line's rate, else the standard rate. Without `pick` it is the cost bomCosts gives.
+ */
+function bomUnit(model: BomModel, prod: number, pick?: (material: number) => number | undefined, depth = 0, path: ReadonlySet<number> = new Set()): number {
+  const header = model.latest.get(prod);
+  if (!header || header.qty <= 0 || depth >= 10 || path.has(prod)) return model.standard(prod);
+  const next = new Set(path).add(prod);
+  let total = 0;
+  for (const line of model.lines.get(header.doc) ?? []) {
+    const own = model.latest.has(line.prod);
+    const rate = own ? (line.rate !== 0 ? line.rate : bomUnit(model, line.prod, pick, depth + 1, next)) : pick?.(line.prod) ?? (line.rate !== 0 ? line.rate : model.standard(line.prod));
+    total += line.qty * rate;
+  }
+  return total / header.qty;
+}
+
+/** What one piece of a made product uses of each raw material (a material made from its own bill is broken down into its materials), with the cost of it. */
+function bomUsage(model: BomModel, prod: number, scale = 1, out = new Map<number, { qty: number; value: number }>(), depth = 0, path: ReadonlySet<number> = new Set()) {
+  const header = model.latest.get(prod);
+  if (!header || header.qty <= 0 || depth >= 10 || path.has(prod)) return out;
+  const next = new Set(path).add(prod);
+  for (const line of model.lines.get(header.doc) ?? []) {
+    const each = (line.qty / header.qty) * scale;
+    if (model.latest.has(line.prod) && line.rate === 0) { bomUsage(model, line.prod, each, out, depth + 1, next); continue; }
+    const entry = out.get(line.prod) ?? out.set(line.prod, { qty: 0, value: 0 }).get(line.prod)!;
+    entry.qty += each; entry.value += each * (line.rate !== 0 ? line.rate : model.standard(line.prod));
+  }
+  return out;
+}
+
+/** Each product's purchase rate in force at the date: its latest purchase up to then (value over quantity of that bill's line, before tax), with the date of the latest purchase of all. */
+async function rateAsOf(ctx: Ctx, upto: string) {
+  const found = await rows(ctx, `SELECT DISTINCT ON (pl.prod_id) pl.prod_id, pl.il_value::numeric / NULLIF(pl.quantity::numeric, 0) AS rate, l.doc_date AS d FROM ${ctx.sch}.prod_ledger pl JOIN ${ctx.sch}.ledger l ON l.led_key = pl.led_id WHERE pl.book = ${PURCHASE} AND pl.il_pos = 'A' AND pl.inventory = 'Y' AND l.doc_pos = 'A' AND pl.quantity::numeric > 0 AND l.doc_date <= $1::date ORDER BY pl.prod_id, l.doc_date DESC, pl.il_key DESC`, [upto]);
+  const latest = found.reduce((most, row) => (row.d instanceof Date && row.d.getTime() > most ? row.d.getTime() : most), 0);
+  return { rates: new Map(found.filter((row) => num(row.rate) > 0).map((row) => [num(row.prod_id), num(row.rate)] as const)), latest: latest === 0 ? "" : dmy(new Date(latest)) };
+}
+
+async function productNames(ctx: Ctx, ids: readonly number[]) {
+  if (ids.length === 0) return new Map<number, string>();
+  return new Map((await rows(ctx, `SELECT prod_key, btrim(prod_desc) AS name FROM ${ctx.sch}.product_master WHERE prod_key = ANY($1::int[])`, [[...ids]])).map((row) => [num(row.prod_key), String(row.name)] as const));
+}
+
+const NO_BOM = "No product has a bill of material (MFG-BOM) in this company, so there is no manufacturing cost to work out.";
+const noBom = (id: number, title: string): AskAnswer => ({ id, title, columns: [text("item", "Item")], rows: [], note: NO_BOM });
+const BOM_NOTE = "A made product's cost is its latest bill of material at the rates the Finish Product Costing report takes (the BOM's rate, else the latest purchase rate of the year, else the opening rate).";
+
+T.push({
+  id: 141, question: "Which products have the highest material cost?", defaultPeriod: "year",
+  terms: [/products?|items?|finished|goods/, /material|raw/, /cost/, /highest|most|top|biggest|largest|expensive/], not: [/increase|change|rose|percent|%|impact|consum|margin/],
+  run: async (ctx) => {
+    const model = await bomModel(ctx);
+    if (!model) return noBom(141, "Products by material cost");
+    const sold = new Map((await productProfits(ctx)).map((row) => [row.prod, row] as const));
+    const made = [...model.latest.keys()].map((prod) => ({ prod, cost: bomUnit(model, prod) })).filter((row) => row.cost > 0);
+    const names = await productNames(ctx, made.map((row) => row.prod));
+    const list = made.map((row) => { const s = sold.get(row.prod); return { name: names.get(row.prod) ?? String(row.prod), unit: row.cost, rate: s?.rate ?? 0, pct: s && s.rate > 0 ? pctOf(row.cost, s.rate) : 0, qty: s?.qty ?? 0, total: row.cost * Math.max(0, s?.qty ?? 0) }; }).sort((a, b) => b.total - a.total || b.unit - a.unit);
+    return {
+      id: 141, title: `Made products by material cost (${list.length})`, columns: [int("no", "No."), text("name", "Product"), money("unit", "Material Cost a Piece"), money("rate", "Average Selling Rate"), money("pct", "Material % of Rate"), qty("qty", "Quantity Sold"), money("total", "Material Cost of Sales")],
+      rows: list.slice(0, 100).map((row, at) => ({ no: at + 1, ...row })),
+      note: `${ctx.period.label}. ${BOM_NOTE} Material Cost of Sales is the cost a piece times the net quantity sold, biggest first; a product not sold shows 0.`,
+    };
+  },
+});
+
+/** The made products costed with each month's own purchase rates, this month so far and the days of last month. */
+async function monthlyBomCosts(ctx: Ctx) {
+  const model = await bomModel(ctx);
+  const pair = await monthPair(ctx);
+  if (!model || !pair.lastCtx) return { model, pair, list: [] as { prod: number; last: number; current: number }[], latest: "" };
+  const now = await rateAsOf(ctx, ctx.today);
+  const thisRates = now.rates;
+  const lastRates = (await rateAsOf(pair.lastCtx, iso(new Date(pair.lastFrom.getFullYear(), pair.lastFrom.getMonth() + 1, 0)))).rates;
+  const list = [...model.latest.keys()].map((prod) => ({ prod, last: bomUnit(model, prod, (material) => lastRates.get(material)), current: bomUnit(model, prod, (material) => thisRates.get(material)) })).filter((row) => row.last > 0 || row.current > 0);
+  return { model, pair, list, latest: now.latest };
+}
+
+T.push({
+  id: 142, question: "How much has production cost changed compared with the previous month?", defaultPeriod: "none",
+  terms: [/production|manufactur|making|factory/, /cost/, /chang|compar|differ|increase|decrease|vs|versus|previous|last/, /month/],
+  run: async (ctx) => {
+    const { model, pair, list, latest } = await monthlyBomCosts(ctx);
+    if (!model) return noBom(142, "Production cost against the previous month");
+    if (!pair.lastCtx) return { id: 142, title: "Production cost against the previous month", columns: [text("item", "Item")], rows: [], note: "Last month is in the previous year, whose database was not found on this server." };
+    const names = await productNames(ctx, list.map((row) => row.prod));
+    const out = list.map((row) => ({ name: names.get(row.prod) ?? String(row.prod), last: row.last, current: row.current, change: row.current - row.last, pct: pctOf(row.current - row.last, row.last) })).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    const costed = out.filter((row) => row.last > 0 && row.current > 0);
+    const average = costed.length === 0 ? 0 : sumOf(costed, (row) => row.pct) / costed.length;
+    return {
+      id: 142, title: `Production cost of ${out.length} made products against last month`, columns: [int("no", "No."), text("name", "Product"), money("last", "Last Month"), money("current", "This Month"), money("change", "Change a Piece"), money("pct", "Change %")],
+      summary: `Material cost a piece is ${average >= 0 ? "up" : "down"} ${Math.abs(average).toFixed(1)}% on average over last month; ${costed.filter((row) => row.change > 0).length} products cost more, ${costed.filter((row) => row.change < 0).length} cost less.`,
+      rows: out.slice(0, 100).map((row, at) => ({ no: at + 1, ...row })),
+      note: `Each made product's latest bill of material costed at the purchase rate in force at the end of ${MONTHS_SHORT[pair.lastFrom.getMonth()]}-${pair.lastFrom.getFullYear()} and today (the latest purchase of each material up to then; a material never bought keeps its bill's rate), so a change shows only where a material was bought at a new price in between${latest === "" ? "" : `; the latest purchase in the books is of ${latest}`}. Material cost only: labour and overheads are not entered against products.`,
+    };
+  },
+});
+
+T.push({
+  id: 143, question: "Which products have actual costs above their standard costs?", defaultPeriod: "none",
+  terms: [/products?|items?|finished|goods/, /actual/, /standard|budget|estimat|bom|planned/, /cost/, /above|more|higher|exceed|over/],
+  run: async (ctx) => {
+    const model = await bomModel(ctx);
+    if (!model) return noBom(143, "Actual cost above standard cost");
+    const { rates, latest } = await rateAsOf(ctx, ctx.today);
+    const names = await productNames(ctx, [...model.latest.keys()]);
+    const list = [...model.latest.keys()].map((prod) => { const standard = bomUnit(model, prod); const actual = bomUnit(model, prod, (material) => rates.get(material)); return { name: names.get(prod) ?? String(prod), standard, actual, change: actual - standard, pct: pctOf(actual - standard, standard) }; })
+      .filter((row) => row.standard > 0 && row.change > 0.005).sort((a, b) => b.pct - a.pct);
+    return {
+      id: 143, title: `Products whose actual cost is above standard (${list.length})`, columns: [int("no", "No."), text("name", "Product"), money("standard", "Standard Cost a Piece"), money("actual", "Actual Cost a Piece"), money("change", "Above Standard"), money("pct", "Above Standard %")],
+      rows: list.slice(0, 100).map((row, at) => ({ no: at + 1, ...row })),
+      note: `Standard is the latest bill of material at its own rates; actual is the same bill at the latest purchase rate of each material (a material never bought keeps its standard rate)${latest === "" ? "" : `; the latest purchase in the books is of ${latest}`}. ${BOM_NOTE.split(" (")[0]}.`,
+    };
+  },
+});
+
+T.push({
+  id: 144, question: "Which raw materials contribute most to cost increases?", defaultPeriod: "year",
+  terms: [/raw materials?|materials?|ingredients?|components?/, /cost|price|rate/, /contribut|driv|cause|behind|responsible|biggest|most/, /increase|rise|rising|higher|up|jump/],
+  run: async (ctx) => {
+    const model = await bomModel(ctx);
+    if (!model) return noBom(144, "Raw materials behind cost increases");
+    const pair = await monthPair(ctx);
+    if (!pair.lastCtx) return { id: 144, title: "Raw materials behind cost increases", columns: [text("item", "Item")], rows: [], note: "Last month is in the previous year, whose database was not found on this server." };
+    const now = await rateAsOf(ctx, ctx.today);
+    const thisRates = now.rates;
+    const lastRates = (await rateAsOf(pair.lastCtx, iso(new Date(pair.lastFrom.getFullYear(), pair.lastFrom.getMonth() + 1, 0)))).rates;
+    const made = new Map((await productProfits(ctx)).filter((row) => model.latest.has(row.prod) && row.qty > 0).map((row) => [row.prod, row.qty] as const));
+    const used = new Map<number, number>();
+    for (const [prod, sold] of made) for (const [material, use] of bomUsage(model, prod)) used.set(material, (used.get(material) ?? 0) + use.qty * sold);
+    const names = await productNames(ctx, [...used.keys()]);
+    const list = [...used].filter(([material]) => thisRates.has(material) && lastRates.has(material)).map(([material, quantity]) => { const last = lastRates.get(material) as number; const current = thisRates.get(material) as number; return { name: names.get(material) ?? String(material), last, current, pct: pctOf(current - last, last), qty: quantity, impact: (current - last) * quantity }; })
+      .filter((row) => row.impact > 0).sort((a, b) => b.impact - a.impact);
+    const total = sumOf(list, (row) => row.impact);
+    return {
+      id: 144, title: `Raw materials pushing the cost up (${list.length})`, columns: [int("no", "No."), text("name", "Raw Material"), money("last", "Rate Last Month End"), money("current", "Rate Now"), money("pct", "Rate Change %"), qty("qty", "Used in Sales (year)"), money("impact", "Cost Impact"), money("share", "Share of Increase %")],
+      rows: list.slice(0, 100).map((row, at) => ({ no: at + 1, ...row, share: pctOf(row.impact, total) })),
+      note: `Materials whose purchase rate now is above the rate in force at the end of last month${now.latest === "" ? "" : ` (the latest purchase in the books is of ${now.latest})`}. Cost Impact is the rate rise times the quantity of the material used for the made products sold in ${ctx.period.label.toLowerCase()} (each bill of material times the net quantity sold). ${BOM_NOTE.split(" (")[0]}.`,
+    };
+  },
+});
+
+T.push({
+  id: 145, question: "Which finished products have the lowest profit margin?", defaultPeriod: "year",
+  terms: [/finished|made|manufactured|factory|\bfg\b|production/, /products?|items?|goods/, /lowest|least|low|poor|weak|worst|thin/, /margin|profit/],
+  run: async (ctx) => {
+    const model = await bomModel(ctx);
+    if (!model) return noBom(145, "Finished products by margin");
+    const list = (await productProfits(ctx)).filter((row) => model.latest.has(row.prod) && row.value > 0).sort((a, b) => a.margin - b.margin).slice(0, Math.max(ctx.top, 20));
+    return { id: 145, title: `Finished products with the lowest margin`, columns: [int("no", "No."), text("name", "Product"), ...profitColumns], rows: list.map(profitRow), note: `${ctx.period.label}. Only products made in the factory (with a bill of material). ${PROFIT_NOTE}` };
+  },
+});
+
+T.push({
+  id: 146, question: "How much material cost is consumed in production?", defaultPeriod: "year",
+  terms: [/material/, /cost|value|amount/, /consum|used|use|spent|going/, /production|manufactur|factory|making/],
+  run: async (ctx) => {
+    const model = await bomModel(ctx);
+    if (!model) return noBom(146, "Material cost consumed in production");
+    const made = (await productProfits(ctx)).filter((row) => model.latest.has(row.prod) && row.qty > 0);
+    const used = new Map<number, { qty: number; value: number }>();
+    for (const row of made) for (const [material, use] of bomUsage(model, row.prod)) { const entry = used.get(material) ?? used.set(material, { qty: 0, value: 0 }).get(material)!; entry.qty += use.qty * row.qty; entry.value += use.value * row.qty; }
+    const names = await productNames(ctx, [...used.keys()]);
+    const list = [...used].map(([material, entry]) => ({ name: names.get(material) ?? String(material), qty: entry.qty, rate: entry.qty === 0 ? 0 : entry.value / entry.qty, value: entry.value })).sort((a, b) => b.value - a.value);
+    const total = sumOf(list, (row) => row.value);
+    const sales = sumOf(made, (row) => row.value);
+    return {
+      id: 146, title: "Material cost consumed in production", summary: `Material worth ${grouping.format(total)} went into the ${made.length} made products sold (${pctOf(total, sales).toFixed(1)}% of their net sales of ${grouping.format(sales)}).`,
+      columns: [int("no", "No."), text("name", "Material"), qty("qty", "Quantity"), money("rate", "Average Rate"), money("value", "Cost"), money("share", "Share %")],
+      rows: list.length === 0 ? [] : [...list.slice(0, 100).map((row, at) => ({ no: at + 1, ...row, share: pctOf(row.value, total) })), { no: "", name: "Total", qty: "", rate: "", value: total, share: 100 }],
+      note: `${ctx.period.label}. Production is not entered as vouchers, so the consumption is worked out: each made product's latest bill of material times the net quantity of it sold (a semi-finished material is broken down into its own materials). ${BOM_NOTE}`,
+    };
+  },
+});
+
+T.push({
+  id: 147, question: "Which production orders exceed their estimated cost?", defaultPeriod: "none",
+  terms: [/production|manufactur|job|work/, /orders?|jobs?|batch|batches/, /exceed|over|above|more than|overrun|beyond/, /estimat|budget|planned|standard|cost/],
+  run: async () => ({
+    id: 147, title: "Production orders against estimated cost", columns: [text("item", "Item"), text("what", "What")],
+    rows: [{ item: "Estimated cost", what: "Can be worked out: the product's bill of material (see \"Which products have actual costs above their standard costs?\")." }, { item: "Actual cost of an order", what: "Not kept: the books do not record the materials issued or the expenses charged against a production order, so an order's actual cost is unknown." }],
+    note: "A production order cannot be compared with its estimate because its actual cost is not recorded. Ask \"Which products have actual costs above their standard costs?\" to see where current material rates exceed the bill of material.",
+  }),
+});
+
+T.push({
+  id: 148, question: "What is the cost impact of a 5% increase in raw material prices?", defaultPeriod: "year",
+  terms: [/raw materials?|materials?|ingredients?|input/, /prices?|rates?|cost/, /increase|rise|hike|higher|up|inflation|impact|effect/, /impact|effect|what|%|percent|if/],
+  run: async (ctx) => {
+    const model = await bomModel(ctx);
+    const percent = numberAfter(ctx.question ?? "", /(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)/i) ?? 5;
+    if (!model) return noBom(148, "Impact of a raw material price rise");
+    const made = (await productProfits(ctx)).filter((row) => model.latest.has(row.prod) && row.qty > 0);
+    const used = new Map<number, number>();
+    const byProduct: { name: string; cost: number; impact: number; margin: number; after: number; sales: number }[] = [];
+    for (const row of made) {
+      let cost = 0;
+      for (const [material, use] of bomUsage(model, row.prod)) { used.set(material, (used.get(material) ?? 0) + use.value * row.qty); cost += use.value * row.qty; }
+      const impact = (cost * percent) / 100;
+      byProduct.push({ name: row.name, cost, impact, margin: row.margin, after: pctOf(row.profit - impact, row.value), sales: row.value });
+    }
+    const total = sumOf(byProduct, (row) => row.cost); const impact = (total * percent) / 100;
+    const profit = sumOf(made, (row) => row.profit); const sales = sumOf(made, (row) => row.value);
+    byProduct.sort((a, b) => b.impact - a.impact);
+    return {
+      id: 148, title: `If raw material prices rise ${percent}%`,
+      summary: `A ${percent}% rise adds about ${grouping.format(impact)} to the material cost of the made products sold this year (${pctOf(impact, sales).toFixed(2)}% of their sales), cutting their profit from ${grouping.format(profit)} to ${grouping.format(profit - impact)} and their margin from ${pctOf(profit, sales).toFixed(1)}% to ${pctOf(profit - impact, sales).toFixed(1)}% if prices cannot be passed on.`,
+      columns: [text("item", "Product"), money("cost", "Material Cost"), money("impact", `Extra Cost at ${percent}%`), money("margin", "Margin Now %"), money("after", "Margin After %")],
+      rows: [{ item: "All made products sold", cost: total, impact, margin: pctOf(profit, sales), after: pctOf(profit - impact, sales) }, ...byProduct.slice(0, 30).map((row) => ({ item: `  ${row.name}`, cost: row.cost, impact: row.impact, margin: row.margin, after: row.after }))],
+      note: `${ctx.period.label}. The material cost is each made product's bill of material times the net quantity sold. Say another rise in the question (for example "a 10% increase"). Products without a bill of material (bought and sold as they are) are not affected here. ${PROFIT_NOTE}`,
+    };
+  },
+});
+
+// --- 53: the profit and loss account (the Profit / Loss report, with its closing stock from the Stock report)
+
+T.push({
+  id: 53, question: "Show the profit and loss account.", defaultPeriod: "year",
+  terms: [/profit/, /loss/, /account|statement|p ?& ?l|and loss/], not: [/customer|party|product|each|net profit|gross|margin/],
+  run: async (ctx) => {
+    const columns = [text("PARTICULAR", "Particulars"), money("CURRENT_AMOUNT", "Amount"), money("PERC", "% of Sales"), text("PARTICULAR_1", "Particulars"), money("CURRENT_AMOUNT_1", "Amount"), money("PERC_1", "% of Sales")];
+    const failed = (why: string): AskAnswer => ({ id: 53, title: "Profit and loss account", columns, rows: [], note: `The Profit / Loss report could not be run here: ${why}` });
+    try {
+      const found = (await rows(ctx, `SELECT btrim(report_name) AS name FROM ${SETUP_SCHEMA}.report_properties WHERE report_key = 22 LIMIT 1`))[0];
+      if (!found) return failed("this installation has no Profit / Loss report.");
+      const reportName = String(found.name);
+      const menus: MenuNode[] = [];
+      const walk = (list: readonly MenuNode[]) => { for (const node of list) { menus.push(node); walk(node.children); } };
+      walk(await readMenuCatalog(ctx.session.companyGroup));
+      const loader = new Loader(ctx.client, ctx.session);
+      const definition = await loadReport(loader, reportName, menus.find((node) => node.actionMenu?.toUpperCase() === reportName.toUpperCase())?.menuShortName ?? "");
+      // Up to date from the year's start, or between dates; the closing stock is worked out by the Stock report (Update Value In Master, Closing Amount), as the screen does when it is ticked.
+      const between = ctx.period.from !== iso(ctx.session.tarikh1);
+      const option = definition.firstCombo.options.find((candidate) => (between ? /between/i : /upto|up to/i).test(candidate.text));
+      const control = definition.controls.find((candidate) => /^lbox_sorting$/i.test(candidate.name));
+      const closing = control?.items.find((item) => /closing/i.test(item.text));
+      if (!option || !control || !closing) return failed("its selection does not have the Upto Date and Closing Amount choices.");
+      const checks = Object.fromEntries(definition.checkboxes.map((check) => [check.name, check.value]));
+      const output = await runReport(loader, reportName, {
+        firstCombo: option.value, from: reportDay(ctx.period.from), upto: reportDay(ctx.period.to), groups: [], ticks: {}, choices: { [control.name]: `${closing.controlValKey}|${closing.value}` }, columns: [],
+        texts: {}, checks: { ...checks, CHK_UPD_MASTER: true, CHK_OPEN_VALUE: between, CHK_PROFIT_PERC: false, CHK_PREV_BAL: false },
+      });
+      const entries = output.rows.filter((row) => isEntryRow(row));
+      const cell = (row: (typeof entries)[number], key: string) => row.values[key];
+      const body = entries.map((row) => ({ PARTICULAR: String(cell(row, "PARTICULAR") ?? ""), CURRENT_AMOUNT: amountOfCell(cell(row, "CURRENT_AMOUNT")), PARTICULAR_1: String(cell(row, "PARTICULAR_1") ?? ""), CURRENT_AMOUNT_1: amountOfCell(cell(row, "CURRENT_AMOUNT_1")) }));
+      // The summary as Tally's Profit & Loss A/c shows it: the accounts are added into the main groups (Purchase Accounts, Direct Expenses, Sales Accounts, Direct Incomes, Indirect Expenses, Indirect Incomes),
+      // the stock and profit lines stand as they are, and each amount has its percentage of the sales accounts.
+      const heads = new Map((await rows(ctx, `SELECT btrim(ac.name) AS name, btrim(bs.bs_code) AS code, btrim(bs.bs_desc) AS head, bs.bs_level AS level, ac.book AS book FROM ${ctx.sch}.account ac JOIN ${ctx.sch}.balsheet bs ON bs.bs_key = ac.bs_id WHERE ac.a_pos <> 'D' AND bs.bs_level IN (1, 2, 3)`)).map((row) => [String(row.name).toLowerCase(), { code: String(row.code), head: String(row.head), level: num(row.level), book: num(row.book) }] as const));
+      const special = (name: string) => (/^(OPENING|CLOSING) STOCK$|^Gross (Profit|Loss) c\/f$/i.test(name) ? 1 : /^(NET (PROFIT|LOSS)|Gross (Profit|Loss) B\/d)$/i.test(name) ? 2 : /^(NET (PROFIT|LOSS) B\/d|APPROPRIATE (PROFIT|LOSS))$/i.test(name) ? 3 : /== >>/.test(name) ? 20 : 0);
+      const groups = new Map<string, number>();
+      const add = (key: string, amount: number) => groups.set(key, (groups.get(key) ?? 0) + amount);
+      let netSeen = false;
+      // The appropriation of the profit (level 3) and the net profit left after it, as the report shows them.
+      const appropriation = { left: new Map<string, number>(), right: new Map<string, number>() };
+      let afterAppropriation: { name: string; amount: number } | null = null;
+      const picked = { net: "", gross: "" };
+      for (const row of body) {
+        for (const [name, amount, debit] of [[row.PARTICULAR.trim(), row.CURRENT_AMOUNT, true], [row.PARTICULAR_1.trim(), row.CURRENT_AMOUNT_1, false]] as const) {
+          if (name === "" || amount === 0) continue;
+          const kind = special(name);
+          if (kind === 20) continue;
+          if (kind === 3) {
+            const label = /^NET PROFIT B\/d$/i.test(name) ? "Nett Profit b/d" : /^NET LOSS B\/d$/i.test(name) ? "Nett Loss b/d" : name;
+            const target = debit ? appropriation.left : appropriation.right;
+            target.set(label, (target.get(label) ?? 0) + amount);
+            continue;
+          }
+          if (kind > 0) {
+            if (/^NET (PROFIT|LOSS)$/i.test(name)) { if (netSeen) { afterAppropriation = { name: /LOSS/i.test(name) ? "Nett Loss (after appropriation)" : "Nett Profit (after appropriation)", amount }; continue; } netSeen = true; picked.net = /LOSS/i.test(name) ? "Nett Loss" : "Nett Profit"; add(picked.net, amount); }
+            else if (/^Gross (Profit|Loss) c\/f$/i.test(name)) { picked.gross = name; add(/Profit/i.test(name) ? "Gross Profit c/o" : "Gross Loss c/o", amount); }
+            else if (/^Gross (Profit|Loss) B\/d$/i.test(name)) add(/Profit/i.test(name) ? "Gross Profit b/f" : "Gross Loss b/f", amount);
+            else add(name.replace(/^(\w)(\w*) STOCK$/i, (_all, first: string, rest: string) => `${first.toUpperCase()}${rest.toLowerCase()} Stock`), amount);
+            continue;
+          }
+          const found = heads.get(name.toLowerCase());
+          const level = found?.level ?? 0;
+          // Sales Accounts are the sale (and sales return) accounts only, net; every other credit of the trading account (trade discounts, duty drawback ...) is a Direct Income.
+          if (level === 1 && (found?.book === 8 || found?.book === 16)) add("Sales Accounts", debit ? -amount : amount);
+          else if (level === 1) add(!debit ? "Direct Incomes" : found?.code.startsWith("0103") ? "Direct Expenses" : "Purchase Accounts", amount);
+          else if (level === 2) add(debit ? "Indirect Expenses" : "Indirect Incomes", amount);
+          else if (level === 3 && found) { const target = debit ? appropriation.left : appropriation.right; const label = "Appropriation Expenses"; target.set(label, (target.get(label) ?? 0) + amount); }
+        }
+      }
+      const sales = groups.get("Sales Accounts") ?? 0;
+      const line = (name: string) => (groups.has(name) ? { name, amount: round2(groups.get(name) as number) } : null);
+      const side = (names: string[]) => names.map(line).filter((entry): entry is { name: string; amount: number } => entry !== null);
+      const summaryRows: Record<string, string | number>[] = [];
+      const percent = (amount: number) => (sales === 0 ? "" : round2((amount / sales) * 100));
+      const block = (left: { name: string; amount: number }[], right: { name: string; amount: number }[]) => {
+        for (let at = 0; at < Math.max(left.length, right.length); at += 1) summaryRows.push({ PARTICULAR: left[at]?.name ?? "", CURRENT_AMOUNT: left[at]?.amount ?? "", PERC: left[at] ? percent(left[at].amount) : "", PARTICULAR_1: right[at]?.name ?? "", CURRENT_AMOUNT_1: right[at]?.amount ?? "", PERC_1: right[at] ? percent(right[at].amount) : "" });
+        summaryRows.push({ PARTICULAR: "Total", CURRENT_AMOUNT: round2(sumOf(left, (entry) => entry.amount)), PERC: "", PARTICULAR_1: "Total", CURRENT_AMOUNT_1: round2(sumOf(right, (entry) => entry.amount)), PERC_1: "" });
+      };
+      block(side(["Opening Stock", "Purchase Accounts", "Direct Expenses", "Gross Profit c/o"]), side(["Sales Accounts", "Direct Incomes", "Closing Stock", "Gross Loss c/o"]));
+      block(side(["Gross Loss b/f", "Indirect Expenses", "Nett Profit"]), side(["Gross Profit b/f", "Indirect Incomes", "Nett Loss"]));
+      if (appropriation.left.size > 0 || appropriation.right.size > 0) {
+        summaryRows.push({ PARTICULAR: "Profit & Loss Appropriation", CURRENT_AMOUNT: "", PERC: "", PARTICULAR_1: "", CURRENT_AMOUNT_1: "", PERC_1: "" });
+        const listOf = (map: Map<string, number>) => [...map].map(([name, amount]) => ({ name, amount: round2(amount) }));
+        // The net profit left after the appropriation closes the left side, so both sides balance.
+        const left = listOf(appropriation.left);
+        if (afterAppropriation !== null) { const after: { name: string; amount: number } = afterAppropriation; left.push({ name: after.name, amount: round2(after.amount) }); }
+        block(left, listOf(appropriation.right));
+      }
+      const amountOf = (name: RegExp) => { const hit = body.find((row) => name.test(row.PARTICULAR) || name.test(row.PARTICULAR_1)); return hit ? (name.test(hit.PARTICULAR) ? hit.CURRENT_AMOUNT : hit.CURRENT_AMOUNT_1) : null; };
+      const closingStock = amountOf(/^CLOSING STOCK$/i);
+      const net = body.find((row) => /^NET (PROFIT|LOSS)$/i.test(row.PARTICULAR) || /^NET (PROFIT|LOSS)$/i.test(row.PARTICULAR_1));
+      const gross = amountOf(/^Gross (Profit|Loss) (C\/f|c\/f)$/i);
+      const parts = [closingStock !== null ? `closing stock ${grouping.format(closingStock)}` : "", gross !== null ? `gross ${/Loss/i.test(body.find((row) => /^Gross (Profit|Loss) c\/f$/i.test(row.PARTICULAR) || /^Gross (Profit|Loss) c\/f$/i.test(row.PARTICULAR_1))?.PARTICULAR_1 ?? "") ? "loss" : "profit"} ${grouping.format(gross)}` : "",
+        net ? `${/PROFIT/i.test(net.PARTICULAR || net.PARTICULAR_1) ? "net profit" : "net loss"} ${grouping.format(net.CURRENT_AMOUNT || net.CURRENT_AMOUNT_1)}` : ""].filter((part) => part !== "");
+      return {
+        id: 53, title: "Profit and loss account", columns, rows: summaryRows,
+        choices: ["Today", "Yesterday", "This month", "Last month", "This quarter", "Last quarter", "This half year", "Last half year", "This year"].map((label) => ({ label, question: `Show the profit and loss account for ${label.toLowerCase()}.` })),
+        ...(parts.length > 0 ? { summary: `${ctx.period.label}: ${parts.join(", ")}.` } : {}),
+        note: `${ctx.period.label}. The Profit / Loss report of the REPORT menu with "Update Value In Master" ticked and Closing Amount chosen, so the closing stock is the value the Stock report works out (valuation Actual); figures as that report shows them. This is the summary as Tally's Profit & Loss A/c shows it, with each line's percentage of the sales accounts; open the report for the accounts and the appropriation. For another period pick a button above or type it after the question, for example: Show the profit and loss account for July to September.`,
+        period: { from: ctx.period.from, to: ctx.period.to }, report: { name: reportName, label: "Open the Profit / Loss report", from: ctx.period.from, to: ctx.period.to, setup: { choices: { [control.name]: closing.text }, checks: ["CHK_UPD_MASTER", ...(between ? ["CHK_OPEN_VALUE"] : [])] } },
+      };
+    } catch (error) {
+      return failed(error instanceof Error ? error.message.split("\n")[0] : "it could not be run.");
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
 // Reading the question
 
 const STOP = new Set(["the", "of", "for", "from", "to", "a", "an", "and", "in", "on", "at", "my", "me", "show", "what", "is", "are", "was", "all", "this", "that", "party", "customer", "customers", "supplier", "suppliers", "particular", "find", "get", "give", "list", "ledger", "statement", "invoices", "invoice", "sales", "sale", "bills", "bill", "closing", "opening", "balance", "balances", "month", "year", "today", "yesterday", "last", "week", "financial", "with", "by", "please", "details", "detail", "report", "amount", "total", "outstanding", "purchase", "purchases", "returns", "return", "cancelled", "between", "stock", "current", "product", "products", "item", "items", "quantity", "qty", "available", "name", "which", "have", "has", "what"]);
@@ -2461,6 +3700,22 @@ function periodOf(question: string, fallback: Template["defaultPeriod"], session
       const label = `${part[1] === "last" || part[1] === "previous" ? "Last" : "This"} ${part[2] === "quarter" ? "quarter" : "half year"}`;
       return range(from, end > now ? now : end, label);
     }
+  }
+  // Months by name: "for July to September", "from April to June 2026", "in July" (the month of the financial year it falls in, or the year typed).
+  const monthWord = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+  const named = new RegExp(`\\b(?:for|in|of|during|from|between)\\s+${monthWord}(?:\\s*(\\d{4}))?(?:\\s*(?:to|-|till|until|and|upto|up to)\\s*${monthWord}(?:\\s*(\\d{4}))?)?\\b`).exec(text);
+  if (named) {
+    const monthOf = (word: string) => MONTH_NAMES.indexOf(word.slice(0, 3));
+    const start = session.tarikh1;
+    const yearOf = (month: number, typed: string | undefined) => (typed ? Number(typed) : month >= start.getMonth() ? start.getFullYear() : start.getFullYear() + 1);
+    const firstMonth = monthOf(named[1]);
+    const fromYear = yearOf(firstMonth, named[2]);
+    const lastMonth = named[3] ? monthOf(named[3]) : firstMonth;
+    let toYear = named[3] ? yearOf(lastMonth, named[4]) : fromYear;
+    if (named[3] && !named[4] && !named[2] && toYear < fromYear) toYear = fromYear;
+    const from = new Date(fromYear, firstMonth, 1);
+    const end = new Date(toYear, lastMonth + 1, 0);
+    if (end >= from) return range(from, end > now ? now : end, `${MONTHS_SHORT[firstMonth]}-${fromYear}${named[3] ? ` to ${MONTHS_SHORT[lastMonth]}-${toYear}` : ""}`);
   }
   if (/last month|previous month/.test(text)) return range(new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth(), 0), "Last month");
   if (/this month|current month|month to date|monthly/.test(text)) return range(new Date(now.getFullYear(), now.getMonth(), 1), now, "This month");
