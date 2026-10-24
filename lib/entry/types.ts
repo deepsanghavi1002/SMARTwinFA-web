@@ -129,7 +129,7 @@ export type BookScreen = Readonly<{
   /** tax_master's tax_perc by tax_rec, for the tax lists of the slab and the item-wise columns. */
   taxPercs: Readonly<Record<string, number>>;
   /** Product_Selection's company switches: I_DUPLICHK (a product once per bill) and item_para PROD_LOCK / PROD_WARN (the product's master message stops, or asks). */
-  productRules: Readonly<{ noDuplicate: boolean; message: "" | "lock" | "warn"; /** setup i_stock C on a stock-posting issue book: a quantity above the stock is refused (not for an AD user). */ stockCheck: boolean }>;
+  productRules: Readonly<{ /** book_properties stkm_ropt O: the rate and its unit may stay blank; any other book stops on them. */ rateOptional: boolean; noDuplicate: boolean; message: "" | "lock" | "warn"; /** setup i_stock C on a stock-posting issue book: a quantity above the stock is refused (not for an AD user). */ stockCheck: boolean }>;
   /** The UOM list (PROD_UOM_LIST_SRT): short name and key. */
   uoms: readonly EntryOption[];
   /** Decimals of quantity, factor, rate and value (i_decqty, i_decfact, i_decrate, decamount). */

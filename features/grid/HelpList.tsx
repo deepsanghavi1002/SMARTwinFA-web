@@ -75,6 +75,13 @@ export function HelpList({
   const [found, setFound] = useState("");
   /** The horizontal scroll bar's height, so it does not hide the last entry. */
   const [bar, setBar] = useState(0);
+  /** The heading's and an entry row's real heights (a heading with filter buttons is taller than ROW), so `shown` entries show whole. */
+  const [sizes, setSizes] = useState({ head: ROW, row: ROW });
+  useLayoutEffect(() => {
+    const head = scroller.current?.querySelector<HTMLElement>("thead")?.offsetHeight ?? 0;
+    const row = scroller.current?.querySelector<HTMLElement>("tbody tr[role=option]")?.offsetHeight ?? 0;
+    if (head > 0 && row > 0) setSizes((now) => (now.head === head && now.row === row ? now : { head, row }));
+  });
   /** The column the keyboard is on: typing searches it (← → move it). Starts on the help's search column. */
   const [col, setCol] = useState<string | null>(null);
   /** The top search box: entries with this text in any column. */
@@ -223,7 +230,7 @@ export function HelpList({
       </div>
       {topSlot}
       {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
-      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", width: tableWidth + sideBar + 2, maxWidth: "100%", height: ROW * (Math.min(shown, Math.max(1, count)) + 1) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", width: tableWidth + sideBar + 2, maxWidth: "100%", height: sizes.head + sizes.row * Math.min(shown, Math.max(1, count)) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table style={{ width: tableWidth }}>
           <colgroup>{help.columns.map((column) => <col key={column.key} style={{ width: widthOf(column) }} />)}</colgroup>
           <thead>
