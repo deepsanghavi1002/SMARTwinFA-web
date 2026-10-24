@@ -541,7 +541,7 @@ export async function buildSave(loader: Loader, entryName: string, firstCombo: E
     for (const row of (await loader.readTable(`SELECT il_key FROM |sys.db|prod_ledger WHERE ${stock ? "process_id" : "led_id"} = $1 AND il_pos = 'A'`, [ledKey])) ?? []) oldIl.set(toInt(field(row, "il_key")), row);
     // The old postings come off first (Save_CodePost's "first delete all existing ledger_post of the led_key"); the slab rows go and are written again.
     statements.push(...(await reversal(loader, ledKey, session.yearId, stock)));
-    statements.push({ kind: "sql", label: "old slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE ${stock ? "process_id" : "led_id"} = ${ledKey}` });
+    statements.push({ kind: "sql", label: "old slab rows", sql: stock ? `DELETE FROM |sys.db|ledger_ext WHERE process_id = ${ledKey} OR il_id IN (SELECT il_key FROM |sys.db|prod_ledger WHERE process_id = ${ledKey})` : `DELETE FROM |sys.db|ledger_ext WHERE led_id = ${ledKey}` });
     for (const line of lines) {
       const key = toInt(line.cells._il_key);
       if (key > 0 && !oldIl.has(key)) throw new Error("A product row does not belong to this invoice");
@@ -1077,7 +1077,7 @@ async function buildStockDelete(loader: Loader, stockModule: string, processKey:
   const yearId = session.yearId;
   const statements: Statement[] = [...(await reversal(loader, processKey, yearId, true))];
   const rows = (await loader.readTable(`SELECT * FROM |sys.db|prod_ledger WHERE process_id = $1 AND il_pos = 'A' ORDER BY il_key`, [processKey])) ?? [];
-  statements.push({ kind: "sql", label: "slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE process_id = ${processKey}` });
+  statements.push({ kind: "sql", label: "slab rows", sql: `DELETE FROM |sys.db|ledger_ext WHERE process_id = ${processKey} OR il_id IN (SELECT il_key FROM |sys.db|prod_ledger WHERE process_id = ${processKey})` });
   statements.push({ kind: "sql", label: "addon row", sql: `DELETE FROM |sys.db|addon_aentry WHERE aona_processid = ${processKey}` });
   for (const row of rows) {
     const key = toInt(field(row, "il_key"));

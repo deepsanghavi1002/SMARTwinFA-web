@@ -20,7 +20,7 @@ import type { SaveInput, SaveReport } from "@/lib/entry/save";
 import type { HeaderField } from "@/lib/entry/checks";
 import { deleteDocuments, documentFile, listDocuments, saveDocuments } from "@/lib/entry/documents";
 import type { DocumentInput } from "@/lib/entry/documents";
-import { productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
+import { partyProductKeys, productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
 
 /**
@@ -209,6 +209,11 @@ export async function POST(request: Request) {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
           return { tds: await tdsInfo(loader, body.entryName, chosenRegister(def, body.firstCombo), code), warnings: loader.warnings };
+        }
+        case "party-products": {
+          const code = Number(body.code);
+          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party first");
+          return { keys: await partyProductKeys(loader, code), warnings: loader.warnings };
         }
         case "product-help":
           return { help: await productHelp(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };

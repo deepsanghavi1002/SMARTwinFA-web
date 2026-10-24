@@ -29,7 +29,7 @@ const BLANK_WINDOW = 30;
  */
 export function ProductGrid({
   columns, frozen, lines, uoms, totals, decimals, style, totalsStyle, productText, locked, tools, amountOpen, beforeLeave,
-  onCell, onProductText, onProductKeys, onRateStock, onRateFocus, onProductFocus, onProductBlur, onDeleteRow, lastEditRow, onLeaveProducts, onProductClick,
+  onCell, onCellFocus, onProductText, onProductKeys, onRateStock, onRateFocus, onProductFocus, onProductBlur, onDeleteRow, lastEditRow, onLeaveProducts, onProductClick,
 }: {
   columns: readonly EntryColumn[];
   frozen: number;
@@ -45,9 +45,11 @@ export function ProductGrid({
   tools: ReturnType<typeof useEditorTools>;
   /** An item-wise amount column: whether its cell takes input in the row (undefined for any other column). */
   amountOpen?: (column: EntryColumn, row: number) => boolean | undefined;
-  /** Enter in the Qty cell: the screen may refuse to leave it (the stock check); resolves true to go on. */
+  /** Enter in a cell: the screen may refuse to leave it (a compulsory cell left blank, the stock check in Qty); resolves true to go on. */
   beforeLeave?: (row: number, key: string) => Promise<boolean>;
   onCell: (row: number, key: string, value: string) => void;
+  /** A cell got the keyboard: the screen notes its value, to put it back if a compulsory cell is left blank. */
+  onCellFocus?: (row: number, key: string) => void;
   onProductText: (row: number, text: string) => void;
   /** Keys in a Product cell: the screen moves the help with them; returns true when it took the key. */
   onProductKeys: (event: ReactKeyboardEvent<HTMLInputElement>, row: number) => boolean;
@@ -114,7 +116,7 @@ export function ProductGrid({
     if (event.key === "Delete" && event.ctrlKey) { event.preventDefault(); onDeleteRow(row); return true; }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (beforeLeave && key === "quantity") void beforeLeave(row, key).then((go) => { if (go) next(row, key); });
+      if (beforeLeave) void beforeLeave(row, key).then((go) => { if (go) next(row, key); });
       else next(row, key);
       return true;
     }
@@ -178,6 +180,8 @@ export function ProductGrid({
           const at = columns.findIndex((column) => column.key === key);
           if (at >= 0 && at >= columns.length - 2 && grid.current) grid.current.scrollLeft = grid.current.scrollWidth;
           onRateFocus?.(key?.toLowerCase() === "rate");
+          const row = Number((id?.getAttribute("data-cell") ?? id?.getAttribute("data-cell-wrap") ?? "").split(":")[0]);
+          if (key && Number.isInteger(row)) onCellFocus?.(row, key);
         }}
         onBlurCapture={() => onRateFocus?.(false)}
         onScroll={(event) => { if (totalsBox.current) totalsBox.current.scrollLeft = event.currentTarget.scrollLeft; setTopRow(Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT)); }}>

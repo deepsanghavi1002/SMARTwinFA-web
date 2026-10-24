@@ -76,6 +76,7 @@ export function EntryCell({ kind, cellId, value, onChange, tools, ariaLabel, ali
         aria-haspopup="listbox"
         title="Show the list (Alt+↓ or F4, or type a letter)"
         onClick={() => open()}
+        onFocus={() => { if (value.trim() === "" && list.length > 0) onChange(list[0].text); }}
         onKeyDown={(event) => {
           if (onKeys?.(event)) return;
           if (event.key === "Enter") { event.preventDefault(); onEnter(); return; }

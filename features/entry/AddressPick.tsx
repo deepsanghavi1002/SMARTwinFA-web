@@ -26,6 +26,9 @@ export function AddressPick({ name, rows, current, onChoose, onEscape }: {
 }) {
   const drag = useDraggable();
   const box = useRef<HTMLDivElement>(null);
+  /** The Enter that chose the party may still be held down (key repeat) when this window opens: it must not choose an address by itself. */
+  const armed = useRef(false);
+  useEffect(() => { const timer = setTimeout(() => { armed.current = true; }, 500); return () => clearTimeout(timer); }, []);
   const [at, setAt] = useState(Math.max(0, rows.findIndex((row) => Number(row.address_id) === current)));
   // Each column as wide as its longest text needs (up to 260), so nothing needs to scroll sideways.
   const help = useMemo((): HelpData => ({
@@ -40,16 +43,22 @@ export function AddressPick({ name, rows, current, onChoose, onEscape }: {
     frozen: 0,
     total: `${rows.length} addresses`,
   }), [rows, current]);
-  useEffect(() => { box.current?.querySelector<HTMLElement>(".mp-help")?.focus(); }, []);
+  // The window takes the keyboard when it opens, and again a moment later in case the help it replaced gave the keyboard back.
+  useEffect(() => {
+    const take = () => box.current?.querySelector<HTMLElement>(".mp-help")?.focus();
+    take();
+    const later = setTimeout(take, 80);
+    return () => clearTimeout(later);
+  }, []);
   return (
     <div className="ent-addrpick-back" ref={box}>
       <HelpList
         help={help}
         focusRow={at}
         onFocusRow={setAt}
-        onChoose={(index) => onChoose(Number(rows[index]?.address_id) || 1)}
+        onChoose={(index) => { if (armed.current) onChoose(Number(rows[index]?.address_id) || 1); }}
         searchKey="address_1"
-        onEscape={onEscape}
+        onEscape={() => { if (armed.current) onEscape(); }}
         title={`SELECT ADDRESS · ${name}`}
         style={{ top: 70, left: 40, right: "auto", bottom: "auto", maxWidth: "calc(100% - 80px)", maxHeight: "none", zIndex: 45, ...(drag.style ?? {}) }}
         dragHandle={drag.handle}

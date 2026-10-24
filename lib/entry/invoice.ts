@@ -556,6 +556,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     defaults,
     taxPercs,
     productRules: {
+      rateOptional: text(book.row, "stkm_ropt").toUpperCase() === "O",
       noDuplicate: toText(session.setup.i_duplichk).toUpperCase() === "Y",
       // bl_Stock_compulsory (i_stock C) on a stock-posting issue book of the invoice style; an AD user is exempt unless SMARTWINFA_STOCK_CHECK_FOR_ADMIN=true (testing).
       stockCheck: toText(session.setup.i_stock).toUpperCase() === "C" && text(book.row, "stkm_stkpost").toUpperCase() === "Y" && book.stockNat === "L" && (session.userType !== "AD" || process.env.SMARTWINFA_STOCK_CHECK_FOR_ADMIN === "true"),
@@ -832,7 +833,10 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
   }
   // C1dg_Slab_Leave fills c1dg_OutClear: the party's pending bills on the side the book posts to.
   const outEvent = eventFilling(await controlEvents(loader, entryId), "c1dg_outclear");
-  let outSql = outEvent ? `Select ${toText(field(outEvent, "fill_control_query"))}` : "";
+  // Only a book that sets off against bills (the debit / credit notes) lists them: a sale or purchase entry leaves the Outstanding grid empty.
+  const setoffBooks = ((await loader.readTable(`SELECT save_only_forbook FROM ${SETUP_SCHEMA}.entry_save_properties WHERE entrykey_id = $1 AND record_active AND LOWER(grid_name) = 'c1dg_outclear' AND multiple_save`, [entryId])) ?? []).map((row) => text(row, "save_only_forbook"));
+  const settlesBills = setoffBooks.some((list) => list.replace(/ /g, "").split(",").includes(String(book.values.bookKey)));
+  let outSql = outEvent && settlesBills ? `Select ${toText(field(outEvent, "fill_control_query"))}` : "";
   if (outSql !== "" && editKey > 0) {
     // An entry being changed: what it set off against a bill counts as pending again and shows as typed (the bill stays listed even when it is settled).
     const ledKey = toInt(field((await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [editKey]))?.[0], "led_key"));

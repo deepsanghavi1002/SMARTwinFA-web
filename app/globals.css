@@ -3907,3 +3907,20 @@
 .ask-export{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:0 0 6px;font-size:11px;color:#5c6f86}
 .ask-export button{padding:3px 10px;border:1px solid #c9d7ea;border-radius:6px;background:#fff;color:#1f64b8;font:inherit;font-size:11px;font-weight:700;cursor:pointer}
 .ask-export button:hover{background:#eaf3ff;border-color:#1f64b8}
+
+/* The cell the keyboard is in, light blue, in every entry grid (product, slab, addon, outstanding). */
+.ent-grid td.ent-open:focus-within,.ent-grid tr.ent-alt td.ent-open:focus-within{background:#cdeeff}
+.ent-grid td.ent-open:focus-within input,.ent-grid td.ent-open:focus-within .ent-combo-cell{background:transparent}
+.ent-grid:focus tr.ent-grid-current td.ent-grid-cell{background:#8fd8f8}
+
+/* The field the keyboard is in (doc no, date, party, narration, E-Way fields ...), light blue like the grid cell. */
+.ent-form :is(input,select,textarea,.ent-combo-cell,.mp-control):focus:not(.ent-grid *){background:#cdeeff;outline:2px solid #1f64b8;outline-offset:-2px}
+.ent-form .ent-box:focus-within .mp-editor-wrap,.ent-form .ent-box:focus-within .se-date .mp-editor{background:#cdeeff}
+
+/* E-Way Bill tab of an entry that needs no E-Way Bill: every field grey and closed. */
+.ent-eway-off{opacity:.55;filter:grayscale(1)}
+.ent-eway-off .ent-box :is(input,button,select){background:#d9d9d9 !important;color:#555;cursor:not-allowed}
+
+.ent-filter-bar .ent-rowinfo{font-weight:600;white-space:nowrap;color:#1f3d6b}
+.ent-filter-bar .ent-f6{margin-left:auto;white-space:nowrap}
+.ent-filter-bar .ent-f6-on{background:#cdeeff;outline:1px solid #1f64b8}
