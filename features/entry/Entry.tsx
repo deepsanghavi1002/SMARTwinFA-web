@@ -102,6 +102,14 @@ const FORM_MIN_WIDTH = 1130;
 const WHOLE_NUMBER_RULES = { decimals: 0, positiveOnly: true, rangeFrom: 0, rangeUpto: 0 };
 /** GST E-Way Bill start (desktop PublicVariable.EWAY_Bill_Date). */
 const EWAY_START = new Date(2018, 3, 1);
+/** The register chosen last on a screen is offered first the next time (a convenience of this browser only). */
+const registerKey = (entryName: string) => `smartwinfa.entry.register.${entryName}`;
+function recalledRegister(entryName: string): string {
+  try { return window.localStorage.getItem(registerKey(entryName)) ?? ""; } catch { return ""; }
+}
+function rememberRegister(entryName: string, text: string): void {
+  try { window.localStorage.setItem(registerKey(entryName), text); } catch { /* storage may be blocked */ }
+}
 const HELP_ROWS = 12;
 /** The product help shows 9 entries at a time, so it stays on the screen under the product grid. */
 const PRODUCT_HELP_ROWS = 9;
@@ -202,6 +210,9 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [addressPick, setAddressPick] = useState<PartyDetails | null>(null);
   /** cmb_ProdFilter: the product-type choice the product help is filtered by, and the row it is being asked for. */
   const [prodFilter, setProdFilter] = useState<EntryOption | null>(null);
+  /** F6 in the product help: only the products the party has already taken (its keys are read once per party). */
+  const [partyOnly, setPartyOnly] = useState(false);
+  const [partyProducts, setPartyProducts] = useState<{ code: number; keys: ReadonlySet<number> } | null>(null);
   const [preview, setPreview] = useState<HelpData | null>(null);
   /** Find / Edit with every field of each entry: read only when "All fields" is pressed; shown while allFields is on. */
   const [previewAll, setPreviewAll] = useState<{ fields: HelpData | null; products: HelpData | null }>({ fields: null, products: null });
@@ -297,6 +308,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setAddon({});
     setAddressPick(null);
     setHelpKind(null);
+    setPartyOnly(false);
     setProductText(null);
     // The Find / Edit list (and the All fields / With product choice) stays until the register or series changes or an entry is saved.
     if (!keepList) { setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setTicked([]); }
@@ -307,6 +319,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setTab("all");
   }, []);
 
+  /** The register the box offers before one is chosen: the one chosen last time on this screen, else the first. */
+  const defaultRegister = useMemo(() => {
+    const options = def?.firstCombo.options ?? [];
+    const last = recalledRegister(entryName);
+    return options.find((option) => option.text === last) ?? options[0] ?? null;
+  }, [def, entryName]);
   /** The register's book (for a tax group: Fill_Slab_and_Addon again with CGST, IGST or VAT). */
   const loadBook = useCallback(async (given: EntryOption, taxGroup?: BookScreen["taxGroup"]): Promise<BookReply> => {
     let option = given;
@@ -347,6 +365,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // ---- Cmb_FirstCombo_Leave: the register sets the screen up
   const chooseRegister = useCallback(async (option: EntryOption) => {
     setRegister(option);
+    rememberRegister(entryName, option.text);
     setAgainst(null);
     setBusy("Setting the screen");
     try {
@@ -502,11 +521,13 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     const columns = help.columns.map((column) => ({ ...column, caption: column.key === main ? column.caption.toUpperCase() : properHeading(column.caption) }));
     const needle = typed.trim().toUpperCase();
     // cmb_ProdFilter: only the products of the chosen type.
-    const byType = helpKind === "product" && help.filter && prodFilter ? help.rows.filter((row) => (row.pg_filter ?? "").trim() === prodFilter.text) : help.rows;
-    if (needle === "") return byType === help.rows ? { ...help, columns } : { ...help, columns, rows: byType, total: `${help.total} · ${byType.length} of type ${prodFilter?.text}` };
+    const typeRows = helpKind === "product" && help.filter && prodFilter ? help.rows.filter((row) => (row.pg_filter ?? "").trim() === prodFilter.text) : help.rows;
+    const taken = helpKind === "product" && partyOnly && partyProducts && partyProducts.code === party?.code ? partyProducts.keys : null;
+    const byType = taken ? typeRows.filter((row) => taken.has(Number(row.prod_key))) : typeRows;
+    if (needle === "") return byType === help.rows ? { ...help, columns } : { ...help, columns, rows: byType, total: `${help.total} · ${byType.length} ${taken ? "taken by the party" : `of type ${prodFilter?.text}`}` };
     const rows = byType.filter((row) => (row[main] ?? "").trim().toUpperCase().startsWith(needle));
     return { ...help, columns, rows, total: `${help.total} · ${rows.length} found` };
-  }, [helpKind, accountHelp, productHelp, typed, prodFilter]);
+  }, [helpKind, accountHelp, productHelp, typed, prodFilter, partyOnly, partyProducts, party?.code]);
   // Each help keeps its own column filters and sort (useHelpView); the list on screen is the one Enter takes from.
   const accountView = useHelpView(helpKind === "account" ? typedHelp : null, helpCell);
   const productView = useHelpView(helpKind === "product" ? typedHelp : null, helpCell);
@@ -588,6 +609,32 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     } finally {
       setBusy("");
     }
+  };
+  /** F6 in the product help: the list of the products this party has already taken; F6 again, every product. */
+  const togglePartyProducts = async () => {
+    // The list changes under the cursor: it stops on the product of the row being entered (else the one above it), not on the first one.
+    const landOn = () => {
+      const row = productRow ?? 0;
+      helpLandOn.current = lines[row]?.product?.key ?? lines.slice(0, row).reverse().find((line) => line.product)?.product?.key ?? null;
+      setHelpAt(0);
+      setLandTick((now) => now + 1);
+    };
+    if (partyOnly) { landOn(); setPartyOnly(false); return; }
+    if (!party) { await say("Choose the party first", "Entry Warning"); return; }
+    let have = partyProducts?.code === party.code ? partyProducts : null;
+    if (!have && register) {
+      try {
+        const body = await call<{ keys: number[] }>("party-products", { firstCombo: register, code: party.code });
+        have = { code: party.code, keys: new Set(body.keys) };
+        setPartyProducts(have);
+      } catch (error) {
+        await failed(error);
+        return;
+      }
+    }
+    if (!have || have.keys.size === 0) { await say("This party has not taken any product yet", "Entry Warning"); return; }
+    landOn();
+    setPartyOnly(true);
   };
   const productHelpStock = () => {
     const rows = shownHelp?.rows ?? [];
@@ -674,8 +721,9 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   };
 
   /** The party (and its address) settled: the keyboard goes to the Product of the next free row (its help shows), else the next box. */
-  const afterParty = useCallback(() => {
-    const freeRow = filledLines(lines).length;
+  const afterParty = useCallback((sameParty = false) => {
+    // The same party taken again on an entry already filled: the products are edited from the first row, not from a new one.
+    const freeRow = sameParty ? 0 : filledLines(lines).length;
     setTimeout(() => {
       if (!formRef.current || !partyRef.current) return;
       if (book?.inventory && focusEntryCell(formRef.current, `${freeRow}:prod_key`)) return;
@@ -697,7 +745,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         await failed(error);
       }
     }
-    if (id === null) partyRef.current?.focus(); else afterParty();
+    if (id === null) partyRef.current?.focus(); else afterParty(party?.code === pending.code && filledLines(lines).length > 0);
   };
 
   // ---- Tbx_PartyName_Leave: address, addons, pending bills, and the tax group the party's state gives
@@ -734,8 +782,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setValues((current) => ({ ...current, tbx_partyname: next.name, tbx_credit_days: deducts ? "" : current.tbx_credit_days !== undefined ? next.creditDays : current.tbx_credit_days }));
       setAddon(Object.fromEntries(next.addon.map((item) => [item.key, item.value])));
       // Several addresses: the operator picks the one first (c1help_Address); the keyboard moves on after it.
-      if (next.addresses.length > 1) { setAddressPick(next); return; }
-      afterParty();
+      if (next.addresses.length > 1) { setHelpKind(null); setAddressPick(next); return; }
+      afterParty(party?.code === next.code && filledLines(lines).length > 0);
     } catch (error) {
       await failed(error);
     } finally {
@@ -745,7 +793,13 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
 
   const partyKeys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (helpKeys(event, "account", (row) => void choosePartyRow(row))) return;
-    if (event.key === "Enter" && formRef.current) { event.preventDefault(); setHelpKind(null); moveOn(formRef.current, event.currentTarget); }
+    if (event.key === "Enter" && formRef.current) {
+      event.preventDefault();
+      setHelpKind(null);
+      // The party is already taken and has several addresses: Enter asks for the address again, as when it was taken from the help.
+      if (party && party.addresses.length > 1 && party.name === (values.tbx_partyname ?? "")) { setAddressPick(party); return; }
+      moveOn(formRef.current, event.currentTarget);
+    }
   };
   /** The party box got the keyboard: its help shows (on the party already chosen); the keyboard stays in the box. */
   const partyFocus = () => {
@@ -914,6 +968,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       markRow(row, event.key);
       return true;
     }
+    if (event.key === "F6") { event.preventDefault(); void togglePartyProducts(); return true; }
     if (helpKeys(event, "product", (helpRow) => void chooseProductRow(row, helpRow))) return true;
     // Enter on an empty row (nothing typed) ends the products: on to the slab grid's first open cell.
     if (event.key === "Enter" && !lines[row]?.product) {
@@ -930,7 +985,10 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (productText && productText.row !== row) setProductText(null);
     setHelpAt(0);
     // Back from the F7 stock window: the help stops on the product it was opened from, not the first one.
-    helpLandOn.current = stockLand.current ?? lines[row]?.product?.key ?? null;
+    // An empty row carries on from the row above: its product type and its product are where the help stops.
+    const carried = lines[row]?.product ? undefined : lines.slice(0, row).reverse().find((line) => line.product);
+    const land = stockLand.current ?? lines[row]?.product?.key ?? carried?.product?.key ?? null;
+    helpLandOn.current = land;
     stockLand.current = null;
     setLandTick((now) => now + 1);
     // The keyboard goes into the product help (it is read already); Esc brings it back to this cell.
@@ -941,10 +999,15 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     void openHelp("product").then((help) => {
       if (!help) return;
       if (help.filter && help.filter.options.length > 0) {
-        const own = lines[row]?.cells.il_div;
+        const own = lines[row]?.cells.il_div || carried?.cells.il_div;
         const rowType = own ? help.filter.options.find((option) => option.value === own) : undefined;
         if (rowType) setProdFilter(rowType);
-        if (!lines[row]?.product) { setTimeout(() => formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(), 60); return; }
+        // The list is cut to the type now: the landing is worked out again on it.
+        helpLandOn.current = land;
+        setLandTick((now) => now + 1);
+        // The product type is always the first stop; Enter on it goes on to the product help.
+        setTimeout(() => formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(), 60);
+        return;
       }
       setTimeout(enterHelp, 30);
     });
@@ -1343,6 +1406,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       return;
     }
     if (filledLines(lines).length === 0 && (book.inventory || slabResult.final <= 0)) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
+    if ((await messageBox.ask("Confirm to save data?", "Confirm Save", ["Yes", "No"], { defaultButton: "Yes" })) !== "Yes") return;
     setBusy("Saving");
     try {
       const reply = await call<{ report: SaveReport; committed: boolean; commitDisabled?: boolean }>("save", {
@@ -1620,7 +1684,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               title={`TDS at ${tdsNow.perc}%`}
               onFocus={(event) => { set(tdsAmountFor(tdsNow)); event.target.select(); }}
               onChange={(event) => set(event.target.value.split(".")[0].replace(/\D/g, ""))} />
-            <span className="ent-tdsperc" style={{ position: "absolute", left: "100%", top: 0, marginLeft: 8, whiteSpace: "nowrap", fontWeight: 600 }}>TDS Perc : {tdsNow.perc}</span>
+            <span className="ent-label ent-tdsperc" style={{ position: "absolute", left: "100%", top: 0, marginLeft: 8, height: 22, lineHeight: "22px", whiteSpace: "nowrap" }}>TDS Perc : {tdsNow.perc}</span>
           </>
         ) : item.name === "tbx_credit_days" ? (
           <input id={`ent-${item.name}`} className="mp-control ent-number" aria-label={item.label} inputMode="numeric" maxLength={item.maxLength > 0 ? item.maxLength : 4} value={value}
@@ -1749,10 +1813,13 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
    * After the last grid: a sale whose final amount is above the E-Way limit (within the company state, or out of it) on or after the E-Way start date
    * takes the E-Way Bill tab, the keyboard on its first box; any other entry goes on to the narration (Invoice_Tab_EwayBill.Show()).
    */
-  const afterOutstanding = () => {
+  const ewayDue = (): boolean => {
     const limit = party?.taxGroup === "G" ? def?.ewayLimits.within ?? 0 : party?.taxGroup === "I" ? def?.ewayLimits.out ?? 0 : 0;
     const date = parseDesktopDate(values.dtp_date);
-    const due = Boolean(def?.tabs.eway && book?.stockNat === "L" && book.bookActual !== false && limit > 0 && slabResult.final > limit && date && date >= EWAY_START && !/^(LQTN-ORD|ORD-IN)$/i.test(register?.text ?? ""));
+    return Boolean(def?.tabs.eway && book?.stockNat === "L" && book.bookActual !== false && limit > 0 && slabResult.final > limit && date && date >= EWAY_START && !/^(LQTN-ORD|ORD-IN)$/i.test(register?.text ?? ""));
+  };
+  const afterOutstanding = () => {
+    const due = ewayDue();
     if (due) {
       setTab("eway");
       setTimeout(() => ewayBoxes()[0]?.focus(), 60);
@@ -1807,10 +1874,35 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   /** Run_Outclear_f5: the set-off is over - the narration is made and the keyboard goes on (E-Way Bill or narration). */
   const finishSetoff = () => { generateSetoffNarration(); afterOutstanding(); };
   /**
+   * Product code, Qty, Q.Uom and the item-wise GST are compulsory; Rate and R.Uom too unless the book (book_properties stkm_ropt O) leaves them optional.
+   * Enter on one of them left blank stays there with the reason.
+   */
+  /** The value each product cell held when the keyboard came to it, by `row:key`. */
+  const cellWas = useRef<Record<string, string>>({});
+  const requiredLeave = async (row: number, key: string): Promise<boolean> => {
+    if (!book || !lines[row]?.product) return true;
+    const column = productColumns.find((candidate) => candidate.key === key);
+    if (!column || !column.editable) return true;
+    const lower = key.toLowerCase();
+    const gst = slab.some((item) => item.itemWise && item.master && item.short === key);
+    const needed = lower === "quantity" || lower === "uomentry_id" || gst || ((lower === "rate" || lower === "rateuom_id") && !book.productRules.rateOptional);
+    if (!needed) return true;
+    const value = (lines[row]?.cells[key] ?? "").trim();
+    if (value !== "" && (lower !== "quantity" || toNumber(value) !== 0)) return true;
+    await say(`${column.caption.replace(/%$/, "")} is compulsory, enter a value`, "Entry Warning");
+    // What the cell held before it was emptied comes back, so the entry is not lost.
+    const was = cellWas.current[`${row}:${key}`] ?? "";
+    if (was.trim() !== "") void editCell(row, key, was);
+    setTimeout(() => focusEntryCell(formRef.current, `${row}:${key}`), 30);
+    return false;
+  };
+  /**
    * Compulsory stock checking (C1dg_Inputdata_ValidateEdit): leaving Qty, a quantity above the product's stock is refused ("Quantity Greater than N not allowed")
    * and put back to the stock; with no stock the quantity is cleared and the keyboard goes back to the Product. An opened bill counts what it already holds.
    */
-  const stockLeave = async (row: number): Promise<boolean> => {
+  const stockLeave = async (row: number, key = "quantity"): Promise<boolean> => {
+    if (!(await requiredLeave(row, key))) return false;
+    if (key !== "quantity") return true;
     if (!book?.productRules.stockCheck) return true;
     const line = lines[row];
     if (!line?.product) return true;
@@ -1907,7 +1999,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               <SearchCombo
                 ariaLabel={def?.firstCombo.label ?? "Register"}
                 options={def?.firstCombo.options ?? []}
-                value={register}
+                value={register ?? defaultRegister}
                 reselect
                 disabled={locked || !def || Boolean(book) || Boolean(busy && busy !== "")}
                 focus={!locked && !book && Boolean(def)}
@@ -1952,6 +2044,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 // The product-type filter sits above the first row: ↑ on it goes there.
                 if (helpKind === "product" && productHelp?.filter && event.key === "ArrowUp" && helpAt === 0) { event.preventDefault(); formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(); return true; }
                 if (event.key === "F7" && helpKind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+                if (event.key === "F6" && helpKind === "product") { event.preventDefault(); void togglePartyProducts(); return true; }
                 if (event.key === "F7" && helpKind === "product") { event.preventDefault(); productHelpStock(); return true; }
                 if (event.key === "F8" && helpKind === "account") { event.preventDefault(); void showLedger(); return true; }
                 if (helpKind === "product" && event.key === "F5") { event.preventDefault(); void endProducts(); return true; }
@@ -1972,13 +2065,23 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               formatCell={helpCell}
               f1
               f7={helpKind === "account" ? true : "Party-Product"}
-              topSlot={helpKind === "product" && productHelp?.filter && productHelp.filter.options.length > 0 ? (
+              topSlot={helpKind === "product" && productHelp ? (
                 <div className="ent-filter-bar" onKeyDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
-                  if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); void endProducts(); }
+                  if (event.key === "F6") { event.preventDefault(); event.stopPropagation(); void togglePartyProducts(); }
+                  else if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); void endProducts(); }
                   else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeHelp(); }
                 }}>
-                  <label>{properHeading(productHelp.filter.caption)}</label>
-                  <SearchCombo ariaLabel={productHelp.filter.caption} options={productHelp.filter.options} value={prodFilter} reselect onChoose={(option) => { setProdFilter(option); setHelpAt(0); setTimeout(enterHelp, 30); }} />
+                  {productHelp.filter && productHelp.filter.options.length > 0 && (
+                    <>
+                      <label>{properHeading(productHelp.filter.caption)}</label>
+                      <SearchCombo ariaLabel={productHelp.filter.caption} options={productHelp.filter.options} value={prodFilter} reselect onChoose={(option) => { if (option.value !== prodFilter?.value) { setProdFilter(option); setHelpAt(0); } setTimeout(enterHelp, 30); }} />
+                    </>
+                  )}
+                  {productRow !== null && (() => {
+                    const line = lines[productRow];
+                    return <span className="ent-rowinfo" title="The row being entered">Sr.{productRow + 1} · Prod: {line?.product?.short ?? "-"} · Qty: {line?.cells.quantity || "-"} · Rate: {line?.cells.rate || "-"}</span>;
+                  })()}
+                  <kbd className={`mp-help-f1 ent-f6${partyOnly ? " ent-f6-on" : ""}`} title="F6 shows the products this party has already taken; F6 again, every product"><b>F6</b>-Help-Party-Product</kbd>
                 </div>
               ) : undefined}
               f8={helpKind === "account"}
@@ -2022,6 +2125,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                     ) : view.inventory ? (
                       <ProductGrid
                         amountOpen={itemAmountOpen}
+                        onCellFocus={(row, key) => { cellWas.current[`${row}:${key}`] = lines[row]?.cells[key] ?? ""; }}
                         beforeLeave={stockLeave}
                         columns={shownColumns}
                         frozen={view.product.frozen}
@@ -2120,7 +2224,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                   </>
                 )}
                 {(tab === "find" || preview) && <FindList preview={(findMode && previewAll[findMode]) || preview} mode={findMode} onMode={(next) => void chooseFindMode(next)} ticked={ticked} onTick={tickEntry} style={{ left: 3, right: 3, top: 3, bottom: 3, ...(tab === "find" ? {} : { display: "none" }) }} onOpen={(row) => void openEntry(row)} />}
-                {tab === "eway" && <div className="ent-eway">{ewayControls.flatMap(control)}</div>}
+                {tab === "eway" && (() => { const needed = ewayDue() || (isRestored && ewayControls.some((item) => item.type === "TB" && (values[item.name] ?? "").trim() !== "")); return <div className={needed ? "ent-eway" : "ent-eway ent-eway-off"} inert={!needed} title={needed ? undefined : "E-Way Bill is not required for this entry"}>{ewayControls.flatMap(control)}</div>; })()}
               </div>
             </div>
           )}
@@ -2129,7 +2233,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
             <div className="ent-foot" inert={!book}>
               {(() => {
                 // "TDS Amt.: 178.00": the one amount of the TDS auto journal - the typed TDS Amount on a new entry, the saved journal's on an opened one.
-                const amount = isRestored ? restoredTds : tdsNow ? (values.tbx_credit_days ?? "").trim() : "";
+                // A new entry has the TDS Amount box itself, so the label is only for an opened one (else the amount shows twice).
+                const amount = isRestored ? restoredTds : "";
                 return toNumber(amount) > 0 ? <span className="ent-against ent-against-book" style={{ left: footControls.find((item) => item.name === "cmb_rev_entry")?.label_.left ?? 892, top: FOOT_TOP + 30, width: 188 }} title="The TDS amount of the entry's auto journal (TDS JV)">{`TDS Amt.: ${amountText(fixed(toNumber(amount), 2), 2)}`}</span> : null;
               })()}
               {against && (book ?? ghost)?.entryFor === "DrCr" && (

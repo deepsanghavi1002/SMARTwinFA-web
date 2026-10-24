@@ -41,6 +41,12 @@ function helpOnePass(sql: string): string {
     .replace(where, () => ") left join (SELECT DISTINCT ON (prod_id) prod_id, pl_mrp FROM |sys.db|pricelist WHERE pl_pos<>'D' AND pl_mrp > 0 ORDER BY prod_id, pl_wefrom DESC) mrp ON mrp.prod_id=product.prod_key WHERE product.prod_pos<>'D'");
 }
 
+/** F6 of the product help: the keys of the products this party has already taken (any entry of the open year). */
+export async function partyProductKeys(loader: Loader, code: number): Promise<number[]> {
+  const rows = (await loader.readTable(`SELECT DISTINCT prod_id FROM |sys.db|prod_ledger WHERE code = $1 AND il_pos = 'A' AND prod_id IS NOT NULL`, [code])) ?? [];
+  return rows.map((row) => toInt(field(row, "prod_id"))).filter((key) => key > 0);
+}
+
 export async function productHelp(loader: Loader, entryName: string, firstCombo: EntryOption): Promise<HelpList> {
   const book = await bookContext(loader, entryName, firstCombo);
   const helpRow = (await loader.readTable(`SELECT help_query, help_col_frozen FROM ${SETUP_SCHEMA}.help_table WHERE help_prog_id = 'HELP_PRODUCT'`))?.[0];
@@ -279,7 +285,7 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
     .replace("order by pled.il_serial", stock && /^JOB-/i.test(book.row ? text(book.row, "stkm_short") : "") ? "order by pled.stock_nat,pled.il_serial" : "order by pled.il_serial")), book.values))) ?? [];
   const stockNat = book.stockNat === "A" ? "A" : "L";
   const ext = link ? [] : (await loader.readTable(replaceEntryTokens(blankCoalesceAsText((await restoreQuery(loader, "RESTINV_03_SLAB"))
-    .replace(/\|sys\.query\.@pkval_3\|/gi, stock ? `ledext.process_id=${ledKey}` : `ledext.led_id=${ledKey}`)), book.values))) ?? [];
+    .replace(/\|sys\.query\.@pkval_3\|/gi, stock ? `(ledext.process_id=${ledKey} or ledext.il_id in (select il_key from |sys.db|prod_ledger where process_id=${ledKey}))` : `ledext.led_id=${ledKey}`)), book.values))) ?? [];
   const itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>> = {};
   const slab: Record<number, { perc: string; amount: string }> = {};
   const slabTax: Record<number, number> = {};
