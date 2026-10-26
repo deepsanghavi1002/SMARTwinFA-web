@@ -1,5 +1,6 @@
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
@@ -16,9 +17,8 @@ const headers = { "cache-control": "no-store" };
 const PROGRAM = "UTILITY_CHECK_GSTNO";
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Check Gst No is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 403, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   const gstNo = String(body.gstNo ?? "").trim().toUpperCase();
   if (gstNo === "") return Response.json({ error: "Please Input GST NO For Get Detail...." }, { status: 400, headers });
   if (!/^[0-9A-Z]{15}$/.test(gstNo)) return Response.json({ error: "A GST number is 15 letters and digits." }, { status: 400, headers });
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   try {
     const login = await transaction(async (client) => {
       const session = await readSession(client, key);

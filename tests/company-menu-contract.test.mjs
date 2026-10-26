@@ -29,8 +29,19 @@ test("the company menu is operator scoped and refills per accounting year", () =
   assert.match(companyMenu, /user_year/);
   assert.match(companyMenu, /co_select_group/);
   assert.match(companyMenu, /readCompanies\(loginName: string, yearKey: number\)/);
-  assert.match(startupGate, /\/api\/accounting-years\?login=/);
-  assert.match(startupGate, /\/api\/companies\?login=/);
+  // The operator is the signed-in session's, never one the browser names.
+  assert.match(startupGate, /fetch\("\/api\/accounting-years"/);
+  assert.match(startupGate, /\/api\/companies\?year=/);
+  assert.doesNotMatch(startupGate, /\?login=/);
+});
+
+// smart_system came from a desktop that kept many clients: only the companies (and the years
+// holding them) whose own database is on this server may be listed, and a single company opens
+// without the selection screen.
+test("only this installation's companies and years are listed, and one company opens directly", () => {
+  assert.match(companyMenu, /AND schemata\.schema_name IS NOT NULL/);
+  assert.equal((companyMenu.match(/AND \$\{onServer\}|WHERE \$\{onServer\}/g) ?? []).length, 3, "every year query is limited to years with a company on this server");
+  assert.match(startupGate, /if \(rows\.length === 1 && rows\[0\]\.available\) setStage\("ready"\)/);
 });
 
 test("no credential column ever leaves the database", () => {
@@ -49,10 +60,13 @@ test("the company menu reads the live database read-only, with bound filters", (
   assert.doesNotMatch(companyMenu, /\$\{scope\.groups\}/);
 });
 
-test("the routes reject a request that names no operator or year", () => {
+test("the routes answer for the session's operator and reject a request with no year", () => {
   assert.match(operatorsRoute, /readOperators/);
-  assert.match(yearsRoute, /An operator is required/);
-  assert.match(companiesRoute, /An operator is required/);
+  assert.match(operatorsRoute, /canManageUsers\(user\.role\)/, "only admins list every operator");
+  for (const route of [yearsRoute, companiesRoute]) {
+    assert.match(route, /requireOperator\(request, headers\)/);
+    assert.doesNotMatch(route, /searchParams\.get\("login"\)/);
+  }
   assert.match(companiesRoute, /An accounting year is required/);
   assert.match(companiesRoute, /\^\\d\{1,9\}\$/);
 });

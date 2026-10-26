@@ -120,7 +120,29 @@ export async function readOperators(): Promise<Operator[]> {
   });
 }
 
-/** The accounting years this operator may open, newest first. */
+/** One active operator by login, or null when there is none by that name. */
+export async function readOperator(loginName: string): Promise<Operator | null> {
+  const SYSTEM_SCHEMA = systemSchema();
+  return readOnly(async (client) => {
+    const row = (await client.query<{ user_no: number; login_name: string; user_name: string | null; user_type: string | null; user_dept: string | null }>(
+      `SELECT user_no, BTRIM(login_name) AS login_name, NULLIF(BTRIM(user_name), '') AS user_name,
+              NULLIF(BTRIM(user_type), '') AS user_type, NULLIF(BTRIM(user_dept), '') AS user_dept
+       FROM ${SYSTEM_SCHEMA}.user_master
+       WHERE UPPER(BTRIM(login_name)) = UPPER($1) AND COALESCE(BTRIM(user_pos), 'A') <> 'D'
+       LIMIT 1`,
+      [loginName.trim()],
+    )).rows[0];
+    return row ? { userNo: row.user_no, loginName: row.login_name, displayName: row.user_name ?? row.login_name, userType: row.user_type, department: row.user_dept } : null;
+  });
+}
+
+/**
+ * The accounting years this operator may open, newest first.
+ *
+ * Only years with at least one company whose own database is on this server: each client has
+ * its own installation, but smart_system came from a desktop that kept many clients, so its
+ * year and company lists also name everyone else's.
+ */
 export async function readAccountingYears(loginName: string): Promise<AccountingYear[]> {
   const SYSTEM_SCHEMA = systemSchema();
   return readOnly(async (client) => {
@@ -128,12 +150,16 @@ export async function readAccountingYears(loginName: string): Promise<Accounting
     const columns = `year_key, NULLIF(BTRIM(year_ac), '') AS year_ac,
               to_char(year_start::date, 'DDMMYYYY') || to_char(year_end::date, 'DDMMYYYY') AS year_id`;
     const order = "ORDER BY year_start::date DESC";
+    const onServer = `year_key IN (
+           SELECT cname.c_yearid FROM ${SYSTEM_SCHEMA}.cname AS cname
+           JOIN ${SYSTEM_SCHEMA}.company AS company ON company.co_key = cname.c_id AND company.co_pos = 'A'
+           JOIN information_schema.schemata AS schemata ON schemata.schema_name = LOWER(BTRIM(COALESCE(company.co_dataname, ''))))`;
     type YearRow = { year_key: number; year_ac: string | null; year_id: string };
 
     let rows: YearRow[] = [];
     if (scope.years) {
       rows = (await client.query<YearRow>(
-        `SELECT ${columns} FROM ${SYSTEM_SCHEMA}.year_ac WHERE BTRIM(year_ac) = ANY($1) ${order}`,
+        `SELECT ${columns} FROM ${SYSTEM_SCHEMA}.year_ac WHERE BTRIM(year_ac) = ANY($1) AND ${onServer} ${order}`,
         [scope.years],
       )).rows;
     } else if (scope.groups) {
@@ -143,14 +169,14 @@ export async function readAccountingYears(loginName: string): Promise<Accounting
            SELECT DISTINCT c_yearid FROM ${SYSTEM_SCHEMA}.cname
            WHERE c_id IN (SELECT co_key FROM ${SYSTEM_SCHEMA}.company
                           WHERE co_pos = 'A' AND COALESCE(BTRIM(co_select_group), '') = ANY($1))
-         ) ${order}`,
+         ) AND ${onServer} ${order}`,
         [scope.groups],
       )).rows;
     }
     // The desktop falls back to the full year list when the operator's own
     // restriction matches nothing, rather than leaving the screen empty.
     if (!rows.length) {
-      rows = (await client.query<YearRow>(`SELECT ${columns} FROM ${SYSTEM_SCHEMA}.year_ac ${order}`)).rows;
+      rows = (await client.query<YearRow>(`SELECT ${columns} FROM ${SYSTEM_SCHEMA}.year_ac WHERE ${onServer} ${order}`)).rows;
     }
     if (!rows.length) throw new Error("No accounting year is available in the company system database");
     return rows.map((row) => ({ key: row.year_key, id: row.year_id, label: row.year_ac ?? yearLabel(row.year_id) }));
@@ -159,9 +185,10 @@ export async function readAccountingYears(loginName: string): Promise<Accounting
 
 /**
  * The companies opened for one accounting year, as the desktop grid lists
- * them. `available` reports whether this installation actually carries the
- * company's own database, so a copy holding one company still shows the
- * client's real list instead of a fabricated one.
+ * them, but only those whose own database is on this server. smart_system came
+ * from a desktop that kept many clients; listing the rest would show one
+ * client the names and addresses of the others. `available` is therefore
+ * always true; it stays for the screens that grey out a missing database.
  */
 export async function readCompanies(loginName: string, yearKey: number): Promise<Company[]> {
   if (!Number.isInteger(yearKey)) {
@@ -197,6 +224,7 @@ export async function readCompanies(loginName: string, yearKey: number): Promise
          ON schemata.schema_name = LOWER(BTRIM(COALESCE(company.co_dataname, '')))
        WHERE company.co_pos = 'A'
          AND company.co_key IN (SELECT c_id FROM ${SYSTEM_SCHEMA}.cname WHERE c_yearid = $1)
+         AND schemata.schema_name IS NOT NULL
          ${groupFilter}
        ORDER BY company.name`,
       parameters,
