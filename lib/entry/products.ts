@@ -237,6 +237,7 @@ function controlValue(value: unknown): string {
 export type LinkSource = Readonly<{ processKeys: readonly number[]; ilKeys: readonly number[] }>;
 
 export async function restoreEntry(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number, link?: LinkSource): Promise<RestoredEntry & { itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>>; slabTax: Record<number, number> }> {
+  if (entryName.trim().toUpperCase().startsWith("V")) return restoreVoucher(loader, entryName, firstCombo, uniqueKey);
   let book = await bookContext(loader, entryName, firstCombo);
   // A debit / credit note opens against the book it was saved with.
   let against: RestoredEntry["against"];
@@ -353,6 +354,66 @@ export async function restoreEntry(loader: Loader, entryName: string, firstCombo
   }
   if (link) for (const name of ["cmb_series", "dtp_date", "tbx_number", "tbx_chlnno", "tbx_entryno", "dtp_chlndate", "dtp_entrydate"]) delete values[name];
   return { uniqueKey: link ? 0 : uniqueKey, ...(against ? { against } : {}), values, partyCode, addressId, taxGroup, lines, slab, addon, itemSlab, slabTax, tdsAmount };
+}
+
+/**
+ * Restore_Entry of the voucher style (entry type V, the same program as the invoice): RESTVOU_01_LEDGER gives one row per account line
+ * (doc_posting P; a Contra's second, book-side row is doc_posting A and is not a line), RESTVOU_02_ADDON the header addon row. Each header
+ * control takes the column entry_control names for it (field_name) from the first row; the rows become the account grid.
+ */
+async function restoreVoucher(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number): Promise<RestoredEntry & { itemSlab: Record<number, Record<number, { perc: string; taxId: number; amount: string }>>; slabTax: Record<number, number> }> {
+  const book = await bookContext(loader, entryName, firstCombo);
+  const entryId = toInt(field(await entryProperties(loader, entryName), "entry_key"));
+  const sql = (await restoreQuery(loader, "RESTVOU_01_LEDGER")).replace(/\|sys\.@pkval_1\|/gi, String(Math.trunc(uniqueKey)));
+  const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(sql), book.values))) ?? [];
+  if (rows.length === 0) throw new Error("The entry is not found (deleted, or not posted)");
+  rows.sort((a, b) => toInt(field(a, "led_div")) - toInt(field(b, "led_div")) || toInt(field(a, "led_key")) - toInt(field(b, "led_key")));
+  const header = rows[0];
+  const controls = (await loader.readTable(`SELECT control_name, field_name FROM ${SETUP_SCHEMA}.entry_control WHERE entry_id = $1 AND add_active AND BTRIM(field_restore_queryid) = 'RESTVOU_01_LEDGER'`, [entryId])) ?? [];
+  const values: Record<string, string> = {};
+  for (const control of controls) {
+    const name = text(control, "control_name").toLowerCase();
+    const column = text(control, "field_name").trim();
+    if (!/^(cmb|dtp|tbx)_/.test(name) || column === "" || column.startsWith("(")) continue;
+    values[name] = controlValue(field(header, column)).trim();
+  }
+  if (values.cmb_rev_entry !== undefined) values.cmb_rev_entry = ({ R: "Regular", D: "Doc.Refund", N: "No Interest Calc" } as Record<string, string>)[values.cmb_rev_entry.toUpperCase()] ?? "Regular";
+  const fixed2 = (amount: number) => (amount === 0 ? "" : amount.toFixed(2));
+  const contra = toInt(field(header, "TYPE")) === 9;
+  // The addon rows (aona_recid L, one per ledger row): the row's own fields (entrypos P, e.g. Sub Ledger) go with it, the header ones (entrypos L, e.g. Bank Name) come from the first row.
+  const fields = (await loader.readTable(`SELECT fiel_key, fiel_save, fiel_type, fiel_entrypos FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D'`)) ?? [];
+  const addonOf = async (ledKey: number, entrypos: "P" | "L"): Promise<Record<number, string>> => {
+    const out: Record<number, string> = {};
+    const addonSql = (await restoreQuery(loader, "RESTVOU_02_ADDON")).replace(/\|sys\.@pkval_1\|/gi, String(ledKey));
+    const addonRow = (await loader.readTable(replaceEntryTokens(addonSql, book.values)))?.[0];
+    if (!addonRow) return out;
+    for (const item of fields) {
+      if (text(item, "fiel_entrypos").trim() !== entrypos) continue;
+      const save = text(item, "fiel_save").trim();
+      const value = text(item, "fiel_type").toUpperCase() === "I" ? field(addonRow, `input_${save}`) : field(addonRow, `txt_${save}`);
+      if (value !== undefined && value !== null) out[toInt(field(item, "fiel_key"))] = toText(displayValue(value)).trim();
+    }
+    return out;
+  };
+  const addon = await addonOf(toInt(field(header, "led_key")), "L");
+  const lines = [];
+  for (const row of rows) {
+    const amount = toDecimal(field(row, "amount"));
+    const debit = toInt(field(row, "ac_dbcode")) === 1;
+    const chq = parseDesktopDate(field(row, "chln_date"));
+    const ledKey = toInt(field(row, "led_key"));
+    const own = (await loader.readTable(`SELECT out_ag_outid, out_setoff::numeric AS setoff FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) > 0 ORDER BY out_key`, [ledKey])) ?? [];
+    lines.push({
+      ledKey, code: toInt(field(row, "code")), book: toInt(field(row, "ac_book")), name: text(row, "name").trim(),
+      debit: debit ? fixed2(amount) : "", credit: debit ? "" : fixed2(amount), chqNo: text(row, "doc_no1").trim(), chqDate: chq ? formatDesktopDate(chq) : "",
+      addon: await addonOf(ledKey, "P"),
+      setoffs: own.map((item) => ({ outKey: toInt(field(item, "out_ag_outid")), amount: toDecimal(field(item, "setoff")).toFixed(2) })),
+    });
+  }
+  return {
+    uniqueKey, values, partyCode: 0, addressId: 0, taxGroup: "V", lines: [], slab: {}, addon, itemSlab: {}, slabTax: {}, tdsAmount: "",
+    voucher: { contra, rows: lines },
+  };
 }
 
 /**

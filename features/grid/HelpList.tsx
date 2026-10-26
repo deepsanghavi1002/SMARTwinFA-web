@@ -19,7 +19,7 @@ const ROW = 20;
 /** Entries the list shows at once unless the screen asks for another number. */
 const SHOWN = 15;
 const OVERSCAN = 10;
-const MIN_WIDTH = 30;
+const MIN_WIDTH = 24;
 /** Typing pauses longer than this start a new search. */
 const TYPE_PAUSE_MS = 1200;
 
@@ -185,7 +185,8 @@ export function HelpList({
     const now = Date.now();
     const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
     typed.current = { text, at: now };
-    const hit = Array.from({ length: count }, (_unused, place) => rowAt(place)).findIndex((row) => (row[searchColumn] ?? "").trim().toUpperCase().startsWith(text));
+    const start = focusPlace < 0 ? 0 : text.length > 1 ? focusPlace : focusPlace + 1;
+    const hit = Array.from({ length: count }, (_unused, step) => (start + step) % Math.max(1, count)).find((place) => (rowAt(place)?.[searchColumn] ?? "").trim().toUpperCase().startsWith(text)) ?? -1;
     if (hit >= 0) { move(hit); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
@@ -230,7 +231,7 @@ export function HelpList({
       </div>
       {topSlot}
       {note && <div className={`mp-help-note ${note.warn ? "mp-help-warn" : ""}`}>{note.text}</div>}
-      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", width: tableWidth + sideBar + 2, maxWidth: "100%", height: sizes.head + sizes.row * Math.min(shown, Math.max(1, count)) + 2 + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <div className="mp-help-scroll" ref={scroller} style={{ flex: "0 1 auto", width: tableWidth + sideBar + 2, maxWidth: "100%", height: sizes.head + sizes.row * Math.min(shown, Math.max(1, count)) + bar }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table style={{ width: tableWidth }}>
           <colgroup>{help.columns.map((column) => <col key={column.key} style={{ width: widthOf(column) }} />)}</colgroup>
           <thead>
@@ -261,7 +262,7 @@ export function HelpList({
                     const text = formatCell(row[column.key] ?? "", column.format);
                     const cursor = column.key === searchColumn;
                     const frozen = freezeSearch && column.key === mainColumn;
-                    return <td key={column.key} title={text} className={[frozen ? "mp-help-frozen" : "", cursor ? "mp-help-cursor" : "", cursor && index === focusPlace ? "mp-help-cursor-now" : ""].filter(Boolean).join(" ") || undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(frozen ? { left: frozenLeft } : {}) }}>{cursor && index === focusPlace && found ? <FoundText text={text} typed={found} /> : query.trim() !== "" ? <MarkedText text={text} query={query} /> : column.key === mainColumn && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
+                    return <td key={column.key} title={text} onMouseDown={() => { if (!freezeSearch) setCol(column.key); }} className={[frozen ? "mp-help-frozen" : "", cursor ? "mp-help-cursor" : "", cursor && index === focusPlace ? "mp-help-cursor-now" : ""].filter(Boolean).join(" ") || undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(frozen ? { left: frozenLeft } : {}) }}>{cursor && index === focusPlace && found ? <FoundText text={text} typed={found} /> : query.trim() !== "" ? <MarkedText text={text} query={query} /> : column.key === mainColumn && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
                   })}
                 </tr>
               );

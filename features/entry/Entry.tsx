@@ -85,6 +85,17 @@ const ROW = 20;
 const PRODUCT_TOP = 0;
 const PRODUCT_HEIGHT = ROW * 8 + 19; // heading + 7 rows + horizontal scroll bar
 const SLAB_TOP = PRODUCT_TOP + PRODUCT_HEIGHT + 24; // the product totals line between
+/** The voucher's Daybook box runs to the right end of the book balance (239 + 223), and the Dr / Cr and Add / Edit labels follow it. */
+const VOUCHER_REGISTER_WIDTH = 375;
+const VOUCHER_SIDE_LEFT = 464;
+/** The calendar button of a date box sits outside the voucher's date input, so the input is as wide as the Series box. */
+const VOUCHER_DATE_BUTTON = 21;
+const VOUCHER_HEIGHT = ROW * 7 + 19;
+/** The voucher's account help opens at the top of the grid's 3rd row (tab strip 18, heading and two rows of ROW above it). */
+const VOUCHER_HELP_TOP = TAB_TOP + 18 + ROW + 2 * ROW - 2;
+/** The voucher's address box is taller, so its 4th line shows whole; it reaches up into the register's row (right of the Add / Edit label). */
+const VOUCHER_ADDRESS = { top: 13, height: 80 }; // the voucher grid: heading + 6 whole rows + horizontal scroll bar
+const VOUCHER_ADDON_TOP = PRODUCT_TOP + VOUCHER_HEIGHT + 24;
 const SLAB_HEIGHT = ROW * 5 + 2; // heading + 4 rows
 const PAGE_HEIGHT = SLAB_TOP + SLAB_HEIGHT + 3;
 const FOOT_TOP = TAB_TOP + 18 + PAGE_HEIGHT + 6;
@@ -113,6 +124,8 @@ function rememberRegister(entryName: string, text: string): void {
 const HELP_ROWS = 12;
 /** The product help shows 9 entries at a time, so it stays on the screen under the product grid. */
 const PRODUCT_HELP_ROWS = 9;
+/** The voucher's account help shows nine whole rows. */
+const VOUCHER_HELP_ROWS = 9;
 /** A slab %: up to three places, never below nought; a slab amount: two places, a round-off or add / less may be negative. */
 const PERCENT_RULES = { decimals: 3, positiveOnly: true, rangeFrom: 0, rangeUpto: 0 };
 const AMOUNT_RULES = { decimals: 2, positiveOnly: false, rangeFrom: 0, rangeUpto: 0 };
@@ -189,6 +202,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [lines, setLines] = useState<Line[]>([]);
   /** The voucher style (Entry.cs str_Entry_Style V): account rows instead of product rows. */
   const [vlines, setVlines] = useState<VoucherLine[]>([]);
+  /** An opened voucher that is a Contra (type 9): its account cannot be changed. */
+  const [contra, setContra] = useState(false);
   /** The series' own period (bn_from to bn_upto, inside the year): the date box takes no day outside it. */
   const [period, setPeriod] = useState<{ from: string; upto: string; chlnFrom: string } | null>(null);
   const [accountText, setAccountText] = useState<{ row: number; text: string } | null>(null);
@@ -302,6 +317,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setSlab([]);
     setLines([]);
     setVlines([]);
+    setContra(false);
+    setDetailsRow(null);
     setAccountText(null);
     setVoucherRow(null);
     setParty(null);
@@ -533,6 +550,24 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const productView = useHelpView(helpKind === "product" ? typedHelp : null, helpCell);
   const helpView = helpKind === "account" ? accountView : productView;
   const shownHelp = helpView.view;
+  /** An Account cell that already holds an account: its help opens with the cursor on that account, not on the first one. */
+  const accountLandOn = useRef<number | null>(null);
+  const [accountLandTick, setAccountLandTick] = useState(0);
+  useEffect(() => {
+    if (helpKind !== "account" || accountLandOn.current === null || !shownHelp || shownHelp.rows.length === 0) return;
+    const at = shownHelp.rows.findIndex((row) => Number(row.CODE) === accountLandOn.current);
+    accountLandOn.current = null;
+    if (at >= 0) setHelpAt(at);
+  }, [helpKind, shownHelp, accountLandTick]);
+  /** A double click on the Account Head of a filled row: the help (opened if it was closed) puts its cursor on that account again, with no text to search. */
+  const landOnAccount = (row: number) => {
+    const code = vlines[row]?.code;
+    if (!code) return;
+    setAccountText(null);
+    accountLandOn.current = code;
+    setAccountLandTick((now) => now + 1);
+    if (helpKind !== "account") void openHelp("account");
+  };
   /** A Product cell that already holds a product (an entry being edited): its help opens with the cursor on that product, not on the first one. */
   const helpLandOn = useRef<number | null>(null);
   const [landTick, setLandTick] = useState(0);
@@ -574,6 +609,22 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     try {
       const body = await call<{ ledger: AccountLedgerData }>("ledger", { code });
       setLedgerView(body.ledger);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      setBusy("");
+    }
+  };
+  /** F7 on the voucher's account help: that account's pending bills with the days they have been pending (no ageing), in the F7 window. */
+  const showPartyOutstanding = async () => {
+    const rows = shownHelp?.rows ?? [];
+    const row = rows[Math.min(helpAt, rows.length - 1)];
+    const code = Number(row?.CODE);
+    if (!row || !code) return;
+    setBusy("Outstanding");
+    try {
+      const body = await call<{ stock: PartyStockData }>("party-outstanding", { code, date: values.dtp_date ?? "" });
+      setStockView(body.stock);
     } catch (error) {
       await failed(error);
     } finally {
@@ -698,7 +749,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const helpKeys = (event: ReactKeyboardEvent<HTMLInputElement>, kind: HelpKind, choose: (row: Readonly<Record<string, string>>) => void): boolean => {
     const open = helpKind === kind && shownHelp !== null;
     if (event.key === "F1" && open) { event.preventDefault(); void showDetails(kind); return true; }
-    if (event.key === "F7" && open && kind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+    if (event.key === "F7" && open && kind === "account") { event.preventDefault(); void (voucher ? showPartyOutstanding() : showPartyStock()); return true; }
+    if (event.key === "F5" && open && kind === "account" && voucher) { event.preventDefault(); void endVoucherRows(); return true; }
     if (event.key === "F7" && open && kind === "product") { event.preventDefault(); productHelpStock(); return true; }
     if (event.key === "F8" && open && kind === "account") { event.preventDefault(); void showLedger(); return true; }
     if (event.key === "ArrowDown" || event.key === "F2") {
@@ -812,6 +864,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // ---- The voucher's account rows: Voucher_Validate_Account and Voucher_AcHelp_Selection
   const sideDbcode = book?.sides?.find((side) => side.text === values.cmb_side)?.acDbcode ?? 1;
   const journal = book?.bookKey === 19;
+  const loadDetailsRef = useRef<(row: number, code: number) => void>(() => undefined);
   const chooseVoucherAccount = useCallback(async (row: number, helpRow: Readonly<Record<string, string>> | undefined) => {
     if (!helpRow || !register || !book) return;
     setHelpKind(null);
@@ -821,12 +874,16 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     });
     setAccountText(null);
     if (!allowed) { setTimeout(() => focusEntryCell(formRef.current, `${row}:name`), 0); return; }
+    const code = Number(helpRow.CODE);
     setVlines((current) => {
       const copy = [...current];
       while (copy.length <= row) copy.push({ code: 0, book: 0, cells: {} });
-      copy[row] = { code: Number(helpRow.CODE), book: Number(helpRow.BOOK) || 0, cells: { ...copy[row].cells, name: helpRow.NAME ?? "" } };
+      // The row's own addon fields (Sub Ledger ...) start at their default; another account on the row keeps what was chosen.
+      const addonDefaults = Object.fromEntries((book.voucherAddon?.row ?? []).map((item) => [item.key, item.value]));
+      copy[row] = { code, book: Number(helpRow.BOOK) || 0, cells: { ...copy[row].cells, name: helpRow.NAME ?? "" }, addon: copy[row].code === code ? copy[row].addon ?? addonDefaults : addonDefaults, setoffs: copy[row].code === code ? copy[row].setoffs : undefined };
       return copy;
     });
+    loadDetailsRef.current(row, code);
     // The side the book side picks takes the figure (a journal book either; the debit first).
     focusAfterVoucher.current = `${row}:${sideDbcode === 1 || journal ? "debit_amt" : "credit_amt"}`;
   }, [register, book, sideDbcode, journal, checkHeader]);
@@ -836,8 +893,40 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (focusAfterVoucher.current && focusEntryCell(formRef.current, focusAfterVoucher.current)) focusAfterVoucher.current = null;
   }, [vlines]);
   const accountKeys = (event: ReactKeyboardEvent<HTMLInputElement>, row: number): boolean => helpKeys(event, "account", (helpRow) => void chooseVoucherAccount(row, helpRow));
+  /** The side of a row's account: the Book Side's, or on a journal the figure typed (debit unless only a credit is there). */
+  const rowSide = (row: number) => (journal ? (toNumber(vlines[row]?.cells.debit_amt) > 0 || toNumber(vlines[row]?.cells.credit_amt) === 0 ? 1 : 2) : sideDbcode);
+  /**
+   * input_name's LF event: the account's address box and the bills pending on the side the day book posts to (the Outstanding tab). The row's saved
+   * ledger key makes what the opened voucher already set off count as pending again. Read once per account, side and row.
+   */
+  const accountReads = useRef(new Map<string, PartyDetails>());
+  /** The voucher row the bills (and the address) on screen belong to: the Outstanding tab sets off for that row, whichever row the keyboard was on last. */
+  const [detailsRow, setDetailsRow] = useState<number | null>(null);
+  loadDetailsRef.current = (row, code) => void loadAccountDetails(row, code, Number(copyOfCells(row, "_led_key")) || 0);
+  const accountWanted = useRef("");
+  const loadAccountDetails = async (row: number, code: number, ledKey: number, side = rowSide(row)): Promise<PartyDetails | null> => {
+    if (!register || !book || code <= 0) return null;
+    const id = `${code}:${side}:${ledKey}:${values.dtp_date ?? ""}`;
+    accountWanted.current = id;
+    const known = accountReads.current.get(id);
+    if (known) { setParty(known); setDetailsRow(row); return known; }
+    try {
+      const body = await call<{ party: PartyDetails }>("party", { firstCombo: register, code, date: values.dtp_date ?? "", addressId: 1, voucherSide: side, rowLedKey: ledKey });
+      accountReads.current.set(id, body.party);
+      if (accountWanted.current === id) { setParty(body.party); setDetailsRow(row); }
+      return body.party;
+    } catch (error) {
+      await failed(error);
+      return null;
+    }
+  };
+  /** The ledger key a voucher row was saved with (0 for a new row). */
+  const copyOfCells = (row: number, key: string) => vlines[row]?.cells[key] ?? "";
   const accountFocus = (row: number) => {
     setVoucherRow(row);
+    accountLandOn.current = vlines[row]?.code || null;
+    if (vlines[row]?.code) void loadAccountDetails(row, vlines[row].code, Number(copyOfCells(row, "_led_key")) || 0);
+    else setParty(null);
     if (accountText && accountText.row !== row) setAccountText(null);
     if (keepHelpAt.current) { keepHelpAt.current = false; void openHelp("account"); return; }
     setHelpAt(0);
@@ -847,17 +936,54 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (index !== row) return line;
     // One figure per row unless the book is a journal: typing one side clears the other.
     const cells = { ...line.cells, [key]: value };
+    if (key === "debit_amt" || key === "credit_amt") delete cells._auto;
     if (!journal && value !== "" && key === "debit_amt") cells.credit_amt = "";
     if (!journal && value !== "" && key === "credit_amt") cells.debit_amt = "";
     return { ...line, cells };
   }));
+  /**
+   * F5 in the account rows (like F5 in the product rows of an invoice): the account entry is over. A voucher with no account is refused, a journal must tally;
+   * then the keyboard goes to the Addon grid (the register's header fields), else to the narration.
+   */
+  const endVoucherRows = async () => {
+    setHelpKind(null);
+    setAccountText(null);
+    if (filledVoucherLines(vlines).length === 0) { await say("Account Name not selected...", "Entry Warning"); setTimeout(() => focusEntryCell(formRef.current, "0:name"), 30); return; }
+    if (journal && Math.abs(toNumber(voucherTotals.debit) - toNumber(voucherTotals.credit)) > 0.005) {
+      await say(`Debit and Credit Total are not Equal... (difference ${amountText(voucherTotals.difference, 2)})`, "Entry Warning");
+      setTimeout(() => focusEntryCell(formRef.current, `${filledVoucherLines(vlines).length}:name`), 30);
+      return;
+    }
+    setTimeout(() => {
+      if ((view?.voucherAddon?.header.length ?? 0) > 0 && focusFirstCell(formRef.current?.querySelector("[aria-label=Addon]"))) return;
+      formRef.current?.querySelector<HTMLElement>("#ent-tbx_narration")?.focus();
+    }, 30);
+  };
+  const editVoucherAddon = (row: number, key: number, value: string) => setVlines((current) => current.map((line, index) => (index === row ? { ...line, addon: { ...(line.addon ?? {}), [key]: value } } : line)));
   const deleteVoucherRow = (row: number) => setVlines((current) => current.filter((_line, index) => index !== row));
+  /** The header addon fields (entrypos L) start at their defaults on every new entry of the register. */
+  const voucherAddonDefaults = (screen: BookScreen | null | undefined): Record<number, string> => Object.fromEntries((screen?.voucherAddon?.header ?? []).map((item) => [item.key, item.value]));
+  /** The voucher row the Outstanding tab works on (the account row last in the keyboard), and the amount it may set off. */
+  const outRow = detailsRow ?? voucherRow ?? 0;
+  const rowAmount = (row: number) => toNumber(vlines[row]?.cells.debit_amt) || toNumber(vlines[row]?.cells.credit_amt);
+  /** Enter on a row's figure: an account with pending bills goes to the Outstanding tab, the keyboard on the first set-off box. */
+  const voucherAmountEntered = async (row: number): Promise<boolean> => {
+    const line = vlines[row];
+    if (!line?.code || !book?.setoff || rowAmount(row) <= 0) return false;
+    const details = await loadAccountDetails(row, line.code, Number(copyOfCells(row, "_led_key")) || 0);
+    if (!details || details.outstanding.length === 0) return false;
+    setVoucherRow(row);
+    setTab("outstanding");
+    setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-grid[aria-label=Outstanding] input[data-cell^=os]")?.focus(), 80);
+    return true;
+  };
   const voucherTotals = useMemo(() => {
     const sum = (key: string) => vlines.reduce((total, line) => total + toNumber(line.cells[key]), 0);
     const debit = sum("debit_amt");
     const credit = sum("credit_amt");
-    return { debit: fixed(debit, 2), credit: fixed(credit, 2), difference: fixed(Math.abs(debit - credit), 2), final: Math.max(debit, credit) };
-  }, [vlines]);
+    // Only a journal must tally: the other day books post the day book side themselves, so there is no difference to show.
+    return { debit: fixed(debit, 2), credit: fixed(credit, 2), difference: journal ? fixed(Math.abs(debit - credit), 2) : "0.00", final: Math.max(debit, credit) };
+  }, [vlines, journal]);
   /** Cmb_Side_Leave: the side picked decides the open figure and the series offered. */
   const chooseSide = (text: string) => {
     const side = book?.sides?.find((candidate) => candidate.text === text);
@@ -1079,8 +1205,28 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const [setoffState, setSetoffState] = useState<{ party: PartyDetails | null; values: Record<number, string> }>({ party: null, values: {} });
   const money = (value: string | undefined) => Number((value ?? "").replace(/,/g, "")) || 0;
   /** What was typed for the party read last (reading a party again, as opening an entry does, starts afresh). */
-  const typedSetoff = setoffState.party === party ? setoffState.values : NO_SETOFF;
-  const setSetoff = (change: (current: Record<number, string>) => Record<number, string>) => setSetoffState((now) => ({ party, values: change(now.party === party ? now.values : NO_SETOFF) }));
+  const voucherSetoffs = voucher ? vlines[detailsRow ?? voucherRow ?? 0]?.setoffs : undefined;
+  const typedSetoff = voucher
+    ? Object.fromEntries((party?.outstanding ?? []).flatMap((row, index) => (voucherSetoffs?.[Number(row.out_key)] !== undefined ? [[index, voucherSetoffs[Number(row.out_key)]]] : [])))
+    : setoffState.party === party ? setoffState.values : NO_SETOFF;
+  const setSetoff = (change: (current: Record<number, string>) => Record<number, string>) => {
+    if (!voucher) { setSetoffState((now) => ({ party, values: change(now.party === party ? now.values : NO_SETOFF) })); return; }
+    const bills = party?.outstanding ?? [];
+    setVlines((current) => current.map((line, index) => {
+      if (index !== (detailsRow ?? voucherRow ?? 0)) return line;
+      const byIndex = Object.fromEntries(bills.flatMap((bill, at) => (line.setoffs?.[Number(bill.out_key)] !== undefined ? [[at, line.setoffs[Number(bill.out_key)]]] : [])));
+      const changed = change(byIndex);
+      const setoffs = Object.fromEntries(Object.entries(changed).map(([at, value]) => [Number(bills[Number(at)]?.out_key), value]));
+      // A row with no amount of its own takes the total of its set-offs (and keeps following it until a figure is typed in the row).
+      const own = toNumber(line.cells.debit_amt) || toNumber(line.cells.credit_amt);
+      if (own > 0 && line.cells._auto !== "1") return { ...line, setoffs };
+      const total = Object.values(setoffs).reduce((sum, value) => sum + money(value), 0);
+      const sideKey = rowSide(index) === 1 ? "debit_amt" : "credit_amt";
+      const cells: Record<string, string> = { ...line.cells, [sideKey]: total > 0 ? fixed(total, 2) : "", _auto: "1" };
+      if (!journal) cells[sideKey === "debit_amt" ? "credit_amt" : "debit_amt"] = "";
+      return { ...line, setoffs, cells };
+    }));
+  };
   /** The set-off of each pending bill (by its row number): as typed, else what the opened entry had set off (the row's own figure). */
   const setoff = useMemo(() => {
     const out: Record<number, string> = {};
@@ -1115,6 +1261,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   // ---- Invoice_Tab_Find_Edit_Enter: the register's entries in the series
   const openTab = useCallback(async (next: Tab) => {
     setTab(next);
+    if (next === "outstanding" && voucher) { const line = vlines[voucherRow ?? 0]; if (line?.code) loadDetailsRef.current(voucherRow ?? 0, line.code); }
     if (next !== "find" || preview || !register) return;
     setBusy("Entries");
     try {
@@ -1125,7 +1272,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     } finally {
       setBusy("");
     }
-  }, [preview, register, call, values.cmb_series, failed]);
+  }, [preview, register, call, values.cmb_series, failed, voucher, vlines, voucherRow]);
   /** "All fields" (slab amounts and addons of each entry) and "With product" (and every product line): one server read each, only when asked. */
   const chooseFindMode = async (next: FindMode) => {
     if (next === "") { setFindMode(""); return; }
@@ -1149,7 +1296,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const openEntry = useCallback(async (row: Readonly<Record<string, string>>) => {
     if (!register || !book) return;
     if (String(row.name ?? "").toLowerCase().includes("cancel invoice")) { await say("A cancelled invoice number opens for editing on the desktop only (not ported yet).", "Entry"); return; }
-    if (filledLines(lines).length > 0 && restored === null) {
+    if ((filledLines(lines).length > 0 || filledVoucherLines(vlines).length > 0) && restored === null) {
       const answer = await messageBox.ask("The entry on screen is not saved. Open the chosen entry instead?", "Find / Edit", ["Yes", "No"], { defaultButton: "No" });
       if (answer !== "Yes") return;
     }
@@ -1164,7 +1311,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         if (register.against?.code !== saved.code || register.against?.nature !== saved.nature) { reg = { ...register, against: { code: saved.code, nature: saved.nature } }; setRegister(reg); }
         setAgainst({ book: `Ag: ${saved.accountName}`, nature: saved.natureText });
       }
-      if (book.slab && (entry.taxGroup !== book.taxGroup || reg !== register)) screenBook = (await loadBook(reg, entry.taxGroup)).book;
+      if (!entry.voucher && book.slab && (entry.taxGroup !== book.taxGroup || reg !== register)) screenBook = (await loadBook(reg, entry.taxGroup)).book;
       // Header and foot: a list box's saved key shows as its text.
       const next: Record<string, string> = {};
       for (const control of screenBook.controls) {
@@ -1172,6 +1319,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
         if (saved === undefined) { next[control.name] = control.initial; continue; }
         const option = control.type === "CB" && !control.options.some((candidate) => candidate.text === saved) ? control.options.find((candidate) => candidate.value === saved) : undefined;
         next[control.name] = option ? option.text : saved;
+      }
+      // The voucher style: the saved side (bk_dbcode, the day book's side) picks the Book Side whose account side is the other one.
+      if (entry.voucher && screenBook.sides && screenBook.sides.length > 0) {
+        const bookSide = Number(entry.values.cmb_side);
+        const side = screenBook.sides.find((candidate) => candidate.acDbcode === (bookSide === 2 ? 1 : 2));
+        if (side) next.cmb_side = side.text;
       }
       let partyDetails: PartyDetails | null = null;
       if (entry.partyCode > 0 && screenBook.party) partyDetails = (await call<{ party: PartyDetails }>("party", { firstCombo: reg, editKey: Number(row.unique_key), code: entry.partyCode, date: next.dtp_date ?? "", addressId: entry.addressId })).party;
@@ -1206,20 +1359,33 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
       setSlab(slabRows);
       setValues(next);
       setParty(partyDetails);
-      setAddon({ ...Object.fromEntries((partyDetails?.addon ?? []).map((item) => [item.key, item.value])), ...entry.addon });
+      setAddon({ ...(entry.voucher ? voucherAddonDefaults(screenBook) : Object.fromEntries((partyDetails?.addon ?? []).map((item) => [item.key, item.value]))), ...entry.addon });
       setLines(restoredLines);
+      // The account rows of a voucher: each as saved, with its ledger key (the Edit save changes the row by it).
+      if (entry.voucher) {
+        setVlines(entry.voucher.rows.map((voucherRow) => ({
+          code: voucherRow.code, book: voucherRow.book,
+          cells: { name: voucherRow.name, debit_amt: voucherRow.debit, credit_amt: voucherRow.credit, doc_no1: voucherRow.chqNo, chln_date: voucherRow.chqDate, _led_key: String(voucherRow.ledKey) },
+          addon: { ...Object.fromEntries((screenBook.voucherAddon?.row ?? []).map((item) => [item.key, item.value])), ...voucherRow.addon },
+          setoffs: Object.fromEntries(voucherRow.setoffs.map((item) => [item.outKey, item.amount])),
+        })));
+        setContra(entry.voucher.contra);
+        accountReads.current.clear();
+        const first = entry.voucher.rows[0];
+        if (first) { setVoucherRow(0); void loadAccountDetails(0, first.code, first.ledKey, first.credit !== "" && first.debit === "" ? 2 : 1); }
+      }
       restoredDate.current = next.dtp_date ?? "";
       setRestoredTds(entry.tdsAmount);
       setRestoredRows(restoredLines.length);
-      // The entry is open: the keyboard goes to the Series, ready to type.
-      setTimeout(() => formRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button")?.focus(), 150);
+      // The entry is open: the keyboard goes to the Series, ready to type (a voucher shows series and book side only: it goes to the date).
+      setTimeout(() => formRef.current?.querySelector<HTMLElement>(entry.voucher ? ".ent-head [data-box=dtp_date] input" : ".ent-head [data-first] input, .ent-head [data-first] button")?.focus(), 150);
       setRestored(entry.uniqueKey);
     } catch (error) {
       await failed(error);
     } finally {
       setBusy("");
     }
-  }, [register, book, lines, restored, call, loadBook, blankEntry, say, failed]);
+  }, [register, book, lines, vlines, restored, call, loadBook, blankEntry, say, failed]);
 
   /**
    * Link_Product_Rec / Restore_Entry for a LINK register: the lines chosen from the source entries become the rows of a new entry (their pending quantity, the
@@ -1402,17 +1568,25 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     }
     if (voucher) {
       if (filledVoucherLines(vlines).length === 0) { await say("Account Name not selected...", "Entry Warning"); return; }
-      await say("Saving a voucher is not ported to the web yet. The account rows, side, series, date and number are set up; saving comes next.", "Voucher");
-      return;
+      if (journal && Math.abs(toNumber(voucherTotals.debit) - toNumber(voucherTotals.credit)) > 0.005) { await say(`Debit and Credit Total are not Equal... (difference ${amountText(voucherTotals.difference, 2)})`, "Entry Warning"); return; }
     }
-    if (filledLines(lines).length === 0 && (book.inventory || slabResult.final <= 0)) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
+    if (!voucher && filledLines(lines).length === 0 && (book.inventory || slabResult.final <= 0)) { await say("Total of All Product can not be Zero Value", "Entry Warning"); return; }
     if ((await messageBox.ask("Confirm to save data?", "Confirm Save", ["Yes", "No"], { defaultButton: "Yes" })) !== "Yes") return;
     setBusy("Saving");
     try {
       const reply = await call<{ report: SaveReport; committed: boolean; commitDisabled?: boolean }>("save", {
         firstCombo: register,
         commit: true,
-        save: {
+        save: voucher ? {
+          values,
+          rows: filledVoucherLines(vlines).map((line) => ({
+            ledKey: Number(line.cells._led_key) || 0, code: line.code, debit: line.cells.debit_amt ?? "", credit: line.cells.credit_amt ?? "", chqNo: line.cells.doc_no1 ?? "", chqDate: line.cells.chln_date ?? "",
+            addon: line.addon ?? {},
+            setoffs: Object.entries(line.setoffs ?? {}).filter(([, amount]) => money(amount) > 0).map(([outKey, amount]) => ({ outKey: Number(outKey), amount: fixed(money(amount), 2) })),
+          })),
+          addon: { ...voucherAddonDefaults(book), ...addon },
+          editKey: restored ?? 0,
+        } : {
           values,
           party: { code: party?.code ?? 0, addressId: party?.addressId ?? 1 },
           lines: filledLines(lines).map((line) => ({ prodKey: line.product!.key, cells: line.cells })),
@@ -1614,6 +1788,31 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     });
     return out;
   };
+  // ---- Voucher header keys
+  /** An opened voucher shows its Series and Book Side only (changing them is not allowed). */
+  const frozenOnEdit = (name: string) => voucher && isRestored && (name === "cmb_series" || name === "cmb_side");
+  /** The Book Side is not a stop of the keyboard (Daybook -> Series, and back); a click on it still opens it. */
+  const sideByMouse = useRef(false);
+  const skipSide = (event: ReactFocusEvent<HTMLElement>, name: string) => {
+    if (!voucher || name !== "cmb_side") return;
+    if (sideByMouse.current) { sideByMouse.current = false; return; }
+    const from = event.relatedTarget as Element | null;
+    if (!from || event.currentTarget.contains(from)) return;
+    const forward = Boolean(from.closest("#ent-register"));
+    if (!forward && !from.closest("[data-box=cmb_series]")) return;
+    // Back from the Series: the Daybook is shut once a register is chosen, so the keyboard stays on the Series.
+    const back = formRef.current?.querySelector<HTMLInputElement>("#ent-register input");
+    const target = forward || !back || back.disabled ? formRef.current?.querySelector<HTMLElement>("[data-box=cmb_series] input") : back;
+    target?.focus();
+  };
+  /** The last box of the voucher's header (Number, or Entry No. when the book has it): Enter / Tab goes to the first account row, whose help opens on its account. */
+  const lastHeadBox = (book ?? ghost)?.controls.some((item) => item.name === "tbx_entryno") ? "tbx_entryno" : "tbx_number";
+  const voucherLastBoxKey = (event: ReactKeyboardEvent<HTMLElement>, name: string) => {
+    if (!voucher || name !== lastHeadBox || (event.key !== "Enter" && !(event.key === "Tab" && !event.shiftKey))) return;
+    event.preventDefault();
+    event.stopPropagation();
+    focusEntryCell(formRef.current, "0:name");
+  };
   const control = (item: InvoiceControl) => {
     const value = values[item.name] ?? "";
     if (item.tds && !tdsNow) return [];
@@ -1621,10 +1820,18 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const shift = item.place === "B" ? DESKTOP_FOOT_TOP - FOOT_TOP : 0;
     const place = item.place === "T" ? headerPlace(item) : null;
     const labelStyle: CSSProperties = place?.label ?? { left: item.label_.left, top: item.label_.top - shift, width: item.label_.right ? Math.max(24, item.box.left - item.label_.left) : item.label_.width, height: item.label_.height, textAlign: item.label_.right ? "right" : "left" };
-    const boxStyle: CSSProperties = place?.box ?? { left: item.box.left, top: item.box.top - shift, width: item.box.width, ...(item.name === "tbx_narration" ? { height: Math.min(item.box.height, FORM_HEIGHT - 2 - (item.box.top - shift)) } : {}) };
+    const placedBox: CSSProperties = place?.box ?? { left: item.box.left, top: item.box.top - shift, width: item.box.width, ...(item.name === "tbx_narration" ? { height: Math.min(item.box.height, FORM_HEIGHT - 2 - (item.box.top - shift)) } : {}) };
+    const boxStyle: CSSProperties = voucher && item.type === "DT" && item.place === "T" ? { ...placedBox, width: Number(placedBox.width) + VOUCHER_DATE_BUTTON } : placedBox;
     return [
       <label key={`${item.name}-label`} className={`ent-label ${item.compulsory ? "ent-compulsory" : ""}`} style={labelStyle} title={item.tooltip || undefined} htmlFor={`ent-${item.name}`}>{item.label}</label>,
-      <span key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})} onBlur={(event) => leaveBox(event, item.name)}>
+      <span
+        key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}${frozenOnEdit(item.name) ? " ent-locked" : ""}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})}
+        inert={frozenOnEdit(item.name)}
+        onBlur={(event) => leaveBox(event, item.name)}
+        onMouseDown={() => { if (item.name === "cmb_side") sideByMouse.current = true; }}
+        onFocus={(event) => skipSide(event, item.name)}
+        onKeyDownCapture={(event) => voucherLastBoxKey(event, item.name)}
+      >
         {item.type === "CB" ? (
           item.place === "E" ? (
             <EntryCell kind="combo" cellId={`eway:${item.name}`} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => ewayAfter(`eway:${item.name}`)} />
@@ -1708,6 +1915,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   const footControls = view?.controls.filter((item) => item.place === "B") ?? [];
   const ewayControls = view?.controls.filter((item) => item.place === "E" && (def?.ewayDates || !["dtp_ewaydate", "tbx_ewayvalid"].includes(item.name))) ?? [];
   const showParty = Boolean(view?.party && headControls.some((item) => item.name === "tbx_partyname"));
+  /** The address box: the party's, or on a voucher the address of the account the keyboard is on. */
+  const showAddress = showParty || voucher;
   // The Particulars column 30% wider than the setup gives it; the slab grid grows by as much.
   const slabColumns = (view?.grids.slab ?? []).map((column) => (column.key === "slab_desc" ? { ...column, width: Math.round(column.width * 1.3) } : column));
   const slabWidth = slabColumns.reduce((sum, column) => sum + column.width, 0) + 20;
@@ -1720,14 +1929,17 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
    * the next row); after the grid's last one, the addon grid (from the slab) or the narration.
    */
   /** C1dg_OutClear_AfterEdit: a set-off cannot pass the bill's pending amount, nor the sum of them the entry's amount. */
+  const entryAmount = voucher ? rowAmount(outRow) : slabResult.final;
+  /** A voucher row whose amount is not typed (it follows the set-offs): the set-offs have no amount to stay under yet. */
+  const amountFollows = voucher && (vlines[outRow]?.cells._auto === "1" || rowAmount(outRow) === 0);
   const checkSetoff = async (row: number) => {
     const pending = money(party?.outstanding[row]?.out_pending);
     const mine = money(setoff[row]);
     const others = outstandingSetoff - mine;
-    const left = Math.max(0, slabResult.final - others);
+    const left = amountFollows ? Number.POSITIVE_INFINITY : Math.max(0, entryAmount - others);
     let fixedTo: number | null = null;
     if (mine > pending) { await say("Outstanding Setoff Amount can not be greater than Balance Pending Amount...", "Entry Warning"); fixedTo = Math.min(pending, left); }
-    else if (others + mine > slabResult.final + 0.005) { await say("Outstanding Setoff Amount can not be greater than Entry Amount...", "Entry Warning"); fixedTo = left; }
+    else if (!amountFollows && others + mine > entryAmount + 0.005) { await say("Outstanding Setoff Amount can not be greater than Entry Amount...", "Entry Warning"); fixedTo = left; }
     if (fixedTo !== null) { setSetoff((current) => ({ ...current, [row]: fixedTo > 0 ? fixed(fixedTo, 2) : "" })); return false; }
     return true;
   };
@@ -1738,7 +1950,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const box = form?.querySelector(`.ent-grid[aria-label=Outstanding]`);
     const cells = [...(box?.querySelectorAll<HTMLElement>("[data-cell]") ?? [])];
     const at = cells.findIndex((cell) => cell.getAttribute("data-cell") === cellId);
-    const tallied = slabResult.final > 0 && Math.abs(outstandingSetoff - slabResult.final) < 0.005;
+    const tallied = !amountFollows && entryAmount > 0 && Math.abs(outstandingSetoff - entryAmount) < 0.005;
     const next = cells[at + 1];
     if (tallied) { finishSetoff(); return; }
     (next ?? cells[0])?.focus();
@@ -1746,7 +1958,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   const fillSetoff = (row: number) => {
     if (money(setoff[row]) !== 0) return;
     const pending = money(party?.outstanding[row]?.out_pending);
-    const left = slabResult.final - outstandingSetoff;
+    const left = amountFollows ? Number.POSITIVE_INFINITY : entryAmount - outstandingSetoff;
     const amount = Math.min(pending, left);
     if (amount > 0) setSetoff((current) => ({ ...current, [row]: fixed(amount, 2) }));
   };
@@ -1872,7 +2084,12 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     });
   };
   /** Run_Outclear_f5: the set-off is over - the narration is made and the keyboard goes on (E-Way Bill or narration). */
-  const finishSetoff = () => { generateSetoffNarration(); afterOutstanding(); };
+  const finishSetoff = () => {
+    generateSetoffNarration();
+    if (!voucher) { afterOutstanding(); return; }
+    setTab("all");
+    setTimeout(() => focusEntryCell(formRef.current, `${outRow + 1}:name`), 80);
+  };
   /**
    * Product code, Qty, Q.Uom and the item-wise GST are compulsory; Rate and R.Uom too unless the book (book_properties stkm_ropt O) leaves them optional.
    * Enter on one of them left blank stays there with the reason.
@@ -1976,8 +2193,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     return () => { box.removeEventListener("scroll", measure); window.removeEventListener("resize", measure); };
   }, [helpKind]);
   const helpStyle = (kind: HelpKind): CSSProperties => ({
-    ...(seen ? { top: kind === "account" ? 28 : TAB_TOP + 60, left: seen.left + 8, right: "auto", bottom: "auto" }
-      : kind === "account" ? { top: 28, right: PARTY_RIGHT, left: "auto", bottom: "auto" } : { left: 40, top: TAB_TOP + 60, right: "auto", bottom: "auto" }),
+    ...(seen ? { top: kind === "account" ? (voucher ? VOUCHER_HELP_TOP : 28) : TAB_TOP + 60, left: seen.left + 8, right: "auto", bottom: "auto" }
+      : kind === "account" ? { top: voucher ? VOUCHER_HELP_TOP : 28, right: PARTY_RIGHT, left: "auto", bottom: "auto" } : { left: 40, top: TAB_TOP + 60, right: "auto", bottom: "auto" }),
     maxHeight: "none", maxWidth: seen ? seen.width - 16 : "calc(100% - 16px)", zIndex: 30,
     ...((kind === "account" ? accountDrag.style : productDrag.style) ?? {}),
   });
@@ -1995,7 +2212,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         <div ref={formRef} className="ent-form" style={{ height: FORM_HEIGHT, ...(fit < 1 ? { zoom: fit } : {}) }} role="group" aria-label={def?.caption || title}>
           <div className="ent-head" role="group" aria-label={`${def?.caption || title} header`}>
             <label className="ent-label ent-register-label" style={{ left: 2, top: 6, width: 84 }} htmlFor="ent-register">{def?.firstCombo.label ?? "Register"}</label>
-            <span className="ent-box ent-register" style={{ left: 86, top: 6, width: 317 }} id="ent-register">
+            <span className="ent-box ent-register" style={{ left: 86, top: 6, width: voucher ? VOUCHER_REGISTER_WIDTH : 317 }} id="ent-register">
               <SearchCombo
                 ariaLabel={def?.firstCombo.label ?? "Register"}
                 options={def?.firstCombo.options ?? []}
@@ -2006,16 +2223,19 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 onChoose={(option) => void chooseRegister(option)}
               />
             </span>
-            {view && <span className="ent-side" style={{ left: 406, top: 6 }} title="Book posting side">{view.side}</span>}
+            {view && <span className="ent-side" style={{ left: voucher ? VOUCHER_SIDE_LEFT : 406, top: 6 }} title="Book posting side">{view.side}</span>}
             {view?.balance && <span className="ent-balance" style={{ left: 238, top: 28 }} title="Book balance as on the last date of the year">{view.balance}</span>}
             <div style={{ display: "contents" }} inert={!book}>{headControls.flatMap(control)}</div>
-            {view && headControls.some((item) => item.name === "dtp_date") && <span className="ent-day" style={{ left: 204, top: 50 }}>{dayOf(values.dtp_date ?? "")}</span>}
+            {view && headControls.some((item) => item.name === "dtp_date") && (() => {
+              const dateBox = headControls.find((item) => item.name === "dtp_date")!.box;
+              return <span className="ent-day" style={voucher ? { left: dateBox.left + dateBox.width + VOUCHER_DATE_BUTTON + 6, top: dateBox.top } : { left: 204, top: 50 }}>{dayOf(values.dtp_date ?? "")}</span>;
+            })()}
             {view && headControls.some((item) => item.name === "dtp_chlndate") && <span className="ent-day" style={{ left: 204, top: 72 }}>{dayOf(values.dtp_chlndate ?? "")}</span>}
             {view && headControls.some((item) => item.name === "dtp_entrydate") && <span className="ent-day" style={{ left: 616, top: 50 }}>{dayOf(values.dtp_entrydate ?? "")}</span>}
-            {showParty && (
+            {showAddress && (
               <>
-                <span className="ent-label" style={{ right: PARTY_RIGHT + PARTY_WIDTH + 6, top: 28, width: 74 }}>Address</span>
-                <dl className="ent-address" style={{ right: PARTY_RIGHT, top: 28, width: PARTY_WIDTH, height: TAB_TOP - 32 }} aria-label="Party address" title={(party?.addresses.length ?? 0) > 1 ? "Double-click to choose another address of the party" : "Closing balance, address, telephone, GST number, opening balance, credit days and limit"} onDoubleClick={() => { if (book && party && party.addresses.length > 1) setAddressPick(party); }}>
+                <span className="ent-label" style={{ right: PARTY_RIGHT + PARTY_WIDTH + 6, top: voucher ? VOUCHER_ADDRESS.top : 28, width: 74 }}>Address</span>
+                <dl className="ent-address" style={{ right: PARTY_RIGHT, top: voucher ? VOUCHER_ADDRESS.top : 28, width: PARTY_WIDTH, height: voucher ? VOUCHER_ADDRESS.height : TAB_TOP - 32 }} aria-label="Party address" title={(party?.addresses.length ?? 0) > 1 ? "Double-click to choose another address of the party" : "Closing balance, address, telephone, GST number, opening balance, credit days and limit"} onDoubleClick={() => { if (book && party && !voucher && party.addresses.length > 1) setAddressPick(party); }}>
                   {addressFields(party?.address ?? []).map((item, index) => (
                     <div key={index} className={`ent-addr-item ${item.value.length > 26 || /^(address|ship to|email id|emil id|website)$/i.test(item.label) ? "ent-addr-wide" : ""}`}>
                       <dt>{item.label}</dt>
@@ -2026,7 +2246,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               </>
             )}
             {/* The mode (EDIT for an entry opened from Find / Edit, else ADD) sits after the Debit / Credit label on the register's row, with a margin. */}
-            {book && <span className={`ent-mode ${isRestored ? "" : "ent-mode-add"}`} style={{ left: 406 + 55 + 12, top: 6 }} title={isRestored ? "An entry opened from Find / Edit" : "A new entry"}>{isRestored ? "EDIT" : "ADD"}</span>}
+            {book && <span className={`ent-mode ${isRestored ? "" : "ent-mode-add"}`} style={{ left: (voucher ? VOUCHER_SIDE_LEFT : 406) + 55 + 12, top: 6 }} title={isRestored ? "An entry opened from Find / Edit" : "A new entry"}>{isRestored ? "EDIT" : "ADD"}</span>}
           </div>
 
           {helpKind && shownHelp && (
@@ -2043,7 +2263,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 if (event.key === "F1") { event.preventDefault(); void showDetails(helpKind); return true; }
                 // The product-type filter sits above the first row: ↑ on it goes there.
                 if (helpKind === "product" && productHelp?.filter && event.key === "ArrowUp" && helpAt === 0) { event.preventDefault(); formRef.current?.querySelector<HTMLInputElement>(".ent-filter-bar input")?.focus(); return true; }
-                if (event.key === "F7" && helpKind === "account") { event.preventDefault(); void showPartyStock(); return true; }
+                if (event.key === "F7" && helpKind === "account") { event.preventDefault(); void (voucher ? showPartyOutstanding() : showPartyStock()); return true; }
+                if (event.key === "F5" && helpKind === "account" && voucher) { event.preventDefault(); void endVoucherRows(); return true; }
                 if (event.key === "F6" && helpKind === "product") { event.preventDefault(); void togglePartyProducts(); return true; }
                 if (event.key === "F7" && helpKind === "product") { event.preventDefault(); productHelpStock(); return true; }
                 if (event.key === "F8" && helpKind === "account") { event.preventDefault(); void showLedger(); return true; }
@@ -2064,7 +2285,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               onResetPosition={helpKind === "account" ? accountDrag.reset : productDrag.reset}
               formatCell={helpCell}
               f1
-              f7={helpKind === "account" ? true : "Party-Product"}
+              f7={helpKind === "account" ? (voucher ? "Outstanding" : true) : "Party-Product"}
               topSlot={helpKind === "product" && productHelp ? (
                 <div className="ent-filter-bar" onKeyDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
                   if (event.key === "F6") { event.preventDefault(); event.stopPropagation(); void togglePartyProducts(); }
@@ -2085,7 +2306,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 </div>
               ) : undefined}
               f8={helpKind === "account"}
-              shown={helpKind === "product" ? PRODUCT_HELP_ROWS : HELP_ROWS}
+              shown={helpKind === "product" ? PRODUCT_HELP_ROWS : voucher ? VOUCHER_HELP_ROWS : HELP_ROWS}
             />
             </div>
           )}
@@ -2096,7 +2317,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
             <div className="ent-tabs" style={{ top: TAB_TOP, height: PAGE_HEIGHT + 20 }} inert={!book}>
               <div className="ent-tab-strip" role="tablist">
                 <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "ent-tab-on" : ""} onClick={() => void openTab("all")}>{voucher ? "Voucher" : "Product & Slab"}</button>
-                {def?.tabs.outstanding && !voucher && <button type="button" role="tab" aria-selected={tab === "outstanding"} className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}>Outstanding</button>}
+                {def?.tabs.outstanding && <button type="button" role="tab" aria-selected={tab === "outstanding"} className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}>Outstanding</button>}
                 <button type="button" role="tab" aria-selected={tab === "find"} className={tab === "find" ? "ent-tab-on" : ""} onClick={() => void openTab("find")}>Find / Edit</button>
                 {def?.tabs.eway && <button type="button" role="tab" aria-selected={tab === "eway"} className={tab === "eway" ? "ent-tab-on" : ""} onClick={() => void openTab("eway")}>E-Way Bill</button>}
               </div>
@@ -2109,10 +2330,16 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                         lines={vlines}
                         debitOpen={journal || sideDbcode === 1}
                         creditOpen={journal || sideDbcode === 2}
-                        style={{ left: 3, right: 6, top: PRODUCT_TOP, height: PRODUCT_HEIGHT }}
-                        totalsStyle={{ left: 3, right: 6, top: PRODUCT_TOP + PRODUCT_HEIGHT + 2, height: 20 }}
+                        style={{ left: 3, right: 6, top: PRODUCT_TOP, height: VOUCHER_HEIGHT }}
+                        totalsStyle={{ left: 3, right: 6, top: PRODUCT_TOP + VOUCHER_HEIGHT + 2, height: 20 }}
+                        addonItems={view.voucherAddon?.row ?? []}
+                        onAddon={editVoucherAddon}
+                        onAmountEnter={voucherAmountEntered}
+                        onAccountDouble={landOnAccount}
+                        onEnd={() => void endVoucherRows()}
                         accountText={accountText}
                         locked={locked || !book}
+                        accountLocked={contra && restored !== null}
                         tools={tools}
                         totals={voucherTotals}
                         onCell={editVoucherCell}
@@ -2173,14 +2400,14 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                       label="Addon"
                       searchKey="addon_label"
                       fill
-                      style={view.slab && !voucher ? { left: `calc(50% + ${SIDE_GAP / 2}px)`, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT } : { left: 3, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT }}
+                      style={voucher ? { left: 3, top: VOUCHER_ADDON_TOP, width: view.grids.addon.reduce((sum, column) => sum + column.width, 0) + 24, height: SLAB_HEIGHT } : view.slab ? { left: `calc(50% + ${SIDE_GAP / 2}px)`, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT } : { left: 3, right: 6, top: SLAB_TOP, height: SLAB_HEIGHT }}
                       columns={view.grids.addon}
-                      rows={(party?.addon ?? []).map((item) => ({ addon_label: item.label, addon_input: addon[item.key] ?? "" }))}
-                      empty={showParty ? "Choose the party: its addon fields show here" : voucher ? "Choose the account: its addon fields show here" : undefined}
+                      rows={(voucher ? view.voucherAddon?.header ?? [] : party?.addon ?? []).map((item) => ({ addon_label: item.label, addon_input: addon[item.key] ?? (voucher ? item.value : "") }))}
+                      empty={showParty ? "Choose the party: its addon fields show here" : undefined}
                       cell={(row, column) => {
-                        const item = party!.addon[row];
+                        const item = (voucher ? view.voucherAddon!.header : party!.addon)[row];
                         if (column.key !== "addon_input") return item.label;
-                        const value = addon[item.key] ?? "";
+                        const value = addon[item.key] ?? (voucher ? item.value : "");
                         const set = (next: string) => setAddon((current) => ({ ...current, [item.key]: next }));
                         const cellId = `a${row}`;
                         return <EntryCell kind={item.options ? "combo" : item.date ? "date" : "text"} optional={!item.compulsory || Boolean(item.date)} cellId={cellId} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => nextSideCell("Addon", cellId)} />;
@@ -2199,7 +2426,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                       onF5={finishSetoff}
                       cellClass={(_row, column) => (column.key === "out_setoff" ? "ent-open ent-always-tools" : column.editable ? "ent-open" : "")}
                       totals={outstandingTotals}
-                      empty={party ? "No pending entries for this party" : "Choose the party first"}
+                      empty={party ? (voucher ? "No pending entries for this account" : "No pending entries for this party") : voucher ? "Choose the account row first" : "Choose the party first"}
                       cell={(row, column) => {
                         const given = party?.outstanding[row]?.[column.key] ?? "";
                         if (column.key === "out_setoff" && !book?.setoff) return amountText(setoff[row] ?? "", column.decimals);
@@ -2216,8 +2443,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                       }}
                       below={(
                         <>
-                          <label className="ent-total-label">Entry Amount<output>{amountText(fixed(slabResult.final, 2), 2)}</output></label>
-                          <label className="ent-total-label">O/s Bal.<output>{amountText(fixed(slabResult.final - outstandingSetoff, 2), 2)}</output></label>
+                          <label className="ent-total-label">Entry Amount<output>{amountText(fixed(entryAmount, 2), 2)}</output></label>
+                          <label className="ent-total-label">O/s Bal.<output>{amountText(fixed(entryAmount - outstandingSetoff, 2), 2)}</output></label>
                         </>
                       )}
                     />

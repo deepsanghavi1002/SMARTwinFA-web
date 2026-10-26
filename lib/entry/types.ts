@@ -120,6 +120,8 @@ export type BookScreen = Readonly<{
   /** The product grid (c1dg_Inputdata): its columns and how many rows it offers. */
   product: Readonly<{ columns: readonly EntryColumn[]; rows: number; frozen: number; totals: readonly string[] }>;
   slabRows: readonly SlabRow[];
+  /** Voucher only: the addon fields the register takes (addon_fld where fiel_inbook has the book): header ones (entrypos L, the Addon grid) and per-account-row ones (entrypos P, a column of each row). */
+  voucherAddon?: Readonly<{ header: readonly AddonItem[]; row: readonly AddonItem[] }>;
   /** The visible columns of the slab, addon and outstanding grids (entry_grid_body of their fill events). */
   grids: Readonly<{ slab: readonly GridColumn[]; addon: readonly GridColumn[]; outstanding: readonly GridColumn[] }>;
   /** str_Ac_Help: the books the party help lists. */
@@ -182,6 +184,8 @@ export type RestoredEntry = Readonly<{
   addon: Readonly<Record<number, string>>;
   /** The amount of the TDS auto journal the entry passed (one amount: the JV pair's debit side), "" when it passed none. */
   tdsAmount: string;
+  /** The voucher style (entry type V): the account rows as saved (one ledger row each, doc_posting P), and whether it is a Contra (type 9). */
+  voucher?: Readonly<{ contra: boolean; rows: readonly Readonly<{ ledKey: number; code: number; book: number; name: string; debit: string; credit: string; chqNo: string; chqDate: string; /** The row's own addon values (entrypos P, e.g. Sub Ledger) by addon key. */ addon: Readonly<Record<number, string>>; /** What the row set off against bills: the bill's outclear key and the amount. */ setoffs: readonly Readonly<{ outKey: number; amount: string }>[] }>[] }>;
 }>;
 
 /** A column of the side grids, as Setting_GridCol shows it. */
@@ -199,6 +203,9 @@ export type HelpList = Readonly<{
   /** Product help only (item_para PGFILT): the list the help is filtered by before it is read (row.pg_filter holds each product's value). */
   filter?: Readonly<{ caption: string; options: readonly EntryOption[] }>;
 }>;
+
+/** One addon field (addon_fld row): the label, the list of a M field, a date flag (fiel_mbal D) and whether it is compulsory. */
+export type AddonItem = Readonly<{ key: number; label: string; value: string; /** The column width the setup gives a row addon (entry_grid_body). */ width?: number; options?: readonly EntryOption[]; /** fiel_mbal D: a date field (the date control, a date only). */ date?: boolean; compulsory?: boolean }>;
 
 /** Leaving the party (Tbx_PartyName_Leave): its address lines and its addon fields. */
 export type PartyDetails = Readonly<{

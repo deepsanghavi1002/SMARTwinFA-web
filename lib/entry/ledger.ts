@@ -10,6 +10,8 @@ import { formatDesktopDate, toDecimal, toText } from "../master-program/legacy";
 const field = Loader.field;
 
 export type LedgerRow = Readonly<{
+  /** The row's place in the ledger as it is read (a sort on Sr. brings the original order back). */
+  sr?: string;
   date: string; docNo: string; particular: string; debit: string; credit: string; closing: string; drCr: string;
   chln: string; chlnDate: string; narration: string;
 }>;

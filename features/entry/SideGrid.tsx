@@ -176,4 +176,4 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
 }
 
 /** The faint name behind a grid (Slab Grid, Addon Grid). */
-const WATERMARKS: Readonly<Record<string, string>> = { Slab: "Slab Grid", Addon: "Addon Grid", Outstanding: "Outstanding Grid" };
+const WATERMARKS: Readonly<Record<string, string>> = { Slab: "Slab grid", Addon: "Addon grid", Outstanding: "Outstanding grid" };

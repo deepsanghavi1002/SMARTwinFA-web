@@ -12,9 +12,10 @@ import { entryAll } from "@/lib/entry/all";
 import { entryBill } from "@/lib/entry/bill";
 import { masterDetails } from "@/lib/entry/details";
 import { accountLedger } from "@/lib/entry/ledger";
+import { accountOutstanding } from "@/lib/entry/outstanding";
 import { isLinkRegister, linkEntries, linkLines } from "@/lib/entry/link";
 import { partyStock } from "@/lib/entry/partyStock";
-import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
+import { buildDelete, buildSave, isVoucherStyle, runPlan } from "@/lib/entry/save";
 import { tdsInfo } from "@/lib/entry/tds";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
 import type { HeaderField } from "@/lib/entry/checks";
@@ -67,10 +68,11 @@ async function saveEntry(body: Body, key: SessionKey, moduleName: string) {
       await client.query("SET LOCAL lock_timeout = '5s'");
       const loader = new Loader(client, session);
       const def = await loadInvoice(loader, body.entryName, moduleName);
+      const kind = isVoucherStyle(body.entryName) ? "Voucher" : "Invoice";
       const input = body.save as SaveInput | undefined;
       const changing = Number(input?.editKey ?? 0) > 0;
-      if (def.rights.restricted && !changing && !def.rights.add) throw new Error("Invoice Entry Add Rights Not Available For User");
-      if (def.rights.restricted && changing && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
+      if (def.rights.restricted && !changing && !def.rights.add) throw new Error(`${kind} Entry Add Rights Not Available For User`);
+      if (def.rights.restricted && changing && !def.rights.edit) throw new Error(`${kind} Entry Edit Rights Not Available For User`);
       if (!input || typeof input !== "object") throw new Error("The entry to save is missing");
       // One save at a time, taken before the number is checked: a save waiting here then sees what the one before it committed.
       if (commit) await client.query("SELECT pg_advisory_xact_lock(hashtext('smartwinfa-entry-save'))");
@@ -98,7 +100,8 @@ async function saveDocumentsAction(body: Body, key: SessionKey, moduleName: stri
       }
       const loader = new Loader(client, session);
       const def = await loadInvoice(loader, body.entryName, moduleName);
-      if (def.rights.restricted && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
+      const kind = isVoucherStyle(body.entryName) ? "Voucher" : "Invoice";
+      if (def.rights.restricted && !def.rights.edit) throw new Error(`${kind} Entry Edit Rights Not Available For User`);
       const docs = Array.isArray(body.documents) ? (body.documents as DocumentInput[]) : [];
       const counts = await saveDocuments(client, loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey), docs);
       if (!allowed) throw new DocumentDryRun(counts);
@@ -130,9 +133,10 @@ async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
       await client.query("SET LOCAL lock_timeout = '5s'");
       const loader = new Loader(client, session);
       const def = await loadInvoice(loader, body.entryName, moduleName);
-      if (def.rights.restricted && !def.rights.delete) throw new Error("Invoice Entry Delete Rights Not Available For User");
+      const kind = isVoucherStyle(body.entryName) ? "Voucher" : "Invoice";
+      if (def.rights.restricted && !def.rights.delete) throw new Error(`${kind} Entry Delete Rights Not Available For User`);
       const uniqueKey = Number(body.uniqueKey);
-      if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the invoice to delete from Find / Edit");
+      if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the entry to delete from Find / Edit");
       const plan = await buildDelete(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey);
       const result = await runPlan(client, loader, plan, { commit });
       if (!commit) throw new DryRun(result);
@@ -199,7 +203,7 @@ export async function POST(request: Request) {
         case "party": {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
-          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0, Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0), warnings: loader.warnings };
+          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0, Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0, isVoucherStyle(body.entryName) ? { acDbcode: Number(body.voucherSide) === 2 ? 2 : 1, ledKey: Number.isInteger(Number(body.rowLedKey)) ? Math.max(0, Number(body.rowLedKey)) : 0 } : undefined), warnings: loader.warnings };
         }
         case "doc-list":
           return { documents: await listDocuments(loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey)), warnings: loader.warnings };
@@ -266,6 +270,11 @@ export async function POST(request: Request) {
           const prodKey = Number(body.prodKey ?? 0);
           if (!Number.isInteger(code) || code < 0 || !Number.isInteger(prodKey) || prodKey < 0 || (code === 0 && prodKey === 0)) throw new Error("Choose an account or a product row");
           return { stock: await partyStock(loader, code, prodKey, typeof body.date === "string" ? body.date : ""), warnings: loader.warnings };
+        }
+        case "party-outstanding": {
+          const code = Number(body.code);
+          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose an account row");
+          return { stock: await accountOutstanding(loader, code, typeof body.date === "string" ? body.date.slice(0, 20) : ""), warnings: loader.warnings };
         }
         case "ledger": {
           const code = Number(body.code);
