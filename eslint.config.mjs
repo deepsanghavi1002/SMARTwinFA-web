@@ -36,6 +36,13 @@ const eslintConfig = defineConfig([
       },
     },
   },
+  {
+    rules: {
+      // The screens wrap the app's own date inputs in a <label> (DateField, DmyField each render the <input>), and a switch's text
+      // sits a level deeper (label > span > b); the rule is told so instead of each label being reworked.
+      "jsx-a11y/label-has-associated-control": ["error", { controlComponents: ["DateField", "DmyField"], depth: 3 }],
+    },
+  },
 ]);
 
 export default eslintConfig;

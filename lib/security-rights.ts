@@ -75,8 +75,8 @@ export async function loadSecurityRows(client: Client, session: MasterSession, m
   const saved = (await client.query(`SELECT * FROM ${SYSTEM_SCHEMA}.security WHERE u_id = $1${companyFilter(session)} ORDER BY security_key`, params)).rows;
   const byModule = new Map<string, Record<string, unknown>>();
   for (const row of saved) {
-    const module = securityRead(toText(row.u_module), 0).trim().toUpperCase();
-    if (module !== "" && !byModule.has(module)) byModule.set(module, row);
+    const moduleName = securityRead(toText(row.u_module), 0).trim().toUpperCase();
+    if (moduleName !== "" && !byModule.has(moduleName)) byModule.set(moduleName, row);
   }
   return list.map((entry) => {
     const row = byModule.get(entry.module.trim().toUpperCase());
@@ -134,17 +134,17 @@ export async function saveSecurityRows(client: Client, session: MasterSession, r
       roll += securityWrite(row.rights[at] ? "1" : "0", at * 2 + 1) + securityWrite(value !== "" ? "Y" : "N", at * 2 + 2);
     });
     const moduleId = securityWrite(row.heading, 0);
-    const module = securityWrite(row.module, 0);
+    const moduleName = securityWrite(row.module, 0);
     if (old && !copy) {
       await client.query(
         `UPDATE ${SYSTEM_SCHEMA}.security SET u_module_id = $1, u_module_pass = $2, u_pass_1 = $3, u_pass_2 = $4, u_pass_3 = $5, u_pass_4 = $6, u_pass_5 = $7, u_pass_6 = $8, u_module = $9, u_roll_id = $10 WHERE security_key = $11`,
-        [moduleId, ...stored, module, roll, row.key],
+        [moduleId, ...stored, moduleName, roll, row.key],
       );
     } else {
       const company = session.companyWiseRights ? [session.companyKey] : [null];
       await client.query(
         `INSERT INTO ${SYSTEM_SCHEMA}.security (security_key, u_co_id, u_module_id, u_module_pass, u_pass_1, u_pass_2, u_pass_3, u_pass_4, u_pass_5, u_pass_6, u_module, u_roll_id, u_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-        [next, company[0], moduleId, ...stored, module, roll, copy ? request.copyToNo : request.userNo],
+        [next, company[0], moduleId, ...stored, moduleName, roll, copy ? request.copyToNo : request.userNo],
       );
       next += 1;
     }

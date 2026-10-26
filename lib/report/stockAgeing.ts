@@ -68,16 +68,16 @@ export async function stockAgeing(loader: Loader, plan: ReportPlan): Promise<Res
   const keys = products.map((row) => num(row.prod_key));
 
   // The year's movement, the additions (newest first) and the last rate of each product.
-  const module = "btrim(prodled.trn_module)";
-  const quantity = vinayak ? "round(prodled.trn_qty3 - (prodled.ag_qty / prodled.quantity * prodled.trn_qty3), 4)" : `CASE WHEN ${module} IN ('JOB-OUT', 'JOB-IN') THEN prodled.quantity ELSE prodled.quantity - prodled.ag_qty END`;
+  const trnModule = "btrim(prodled.trn_module)";
+  const quantity = vinayak ? "round(prodled.trn_qty3 - (prodled.ag_qty / prodled.quantity * prodled.trn_qty3), 4)" : `CASE WHEN ${trnModule} IN ('JOB-OUT', 'JOB-IN') THEN prodled.quantity ELSE prodled.quantity - prodled.ag_qty END`;
   const movement = new Map<number, number>();
   const lots = new Map<number, { date: Date; qty: number }[]>();
   const rates = new Map<number, number>();
   const purchaseRates = new Map<number, number>();
   if (keys.length > 0) {
-    const common = `prodled.il_pos <> 'D' AND prodled.inventory = 'Y' AND (prodled.quantity - prodled.ag_qty > 0 OR ${module} IN ('JOB-OUT', 'JOB-IN')) AND prodled.il_date BETWEEN $1::date AND $2::date AND prodled."TYPE"::numeric <> $3 AND prodled.prod_id = ANY($4::int[])`;
+    const common = `prodled.il_pos <> 'D' AND prodled.inventory = 'Y' AND (prodled.quantity - prodled.ag_qty > 0 OR ${trnModule} IN ('JOB-OUT', 'JOB-IN')) AND prodled.il_date BETWEEN $1::date AND $2::date AND prodled."TYPE"::numeric <> $3 AND prodled.prod_id = ANY($4::int[])`;
     const argument = [start, uptoText, noteType, keys];
-    for (const row of (await runReportSql(loader, `SELECT prodled.prod_id, sum(CASE WHEN prodled.stock_nat = 'A' THEN ${quantity} ELSE -(${vinayak ? quantity : `CASE WHEN ${module} = 'JOB-OUT' THEN prodled.quantity ELSE prodled.quantity - prodled.ag_qty END`}) END) AS moved`
+    for (const row of (await runReportSql(loader, `SELECT prodled.prod_id, sum(CASE WHEN prodled.stock_nat = 'A' THEN ${quantity} ELSE -(${vinayak ? quantity : `CASE WHEN ${trnModule} = 'JOB-OUT' THEN prodled.quantity ELSE prodled.quantity - prodled.ag_qty END`}) END) AS moved`
       + ` FROM ${db}prod_ledger prodled WHERE ${common} GROUP BY prodled.prod_id`, argument)).rows) movement.set(num(row.prod_id), num(row.moved));
     for (const row of (await runReportSql(loader, `SELECT prodled.prod_id, prodled.il_date, ${quantity}::numeric AS qty FROM ${db}prod_ledger prodled WHERE ${common} AND prodled.stock_nat = 'A' AND prodled.il_pos = 'A' ORDER BY prodled.prod_id, prodled.il_date DESC, prodled.il_key DESC`, argument)).rows) {
       const list = lots.get(num(row.prod_id));
@@ -169,9 +169,9 @@ export async function stockLots(loader: Loader, db: string, upto: Date, yearStar
   if (keys.length === 0) return result;
   const dayNumber = (date: Date) => Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
   const lots = new Map<number, { date: Date; qty: number }[]>();
-  const module = "btrim(prodled.trn_module)";
-  for (const row of (await runReportSql(loader, `SELECT prodled.prod_id, prodled.il_date, (CASE WHEN ${module} IN ('JOB-OUT', 'JOB-IN') THEN prodled.quantity ELSE prodled.quantity - prodled.ag_qty END)::numeric AS qty`
-    + ` FROM ${db}prod_ledger prodled WHERE prodled.il_pos = 'A' AND prodled.inventory = 'Y' AND prodled.stock_nat = 'A' AND (prodled.quantity - prodled.ag_qty > 0 OR ${module} IN ('JOB-OUT', 'JOB-IN'))`
+  const trnModule = "btrim(prodled.trn_module)";
+  for (const row of (await runReportSql(loader, `SELECT prodled.prod_id, prodled.il_date, (CASE WHEN ${trnModule} IN ('JOB-OUT', 'JOB-IN') THEN prodled.quantity ELSE prodled.quantity - prodled.ag_qty END)::numeric AS qty`
+    + ` FROM ${db}prod_ledger prodled WHERE prodled.il_pos = 'A' AND prodled.inventory = 'Y' AND prodled.stock_nat = 'A' AND (prodled.quantity - prodled.ag_qty > 0 OR ${trnModule} IN ('JOB-OUT', 'JOB-IN'))`
     + ` AND prodled.il_date BETWEEN $1::date AND $2::date AND prodled."TYPE"::numeric <> $3 AND prodled.prod_id = ANY($4::int[]) ORDER BY prodled.prod_id, prodled.il_date DESC, prodled.il_key DESC`,
   [desktopDate(yearStart), desktopDate(upto), noteType, keys])).rows) {
     const list = lots.get(num(row.prod_id));

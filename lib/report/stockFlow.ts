@@ -47,24 +47,24 @@ export async function stockFlow(loader: Loader, plan: ReportPlan): Promise<Resul
   const net = (column: string, withdraw = true) => (withdraw ? `prodled.${column}::numeric - prodled.ag_qty::numeric` : `prodled.${column}::numeric`);
   const simple = (other: string, withdraw = true) => uom(net("trn_pcs", withdraw), net("trn_qty1", withdraw), net("trn_qty2", withdraw), net("trn_qty3", withdraw), net("trn_pack", withdraw), net("trn_weight", withdraw), other);
   const share = (column: string) => `prodled.${column}::numeric - round(prodled.ag_qty::numeric / nullif(prodled.quantity::numeric, 0) * prodled.${column}::numeric, 4)`;
-  const module = "btrim(prodled.trn_module)";
+  const trnModule = "btrim(prodled.trn_module)";
   const done = "prodled.inventory = 'Y'";
   const processed = "prodled.process_id IS NOT NULL";
   const sum = (condition: string, value: string, name: string) => `sum(CASE WHEN ${condition} THEN ${value} ELSE 0 END) AS ${name}`;
   const flows = (await runReportSql(loader, `SELECT product.prod_key, `
     + [
-      sum(`prodled.stock_nat = 'A' AND ((${module} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD' AND proce.ent_approve = 'Yes') OR (${module} = 'PROD-FG' AND proce.ent_approve = 'Yes') OR ${module} = 'PROD-SFG' OR ${module} = 'PROD-MULTI') AND ${done} AND ${processed}`, `(${simple("0")})`, "packing"),
+      sum(`prodled.stock_nat = 'A' AND ((${trnModule} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD' AND proce.ent_approve = 'Yes') OR (${trnModule} = 'PROD-FG' AND proce.ent_approve = 'Yes') OR ${trnModule} = 'PROD-SFG' OR ${trnModule} = 'PROD-MULTI') AND ${done} AND ${processed}`, `(${simple("0")})`, "packing"),
       sum(`prodled.book = 16 AND prodled.stock_nat = 'A' AND ${done} AND prodled.led_id IS NOT NULL`, "(prodled.quantity::numeric - prodled.ag_qty::numeric)", "cr_qty"),
       sum(`prodled.book IN (13, 14, 15) AND prodled.stock_nat = 'A' AND ${done} AND prodled.led_id IS NOT NULL`, `(${uom(net("trn_pcs"), share("trn_qty1"), share("trn_qty2"), share("trn_qty3"), share("trn_pack"), share("trn_weight"), "prodled.quantity::numeric")})`, "purch_qty"),
-      sum(`prodled.stock_nat = 'A' AND ${module} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) <> 'PROD' AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric")})`, "stock_add"),
-      sum(`prodled.stock_nat = 'A' AND ${module} = 'STK-JV' AND proce.ent_approve = 'Yes' AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric")})`, "stock_jv_add"),
-      sum(`prodled.stock_nat = 'A' AND ${module} = 'JOB-IN' AND ${done} AND ${processed}`, `(${simple("0", false)})`, "job_in"),
+      sum(`prodled.stock_nat = 'A' AND ${trnModule} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) <> 'PROD' AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric")})`, "stock_add"),
+      sum(`prodled.stock_nat = 'A' AND ${trnModule} = 'STK-JV' AND proce.ent_approve = 'Yes' AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric")})`, "stock_jv_add"),
+      sum(`prodled.stock_nat = 'A' AND ${trnModule} = 'JOB-IN' AND ${done} AND ${processed}`, `(${simple("0", false)})`, "job_in"),
       sum(`prodled.book = 11 AND prodled.stock_nat = 'L' AND ${done} AND prodled.led_id IS NOT NULL`, "(prodled.quantity::numeric - prodled.ag_qty::numeric)", "dr_qty"),
       sum(`prodled.book IN (8, 9) AND prodled.stock_nat = 'L' AND ${done} AND prodled.led_id IS NOT NULL`, "(prodled.quantity::numeric - prodled.ag_qty::numeric)", "sale_qty"),
-      sum(`prodled.stock_nat = 'L' AND ((${module} = 'PROD-FG' AND proce.ent_approve = 'Yes') OR ${module} = 'PROD-SFG' OR ${module} = 'PROD-MULTI') AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric - prodled.ag_qty::numeric")})`, "consumption"),
-      sum(`prodled.stock_nat = 'L' AND ${module} = 'SVOU-LESS' AND ${done} AND ${processed}`, "(prodled.quantity::numeric - prodled.ag_qty::numeric)", "stock_less"),
-      sum(`prodled.stock_nat = 'L' AND ${module} = 'STK-JV' AND proce.ent_approve = 'Yes' AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric")})`, "stock_jv_less"),
-      sum(`prodled.stock_nat = 'L' AND ${module} = 'JOB-OUT' AND proce.ent_approve = 'Yes' AND ${done} AND ${processed}`, "prodled.quantity::numeric", "job_out"),
+      sum(`prodled.stock_nat = 'L' AND ((${trnModule} = 'PROD-FG' AND proce.ent_approve = 'Yes') OR ${trnModule} = 'PROD-SFG' OR ${trnModule} = 'PROD-MULTI') AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric - prodled.ag_qty::numeric")})`, "consumption"),
+      sum(`prodled.stock_nat = 'L' AND ${trnModule} = 'SVOU-LESS' AND ${done} AND ${processed}`, "(prodled.quantity::numeric - prodled.ag_qty::numeric)", "stock_less"),
+      sum(`prodled.stock_nat = 'L' AND ${trnModule} = 'STK-JV' AND proce.ent_approve = 'Yes' AND ${done} AND ${processed}`, `(${simple("prodled.trn_pcs::numeric")})`, "stock_jv_less"),
+      sum(`prodled.stock_nat = 'L' AND ${trnModule} = 'JOB-OUT' AND proce.ent_approve = 'Yes' AND ${done} AND ${processed}`, "prodled.quantity::numeric", "job_out"),
     ].join(", ")
     + ` FROM ${db}product_master product LEFT JOIN ${db}idopt_master idopt ON product.prod_group = idopt.idopt_key LEFT JOIN ${db}addon_data adata ON adata.prod_id = product.prod_key`
     + ` LEFT JOIN ${db}prod_ledger prodled ON prodled.prod_id = product.prod_key LEFT JOIN ${db}prod_balance prodbal ON prodbal.prod_id = product.prod_key LEFT JOIN ${db}process proce ON proce.process_key = prodled.process_id`

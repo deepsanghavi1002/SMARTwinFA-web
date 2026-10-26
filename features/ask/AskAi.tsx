@@ -167,7 +167,11 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
   const [last, setLast] = useState("");
   /** The lines of the answer opened for their parties (by the line's detail key): clicked once they open under the line, clicked again they close. */
   const [opened, setOpened] = useState<Record<string, AskAnswer>>({});
-  useEffect(() => setOpened({}), [reply]);
+  /** What is typed (or picked) over each column of the answer's table. */
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  /** A new reply starts with no line opened and no filter (reset while rendering, as React's docs show for state that follows a value). */
+  const [replyShown, setReplyShown] = useState(reply);
+  if (replyShown !== reply) { setReplyShown(reply); setOpened({}); setFilters({}); }
   const listed = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (reply || error || last === "") return;
@@ -222,10 +226,12 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
   /** What the party is chosen for: the list shows the parties with entries in the question's period, or a balance at its end. */
   const choiceQuestion = reply?.kind === "choose-party" ? reply.question : undefined;
   const choiceTemplate = reply?.kind === "choose-party" ? reply.templateId : undefined;
+  // The parties the question named come first (nothing typed yet): the list is those, not every party.
+  const namedChoices = choosing && selection && partyName === "" && reply?.kind === "choose-party" && reply.choices.length > 0 ? reply.choices : null;
+  const [choicesShown, setChoicesShown] = useState(namedChoices);
+  if (choicesShown !== namedChoices) { setChoicesShown(namedChoices); if (namedChoices) setParties(namedChoices.map((choice) => ({ code: choice.code, name: choice.name }))); }
   useEffect(() => {
-    if (!choosing || !selection) return;
-    // The parties the question named come first (nothing typed yet): the list is those, not every party.
-    if (partyName === "" && reply?.kind === "choose-party" && reply.choices.length > 0) { setParties(reply.choices.map((choice) => ({ code: choice.code, name: choice.name }))); return; }
+    if (!choosing || !selection || namedChoices) return;
     let live = true;
     const timer = window.setTimeout(() => {
       fetch("/api/ask", {
@@ -277,9 +283,6 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
     : sections;
 
   const answer: AskAnswer | null = reply?.kind === "answer" ? reply.answer : null;
-  /** What is typed (or picked) over each column of the answer's table. */
-  const [filters, setFilters] = useState<Record<string, string>>({});
-  useEffect(() => setFilters({}), [reply]);
   const filtering = answer !== null && answer.columns.some((column) => (filters[column.key] ?? "").trim() !== "");
   const shown = answer === null ? [] : answer.rows.map((row, at) => ({ row, at })).filter(({ row }) => !filtering || (!isTotalRow(row) && answer.columns.every((column) => meetsFilter(column, row, filters[column.key] ?? ""))));
   /** A column with a few different values is filtered from a list, any other by typing. */
@@ -361,7 +364,7 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
                     const code = typeof row.code === "number" && row.code > 0 ? row.code : 0;
                     const detail = typeof row.detail === "string" ? row.detail : "";
                     const open = () => {
-                      if (opened[detail]) { setOpened(({ [detail]: _gone, ...rest }) => rest); return; }
+                      if (opened[detail]) { setOpened((now) => { const rest = { ...now }; delete rest[detail]; return rest; }); return; }
                       if (!selection) return;
                       fetch("/api/ask", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ question: text, templateId: answer.id, detail, session: { companyId: Number(selection.companyId), yearKey: selection.yearKey, loginName: selection.loginName } }) })
                         .then((response) => response.json() as Promise<AskReply>).then((body) => { if (body.kind === "answer") setOpened((now) => ({ ...now, [detail]: body.answer })); }).catch(() => undefined);
@@ -426,7 +429,7 @@ export function AskAi({ minimized, onMinimize, onRestore, onClose, onOpenLedger,
                 ))}
               </div>
             )}
-            {searched.length === 0 && <p className="ask-note">No listed question has "{text.trim()}" in it. Press Ask to put the question in your own words.</p>}
+            {searched.length === 0 && <p className="ask-note">No listed question has &quot;{text.trim()}&quot; in it. Press Ask to put the question in your own words.</p>}
             {searched.length > 0 && searching && <p className="ask-note">{searched.reduce((total, section) => total + section.list.length, 0)} listed questions have all of these words. Press Ask to put your own wording.</p>}
             {searched.map((section) => (
               <Fragment key={section.title}>

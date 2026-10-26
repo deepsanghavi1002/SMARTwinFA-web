@@ -218,6 +218,7 @@ export function SecurityRights({ menuShortName, title, onClose }: { menuShortNam
     <div className="mp-screen sec-screen" ref={root} role="region" aria-label={title}>
       <div className="mp-combos sec-combos">
         <label className="sec-combo"><span>USER NAME</span>
+          {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the screen opens with the cursor in this box, as the desktop's does */}
           <select ref={combo} value={userNo} disabled={rows !== null || busy !== ""} onChange={(event) => void chooseUser(Number(event.target.value))} autoFocus>
             <option value={0}>— select —</option>
             {users.map((user) => <option key={user.no} value={user.no}>{user.name}</option>)}

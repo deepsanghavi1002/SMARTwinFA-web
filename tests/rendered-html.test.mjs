@@ -59,7 +59,8 @@ test("server-renders the SMARTwinFA login shell", async () => {
   assert.match(html, /User Login Screen/);
   assert.match(html, /Developed By/);
   assert.match(html, /PRANAV COMPUTERS/);
-  assert.match(html, /aria-label="Switch to modern view"/i);
+  // The Legacy / Modern switch left the login screens; the view is chosen from the menu once signed in.
+  assert.doesNotMatch(html, /aria-label="Switch to (modern|legacy) view"/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
 });
 

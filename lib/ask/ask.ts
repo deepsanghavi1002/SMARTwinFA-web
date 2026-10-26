@@ -4163,14 +4163,14 @@ function reportDates(question: string, session: MasterSession, now: Date): { fro
   const text = question.toLowerCase();
   const day = (year: number, month: number, date: number) => iso(new Date(year, month, Math.min(date, monthEnd(year, month))));
   const found: string[] = [];
-  const dates = /\b(\d{1,2})\s*[-\/.\s]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2})[a-z]*\s*[-\/.\s]\s*(\d{4})\b/g;
+  const dates = /\b(\d{1,2})\s*[-/.\s]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2})[a-z]*\s*[-/.\s]\s*(\d{4})\b/g;
   for (let match = dates.exec(text); match; match = dates.exec(text)) {
     const month = /\d/.test(match[2]) ? Number(match[2]) - 1 : MONTH_NAMES.indexOf(match[2]);
     if (month >= 0 && month < 12) found.push(day(Number(match[3]), month, Number(match[1])));
   }
   if (found.length >= 2) { found.sort(); return { from: found[0], to: found[found.length - 1] }; }
   if (found.length === 1) return { from: iso(session.tarikh1), to: found[0] };
-  const monthYear = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-\/,]*(\d{4})\b/.exec(text);
+  const monthYear = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/,]*(\d{4})\b/.exec(text);
   if (monthYear) { const month = MONTH_NAMES.indexOf(monthYear[1]); const year = Number(monthYear[2]); return { from: iso(new Date(year, month, 1)), to: iso(new Date(year, month, monthEnd(year, month))) }; }
   if (/today|yesterday|(this|current|last|previous)\s+(week|month|quarter|half[ -]?year)|quarterly|half[ -]?yearly|monthly/.test(text)) {
     const period = periodOf(question, "none", session, now);

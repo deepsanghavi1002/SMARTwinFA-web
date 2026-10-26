@@ -357,6 +357,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
       <div ref={box} className={`mp-scroll rp-help-scroll ${enabled ? "" : "rp-help-off"}`} tabIndex={-1} role="grid" aria-label={help.grid} onFocus={tellStatus} onKeyDown={(event) => void keys(event)} onMouseDown={mouseDown} onMouseMove={mouseMove} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <div className="mp-grid" style={{ height: (rows.length + 1) * ROW, minWidth: width }}>
           <div className="mp-row mp-head" style={{ top: 0 }}>
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- the Tick heading's click is the mouse's Select All; F4 does it from the keyboard */}
             <div
               className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`}
               style={{ ...(freezeMain ? { position: "sticky", left: 0 } : {}), cursor: "pointer" }}
@@ -393,6 +394,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
             const selected = selectionEnd !== null && index >= low && index <= high;
             return (
               <div key={index} className={`mp-row ${index % 2 ? "mp-alt" : ""} ${index === at ? "mp-current-row" : ""} ${selected ? "mp-selected" : ""} ${on ? "rp-row-ticked" : ""}`} style={{ top: (index + 1) * ROW }} data-row={index}>
+                {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- a click on the tick cell ticks the row; the grid's keys tick it from the keyboard */}
                 <div
                   className={`mp-cell rp-tick ${freezeMain ? "mp-frozen" : ""}`}
                   style={freezeMain ? { position: "sticky", left: 0 } : undefined}

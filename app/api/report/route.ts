@@ -75,7 +75,7 @@ async function runtimeDefaults(client: { query: (sql: string) => Promise<{ rows:
       await client.query("RELEASE SAVEPOINT runtime_default");
       // The first row with an amount (the closing stock account's, not the nil one of a stock account beside it).
       const field = found.fields[0]?.name;
-      const amounts = field === undefined ? [] : found.rows.map((row) => Number(String(row[field] ?? "").replace(/[^0-9.\-]/g, ""))).filter((value) => Number.isFinite(value) && value !== 0);
+      const amounts = field === undefined ? [] : found.rows.map((row) => Number(String(row[field] ?? "").replace(/[^0-9.-]/g, ""))).filter((value) => Number.isFinite(value) && value !== 0);
       if (amounts.length > 0) out[box.name] = amounts[0].toFixed(box.decimals > 0 ? box.decimals : 2);
     } catch {
       await client.query("ROLLBACK TO SAVEPOINT runtime_default").catch(() => undefined);
