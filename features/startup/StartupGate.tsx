@@ -24,6 +24,9 @@ import {
 // screens may be carried in the application: a literal here would show one
 // client's companies to another.
 type Operator = { userNo: number; loginName: string; displayName: string; userType: string | null; department: string | null };
+/** The signed-in web user (lib/auth/public-user.ts). */
+type WebUser = { id: number; login: string; email: string | null; displayName: string; role: string; canManageUsers: boolean; choosesOperator: boolean };
+type Me = { user: WebUser; operator: Operator | null; problem: string | null };
 type AccountingYear = { key: number; id: string; label: string };
 type Company = { key: number; id: string; name: string; code: string; address: string; group: string | null; dataName: string; available: boolean };
 
@@ -106,14 +109,21 @@ const modernTheme = createTheme({
 });
 
 export function StartupGate({ children }: { children: ReactNode }) {
-  const [stage, setStage] = useState<"login" | "company" | "ready">("login");
+  const [stage, setStage] = useState<"login" | "operator" | "company" | "ready">("login");
+  /** The session cookie is being checked: the login form waits (it is what shows when there is no session). */
+  const [checking, setChecking] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState("");
   const [dataError, setDataError] = useState("");
+  const [user, setUser] = useState<WebUser | null>(null);
+  /** The operators a platform admin may work as (the operator screen only). */
   const [operators, setOperators] = useState<Operator[]>([]);
   const [operator, setOperator] = useState<Operator | null>(null);
+  /** The operator highlighted on the operator screen. */
+  const [pick, setPick] = useState("");
   const [accountingYears, setAccountingYears] = useState<AccountingYear[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companiesLoading, setCompaniesLoading] = useState(false);
@@ -126,34 +136,48 @@ export function StartupGate({ children }: { children: ReactNode }) {
   /** The company to highlight when the year list refills after Exit put the year back. */
   const restoreCompany = useRef<string | null>(null);
 
+  /**
+   * After the server accepted the sign-in (or the page opened with a live session): straight to
+   * the company screen as the linked operator, or to the operator screen for a platform admin.
+   */
+  const enter = useCallback(async (me: Me) => {
+    setUser(me.user);
+    setPassword("");
+    setError("");
+    setAccountingYears([]);
+    setYear("");
+    setCompanies([]);
+    setCompany("");
+    if (me.operator) { setOperator(me.operator); setStage("company"); return; }
+    if (me.user.choosesOperator) {
+      const response = await fetch("/api/operators", { cache: "no-store" });
+      const body = await response.json() as { operators?: Operator[]; error?: string };
+      setOperators(body.operators ?? []);
+      setDataError(response.ok ? "" : body.error || "Operator list could not be loaded");
+      setStage("operator");
+      return;
+    }
+    // Signed in, but nothing to open the books as: an admin can still manage users.
+    setError(me.problem || "No operator is linked to this user");
+    setStage("login");
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/operators", { signal: controller.signal, cache: "no-store" })
+    fetch("/api/auth/me", { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
-        const body = await response.json() as { operators?: Operator[]; error?: string };
-        if (!response.ok || !body.operators) throw new Error(body.error || "Operator list could not be loaded");
-        return body.operators;
-      })
-      .then(async (rows) => {
-        setOperators(rows);
-        setUsername((current) => current || rows[0]?.loginName || "");
-        // TEMPORARY, for testing: SMARTWINFA_SKIP_LOGIN in .env.local skips the login form (see app/api/dev-login).
-        const devLogin = await fetch("/api/dev-login", { signal: controller.signal, cache: "no-store" })
-          .then((response) => response.json() as Promise<{ skip?: boolean; login?: string | null }>)
-          .catch(() => ({ skip: false, login: null }));
-        if (!devLogin.skip) return;
-        const wanted = devLogin.login?.toUpperCase();
-        const match = wanted ? rows.find((item) => item.loginName.toUpperCase() === wanted) : rows[0];
-        if (!match) { setError(`Login skip: operator ${devLogin.login ?? ""} not found`); return; }
-        setOperator(match);
-        setStage("company");
+        if (response.status === 401) return;
+        const body = await response.json() as Me & { error?: string };
+        if (!response.ok) throw new Error(body.error || "The session could not be read");
+        await enter(body);
       })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
-        setDataError(reason instanceof Error ? reason.message : "Operator list could not be loaded");
-      });
+        setError(reason instanceof Error ? reason.message : "The session could not be read");
+      })
+      .finally(() => { if (!controller.signal.aborted) setChecking(false); });
     return () => controller.abort();
-  }, []);
+  }, [enter]);
 
   // Highlighting a year empties the grid before it refills, the way the
   // desktop's Lbox_CoSelect_AcYear double-click handler does.
@@ -169,7 +193,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!operator) return;
     const controller = new AbortController();
-    fetch(`/api/accounting-years?login=${encodeURIComponent(operator.loginName)}`, { signal: controller.signal, cache: "no-store" })
+    // The server answers for the session's own operator; the browser does not name one.
+    fetch("/api/accounting-years", { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { years?: AccountingYear[]; error?: string };
         if (!response.ok || !body.years) throw new Error(body.error || "Accounting years could not be loaded");
@@ -190,7 +215,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!operator || selectedYearKey === undefined) return;
     const controller = new AbortController();
-    fetch(`/api/companies?login=${encodeURIComponent(operator.loginName)}&year=${selectedYearKey}`, { signal: controller.signal, cache: "no-store" })
+    fetch(`/api/companies?year=${selectedYearKey}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { companies?: Company[]; error?: string };
         if (!response.ok || !body.companies) throw new Error(body.error || "Company list could not be loaded");
@@ -219,13 +244,16 @@ export function StartupGate({ children }: { children: ReactNode }) {
     setFromMenu(true);
     setStage("company");
   }, [year, company]);
-  /** Back to the login: the operator, company and year are forgotten, and the windows (children) go with the ready screen. */
+  /** Back to the login: the session ends on the server, the operator, company and year are forgotten, and the windows (children) go with the ready screen. */
   const logout = useCallback(() => {
+    void fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => undefined);
     openBefore.current = null;
     setFromMenu(false);
     setPassword("");
     setError("");
+    setUser(null);
     setOperator(null);
+    setOperators([]);
     setAccountingYears([]);
     setCompanies([]);
     setYear("");
@@ -235,7 +263,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const actions = useMemo<StartupActions>(() => ({ changeCompany, logout }), [changeCompany, logout]);
   /** OK on the company screen. */
   const confirmCompany = () => { openBefore.current = null; setFromMenu(false); setStage("ready"); };
-  /** Exit / close on the company screen: from the menu, back to the company that was open; after the login, back to the login. */
+  /** Exit / close on the company screen: from the menu, back to the company that was open; after the login, signs out. */
   const leaveCompany = () => {
     if (fromMenu && openBefore.current) {
       const before = openBefore.current;
@@ -245,8 +273,27 @@ export function StartupGate({ children }: { children: ReactNode }) {
       setStage("ready");
       return;
     }
-    setStage("login");
+    logout();
   };
+  /** A platform admin picks the operator this session works as. */
+  const chooseOperator = async (loginName: string) => {
+    setDataError("");
+    const response = await fetch("/api/auth/operator", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operator: loginName }),
+      cache: "no-store",
+    }).catch(() => null);
+    const body = response ? await response.json().catch(() => ({})) as { operator?: Operator; error?: string } : {};
+    if (!response?.ok || !body.operator) { setDataError(body.error || "The operator could not be chosen"); return; }
+    setAccountingYears([]);
+    chooseYear("");
+    setOperator(body.operator);
+    setStage("company");
+  };
+  const manageUsers = user?.canManageUsers
+    ? <a className="manage-users-link" href="/admin/users">Manage users</a>
+    : null;
   const canContinue = Boolean(selectedYear && selectedCompany?.available);
 
   const viewModeValue = useMemo(() => ({ modernView, setModernView }), [modernView]);
@@ -275,20 +322,61 @@ export function StartupGate({ children }: { children: ReactNode }) {
       </ViewModeContext.Provider>
     );
   }
-  // The typed operator is matched against the real user_master list. The
-  // legacy user_pw column is a fixed-width obfuscation whose algorithm is not
-  // part of this conversion, so the password is required but not verified —
-  // this must not be presented as authenticated access.
-  const login = () => {
-    if (!operators.length) { setError(dataError || "Operator list is still loading"); return; }
-    const match = operators.find((item) => item.loginName.toUpperCase() === username.trim().toUpperCase());
-    if (!match || !password.trim().length) { setError("Invalid user name or password"); return; }
-    setAccountingYears([]);
-    chooseYear("");
-    setOperator(match);
+  // The server checks the web password (app/api/auth/login) and sets an HttpOnly session cookie.
+  // The legacy user_pw column is never used: users set a web password from an invitation link.
+  const login = async () => {
+    if (signingIn || checking) return;
+    if (!username.trim() || !password) { setError("Enter your user name and password"); return; }
+    setSigningIn(true);
     setError("");
-    setStage("company");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ login: username.trim(), password }),
+        cache: "no-store",
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) { setError(body.error || "Invalid user name or password"); return; }
+      const me = await fetch("/api/auth/me", { cache: "no-store" });
+      const meBody = await me.json() as Me & { error?: string };
+      if (!me.ok) { setError(meBody.error || "The session could not be read"); return; }
+      await enter(meBody);
+    } catch {
+      setError("Sign-in is not available right now");
+    } finally {
+      setSigningIn(false);
+    }
   };
+  const changeOperator = user?.choosesOperator
+    ? () => { void enter({ user, operator: null, problem: null }); }
+    : null;
+
+  // The operator screen is the same in both views: only SMARTwinFA's own staff see it.
+  if (stage === "operator") {
+    return (
+      <main className="startup-desktop">
+        <section className="company-window operator-window" aria-label="Choose the operator">
+          <div className="startup-title">Work as operator <button aria-label="Sign out" onClick={logout}>×</button></div>
+          <div className="company-panel">
+            <h1>Choose the operator</h1>
+            <p className="operator-note">Signed in as {user?.displayName}. The chosen operator&apos;s company, year and menu rights apply until you sign out.</p>
+            <label><strong>Operator</strong>
+              <select size={8} value={pick} onChange={(event) => setPick(event.target.value)} onDoubleClick={() => { if (pick) void chooseOperator(pick); }}>
+                {operators.map((item) => <option key={item.loginName} value={item.loginName}>{item.loginName}{item.displayName !== item.loginName ? ` (${item.displayName})` : ""}{item.userType ? ` · ${item.userType}` : ""}</option>)}
+              </select>
+            </label>
+            {dataError && <p className="login-error" role="alert">{dataError}</p>}
+            <div className="company-actions">
+              <button disabled={!pick} onClick={() => void chooseOperator(pick)}>✓ Ok</button>
+              <button onClick={logout}>↩ Sign out</button>
+            </div>
+            {manageUsers}
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (modernView) {
     return (
@@ -346,9 +434,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         fullWidth
                       />
                       <TextField
-                        label="User Name"
+                        label="User Name or Email"
                         value={username}
-                        onChange={(event) => setUsername(event.target.value.toUpperCase())}
+                        autoComplete="username"
+                        onChange={(event) => setUsername(event.target.value)}
                         slotProps={{
                           input: {
                             startAdornment: <InputAdornment position="start"><span style={{ color: "#1976d2", fontSize: 18, marginRight: 4 }}>👤</span></InputAdornment>
@@ -359,6 +448,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
                       <TextField
                         label="Password"
                         type={showPassword ? "text" : "password"}
+                        autoComplete="current-password"
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         slotProps={{
@@ -380,12 +470,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         fullWidth
                       />
                       <Typography variant="body2" color="error" role="alert" sx={{ minHeight: 24 }}>
-                        {error}
+                        {checking ? "Checking your session…" : error} {manageUsers}
                       </Typography>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} sx={{ justifyContent: "center", alignItems: "center" }}>
                         <Button
                           type="submit"
                           variant="contained"
+                          disabled={signingIn || checking}
                           sx={{
                             flex: 1,
                             background: "linear-gradient(135deg, #1565c0 0%, #0f7c90 58%)",
@@ -516,6 +607,12 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         <Button variant="contained" disabled={!canContinue} onClick={confirmCompany} sx={{ minWidth: 160, py: 1.1, fontWeight: 700 }}>✓ OK</Button>
                         <Button variant="outlined" onClick={leaveCompany} sx={{ minWidth: 160, py: 1.1, fontWeight: 700, color: "#dc2626", borderColor: "#d1d5db", "&:hover": { borderColor: "#dc2626", backgroundColor: "#fee2e2" } }}>✕ CLOSE</Button>
                       </Stack>
+                      {(manageUsers || changeOperator) && (
+                        <Stack direction="row" spacing={2} sx={{ justifyContent: "center", fontSize: 14 }}>
+                          {changeOperator && !fromMenu && <Button size="small" onClick={changeOperator}>Change operator ({operator?.loginName})</Button>}
+                          {manageUsers}
+                        </Stack>
+                      )}
                     </Stack>
                   </CardContent>
                 </Box>
@@ -535,10 +632,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
             <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
             <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-brand"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><div className="developer-credit"><span>Developed By</span><strong>PRANAV COMPUTERS</strong></div></div><form onSubmit={(event) => { event.preventDefault(); login(); }}>
               <label>Today&apos;s Date:<input value={new Date().toLocaleDateString("en-GB")} readOnly /></label>
-              <label>User Name:<input value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} /></label>
-              <label>Password:<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-              <p className="login-error" role="alert">{error}</p>
-              <button className="login-button" type="submit"><span>➜</span> Login</button>
+              <label>User Name:<input value={username} autoComplete="username" placeholder="user name or email" onChange={(event) => setUsername(event.target.value)} /></label>
+              <label>Password:<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+              <p className="login-error" role="alert">{checking ? "Checking your session…" : error} {manageUsers}</p>
+              <button className="login-button" type="submit" disabled={signingIn || checking}><span>➜</span> Login</button>
             </form></div></div>
           </section> : <section className="company-window" aria-label="Company selection menu">
             <div className="startup-title">Select Company <button aria-label="Close" onClick={leaveCompany}>×</button></div>
@@ -547,6 +644,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
               <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></label>
               {dataError && <p className="login-error" role="alert">{dataError}</p>}
               <div className="company-actions"><button disabled={!canContinue} onClick={confirmCompany}>✓ Ok</button><button onClick={leaveCompany}>↩ Exit</button></div>
+              {(manageUsers || changeOperator) && <p className="company-admin-links">{changeOperator && !fromMenu && <button type="button" onClick={changeOperator}>Change operator ({operator?.loginName})</button>} {manageUsers}</p>}
             </div>
           </section>}
         </main>

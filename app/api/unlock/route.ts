@@ -1,5 +1,5 @@
 import { readOnly } from "@/lib/db";
-import { trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { readPw, toText } from "@/lib/master-program/legacy";
 import { SYSTEM_SCHEMA } from "@/lib/master-program/session";
 
@@ -12,18 +12,17 @@ import { SYSTEM_SCHEMA } from "@/lib/master-program/session";
 const headers = { "cache-control": "no-store" };
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Unlock is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 403, headers });
-  }
-  let body: { loginName?: unknown; password?: unknown; action?: unknown };
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
+  let body: { password?: unknown; action?: unknown };
   try {
     body = await request.json() as typeof body;
   } catch {
     return Response.json({ error: "The request body is not JSON" }, { status: 400, headers });
   }
-  const loginName = toText(body?.loginName);
+  // Always the session's own operator: a loginName in the body is ignored.
+  const loginName = operator;
   const typed = typeof body?.password === "string" ? body.password : "";
-  if (loginName === "") return Response.json({ error: "loginName is required" }, { status: 400, headers });
   try {
     const stored = await readOnly(async (client) => (await client.query(
       `SELECT user_screen_pw FROM ${SYSTEM_SCHEMA}.user_master WHERE UPPER(BTRIM(login_name)) = UPPER($1) AND COALESCE(BTRIM(user_pos), 'A') <> 'D' LIMIT 1`,

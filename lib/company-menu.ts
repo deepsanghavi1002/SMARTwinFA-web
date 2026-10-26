@@ -120,6 +120,22 @@ export async function readOperators(): Promise<Operator[]> {
   });
 }
 
+/** One active operator by login, or null when there is none by that name. */
+export async function readOperator(loginName: string): Promise<Operator | null> {
+  const SYSTEM_SCHEMA = systemSchema();
+  return readOnly(async (client) => {
+    const row = (await client.query<{ user_no: number; login_name: string; user_name: string | null; user_type: string | null; user_dept: string | null }>(
+      `SELECT user_no, BTRIM(login_name) AS login_name, NULLIF(BTRIM(user_name), '') AS user_name,
+              NULLIF(BTRIM(user_type), '') AS user_type, NULLIF(BTRIM(user_dept), '') AS user_dept
+       FROM ${SYSTEM_SCHEMA}.user_master
+       WHERE UPPER(BTRIM(login_name)) = UPPER($1) AND COALESCE(BTRIM(user_pos), 'A') <> 'D'
+       LIMIT 1`,
+      [loginName.trim()],
+    )).rows[0];
+    return row ? { userNo: row.user_no, loginName: row.login_name, displayName: row.user_name ?? row.login_name, userType: row.user_type, department: row.user_dept } : null;
+  });
+}
+
 /** The accounting years this operator may open, newest first. */
 export async function readAccountingYears(loginName: string): Promise<AccountingYear[]> {
   const SYSTEM_SCHEMA = systemSchema();

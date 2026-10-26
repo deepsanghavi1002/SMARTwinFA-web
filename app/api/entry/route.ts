@@ -1,5 +1,6 @@
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { verifyModulePassword } from "@/lib/master-program/extras";
 import { Loader } from "@/lib/master-program/load";
 import { readSession } from "@/lib/master-program/session";
@@ -152,9 +153,8 @@ async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
 }
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Entry migration is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -164,7 +164,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.action !== "string" || !body.session || !NAME.test(String(body.entryName ?? ""))) {
     return Response.json({ error: "action, session and entryName are required" }, { status: 400, headers });
   }
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   const moduleName = String(body.menuShortName ?? "");
   if (body.action === "save") return saveEntry(body, key, moduleName);
   if (body.action === "delete") return deleteEntry(body, key, moduleName);
