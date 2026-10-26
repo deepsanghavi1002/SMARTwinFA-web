@@ -1,5 +1,5 @@
 "use client";
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Box,
   Button,
@@ -72,6 +72,29 @@ export type ViewModeContextValue = {
 
 const ViewModeContext = createContext<ViewModeContextValue | null>(null);
 
+/** Legacy or Modern, kept in this browser so a reload or the next sign-in opens the same view (held in memory where storage is blocked). */
+const VIEW_KEY = "view-mode";
+let modernNow: boolean | null = null;
+const viewListeners = new Set<() => void>();
+function readModernView(): boolean {
+  if (modernNow === null) {
+    try { modernNow = window.localStorage.getItem(VIEW_KEY) === "modern"; } catch { modernNow = false; }
+  }
+  return modernNow;
+}
+function writeModernView(next: React.SetStateAction<boolean>) {
+  modernNow = typeof next === "function" ? next(readModernView()) : next;
+  try { window.localStorage.setItem(VIEW_KEY, modernNow ? "modern" : "legacy"); } catch { /* the choice is only a convenience */ }
+  for (const listener of viewListeners) listener();
+}
+function subscribeModernView(listener: () => void) {
+  viewListeners.add(listener);
+  // Another tab of this browser switching view switches this one too.
+  const onStorage = (event: StorageEvent) => { if (event.key === VIEW_KEY) { modernNow = null; listener(); } };
+  window.addEventListener("storage", onStorage);
+  return () => { viewListeners.delete(listener); window.removeEventListener("storage", onStorage); };
+}
+
 export function useViewMode() {
   return useContext(ViewModeContext);
 }
@@ -129,7 +152,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [year, setYear] = useState("");
   const [company, setCompany] = useState("");
-  const [modernView, setModernView] = useState(false);
+  // The server's page is Legacy; the browser switches to the remembered view once it has started.
+  const modernView = useSyncExternalStore(subscribeModernView, readModernView, () => false);
   /** The company screen was opened from the menu (not after the login): Exit goes back to the company that was open. */
   const [fromMenu, setFromMenu] = useState(false);
   const openBefore = useRef<{ year: string; company: string } | null>(null);
@@ -309,7 +333,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     : null;
   const canContinue = Boolean(selectedYear && selectedCompany?.available);
 
-  const viewModeValue = useMemo(() => ({ modernView, setModernView }), [modernView]);
+  const viewModeValue = useMemo(() => ({ modernView, setModernView: writeModernView }), [modernView]);
 
   if (stage === "ready" && operator && selectedYear && selectedCompany) {
     const selection: StartupSelection = {
