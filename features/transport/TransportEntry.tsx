@@ -206,6 +206,7 @@ export function TransportEntry({ menuShortName, title, onClose }: { menuShortNam
   // txt_Amount_Leave: the TDS of the amount, worked out as the amount is typed (and when the transport changes); it can still be typed over.
   useEffect(() => {
     const value = number(amount);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the lookup's own "nothing to work out" branch: no amount or transport, no TDS
     if (!selection || value <= 0 || transportKey <= 0) { setTds(""); return; }
     let live = true;
     const timer = setTimeout(() => {
@@ -287,13 +288,13 @@ export function TransportEntry({ menuShortName, title, onClose }: { menuShortNam
       {list.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
     </select>
   );
-  const dateMin = options.yearFrom;
-  const dateMax = options.yearTo;
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the screen hears Enter bubble up from its boxes and moves to the next one
     <div className="mp-screen te-screen" role="region" aria-label={title} ref={root} onKeyDown={onKeyDown}>
       <div className="te-form">
         <label>Transport »»
+          {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the screen opens with the cursor in this box, as the desktop's does */}
           <select data-te-field ref={transportBox} autoFocus disabled={bills !== null} value={transportKey} onChange={(event) => { setTransportKey(Number(event.target.value)); setBills(null); setFreight([]); }}>
             {options.transports.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
           </select>

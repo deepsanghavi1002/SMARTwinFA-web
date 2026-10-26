@@ -185,7 +185,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | "pivot" | null>(null);
   /** The side panel (Growth, Budget, Compare, Chart ...) shrunk to a strip so the grid has the room; opening another panel shows it again. */
   const [panelMin, setPanelMin] = useState(false);
-  useEffect(() => { setPanelMin(false); }, [panel]);
+  const [panelShown, setPanelShown] = useState(panel);
+  if (panelShown !== panel) { setPanelShown(panel); setPanelMin(false); }
   const charting = panel === "chart";
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
@@ -208,8 +209,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const widthOf = layout.widthOf;
   // This report, as the other windows' VLOOKUP sees it: its names, its columns as shown, and the cells of its entry rows.
   const lookupSource = useRef({ output, columns, fallbackTitle });
-  lookupSource.current = { output, columns, fallbackTitle };
-  const ownSnapshot = useRef(() => {
+  useEffect(() => { lookupSource.current = { output, columns, fallbackTitle }; });
+  const [ownSnapshot] = useState(() => () => {
     const { output: current, columns: shown, fallbackTitle: name } = lookupSource.current;
     const entries = entryIndexes(current);
     return {
@@ -217,7 +218,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       columns: shown.map((column) => ({ key: column.key, caption: column.caption })),
       rows: entries.map((index) => shown.map((column) => cellValue(current.rows[index].values[column.key], column))),
     };
-  }).current;
+  });
   useEffect(() => registerOpenReport(ownSnapshot), [ownSnapshot]);
   // The other windows work their formulas out again when this report changes (its added columns do not count: they follow this report).
   // (From what the report is made of, not from `shaped`: with a pivot that changes whenever another report opens, which would notify again and again.)
@@ -416,10 +417,11 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
    * The bordered (coloured) cells' total: those of the current column when it is a number column
    * with borders in it, else every bordered number cell.
    */
+  const atCol = at.col;
   const borderTotals = useMemo(() => {
     if (borders.size === 0) return "";
     const byIndex = rowByIndex;
-    const currentKey = columns[at.col]?.key ?? "";
+    const currentKey = columns[atCol]?.key ?? "";
     const entries = [...borders].map((key) => { const split = key.indexOf("|"); return { row: byIndex.get(Number(key.slice(0, split))), column: output.columns.find((candidate) => candidate.key === key.slice(split + 1)) }; })
       .filter((entry) => entry.row && entry.column?.kind === "number");
     if (entries.length === 0) return "";
@@ -427,8 +429,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     const used = inCurrent.length > 0 ? inCurrent : entries;
     const places = Math.max(0, ...used.map((entry) => entry.column?.decimals ?? 0));
     const sum = selectionTotals(used.map((entry) => entry.row?.values[entry.column?.key ?? ""] ?? ""), places);
-    return sum ? `Bordered${inCurrent.length > 0 ? ` ${columns[at.col]?.caption ?? ""}` : ""} ▸ ${sum}` : "";
-  }, [borders, output, columns, at.col, rowByIndex]);
+    return sum ? `Bordered${inCurrent.length > 0 ? ` ${columns[atCol]?.caption ?? ""}` : ""} ▸ ${sum}` : "";
+  }, [borders, output, columns, atCol, rowByIndex]);
   useEffect(() => { onInfo(rowsText, [totals, borderTotals].filter(Boolean).join("   ‖   ")); }, [rowsText, totals, borderTotals, onInfo]);
 
   const lefts = useMemo(() => {
@@ -482,6 +484,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     if (!initialPivot || pivotHinted.current || withAdded.columns.length === 0) return;
     pivotHinted.current = true;
     const spec = resolvePivotHint(withAdded, initialPivot);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- once, when the first output with the named columns arrives (not an event of this grid)
     if (spec) { setPivoting({ forBase: base, spec }); resetView(); }
     const problem = pivotHintProblem(withAdded, initialPivot);
     if (problem !== "") void messageBox.alert(problem, "Pivot", "warning");
@@ -1041,6 +1044,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               <div className="mp-cell mp-rownum rp-count" aria-hidden="true" />
               {tree && <div className={`mp-cell rp-tree ${frozenCount > 0 ? "mp-frozen" : ""}`} style={frozenCount > 0 ? { left: MARK } : undefined} aria-hidden="true" />}
               {columns.map((column, col) => (
+                // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- a press on a column heading selects the column for the mouse; the grid's keys select it from the keyboard
                 <div
                   key={column.key}
                   data-head={column.key}

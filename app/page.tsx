@@ -772,6 +772,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
                 );
               })}
             </div>
+            {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- Escape from the list button or its menu closes the list; the box only hears the key bubble up from them */}
             <div className="window-list" onKeyDown={(event) => { if (event.key === "Escape") setWindowListOpen(false); }}>
               <button type="button" className="window-list-button" aria-haspopup="menu" aria-expanded={windowListOpen} title="Open windows (Ctrl+F6: next)" onClick={() => setWindowListOpen((open) => !open)}>{windows.length} Open ▾</button>
               {windowListOpen && (

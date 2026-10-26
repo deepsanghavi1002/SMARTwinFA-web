@@ -131,7 +131,6 @@ export async function productionSummary(loader: Loader, plan: ReportPlan): Promi
 
 /** 216: the Finish Goods entries of the period against the plan of their job card. */
 async function dailyPacking(loader: Loader, plan: ReportPlan, db: string, where: string, period: string[], other: number, exportRate: number): Promise<ResultTable> {
-  const { call } = plan;
   const plant22 = db.toLowerCase().includes("rishabh_plastic22");
 
   // The plan of each job card and product: the quantity, and what was still to be made before From.
