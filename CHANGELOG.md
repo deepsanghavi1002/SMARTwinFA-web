@@ -3,6 +3,9 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-26 (Linux server setup)
+- `ops/linux/setup-server.sh`: one command for a fresh Ubuntu 22.04/24.04 server: Docker, firewall (only the SSH port in use is opened), code from GitHub (read-only token for the private repository, not kept in `.git/config`), build, control panel, optional Cloudflare Tunnel (`TUNNEL_TOKEN`), Rishabh Plastic demo, optional database dump (`SEED_DUMP`). Shellchecked; not yet run on a real server.
+
 ## 2026-10-23 (Site kit for on-prem clients)
 - `ops/site/compose.yaml` + `ops/site/alloy/config.alloy`: added on top of a client stack on the client's own machine: Portainer Edge Agent (support, client can switch it off), Alloy log agent (only that client's containers, `site=on-prem`), cloudflared, rclone offsite copy of the nightly backups. Each part runs only when its settings are filled.
 - `ops/smartwinfa.sh`: `fleet enroll <id>` (creates the Portainer edge environment and writes EDGE_ID/EDGE_KEY/LOKI_PUSH_URL into `ops/clients/<id>.env`), `site up|down|status <id>`, `site support <id> on|off`; settings reader no longer stops on a missing key.
