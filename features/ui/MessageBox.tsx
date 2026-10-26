@@ -113,7 +113,8 @@ export function MessageBoxHost() {
   // The message can be moved by dragging its title bar; each new message opens in the middle again.
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const requestId = request?.id;
-  useEffect(() => { setOffset({ x: 0, y: 0 }); }, [requestId]);
+  const [offsetFor, setOffsetFor] = useState(requestId);
+  if (offsetFor !== requestId) { setOffsetFor(requestId); setOffset({ x: 0, y: 0 }); }
   const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();

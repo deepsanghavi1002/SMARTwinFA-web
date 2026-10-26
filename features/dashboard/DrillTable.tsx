@@ -43,11 +43,11 @@ export function DrillTable({ title, data, accent = "#4a5ff0", onClose, onOpen }:
   /** Values chosen from "Filter by <column>": one value a column. */
   const [filters, setFilters] = useState<Readonly<Record<string, string>>>({});
   const menuOpen = useRef(false);
-  menuOpen.current = menu !== null;
+  useEffect(() => { menuOpen.current = menu !== null; });
   const body = useRef<HTMLDivElement>(null);
 
   const inFront = useWindowActive();
-  const latest = useRef({ move: (_step: number) => undefined as void, open: () => undefined as void });
+  const latest = useRef<{ move: (step: number) => void; open: () => void }>({ move: () => undefined, open: () => undefined });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // A window opened from the list (the voucher) has the keyboard while this one is behind.
@@ -91,15 +91,17 @@ export function DrillTable({ title, data, accent = "#4a5ff0", onClose, onOpen }:
   const shown = rows.slice(at * size, at * size + size);
   const numeric = data.columns.filter((column) => column.numeric);
   const here = Math.min(cursor, Math.max(shown.length - 1, 0));
-  latest.current = {
-    move: (step) => {
-      const next = here + step;
-      if (next < 0) { if (at > 0) { setPage(at - 1); setCursor(size - 1); } else setCursor(0); }
-      else if (next >= shown.length) { if (at < pages - 1) { setPage(at + 1); setCursor(0); } else setCursor(shown.length - 1); }
-      else setCursor(next);
-    },
-    open: () => { if (onOpen && shown[here]) onOpen(shown[here]); },
-  };
+  useEffect(() => {
+    latest.current = {
+      move: (step) => {
+        const next = here + step;
+        if (next < 0) { if (at > 0) { setPage(at - 1); setCursor(size - 1); } else setCursor(0); }
+        else if (next >= shown.length) { if (at < pages - 1) { setPage(at + 1); setCursor(0); } else setCursor(shown.length - 1); }
+        else setCursor(next);
+      },
+      open: () => { if (onOpen && shown[here]) onOpen(shown[here]); },
+    };
+  });
   useEffect(() => { body.current?.querySelector<HTMLElement>("tr.dash-cur")?.scrollIntoView({ block: "nearest" }); }, [here, at, size]);
 
   const download = (name: string, type: string, text: string) => {
@@ -112,7 +114,7 @@ export function DrillTable({ title, data, accent = "#4a5ff0", onClose, onOpen }:
   const excel = () => {
     const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const lines = [data.columns.map((column) => quote(column.text)).join(","), ...rows.map((row) => data.columns.map((column) => (column.numeric ? String(row[column.name] ?? 0) : quote(String(row[column.name] ?? "")))).join(","))];
-    download(`${title.replace(/[^A-Za-z0-9_-]+/g, "_")}.csv`, "text/csv;charset=utf-8", `﻿${lines.join("\r\n")}`);
+    download(`${title.replace(/[^A-Za-z0-9_-]+/g, "_")}.csv`, "text/csv;charset=utf-8", `\uFEFF${lines.join("\r\n")}`);
   };
   const pdf = () => {
     const popup = window.open("", "_blank", "width=900,height=700");
@@ -138,6 +140,7 @@ export function DrillTable({ title, data, accent = "#4a5ff0", onClose, onOpen }:
     return text;
   };
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- a press on the backdrop outside the box closes it; Escape does from the keyboard
     <div className="dash-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="dash-drill" style={{ ["--accent" as string]: accent }}>
         <header>
@@ -148,12 +151,14 @@ export function DrillTable({ title, data, accent = "#4a5ff0", onClose, onOpen }:
           </div>
           <label className="dash-drill-search">
             <Icon name="search" />
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the list opens with the cursor in its search box */}
             <input type="search" placeholder="Search…" value={find} onChange={(event) => { setFind(event.target.value); setPage(0); setCursor(0); }} autoFocus aria-label="Search" />
           </label>
           <div className="dash-menu-wrap">
             <button type="button" className={`dash-drill-filter${activeFilters > 0 || searchIn.size < data.columns.length ? " on" : ""}`} aria-label="Filters" aria-haspopup="menu" aria-expanded={menu !== null} onClick={() => setMenu(menu ? null : { sub: null })}><Icon name="clear" /></button>
             {menu && (
               <>
+                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the shade behind the open menu closes it on a press outside; Escape does from the keyboard */}
                 <div className="dash-menu-shade" onMouseDown={() => setMenu(null)} />
                 <div className="dash-menu" role="menu">
                   <div className="dash-menu-item-wrap">

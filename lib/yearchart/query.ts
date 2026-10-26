@@ -44,7 +44,7 @@ export async function companyYears(loader: Loader, from: string, upto: string, b
 }
 
 export async function yearChart(loader: Loader, books: YearBooks, from: string, upto: string): Promise<YearRow[]> {
-  const { client, session } = loader;
+  const { client } = loader;
   const years = await companyYears(loader, from, upto);
 
   // The master tax slabs of the sale and purchase books (this year's setup, used for every year).

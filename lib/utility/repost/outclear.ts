@@ -59,11 +59,11 @@ export async function repostOutstanding(ctx: RepostContext): Promise<void> {
   await q("Purchase side", `UPDATE ${s}.outclear SET out_dbcode = 2 WHERE (out_entrybook = 13 OR out_entrybook = 15) AND out_dbcode = 1 AND out_fulldocno <> 'OPENING'`);
 
   // The bills' amounts from the ledger, less what is set off against them.
-  const offsets = (side: number) => `coalesce((SELECT sum(coalesce(x.out_setoff, 0) + coalesce(x.out_ly_setoff, 0)) FROM ${s}.outclear x WHERE x.out_ag_outid IS NOT NULL AND x.out_ledid = oc.out_ledid), 0)`;
+  const offsets = `coalesce((SELECT sum(coalesce(x.out_setoff, 0) + coalesce(x.out_ly_setoff, 0)) FROM ${s}.outclear x WHERE x.out_ag_outid IS NOT NULL AND x.out_ledid = oc.out_ledid), 0)`;
   await q("Sale bill amounts", `UPDATE ${s}.outclear oc SET out_entryamt = led.amount FROM ${s}.ledger led, ${s}.account ac WHERE oc.out_ledid = led.led_key AND led.code = ac.code AND oc.out_ledid IS NOT NULL AND oc.out_dbcode = 2 AND ac.book = 2 AND led.doc_pos <> 'D' AND ac.a_pos <> 'D'`);
-  await q("Sale bill pending", `UPDATE ${s}.outclear oc SET out_entryamt = oc.out_entryamt - ${offsets(2)} FROM ${s}.account ac WHERE ac.code = oc.code AND oc.out_ag_outid IS NULL AND oc.out_dbcode = 2 AND oc.out_ledid IS NOT NULL AND ac.book = 2 AND ac.a_pos <> 'D'`);
+  await q("Sale bill pending", `UPDATE ${s}.outclear oc SET out_entryamt = oc.out_entryamt - ${offsets} FROM ${s}.account ac WHERE ac.code = oc.code AND oc.out_ag_outid IS NULL AND oc.out_dbcode = 2 AND oc.out_ledid IS NOT NULL AND ac.book = 2 AND ac.a_pos <> 'D'`);
   await q("Purchase bill amounts", `UPDATE ${s}.outclear oc SET out_entryamt = led.amount FROM ${s}.ledger led, ${s}.account ac WHERE oc.out_ledid = led.led_key AND ac.code = oc.code AND oc.out_dbcode = 1 AND ac.book IN (1, 3) AND ac.a_pos <> 'D' AND led.doc_pos <> 'D' AND oc.out_ledid IS NOT NULL`);
-  await q("Purchase bill pending", `UPDATE ${s}.outclear oc SET out_entryamt = oc.out_entryamt - ${offsets(1)} FROM ${s}.account ac WHERE ac.code = oc.code AND oc.out_ag_outid IS NULL AND oc.out_dbcode = 1 AND oc.out_ledid IS NOT NULL AND ac.book IN (1, 3) AND ac.a_pos <> 'D'`);
+  await q("Purchase bill pending", `UPDATE ${s}.outclear oc SET out_entryamt = oc.out_entryamt - ${offsets} FROM ${s}.account ac WHERE ac.code = oc.code AND oc.out_ag_outid IS NULL AND oc.out_dbcode = 1 AND oc.out_ledid IS NOT NULL AND ac.book IN (1, 3) AND ac.a_pos <> 'D'`);
   // What the receipts and payments set off, summed on each bill.
   const setoffOf = (side: number, books: string) => `UPDATE ${s}.outclear oc SET out_setoff = coalesce((SELECT sum(x.out_setoff) FROM ${s}.outclear x WHERE x.out_dbcode = ${side} AND x.out_ag_outid = oc.out_key AND x.code = oc.code), 0)`
     + ` WHERE oc.out_ag_outid IS NULL AND oc.out_dbcode = ${side === 2 ? 1 : 2} AND oc.code IN (SELECT code FROM ${s}.account WHERE book ${books} AND a_pos <> 'D')`;

@@ -4,7 +4,6 @@
  * weight and alignment. Pictures are not carried.
  */
 
-const TWIPS_PER_PX = 15;
 /** A4 less 10 mm margins, in twips: the width a table is spread over. */
 const PAGE_TWIPS = 10772;
 

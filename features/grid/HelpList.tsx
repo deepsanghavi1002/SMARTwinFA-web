@@ -210,6 +210,7 @@ export function HelpList({
     <div ref={root} className="mp-help" style={style} tabIndex={0} role="listbox" aria-label={`Help: ${help.total}`} aria-activedescendant={focusPlace >= 0 ? `mp-help-row-${focusPlace}` : undefined} onKeyDown={keys}>
       <div className="mp-help-title mp-drag-handle" {...dragHandle} onDoubleClick={onResetPosition} title="Drag to move · double-click to put back">
         <span><HelpIcon name={helpIconFor(title)} />{title ? <b className="mp-help-name">{title}</b> : null}{help.total}{order ? ` · ${order.length} found` : ""}</span>
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the search box's wrapper keeps a press or double click from reaching the title bar's drag */}
         <span className="mp-help-search" onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
           <input
             ref={searchBox}

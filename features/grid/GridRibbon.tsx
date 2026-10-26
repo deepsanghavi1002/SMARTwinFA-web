@@ -66,7 +66,9 @@ export function GridRibbon({ source, tabs, actions, info }: {
 }) {
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
-  useEffect(() => { setActive(remembered(source, tabs)); }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The tab remembered in the browser is read after the first render, so the server's page and the browser's first render agree.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { setActive(remembered(source, tabs)); }, [source]);
   const choose = (at: number) => {
     setActive(at);
     try { window.localStorage.setItem(`${REMEMBER}:${source}`, tabs[at].title); } catch { /* the choice is only a convenience */ }
