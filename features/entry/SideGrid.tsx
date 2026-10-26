@@ -154,7 +154,7 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
             return (
               <tr key={index} className={[place % 2 ? "ent-alt" : "", place === Math.min(current, shown.length - 1) ? "ent-grid-current" : ""].filter(Boolean).join(" ")} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent(place); }}>
                 {columns.map((column, at) => (
-                  <td key={column.key} className={cellClass?.(index, column) || (column.editable ? "ent-open" : "")} style={{ textAlign: align(column) }} onMouseDown={() => setCol(at)}>
+                  <td key={column.key} className={[cellClass?.(index, column) || (column.editable ? "ent-open" : ""), place === current && at === col ? "ent-grid-cell" : ""].filter(Boolean).join(" ")} style={{ textAlign: align(column) }} onMouseDown={() => setCol(at)}>
                     {found && place === current && column.key === findKey ? <FoundText text={shownOf(column, row)} typed={found} /> : cell ? cell(index, column) : shownOf(column, row)}
                   </td>
                 ))}
@@ -176,4 +176,4 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
 }
 
 /** The faint name behind a grid (Slab Grid, Addon Grid). */
-const WATERMARKS: Readonly<Record<string, string>> = { Slab: "Slab Grid", Addon: "Addon Grid", Outstanding: "Outstanding Grid" };
+const WATERMARKS: Readonly<Record<string, string>> = { Slab: "Slab grid", Addon: "Addon grid", Outstanding: "Outstanding grid" };

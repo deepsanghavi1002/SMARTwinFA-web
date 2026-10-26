@@ -1,5 +1,6 @@
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
@@ -18,9 +19,8 @@ const MAX_PAYLOAD = 200000;
 const MAX_VIEWS = 50;
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Reports are disabled until authenticated sessions are implemented." }, { status: 503, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.action !== "string" || !body.session || !NAME.test(String(body.reportName ?? ""))) {
     return Response.json({ error: "action, session and reportName are required" }, { status: 400, headers });
   }
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   const name = String(body.name ?? "").trim().slice(0, 60);
 
   try {

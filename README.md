@@ -24,12 +24,14 @@ and opens the generic master editor for MASTER menu entries. Other workflows
 show a not-yet-built screen; retaining old service files does not wire them into
 Dad's new menu. This is a substantial migration, not just a view toggle.
 
-**Do not expose this prototype publicly.** Startup still accepts an unverified
-password and request-supplied operator identity. All generic master requests
-are disabled by default. `SMARTWINFA_TRUSTED_LOCAL_MODE=true` explicitly opts
-into isolated development with disposable data; it is not an authentication
-solution. Existing startup/legacy endpoints also need authenticated sessions
-and authorization before public use. The two save checks hardened here validate
+**Sign-in.** Every `/api` call needs a web session (`middleware.ts`); users set
+their password from a one-time link and sign in with user name or email. Each
+web user works as a desktop operator, whose rights apply; the operator is taken
+from the session, never from the request. Create the first admin inside the
+web container: `node scripts/auth-invite.mts <email> --url <public address>`,
+then manage users at `/admin/users`. `SMARTWINFA_TRUSTED_LOCAL_MODE` no longer
+opens anything. Keep Cloudflare Access (or a private network) in front until
+the remaining items in `docs/PENDING-WORK.md` are done. The two save checks hardened here validate
 the program/module pair against the visible menu and require both edit and
 delete permissions for a mixed save; they do not constitute a full security audit.
 

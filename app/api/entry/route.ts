@@ -1,5 +1,6 @@
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { verifyModulePassword } from "@/lib/master-program/extras";
 import { Loader } from "@/lib/master-program/load";
 import { readSession } from "@/lib/master-program/session";
@@ -12,15 +13,16 @@ import { entryAll } from "@/lib/entry/all";
 import { entryBill } from "@/lib/entry/bill";
 import { masterDetails } from "@/lib/entry/details";
 import { accountLedger } from "@/lib/entry/ledger";
+import { accountOutstanding } from "@/lib/entry/outstanding";
 import { isLinkRegister, linkEntries, linkLines } from "@/lib/entry/link";
 import { partyStock } from "@/lib/entry/partyStock";
-import { buildDelete, buildSave, runPlan } from "@/lib/entry/save";
+import { buildDelete, buildSave, isVoucherStyle, runPlan } from "@/lib/entry/save";
 import { tdsInfo } from "@/lib/entry/tds";
 import type { SaveInput, SaveReport } from "@/lib/entry/save";
 import type { HeaderField } from "@/lib/entry/checks";
 import { deleteDocuments, documentFile, listDocuments, saveDocuments } from "@/lib/entry/documents";
 import type { DocumentInput } from "@/lib/entry/documents";
-import { productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
+import { partyProductKeys, productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
 
 /**
@@ -67,10 +69,11 @@ async function saveEntry(body: Body, key: SessionKey, moduleName: string) {
       await client.query("SET LOCAL lock_timeout = '5s'");
       const loader = new Loader(client, session);
       const def = await loadInvoice(loader, body.entryName, moduleName);
+      const kind = isVoucherStyle(body.entryName) ? "Voucher" : "Invoice";
       const input = body.save as SaveInput | undefined;
       const changing = Number(input?.editKey ?? 0) > 0;
-      if (def.rights.restricted && !changing && !def.rights.add) throw new Error("Invoice Entry Add Rights Not Available For User");
-      if (def.rights.restricted && changing && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
+      if (def.rights.restricted && !changing && !def.rights.add) throw new Error(`${kind} Entry Add Rights Not Available For User`);
+      if (def.rights.restricted && changing && !def.rights.edit) throw new Error(`${kind} Entry Edit Rights Not Available For User`);
       if (!input || typeof input !== "object") throw new Error("The entry to save is missing");
       // One save at a time, taken before the number is checked: a save waiting here then sees what the one before it committed.
       if (commit) await client.query("SELECT pg_advisory_xact_lock(hashtext('smartwinfa-entry-save'))");
@@ -98,7 +101,8 @@ async function saveDocumentsAction(body: Body, key: SessionKey, moduleName: stri
       }
       const loader = new Loader(client, session);
       const def = await loadInvoice(loader, body.entryName, moduleName);
-      if (def.rights.restricted && !def.rights.edit) throw new Error("Invoice Entry Edit Rights Not Available For User");
+      const kind = isVoucherStyle(body.entryName) ? "Voucher" : "Invoice";
+      if (def.rights.restricted && !def.rights.edit) throw new Error(`${kind} Entry Edit Rights Not Available For User`);
       const docs = Array.isArray(body.documents) ? (body.documents as DocumentInput[]) : [];
       const counts = await saveDocuments(client, loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey), docs);
       if (!allowed) throw new DocumentDryRun(counts);
@@ -130,9 +134,10 @@ async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
       await client.query("SET LOCAL lock_timeout = '5s'");
       const loader = new Loader(client, session);
       const def = await loadInvoice(loader, body.entryName, moduleName);
-      if (def.rights.restricted && !def.rights.delete) throw new Error("Invoice Entry Delete Rights Not Available For User");
+      const kind = isVoucherStyle(body.entryName) ? "Voucher" : "Invoice";
+      if (def.rights.restricted && !def.rights.delete) throw new Error(`${kind} Entry Delete Rights Not Available For User`);
       const uniqueKey = Number(body.uniqueKey);
-      if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the invoice to delete from Find / Edit");
+      if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the entry to delete from Find / Edit");
       const plan = await buildDelete(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey);
       const result = await runPlan(client, loader, plan, { commit });
       if (!commit) throw new DryRun(result);
@@ -148,9 +153,8 @@ async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
 }
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Entry migration is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -160,7 +164,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.action !== "string" || !body.session || !NAME.test(String(body.entryName ?? ""))) {
     return Response.json({ error: "action, session and entryName are required" }, { status: 400, headers });
   }
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   const moduleName = String(body.menuShortName ?? "");
   if (body.action === "save") return saveEntry(body, key, moduleName);
   if (body.action === "delete") return deleteEntry(body, key, moduleName);
@@ -199,7 +203,7 @@ export async function POST(request: Request) {
         case "party": {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
-          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0, Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0), warnings: loader.warnings };
+          return { party: await partyDetails(loader, body.entryName, chosenRegister(def, body.firstCombo), code, String(body.date ?? "").slice(0, 20), Number.isInteger(Number(body.addressId)) ? Number(body.addressId) : 0, Number.isInteger(Number(body.editKey)) ? Number(body.editKey) : 0, isVoucherStyle(body.entryName) ? { acDbcode: Number(body.voucherSide) === 2 ? 2 : 1, ledKey: Number.isInteger(Number(body.rowLedKey)) ? Math.max(0, Number(body.rowLedKey)) : 0 } : undefined), warnings: loader.warnings };
         }
         case "doc-list":
           return { documents: await listDocuments(loader, body.entryName, chosenRegister(def, body.firstCombo), Number(body.uniqueKey)), warnings: loader.warnings };
@@ -209,6 +213,11 @@ export async function POST(request: Request) {
           const code = Number(body.code);
           if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party from the help list");
           return { tds: await tdsInfo(loader, body.entryName, chosenRegister(def, body.firstCombo), code), warnings: loader.warnings };
+        }
+        case "party-products": {
+          const code = Number(body.code);
+          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose a party first");
+          return { keys: await partyProductKeys(loader, code), warnings: loader.warnings };
         }
         case "product-help":
           return { help: await productHelp(loader, body.entryName, chosenRegister(def, body.firstCombo)), warnings: loader.warnings };
@@ -261,6 +270,11 @@ export async function POST(request: Request) {
           const prodKey = Number(body.prodKey ?? 0);
           if (!Number.isInteger(code) || code < 0 || !Number.isInteger(prodKey) || prodKey < 0 || (code === 0 && prodKey === 0)) throw new Error("Choose an account or a product row");
           return { stock: await partyStock(loader, code, prodKey, typeof body.date === "string" ? body.date : ""), warnings: loader.warnings };
+        }
+        case "party-outstanding": {
+          const code = Number(body.code);
+          if (!Number.isInteger(code) || code <= 0) throw new Error("Choose an account row");
+          return { stock: await accountOutstanding(loader, code, typeof body.date === "string" ? body.date.slice(0, 20) : ""), warnings: loader.warnings };
         }
         case "ledger": {
           const code = Number(body.code);

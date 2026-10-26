@@ -24,17 +24,29 @@ async function render(path = "/", init = {}) {
   );
 }
 
-test("generic master requests fail closed before database access by default", async () => {
-  const previous = process.env.SMARTWINFA_TRUSTED_LOCAL_MODE;
-  delete process.env.SMARTWINFA_TRUSTED_LOCAL_MODE;
-  try {
-    const response = await render("/api/master-program", { method: "POST", body: "{}" });
-    assert.equal(response.status, 503);
-    assert.match((await response.json()).error, /disabled until authenticated sessions/);
-  } finally {
-    if (previous === undefined) delete process.env.SMARTWINFA_TRUSTED_LOCAL_MODE;
-    else process.env.SMARTWINFA_TRUSTED_LOCAL_MODE = previous;
+test("API requests without a session fail closed before database access", async () => {
+  // No cookie means no lookup: these answer without a database, which the test run does not have.
+  for (const [path, method] of [["/api/master-program", "POST"], ["/api/companies?year=1", "GET"], ["/api/operators", "GET"], ["/api/auth/me", "GET"], ["/api/auth/users", "GET"]]) {
+    const response = await render(path, { method, ...(method === "POST" ? { body: "{}" } : {}) });
+    assert.equal(response.status, 401, `${method} ${path}`);
+    assert.match((await response.json()).error, /Sign in to continue/);
   }
+});
+
+test("a forged session cookie is refused without a lookup when it is not a token", async () => {
+  const response = await render("/api/companies?year=1", { headers: { accept: "application/json", cookie: "swfa_session=not a token" } });
+  assert.equal(response.status, 401);
+});
+
+test("writes from another site are refused before anything else", async () => {
+  const response = await render("/api/auth/login", { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: "{}" });
+  assert.equal(response.status, 403);
+});
+
+test("health stays public", async () => {
+  const response = await render("/api/health", { headers: { accept: "application/json" } });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "ok");
 });
 
 test("server-renders the SMARTwinFA login shell", async () => {

@@ -1,6 +1,7 @@
 import { readMasterLog, readSmallEntryLog } from "@/lib/master-program/extras";
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { verifyModulePassword } from "@/lib/master-program/extras";
 import { Loader } from "@/lib/master-program/load";
 import { readSession } from "@/lib/master-program/session";
@@ -11,7 +12,7 @@ import { runGroupedReport, runReport } from "@/lib/report/reportCombine";
 import { loadReport, againstBookItems, formFilterItems, lostFocusItems, slabFilterItems } from "@/lib/report/setup";
 import { readEntryLog } from "@/lib/report/log";
 import { zoomTarget } from "@/lib/report/zoom";
-import type { ReportOutput, ReportSelection } from "@/lib/report/types";
+import type { ReportDefinition, ReportOutput, ReportSelection } from "@/lib/report/types";
 import { packedOutputStream } from "@/lib/report/wire";
 
 /**
@@ -58,6 +59,31 @@ function cleanSelection(value: ReportSelection | undefined): ReportSelection {
  * The program version the desktop's status bar shows (Main_Menu_New.SetWinfa_Version_No):
  * max(version_number) of smart_setup.winfa_version, 20260714 shown as 2026.07.
  */
+/**
+ * The value each text box of the report's selection starts with (runtime_controls' own query: the opening and closing stock amounts of the Profit / Loss come from LAST_YEAR and OS_BILLDIFF):
+ * the first column of the query's first row, as a plain number, left out when there is none or it is nil.
+ */
+async function runtimeDefaults(client: { query: (sql: string) => Promise<{ rows: Record<string, unknown>[]; fields: { name: string }[] }> }, session: { companySchema: string; yearId: string | number }, report: ReportDefinition): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const box of report.runtime) {
+    const query = box.text.trim().replace(/^"+|"+$/g, "").trim();
+    if (box.type !== "T" || !/^select\b/i.test(query)) continue;
+    const sql = query.split("|sys.db|").join(`${session.companySchema}.`).split("|sys.yearid|").join(String(session.yearId));
+    try {
+      await client.query("SAVEPOINT runtime_default");
+      const found = await client.query(`SELECT * FROM (${sql}) q LIMIT 20`);
+      await client.query("RELEASE SAVEPOINT runtime_default");
+      // The first row with an amount (the closing stock account's, not the nil one of a stock account beside it).
+      const field = found.fields[0]?.name;
+      const amounts = field === undefined ? [] : found.rows.map((row) => Number(String(row[field] ?? "").replace(/[^0-9.\-]/g, ""))).filter((value) => Number.isFinite(value) && value !== 0);
+      if (amounts.length > 0) out[box.name] = amounts[0].toFixed(box.decimals > 0 ? box.decimals : 2);
+    } catch {
+      await client.query("ROLLBACK TO SAVEPOINT runtime_default").catch(() => undefined);
+    }
+  }
+  return out;
+}
+
 async function winfaVersion(client: { query: (sql: string) => Promise<{ rows: Record<string, unknown>[] }> }): Promise<string> {
   const exists = await client.query("SELECT to_regclass('smart_setup.winfa_version') IS NOT NULL AS ok");
   if (exists.rows[0]?.ok !== true) return "";
@@ -66,9 +92,8 @@ async function winfaVersion(client: { query: (sql: string) => Promise<{ rows: Re
 }
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Reports are disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -78,20 +103,22 @@ export async function POST(request: Request) {
   if (!body || typeof body.action !== "string" || !body.session || !NAME.test(String(body.reportName ?? ""))) {
     return Response.json({ error: "action, session and reportName are required" }, { status: 400, headers });
   }
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   const moduleName = String(body.menuShortName ?? "");
 
   try {
+    const used: { loader?: Loader } = {};
     const result = await transaction(async (client) => {
       const session = await readSession(client, key);
       if (!allowedMasterMenu(await readMenuCatalog(session.companyGroup), body.reportName, moduleName, "REPORT")) {
         throw new Error("The requested report and module are not in this company's visible menu");
       }
       const loader = new Loader(client, session);
+      used.loader = loader;
       switch (body.action) {
         case "report": {
           const report = await loadReport(loader, body.reportName, moduleName);
-          return { report, warnings: loader.warnings, companyName: session.companyName, userName: session.loginName, version: await winfaVersion(client) };
+          return { report, runtimeDefaults: await runtimeDefaults(client, session, report), warnings: loader.warnings, companyName: session.companyName, userName: session.loginName, version: await winfaVersion(client) };
         }
         case "generate": {
           // Compare periods > Same period last year: the same report read from the company's previous year database.
@@ -113,6 +140,9 @@ export async function POST(request: Request) {
         default: throw new Error(`Unknown action ${body.action}`);
       }
     }, { readOnlyWork: true, timeoutMs: 120000 });
+    // What the report asked to be written (Update Value In Master) is done once it has run, in a transaction that can write.
+    const pendingWrites = body.action === "generate" ? used.loader?.writes ?? [] : [];
+    if (pendingWrites.length > 0) await transaction(async (client) => { for (const write of pendingWrites) await client.query(write.sql, write.params); });
     // A report's rows go packed and in pieces (a year's checklist can be hundreds of thousands of rows).
     if ("output" in result && result.output) return new Response(packedOutputStream(result.output as ReportOutput), { headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
     return Response.json(result, { headers });

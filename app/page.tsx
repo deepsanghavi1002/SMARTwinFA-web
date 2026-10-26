@@ -86,6 +86,8 @@ export interface WindowInstance extends MenuNode {
   autoParty?: { code: number; name: string };
   /** A SUMIF Ask AI asked for, worked out when the report has run. */
   autoSumif?: SumifHint;
+  /** Choices and options Ask AI set on the report as it opens. */
+  autoSetup?: { choices: Readonly<Record<string, string>>; checks: readonly string[] };
   /** The window this one was zoomed from (a report row's voucher or account). */
   zoomParent?: number;
 }
@@ -335,7 +337,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     if (!node) { void messageBox.alert(`The ${wanted} program is not in this company's menu, so it cannot be opened.`, "Zoom", "warning"); return; }
     if (windows.length >= MAX_WINDOWS) { void messageBox.alert(`${MAX_WINDOWS} windows are open already.\nClose one (× on its tab) to open it.`, "Too Many Windows", "warning"); return; }
     const winId = nextWindowId.current++;
-    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode, ...(target.acCode && target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}), ...(target.run ? { autoRun: true, ...(target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}), ...(target.pivot ? { autoPivot: target.pivot } : {}), ...(target.pick ? { autoPick: target.pick } : {}), ...(target.party ? { autoParty: target.party } : {}), ...(target.sumif ? { autoSumif: target.sumif } : {}) } : {}) }) }]);
+    setWindows((list) => [...list, { ...node, id: winId, menuId: node.id, label: getNextWindowLabel(list, node.label), ...(activeId !== null ? { zoomParent: activeId } : {}), ...(target.entryName ? { zoomLedKey: target.ledKey } : { zoomAcCode: target.acCode, ...(target.acCode && target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}), ...(target.run ? { autoRun: true, ...(target.from && target.to ? { autoFrom: target.from, autoTo: target.to } : {}), ...(target.pivot ? { autoPivot: target.pivot } : {}), ...(target.pick ? { autoPick: target.pick } : {}), ...(target.party ? { autoParty: target.party } : {}), ...(target.sumif ? { autoSumif: target.sumif } : {}), ...(target.setup ? { autoSetup: target.setup } : {}) } : {}) }) }]);
     bringToFront(winId);
   };
 
@@ -699,7 +701,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       case "master": return <MasterProgram programName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "small-entry": return <SmallEntry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "entry": return <Entry entryName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoom={(node as WindowInstance).zoomLedKey} />;
-      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} autoRun={(node as WindowInstance).autoRun} autoFrom={(node as WindowInstance).autoFrom} autoTo={(node as WindowInstance).autoTo} autoPivot={(node as WindowInstance).autoPivot} autoPick={(node as WindowInstance).autoPick} autoParty={(node as WindowInstance).autoParty} autoSumif={(node as WindowInstance).autoSumif} />;
+      case "report": return <ReportCombine reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} zoomAccount={(node as WindowInstance).zoomAcCode} autoRun={(node as WindowInstance).autoRun} autoFrom={(node as WindowInstance).autoFrom} autoTo={(node as WindowInstance).autoTo} autoPivot={(node as WindowInstance).autoPivot} autoPick={(node as WindowInstance).autoPick} autoParty={(node as WindowInstance).autoParty} autoSumif={(node as WindowInstance).autoSumif} autoSetup={(node as WindowInstance).autoSetup} />;
       case "pie-chart": return <PieChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "year-chart": return <YearChart reportName={node.actionMenu!} menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "security": return node.actionCode?.toUpperCase() === "USER_DASHBOARD_RIGHTS"
@@ -738,7 +740,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   return (
     <ZoomContext.Provider value={openZoom}>
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
-      {askOpen && <AskAi minimized={askMin} onMinimize={() => setAskMin(true)} onRestore={() => setAskMin(false)} onClose={() => { setAskOpen(false); setAskMin(false); }} onOpenLedger={(acCode, from, to) => { openZoom({ reportName: "REPORT_LEDGER", acCode, from, to }); setAskMin(true); }} onOpenReport={(name, from, to, pivot, pick, party, sumif) => { openZoom({ reportName: name, run: true, from, to, pivot, pick, party, sumif }); setAskMin(true); }} />}
+      {askOpen && <AskAi minimized={askMin} onMinimize={() => setAskMin(true)} onRestore={() => setAskMin(false)} onClose={() => { setAskOpen(false); setAskMin(false); }} onOpenLedger={(acCode, from, to) => { openZoom({ reportName: "REPORT_LEDGER", acCode, from, to }); setAskMin(true); }} onOpenReport={(name, from, to, pivot, pick, party, sumif, setup) => { openZoom({ reportName: name, run: true, from, to, pivot, pick, party, sumif, setup }); setAskMin(true); }} />}
       {selection && <IdleGuard companyGroup={selection.companyGroup} loginName={selection.loginName} locked={locked} onLock={lock} onUnlock={unlock} onLogoff={logoutNow} />}
       <header className="title-bar">
         <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>

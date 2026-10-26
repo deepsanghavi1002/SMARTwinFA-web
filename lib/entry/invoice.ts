@@ -10,7 +10,7 @@ import { orderByAliases } from "../small-entry/text";
 import { moneyColumnNames } from "../report/generate";
 import { BOOK, entryDialect, replaceEntryTokens, tdsAutoJournal, tdsBook } from "./values";
 import type { EntryValues } from "./values";
-import type { BookScreen, ControlPlace, EntryColumn, EntryOption, GridColumn, HelpList, InvoiceControl, InvoiceDefinition, PartyDetails, SeriesDefaults, SlabRow } from "./types";
+import type { AddonItem, BookScreen, ControlPlace, EntryColumn, EntryOption, GridColumn, HelpList, InvoiceControl, InvoiceDefinition, PartyDetails, SeriesDefaults, SlabRow } from "./types";
 
 /**
  * Comman_Entry (Entry.cs), the Invoice screen, as far as setting the screen up: opening the
@@ -253,7 +253,7 @@ function licence21Caption(caption: string, forBook: number, bookActual: boolean)
   return ({ "Chln. Dt.": "Inv. Dt.", "Chln. No.": "Inv. No.", Date: "Ent. Dt.", Number: "Ent. No." } as Record<string, string>)[caption] ?? caption;
 }
 
-async function headerControls(loader: Loader, entryId: number, book: BookContext, replace: (sql: string) => string): Promise<InvoiceControl[]> {
+async function headerControls(loader: Loader, entryId: number, book: BookContext, replace: (sql: string) => string, voucher = false): Promise<InvoiceControl[]> {
   const { session } = loader;
   const { values } = book;
   const forBook = values.type > 0 ? values.type : values.bookKey;
@@ -274,7 +274,7 @@ async function headerControls(loader: Loader, entryId: number, book: BookContext
       if (session.licence !== 21 && (values.type === 28 || values.type === 30)) row.field_enable_book = toText(row.field_enable_book).replace(" 28, 30,", "");
     }
     if (name === "tbx_partyname" && !book.party) continue;
-    if (name === "cmb_rev_entry" && !((values.bookKey === BOOK.EXPENSE || values.bookKey === BOOK.AGENCY) && session.coGstReq)) continue;
+    if (name === "cmb_rev_entry" && !voucher && !((values.bookKey === BOOK.EXPENSE || values.bookKey === BOOK.AGENCY) && session.coGstReq)) continue;
     // The TDS auto journal shows the foot box (Credit Days, as "TDS Amount") on the expense, agency and purchase books; the screen hides it for a party with no TDS.
     const tdsBox = name === "tbx_credit_days" && tdsAutoJournal(session.setup) && tdsBook(values.bookKey, values.bookActual);
     if (tdsBox) { row.field_enable_book = `${text(row, "field_enable_book")} ${forBook},`; row.field_disable_book = ""; row.add_visible = true; }
@@ -415,7 +415,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
   const grids = {
     slab: await gridColumns(loader, toInt(field(events.find((event) => text(event, "fill_column_for").toLowerCase() === "item_slab"), "fill_grid_event_id"))),
     addon: await gridColumns(loader, toInt(field(eventFilling(allEvents, "c1dg_addon"), "fill_grid_event_id"))),
-    outstanding: await gridColumns(loader, toInt(field(eventFilling(allEvents, "c1dg_outclear"), "fill_grid_event_id"))),
+    outstanding: await gridColumns(loader, toInt(field(eventFilling(allEvents, "c1dg_outclear") ?? eventFilling(allEvents, "c1dg_v_outclear"), "fill_grid_event_id"))),
   };
   const replace = (sql: string) => replaceEntryTokens(blankCoalesceAsText(sql), book.values);
   const asks = asksTaxGroup(book, session.coGstReq);
@@ -482,6 +482,19 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     }
   }
   const sides = voucher ? await voucherSides(loader, book, allEvents, replace) : [];
+  // The voucher's addon fields by the register: events 39 (header, entrypos L) and 40 (a column of each account row, entrypos P) read addon_fld for the book.
+  const voucherAddon = voucher
+    ? {
+      header: await readAddonItems(loader, book, `Select ${toText(field(allEvents.find((event) => text(event, "control_name").toLowerCase() === "first_combo" && text(event, "fill_control_name").toLowerCase() === "c1dg_addon"), "fill_control_query"))}`, 0),
+      row: await (async () => {
+        const rowEvent = allEvents.find((event) => text(event, "control_name").toLowerCase() === "first_combo" && text(event, "fill_column_for").toLowerCase() === "account_addon");
+        const items = await readAddonItems(loader, book, `Select ${toText(field(rowEvent, "fill_control_query"))}`, 0);
+        // The `_addon_combo` (a list) and `_addon_input` (typed) rows of the account grid's event give the column widths.
+        const widths = new Map(((await loader.readTable(`SELECT field_name, update_grid_width FROM ${SETUP_SCHEMA}.entry_grid_body WHERE entry_control_id = $1 AND BTRIM(field_name) IN ('_addon_combo', '_addon_input')`, [toInt(field(rowEvent, "fill_grid_event_id"))])) ?? []).map((row) => [text(row, "field_name"), toInt(field(row, "update_grid_width"))]));
+        return items.map((item) => { const width = widths.get(item.options ? "_addon_combo" : "_addon_input"); return width ? { ...item, width } : item; });
+      })(),
+    }
+    : undefined;
   if (voucher && sides.length > 0 && seriesOptions.length === 0) seriesOptions = [...sides[0].series];
   if (book.values.acHelp === "") book = { ...book, values: { ...book.values, acHelp: text(book.row, "bs_achelp") || " 2, 3," } };
 
@@ -525,7 +538,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
   const frozen = session.licence !== 45 && productAt >= 0 ? productAt + 1 : 0;
   const totals = productBody.filter((item) => text(item.row, "field_total") === "Y").map((item) => item.column);
 
-  const controls = await headerControls(loader, entryId, book, replace);
+  const controls = await headerControls(loader, entryId, book, replace, voucher);
   const series = seriesOptions[0]?.text ?? "";
   const defaults = series === "" ? { date: clampToYear(loader, new Date()), number: "", from: formatDesktopDate(session.tarikh1), upto: formatDesktopDate(session.tarikh2), chlnFrom: formatDesktopDate(addDays(session.tarikh1, -120)) } : await seriesDefaults(loader, entryName, book, series);
   const taxPercs = Object.fromEntries(((await loader.readTable(`SELECT tax_rec, tax_perc FROM |sys.db|tax_master WHERE tax_pos <> 'D'`)) ?? []).map((row) => [toText(displayValue(field(row, "tax_rec"))), toDecimal(field(row, "tax_perc"))]));
@@ -543,7 +556,8 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     party: book.party,
     inventory,
     slab: book.slab,
-    setoff: setoffBooks.some((list) => list.replace(/ /g, "").split(",").includes(String(book.values.bookKey))),
+    setoff: voucher || setoffBooks.some((list) => list.replace(/ /g, "").split(",").includes(String(book.values.bookKey))),
+    ...(voucherAddon ? { voucherAddon } : {}),
     balance,
     taxGroup,
     controls: controls.map((control) => (control.name === "cmb_series" ? { ...control, options: seriesOptions, initial: series } : control.name === "cmb_side" ? { ...control, options: sides.map((side) => ({ text: side.text, value: side.value })), initial: sides[0]?.text ?? "" } : control)),
@@ -556,6 +570,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     defaults,
     taxPercs,
     productRules: {
+      rateOptional: text(book.row, "stkm_ropt").toUpperCase() === "O",
       noDuplicate: toText(session.setup.i_duplichk).toUpperCase() === "Y",
       // bl_Stock_compulsory (i_stock C) on a stock-posting issue book of the invoice style; an AD user is exempt unless SMARTWINFA_STOCK_CHECK_FOR_ADMIN=true (testing).
       stockCheck: toText(session.setup.i_stock).toUpperCase() === "C" && text(book.row, "stkm_stkpost").toUpperCase() === "Y" && book.stockNat === "L" && (session.userType !== "AD" || process.env.SMARTWINFA_STOCK_CHECK_FOR_ADMIN === "true"),
@@ -796,46 +811,64 @@ async function firstRowValues(loader: Loader, sql: string): Promise<string[]> {
   }
 }
 
-export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = "", addressId = 0, editKey = 0): Promise<PartyDetails> {
+/**
+ * Fill_Slab_and_Addon's addon list for one query over addon_fld: a typed field (I) is an empty input (a date for fiel_mbal D), a list field (M) the subs of the addon
+ * (Fill_AddonGridCombo), set to the party's own value when the addon is kept on the master. Compulsory = a list field or fiel_entry C.
+ */
+async function readAddonItems(loader: Loader, book: BookContext, query: string, code: number): Promise<AddonItem[]> {
+  let sql = query;
+  if (!book.values.bookActual && book.values.type > 0) sql = sql.replace(/\|sys\.book\|/g, String(book.values.type));
+  const fields = (await loader.readTable(replaceEntryTokens(sql, book.values))) ?? [];
+  const items: AddonItem[] = [];
+  for (const row of fields) {
+    const type = text(row, "fiel_type");
+    const compulsory = type !== "I" || text(row, "fiel_entry") === "C";
+    const label = `${compulsory ? "* " : ""}${text(row, "addon_label")}`;
+    if (type !== "M") { items.push({ key: toInt(field(row, "fiel_key")), label, value: "", date: text(row, "fiel_mbal").toUpperCase() === "D", compulsory }); continue; }
+    const options = await queryOptions(loader, replaceEntryTokens(`select sub_name,sub_code from |sys.db|addon_sub where para_id=${toInt(field(row, "fiel_key"))} and sub_pos <> 'D' order by sub_name`, book.values));
+    let value = options[0]?.text ?? "";
+    if (code > 0 && text(row, "fiel_relate") === "A" && text(row, "fiel_masterpos") === "Y" && /^[A-Za-z0-9_]+$/.test(text(row, "fiel_save").trim())) {
+      const own = (await loader.readTable(`select txt_${text(row, "fiel_save").trim()} from |sys.db|addon_data where code=$1`, [code]))?.[0];
+      if (own) value = toText(displayValue(Object.values(own)[0]));
+    }
+    items.push({ key: toInt(field(row, "fiel_key")), label, value, options });
+  }
+  return items;
+}
+
+/**
+ * The voucher style's account row (input_name's LF event): the account's address box and the bills pending on the side the day book posts to (event 53).
+ * voucher.acDbcode is the account's side on this row; voucher.ledKey the row's saved ledger key (an opened voucher: what it set off counts as pending again).
+ */
+export async function partyDetails(loader: Loader, entryName: string, firstCombo: EntryOption, code: number, docDate = "", addressId = 0, editKey = 0, voucher?: Readonly<{ acDbcode: number; ledKey: number }>): Promise<PartyDetails> {
   const properties = await entryProperties(loader, entryName);
   const entryId = toInt(field(properties, "entry_key"));
-  const book = await bookContext(loader, entryName, firstCombo, { acCode: code });
+  const book = await bookContext(loader, entryName, firstCombo, { acCode: code, ...(voucher && (voucher.acDbcode === 1 || voucher.acDbcode === 2) ? { acDbcode: voucher.acDbcode, bkDbcode: voucher.acDbcode === 1 ? 2 : 1 } : {}) });
   const account = (await loader.readTable(`SELECT name, credit_days FROM |sys.db|account WHERE code = $1 AND a_pos <> 'D'`, [code]))?.[0];
   if (!account) throw new Error("The party is not in the account master");
-  const events = (await controlEvents(loader, entryId)).filter((event) => text(event, "control_name").toLowerCase() === "tbx_partyname" && text(event, "control_event").toUpperCase() === "LF");
+  const events = (await controlEvents(loader, entryId)).filter((event) => text(event, "control_name").toLowerCase() === (voucher ? "input_name" : "tbx_partyname") && text(event, "control_event").toUpperCase() === "LF");
   let address: string[] = [];
-  const addon: { key: number; label: string; value: string; options?: EntryOption[]; date?: boolean; compulsory?: boolean }[] = [];
+  const addon: AddonItem[] = [];
   for (const event of events) {
     const fillName = text(event, "fill_control_name").toLowerCase();
     if (fillName === "lbx_address") {
       // Display_Address: each column of the row is one line. The columns have no names, so the row is read as a list.
       address = await firstRowValues(loader, replaceEntryTokens(`Select ${toText(field(event, "fill_control_query"))}`, book.values));
     } else if (fillName === "c1dg_addon") {
-      let sql = `Select ${toText(field(event, "fill_control_query"))}`;
-      if (!book.values.bookActual && book.values.type > 0) sql = sql.replace(/\|sys\.book\|/g, String(book.values.type));
-      const fields = (await loader.readTable(replaceEntryTokens(sql, book.values))) ?? [];
-      for (const row of fields) {
-        const type = text(row, "fiel_type");
-        const compulsory = type !== "I" || text(row, "fiel_entry") === "C";
-        const label = `${compulsory ? "* " : ""}${text(row, "addon_label")}`;
-        if (type !== "M") { addon.push({ key: toInt(field(row, "fiel_key")), label, value: "", date: text(row, "fiel_mbal").toUpperCase() === "D", compulsory }); continue; }
-        // Fill_AddonGridCombo: a list of the addon's subs; the party's own value when the addon is kept on the master.
-        const options = await queryOptions(loader, replaceEntryTokens(`select sub_name,sub_code from |sys.db|addon_sub where para_id=${toInt(field(row, "fiel_key"))} and sub_pos <> 'D' order by sub_name`, book.values));
-        let value = options[0]?.text ?? "";
-        if (text(row, "fiel_relate") === "A" && text(row, "fiel_masterpos") === "Y" && /^[A-Za-z0-9_]+$/.test(text(row, "fiel_save").trim())) {
-          const own = (await loader.readTable(`select txt_${text(row, "fiel_save").trim()} from |sys.db|addon_data where code=$1`, [code]))?.[0];
-          if (own) value = toText(displayValue(Object.values(own)[0]));
-        }
-        addon.push({ key: toInt(field(row, "fiel_key")), label, value, options });
-      }
+      addon.push(...(await readAddonItems(loader, book, `Select ${toText(field(event, "fill_control_query"))}`, code)));
     }
   }
   // C1dg_Slab_Leave fills c1dg_OutClear: the party's pending bills on the side the book posts to.
-  const outEvent = eventFilling(await controlEvents(loader, entryId), "c1dg_outclear");
-  let outSql = outEvent ? `Select ${toText(field(outEvent, "fill_control_query"))}` : "";
-  if (outSql !== "" && editKey > 0) {
+  const outEvents = await controlEvents(loader, entryId);
+  const outEvent = eventFilling(outEvents, "c1dg_outclear") ?? eventFilling(outEvents, "c1dg_v_outclear");
+  // Only a book that sets off against bills (the debit / credit notes) lists them: a sale or purchase entry leaves the Outstanding grid empty.
+  const setoffBooks = ((await loader.readTable(`SELECT save_only_forbook FROM ${SETUP_SCHEMA}.entry_save_properties WHERE entrykey_id = $1 AND record_active AND LOWER(grid_name) = 'c1dg_outclear' AND multiple_save`, [entryId])) ?? []).map((row) => text(row, "save_only_forbook"));
+  const settlesBills = Boolean(voucher) || setoffBooks.some((list) => list.replace(/ /g, "").split(",").includes(String(book.values.bookKey)));
+  let outSql = outEvent && settlesBills ? `Select ${toText(field(outEvent, "fill_control_query"))}` : "";
+  if (voucher) outSql = outSql.replace(/,\s*ledger\s+led\b/i, ", |sys.db|ledger led");
+  if (outSql !== "" && (voucher ? voucher.ledKey > 0 : editKey > 0)) {
     // An entry being changed: what it set off against a bill counts as pending again and shows as typed (the bill stays listed even when it is settled).
-    const ledKey = toInt(field((await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [editKey]))?.[0], "led_key"));
+    const ledKey = voucher ? voucher.ledKey : toInt(field((await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [editKey]))?.[0], "led_key"));
     // The entry's own set-offs, read first (a few rows) and written into the query as figures: a subquery per bill scans the whole outstanding table.
     const own = (await loader.readTable(`SELECT out_ag_outid, SUM(out_setoff::numeric) AS setoff FROM |sys.db|outclear WHERE out_ledid = $1 AND COALESCE(out_ag_outid, 0) > 0 GROUP BY out_ag_outid`, [ledKey])) ?? [];
     const mine = own.length === 0 ? "0" : `(CASE out.out_key ${own.map((row) => `WHEN ${toInt(field(row, "out_ag_outid"))} THEN ${toDecimal(field(row, "setoff"))}`).join(" ")} ELSE 0 END)`;

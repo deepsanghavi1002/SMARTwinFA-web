@@ -88,7 +88,7 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
-export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo, autoPivot, autoPick, autoParty, autoSumif }: { autoRun?: boolean; /** A SUMIF Ask AI asked for: worked out on the output when the report has run. */ autoSumif?: SumifHint; /** One account Ask AI named: the Account group is ticked and only this account is picked in its list. */ autoParty?: { code: number; name: string }; /** The question Ask AI was asked: the first combo (SALE, PURCHASE ...) is chosen from the words in it. */ autoPick?: string; /** A pivot Ask AI asked for, set up when the report has run. */ autoPivot?: PivotHint; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
+export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo, autoPivot, autoPick, autoParty, autoSumif, autoSetup }: { autoRun?: boolean; /** Choices (control name to item text) and options to tick as an Ask AI report opens. */ autoSetup?: { choices: Readonly<Record<string, string>>; checks: readonly string[] }; /** A SUMIF Ask AI asked for: worked out on the output when the report has run. */ autoSumif?: SumifHint; /** One account Ask AI named: the Account group is ticked and only this account is picked in its list. */ autoParty?: { code: number; name: string }; /** The question Ask AI was asked: the first combo (SALE, PURCHASE ...) is chosen from the words in it. */ autoPick?: string; /** A pivot Ask AI asked for, set up when the report has run. */ autoPivot?: PivotHint; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
   const [fatal, setFatal] = useState("");
@@ -103,6 +103,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   const [lostItems, setLostItems] = useState<ControlItem[] | null>(null);
   const [columnsTicked, setColumnsTicked] = useState<string[]>([]);
   const [texts, setTexts] = useState<Record<string, string>>({});
+  const textDefaults = useRef<Record<string, string>>({});
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [ticks, setTicks] = useState<Record<string, Set<string>>>({});
   /** The register (first combo entry) whose Account ticks the operator has changed; until then every listed account is ticked, as on the desktop. */
@@ -154,7 +155,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     let live = true;
     (async () => {
       try {
-        const reply = await call<{ report: ReportDefinition; warnings: string[]; version?: string }>("report");
+        const reply = await call<{ report: ReportDefinition; runtimeDefaults?: Record<string, string>; warnings: string[]; version?: string }>("report");
         if (!live) return;
         const report = reply.report;
         if (report.rights.modulePassword) {
@@ -164,6 +165,9 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
           if (!check.ok) { await messageBox.alert(check.message || "Invalid Password", "Module Password"); onClose(); return; }
         }
         setDef(report);
+        // The amounts the report's own queries give (Profit / Loss: Opening Amount from LAST_YEAR, Closing Amount from OS_BILLDIFF) fill their boxes as it opens.
+        textDefaults.current = reply.runtimeDefaults ?? {};
+        setTexts({ ...textDefaults.current });
         setVersion(reply.version ?? "");
         setFirst(report.firstCombo.options[0]?.value ?? "");
         const lastDates = readLastDates();
@@ -384,12 +388,25 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     autoStarted.current = true;
     // The dates the question named go in first; the run follows on the next render, when they are in.
     if (autoFrom && autoTo) { setFrom(desktopDay(autoFrom)); setUpto(desktopDay(autoTo)); }
+    // The choices and options the answer was worked out with (Profit / Loss: Closing Amount and Update Value In Master, so its closing stock is generated).
+    // The Profit / Loss opened from Ask AI always has its stock value generated (Update Value In Master, and the opening value between dates), as its answer was.
+    const setup = autoSetup ?? (def.checkboxes.some((check) => check.name === "CHK_UPD_MASTER") && def.checkboxes.some((check) => check.name === "CHK_PROFIT_TRF")
+      ? { choices: {}, checks: ["CHK_UPD_MASTER", ...(autoFrom && autoTo && desktopDay(autoFrom) !== def.dates.yearStart ? ["CHK_OPEN_VALUE"] : [])] } : undefined);
+    if (setup) {
+      for (const [name, wantedText] of Object.entries(setup.choices)) {
+        const item = def.controls.find((control) => control.name === name)?.items.find((entry) => entry.text.trim().toLowerCase() === wantedText.trim().toLowerCase());
+        if (item) setChoices((current) => ({ ...current, [name]: itemKey(item) }));
+      }
+      if (setup.checks.length > 0) setChecks((current) => ({ ...current, ...Object.fromEntries(setup.checks.map((name) => [name, true])) }));
+    }
     // The register the question named (purchase, not the sale it opens on): the first combo is set first and the run waits for its lists.
     const words = new Set((autoPick ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word !== "").map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word)));
     const wanted = autoPick ? def.firstCombo.options
       .map((option) => ({ option, parts: option.text.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word !== "").map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word)) }))
       .filter((entry) => entry.parts.length > 0 && entry.parts.every((word) => words.has(word)))
       .sort((a, b) => b.parts.length - a.parts.length)[0]?.option : undefined;
+    // Dates that do not start at the year's start (a month, a quarter, yesterday): the report that has a Between Date first combo is set to it, not left on Upto Date.
+    const wantedFirst = wanted ?? (autoFrom && autoTo && desktopDay(autoFrom) !== def.dates.yearStart ? def.firstCombo.options.find((option) => /between/i.test(option.text)) : undefined);
     // A party the question named: the account group is ticked and that account alone picked in its list.
     if (autoParty) {
       const group = groupControl?.items.find((item) => /account|party/i.test(item.text)) ?? groupControl?.items[0];
@@ -398,11 +415,11 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       if (group && help && row) {
         tickGroup(group, true);
         setTicks((current) => ({ ...current, [help.grid]: new Set([row[help.keyColumn] ?? ""]) }));
-        setFirstEdited(wanted?.value ?? first);
+        setFirstEdited(wantedFirst?.value ?? first);
       }
     }
-    if (wanted && wanted.value !== first && def.lostFocusControl !== "") { afterFirst.current = () => setAutoGo(true); setFirst(wanted.value); if (!autoParty) setFirstEdited(null); return; }
-    if (wanted && wanted.value !== first) setFirst(wanted.value);
+    if (wantedFirst && wantedFirst.value !== first && def.lostFocusControl !== "") { afterFirst.current = () => setAutoGo(true); setFirst(wantedFirst.value); if (!autoParty) setFirstEdited(null); return; }
+    if (wantedFirst && wantedFirst.value !== first) setFirst(wantedFirst.value);
     setAutoGo(true);
   }, [autoRun, def]);
   useEffect(() => {
@@ -470,7 +487,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     setGroups([]);
     setChoices(Object.fromEntries(def.controls.filter((candidate) => candidate.type === "L" || candidate.type === "C").map((candidate) => [candidate.name, candidate.items[0] ? itemKey(candidate.items[0]) : ""])));
     setColumnsTicked(def.controls.find((candidate) => candidate.name === "lbchk_Col_Select")?.initiallyTicked.slice() ?? []);
-    setTexts({});
+    setTexts({ ...textDefaults.current });
     setChecks(Object.fromEntries(def.checkboxes.map((check) => [check.name, check.value])));
     setTicks(Object.fromEntries(def.helps.map((help) => [help.grid, new Set<string>()])));
     setFirstEdited(null);

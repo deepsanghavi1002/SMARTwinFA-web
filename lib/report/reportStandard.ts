@@ -46,7 +46,7 @@ import type { ResultRow } from "./call";
 import { ResultTable } from "./call";
 import { dateStyle112, dateStyle6, desktopDate, sqlServerCompare } from "./formula";
 import type { ReportPlan } from "./generate";
-import { pgFragment, ReportRefusal, tickedGroupOrder } from "./generate";
+import { pgFragment, planReport, ReportRefusal, tickedGroupOrder } from "./generate";
 import {
   cashBookColumns, dayBefore, dropColumn, groupFailed, groupHeadingColumns, groupList, groupSmartColumn, insertFirst, narrationPieces, numberKey,
   parseRowDate, renameColumn, replaceCI, rightAlignedKey, sortRows, tableFromFields, tableFromResult, textKey, withEntryAddon,
@@ -2078,12 +2078,14 @@ async function trialBalance(loader: Loader, plan: ReportPlan): Promise<ResultTab
 // gross and net profit / loss lines are put in at each change of level. The same counters are
 // kept here, one for one.
 //
-// Not ported: the Previous Year (CHK_PREV_BAL), Cash / Cheque (CHK_CASH_CHQ) and Cash Sale
-// (CHK_CSPLREQ) options, the closing stock worked out from the stock report (CHK_UPD_MASTER;
-// a Closing / Opening amount typed in is used), and the procedure's write of the profit back
-// to AC_BALANCE.OS_BILLDIFF (this program only reads).
+// The Previous Year (CHK_PREV_BAL), Cash / Cheque (CHK_CASH_CHQ) and Cash Sale (CHK_CSPLREQ) options are
+// ported with their own cursors; two of them together are refused, as the procedure's SELECT and FETCH
+// lists disagree and it fails on them. Not ported: the closing stock worked out from the stock report
+// (CHK_UPD_MASTER; a Closing / Opening amount typed in is used), and the procedure's write of the profit
+// back to AC_BALANCE.OS_BILLDIFF (this program only reads).
 
-type ProfitRow = { sr: number; particular: unknown; amount: unknown; particular1: unknown; amount1: unknown; level: unknown; desc: unknown; desc1: unknown };
+type ProfitRow = { sr: number; prev: unknown; particular: unknown; oth: unknown; chq: unknown; amount: unknown; prev1: unknown; particular1: unknown; oth1: unknown; chq1: unknown; amount1: unknown; level: unknown; desc: unknown; desc1: unknown };
+type ProfitNumbers = "prev" | "prev1" | "amount" | "amount1";
 
 async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const { session } = loader;
@@ -2094,13 +2096,59 @@ async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable
   const check = (name: string) => call.checkQuery.includes(`${name},`);
   const first = call.fcValue;
   const licence = call.licence;
-  for (const [name, caption] of [["CHK_PREV_BAL", "Previous Year Balance"], ["CHK_CASH_CHQ", "Cash / Cheque"], ["CHK_CSPLREQ", "Cash Sale"]] as const) {
-    if (check(name)) throw new ReportRefusal(`The ${caption} option of the Profit & Loss is not available in the web version yet.`, "Not ported yet");
+  const prevMode = check("CHK_PREV_BAL");
+  const cashMode = check("CHK_CASH_CHQ");
+  const cashSale = check("CHK_CSPLREQ");
+  // The procedure's own cursors for these options do not agree with the columns it fetches when two of them are ticked (its SELECT and FETCH lists differ),
+  // so the desktop fails on them: they are refused here the same way.
+  for (const [taken, name] of [[prevMode && cashMode, "Previous Year Balance with Cash / Cheque"], [prevMode && cashSale, "Previous Year Balance with Cash Sale"], [cashMode && cashSale, "Cash / Cheque with Cash Sale"]] as const) {
+    if (taken) throw new ReportRefusal(`The ${name} options of the Profit & Loss cannot be used together.`, "INTERNAL PROGRAM FAILURE");
   }
-  if (call.sortingText.includes("Opening Amount")) throw new ReportRefusal("Pl. Cursor Select Closing Amount Row", "INTERNAL PROGRAM FAILURE");
-  if (call.from.getTime() !== call.tarikh1.getTime() && first === 1) throw new ReportRefusal("Pl. Select Between Date Option Or From Date Select Year Start Date", "INTERNAL PROGRAM FAILURE");
+  const ymd = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
   const fromText = desktopDate(call.from);
   const uptoText = desktopDate(call.upto);
+  const text1Raw = toText(call.text[0]).trim();
+  let text1 = text1Raw === "" || text1Raw === "0" ? "0.00" : text1Raw;
+  let text2 = toText(call.text[1]).trim();
+
+  // The checks the procedure makes first: the last message it sets is the one shown.
+  let error = "";
+  // With Update Value In Master the stock value comes from the Stock report first, so a typed Opening Amount is not an error.
+  if (call.sortingText.includes("Opening Amount") && !(check("CHK_UPD_MASTER") && !check("CHK_STOCK_VAL_MANUAL"))) error = "Pl. Cursor Select Closing Amount Row";
+  if (call.from.getTime() !== call.tarikh1.getTime() && first === 1) error = "Pl. Select Between Date Option Or From Date Select Year Start Date";
+  // Once the year-ending entry (END- journal of book 19) is passed, the opening and closing figures cannot be changed; the profit is not shared again (CHK_PROFIT_TRF is dropped).
+  const schemaName = db.replace(/\.$/, "");
+  let productWise = false;
+  if ((await runReportSql(loader, "SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'ledger' AND column_name = 'year_id'", [schemaName])).rows.length > 0) {
+    productWise = num((await runReportSql(loader, `SELECT COUNT(*) AS n FROM ${db}ledger WHERE doc_pos = 'A' AND doc_date BETWEEN $1::date AND $2::date AND left(ltrim(doc_no1),4) = 'END-' AND book = 19 AND year_id = $3`, [ymd(call.tarikh1), ymd(call.tarikh2), call.yearId])).rows[0]?.n) > 0;
+  }
+  if (productWise) {
+    const openFigure = num((await runReportSql(loader, `SELECT coalesce(b.last_year::numeric,0) AS v FROM ${db}account a, ${db}ac_balance b WHERE a.a_pos <> 'D' AND a.code = b.code AND b.year_id = $1 AND a.bs_id IN (SELECT c.bs_id FROM ${db}account c WHERE c.ac_opensty = 'CB')`, [call.yearId])).rows.pop()?.v);
+    const closeFigure = num((await runReportSql(loader, `SELECT coalesce(b.amount::numeric,0) AS v FROM ${db}account a, ${db}ledger b WHERE a.a_pos <> 'D' AND a.code = b.code AND b.doc_pos = 'A' AND a.ac_opensty = 'CB' AND ac_dbcode = 1 AND b.doc_date BETWEEN $1::date AND $2::date AND left(ltrim(b.doc_no1),4) = 'END-' AND b.book = 19`, [ymd(call.tarikh1), ymd(call.tarikh2)])).rows.pop()?.v);
+    if (closeFigure > 0 && text1 !== "" && text1 !== "0.00" && closeFigure !== num(text1)) error = "Opening Figure Change Not Allowed After Year Ending Entry Pass";
+    if (openFigure > 0 && text2 !== "" && text2 !== "0.00" && openFigure !== num(text2)) error = "Closing Figure Change Not Allowed After Year Ending Entry Pass";
+  }
+  if (error !== "") throw new ReportRefusal(error, "INTERNAL PROGRAM FAILURE");
+
+  // Update Value In Master (CHK_UPD_MASTER) without Stock Value Manual (whatever the Selection, None too): the closing stock is worked out by the Stock report (first combo Summary, valuation Actual, the options
+  // of this report, by product) and its total is taken as the Closing Amount; a between-date report takes the opening value of the Stock report as the Opening Amount. The procedure also
+  // writes these into the closing stock account (AC_BALANCE.OS_BILLDIFF / LAST_YEAR); this program only reads, so they are used here and not stored.
+  if (!check("CHK_STOCK_VAL_MANUAL") && check("CHK_UPD_MASTER")) {
+    // The procedure runs it for every product (no help selection): all of them are ticked.
+    const everyProduct = (await runReportSql(loader, `SELECT prod_key FROM ${db}product_master WHERE prod_pos <> 'D' AND inventory = 'Y'`)).rows.map((row) => String(num(row.prod_key)));
+    const stockPlan = await planReport(loader, "REPORT_STOCK", { firstCombo: "2", from: fromText, upto: uptoText, groups: ["172|-1"], ticks: { C1HelpProduct: everyProduct }, choices: { lbox_Filter: "180|-5", lBox_Sorting: "382|-1" }, columns: [], texts: {}, checks: {} });
+    const options = call.checkQuery.split(",").filter((name) => name !== "" && !["CHK_UPD_MASTER", "CHK_UPD_RATE", "CHK_GST_OPEN"].includes(name)).map((name) => `${name},`).join("");
+    const stock = await stockReport(loader, { ...stockPlan, call: { ...stockPlan.call, checkQuery: options } });
+    const total = (column: string) => (stock.columns.includes(column) ? Math.round(stock.rows.reduce((sum, row) => sum + num(stock.get(row, column)), 0) * 100) / 100 : null);
+    const closing = total("VALUE");
+    if (closing !== null) text1 = String(closing);
+    // Update Value In Master comes first: an Opening Amount typed in the selection is not used with it (the opening stock is the account's own, or the Stock report's opening value between dates).
+    text2 = "";
+    if (call.from.getTime() !== call.tarikh1.getTime()) { const opened = total("OPEN_VALUE"); if (opened !== null) text2 = String(opened); }
+    if (text1 === "0" || text1 === "") text1 = "0.00";
+  }
+  const noClosingText = text1 === "" || text1 === "0.00";
+  const closingText = noClosingText ? 0 : num(text1);
 
   // bitHideBook: licences 19, 29, 68 and 73 hide entries booked against an account whose short name says CA_ENT.
   let hideBook = true;
@@ -2108,19 +2156,14 @@ async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable
     const found = await runReportSql(loader, `SELECT COUNT(*) AS n FROM ${db}account WHERE a_pos <> 'D' AND POSITION('CA_ENT' IN a_short) > 0`);
     hideBook = num(found.rows[0]?.n) > 0;
   }
-  const hide = !hideBook && [19, 29, 68, 73].includes(licence) ? ` AND LEDPOST.POST_BOOKCD in (select code from ${db}ACCOUNT where a_pos='A')` : "";
+  const hide = (schema: string) => (!hideBook && [19, 29, 68, 73].includes(licence) ? ` AND LEDPOST.POST_BOOKCD in (select code from ${schema}ACCOUNT where a_pos='A')` : "");
+  // Licence 29 (unless both figures are asked for) and licence 73 leave out the entries booked against the CA_ENT account.
+  const bookAccounts = (schema: string) => `select code from ${schema}ACCOUNT where a_pos<>'D'${(!check("CHK_BOTHFIG") && licence === 29) || licence === 73 ? " and a_short<>'CA_ENT'" : ""}`;
 
   // The capital accounts the company has (BOSSCAPITAL): 0901 proprietor ... 0905.
   const capitals = (await rowsOf(`select left(bs_code,4) AS c4 from ${db}balsheet where BS_POS <> 'D' and bs_key in (select bs_id from ${db}account where a_pos<>'D' and bs_id in (select bs_key from ${db}balsheet where BS_POS <> 'D' and Left(bs_code,2)='09' and substring(bs_code,3,2) in ('01','02','03','04','05')))`)).map((row) => String(row.c4));
   const capital = (code: string) => capitals.includes(code);
   const partnership = capital("0901") || capital("0902") || capital("0904") || capital("0905");
-
-  // The typed Closing / Opening stock amounts (var_text1, var_text2).
-  const text1Raw = toText(call.text[0]).trim();
-  const text1 = text1Raw === "" || text1Raw === "0" ? "0.00" : text1Raw;
-  const text2 = toText(call.text[1]).trim();
-  const noClosingText = text1 === "" || text1 === "0.00";
-  const closingText = noClosingText ? 0 : num(text1);
 
   // The table (TEMP_TABLE_PROFITLOS), kept as rows.
   const rows: ProfitRow[] = [];
@@ -2135,175 +2178,279 @@ async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable
   let tempLevel = 0;
   let openSr = 0;
   let openAmount = 0;
+  // Last year's side of the same figures (LY_*).
+  let lyDebit = 0;
+  let lyCredit = 0;
+  let lyDiff = 0;
+  let lyPrint = 0;
+  let lyOpen = 0;
   const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;
-  const insert = (values: Partial<ProfitRow>) => { rows.push({ sr: srNo, particular: null, amount: null, particular1: null, amount1: null, level: null, desc: null, desc1: null, ...values }); };
+  const abs = Math.abs;
+  const insert = (values: Partial<ProfitRow>) => { rows.push({ sr: srNo, prev: null, particular: null, oth: null, chq: null, amount: null, prev1: null, particular1: null, oth1: null, chq1: null, amount1: null, level: null, desc: null, desc1: null, ...values }); };
   const update = (sr: number, values: Partial<ProfitRow>) => { for (const row of rows) if (row.sr === sr) Object.assign(row, values); };
+  /** The updates that only the Previous Year Balance option makes. */
+  const updatePrev = (sr: number, values: Partial<ProfitRow>) => { if (prevMode) update(sr, values); };
   const sync = () => { if (debitCounter >= creditCounter) creditCounter = debitCounter + 1; else debitCounter = creditCounter + 1; };
   const even = () => { if (debitCounter > creditCounter) creditCounter = debitCounter; else debitCounter = creditCounter; };
   const half = (value: number) => ((licence === 5 || licence === 18) && check("CHK_PROFIT_FULL") ? value / 2 : value);
-  const sumOf = (side: "amount" | "amount1", notTrading: boolean) => r2(rows.filter((row) => !notTrading || (row.desc !== null && row.desc !== "TRADING")).reduce((sum, row) => sum + num(row[side]), 0));
+  const sumOf = (side: ProfitNumbers, notTrading: boolean) => r2(rows.filter((row) => !notTrading || (row.desc !== null && row.desc !== "TRADING")).reduce((sum, row) => sum + num(row[side]), 0));
+  const sums = (notTrading: boolean) => { creditAmount = sumOf("amount1", notTrading); debitAmount = sumOf("amount", notTrading); if (prevMode) { lyCredit = sumOf("prev1", notTrading); lyDebit = sumOf("prev", notTrading); } };
 
   // Opening stock: the opening stock account's opening (last year's closing for a between-date report).
   const opening = await rowsOf(`SELECT ac.name AS "particular", acbal.${first === 2 ? "last_year" : "opening"}::numeric AS "amount", acbal.os_billdiff::numeric AS "closing"`
     + ` FROM ${db}ACCOUNT ac left join ${db}AC_BALANCE acbal on acbal.code=ac.code left join ${db}balsheet bs on bs.bs_key=ac.bs_id`
     + ` where acbal.year_id='${call.yearId}' and ac.ac_opensty='CB' and ac.a_pos<>'D' and ac.bs_id=10`);
-  let lyOpen = 0;
   for (const stock of opening) {
     openAmount = num(stock.amount);
     if (text2 !== "" && text2 !== "0.00" && text2 !== "0") openAmount = num(text2);
     if (openAmount > 0) {
       srNo += 1;
-      insert({ particular: "OPENING STOCK", amount: Math.abs(openAmount), level: 1, desc: "TRADING" });
+      insert({ particular: "OPENING STOCK", amount: abs(openAmount), level: 1, desc: "TRADING" });
       openSr = srNo;
-      lyOpen = Math.abs(openAmount);
-      debitAmount += Math.abs(openAmount);
+      lyOpen = abs(openAmount);
+      debitAmount += abs(openAmount);
       debitCounter += 1;
     }
   }
 
-  // The accounts' net amounts, by level, balance sheet head and name.
-  const csFrom = withEntryAddon(call.from_, `left join ${db}addon_aentry aentry on ac.code=aentry.aona_accode`).split("sys.aents").join("").split("sys.aente").join("");
-  const where = call.where.split("|sys.yearid|").join(call.yearId);
-  const accounts = await rowsOf(`SELECT ac1.name AS "particular", SUM(CASE WHEN ledpost.POST_DBCODE = 1 THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "debit", SUM(CASE WHEN ledpost.POST_DBCODE = 2 THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "credit", bs2.bs_level AS "bs_level", bs2.bs_desc AS "bs_desc"`
-    + ` FROM ${db}LEDGER_POST ledpost left join ${db}account ac1 on ac1.code=ledpost.post_code left join ${db}balsheet bs2 on bs2.bs_key=ac1.bs_id left join ${db}LEDGER led on led.led_key=ledpost.led_id`
-    + ` WHERE ledpost.POST_DATE BETWEEN '${fromText}' AND '${uptoText}'${hide} and ledpost.post_bookcd in (select code from ${db}ACCOUNT where a_pos<>'D') and led.DOC_POS<>'D' and coalesce(LEFT(doc_no1,3),'')<>'END'`
-    + ` and ledpost.POST_CODE in (select ac.code ${csFrom} ${where} and (ac.bs_id in (select bs1.bs_key from ${db}balsheet bs1 where (Left(bs1.bs_code,2) between '01' and '04') or (bs1.bs_key=10))))`
-    + ` GROUP BY bs2.bs_level, bs2.bs_desc, ac1.name ORDER BY bs2.bs_level, bs2.bs_desc, ac1.name`);
-  accounts.sort((a, b) => num(a.bs_level) - num(b.bs_level) || sqlServerCompare(toText(a.bs_desc), toText(b.bs_desc)) || sqlServerCompare(toText(a.particular), toText(b.particular)));
-
-  /** The trading account's close (level 1 to the next): the closing stock, then the gross profit or loss carried to the profit and loss. */
-  const closeTrading = (side: "debit" | "credit", balanceHead: string) => {
-    if (noClosingText) {
-      diff = r2(creditAmount - debitAmount);
-    } else {
-      if (creditCounter >= debitCounter) {
-        creditCounter += 1; srNo += 1;
-        insert({ particular1: "CLOSING STOCK", amount1: closingText, level: 1, desc: "TRADING" });
-      } else {
-        creditCounter += 1;
-        update(creditCounter, { particular1: "CLOSING STOCK", amount1: closingText, level: 1, desc: "TRADING" });
-      }
-      insertedClosing = true;
-      creditAmount += closingText;
-      diff = r2(creditAmount - debitAmount);
+  // The accounts, by level, balance sheet head and name: the amounts of the period (and last year's balance with the Previous Year option).
+  type Account = { particular: string; level: number; head: string; debit: number; credit: number; othD: number; chqD: number; othC: number; chqC: number; prev: number };
+  const accounts: Account[] = [];
+  const fromDate = `to_date('${fromText}','DD/Mon/YYYY')`;
+  const uptoDate = `to_date('${uptoText}','DD/Mon/YYYY')`;
+  if (prevMode) {
+    // The account-wise query of the option: every account of the heads 01 to 04, its balance of last year and what was posted in the dates. A between-date report takes
+    // last year from the same dates of last year's database.
+    let withPrev = "COALESCE(acbal.last_year::numeric, 0)";
+    let prvCte = "";
+    if (first === 2) {
+      const prvSchema = (await runReportSql(loader,
+        `SELECT LOWER(BTRIM(c.co_dataname)) AS schema_name FROM ${SYSTEM_SCHEMA}.company c JOIN ${SYSTEM_SCHEMA}.cname n ON n.c_id = c.co_key JOIN ${SYSTEM_SCHEMA}.year_ac y ON y.year_key = n.c_yearid`
+        + ` WHERE c.co_pos = 'A' AND BTRIM(c.name) = $1 AND y.year_start::date = $2::date AND LOWER(BTRIM(c.co_dataname)) <> $3`
+        + ` AND EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = LOWER(BTRIM(c.co_dataname))) ORDER BY c.co_key DESC LIMIT 1`,
+        [session.companyName, ymd(new Date(call.tarikh1.getFullYear() - 1, call.tarikh1.getMonth(), call.tarikh1.getDate())), schemaName])).rows[0]?.schema_name;
+      if (!prvSchema) throw new ReportRefusal("Last year's database of this company was not found, so the Previous Year Balance cannot be shown for a between-date report.", "INTERNAL PROGRAM FAILURE");
+      const prv = `${String(prvSchema)}.`;
+      prvCte = `, prv AS (SELECT ledpost.post_code AS code, SUM(CASE WHEN ledpost.POST_DBCODE = 1 THEN ledpost.POST_AMT::numeric ELSE -ledpost.POST_AMT::numeric END) AS n FROM ${prv}ledger_post ledpost left join ${prv}ledger led on led.led_key=ledpost.led_id`
+        + ` WHERE ledpost.POST_DATE BETWEEN (${fromDate} - interval '1 year')::date AND (${uptoDate} - interval '1 year')::date${hide(prv)} and ledpost.post_bookcd in (${bookAccounts(prv)}) and led.DOC_POS<>'D' and coalesce(LEFT(doc_no1,3),'')<>'END' GROUP BY ledpost.post_code)`;
+      withPrev = "COALESCE(prv.n, 0)";
     }
-    const loss = side === "debit" ? diff < 0 : diff <= 0;
-    if (loss) {
-      srNo += 1; creditCounter += 1;
-      insert({ particular1: "Gross Loss c/f", amount1: Math.abs(diff), level: 1, desc: "TRADING" });
-      srNo += 1; debitCounter += 1;
-      insert({ particular: "Gross Loss B/d", amount: Math.abs(diff), level: 2, desc: balanceHead });
-      sync();
-      debitAmount = Math.abs(diff); creditAmount = 0;
+    const found = await rowsOf(`WITH cur AS (SELECT ledpost.post_code AS code, SUM(CASE WHEN ledpost.POST_DBCODE = 1 THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS d, SUM(CASE WHEN ledpost.POST_DBCODE = 2 THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS c`
+      + ` FROM ${db}ledger_post ledpost left join ${db}ledger led on led.led_key=ledpost.led_id WHERE ledpost.POST_DATE BETWEEN ${fromDate} AND ${uptoDate}${hide(db)} and ledpost.post_bookcd in (${bookAccounts(db)}) and led.DOC_POS<>'D' and coalesce(LEFT(doc_no1,3),'')<>'END' GROUP BY ledpost.post_code)${prvCte}`
+      + ` SELECT ac1.name AS "particular", ${withPrev} AS "prev", COALESCE(cur.d, 0) AS "debit", COALESCE(cur.c, 0) AS "credit", bs2.bs_level AS "bs_level", bs2.bs_desc AS "bs_desc"`
+      + ` FROM ${db}account ac1 left join ${db}balsheet bs2 on bs2.bs_key=ac1.bs_id left join ${db}AC_BALANCE acbal on acbal.code=ac1.code and acbal.year_id='${call.yearId}' left join cur on cur.code=ac1.code${first === 2 ? " left join prv on prv.code=ac1.code" : ""}`
+      + ` where ac1.bs_id in (select bs1.bs_key from ${db}balsheet bs1 where Left(bs1.bs_code,2) between '01' and '04')`);
+    for (const row of found) accounts.push({ particular: toText(row.particular), level: num(row.bs_level), head: toText(row.bs_desc), debit: num(row.debit), credit: num(row.credit), othD: 0, chqD: 0, othC: 0, chqC: 0, prev: num(row.prev) });
+  } else {
+    const csFrom = withEntryAddon(call.from_, `left join ${db}addon_aentry aentry on ac.code=aentry.aona_accode`).split("sys.aents").join("").split("sys.aente").join("");
+    // Licence 34 (Mudra Foods) does not leave out the accounts marked A_POSTING = N.
+    const where = (licence === 34 ? call.where.split("AND AC.A_POSTING <> 'N'").join("") : call.where).split("|sys.yearid|").join(call.yearId);
+    const debitOnly = cashSale ? "ledpost.POST_DBCODE = 1 and ledpost.post_book <> 4" : "ledpost.POST_DBCODE = 1";
+    const split = cashMode
+      ? `, SUM(CASE WHEN ledpost.POST_DBCODE = 1 and left(led.full_docno,2)<>'SH' THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "othd", SUM(CASE WHEN ledpost.POST_DBCODE = 1 and left(led.full_docno,2)='SH' THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "chqd"`
+        + `, SUM(CASE WHEN ledpost.POST_DBCODE = 2 and left(led.full_docno,2)<>'SH' THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "othc", SUM(CASE WHEN ledpost.POST_DBCODE = 2 and left(led.full_docno,2)='SH' THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "chqc"` : "";
+    const found = await rowsOf(`SELECT ac1.name AS "particular", SUM(CASE WHEN ${debitOnly} THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "debit", SUM(CASE WHEN ledpost.POST_DBCODE = 2 THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "credit"${split}, bs2.bs_level AS "bs_level", bs2.bs_desc AS "bs_desc"`
+      + ` FROM ${db}LEDGER_POST ledpost left join ${db}account ac1 on ac1.code=ledpost.post_code left join ${db}balsheet bs2 on bs2.bs_key=ac1.bs_id left join ${db}LEDGER led on led.led_key=ledpost.led_id`
+      + ` WHERE ledpost.POST_DATE BETWEEN '${fromText}' AND '${uptoText}'${hide(db)} and ledpost.post_bookcd in (${bookAccounts(db)}) and led.DOC_POS<>'D' and coalesce(LEFT(doc_no1,3),'')<>'END'`
+      + ` and ledpost.POST_CODE in (select ac.code ${csFrom} ${where} and (ac.bs_id in (select bs1.bs_key from ${db}balsheet bs1 where (Left(bs1.bs_code,2) between '01' and '04') or (bs1.bs_key=10))))`
+      + ` GROUP BY bs2.bs_level, bs2.bs_desc, ac1.name ORDER BY bs2.bs_level, bs2.bs_desc, ac1.name`);
+    for (const row of found) accounts.push({ particular: toText(row.particular), level: num(row.bs_level), head: toText(row.bs_desc), debit: num(row.debit), credit: num(row.credit), othD: num(row.othd), chqD: num(row.chqd), othC: num(row.othc), chqC: num(row.chqc), prev: 0 });
+  }
+  accounts.sort((a, b) => a.level - b.level || sqlServerCompare(a.head, b.head) || sqlServerCompare(a.particular, b.particular));
+
+  /** The trading account's close (level 1 to the next) when the account that made the level change is on the debit side (`debitSide`) or the credit side. */
+  const closeTrading = (debitSide: boolean, head: string, prev1: number) => {
+    const closingRow = () => {
+      if (creditCounter >= debitCounter) { creditCounter += 1; srNo += 1; insert({ particular1: "CLOSING STOCK", amount1: noClosingText ? 0 : closingText, prev1: debitSide && noClosingText ? abs(lyOpen) : abs(prev1), level: 1, desc: "TRADING" }); }
+      else { creditCounter += 1; update(creditCounter, { particular1: "CLOSING STOCK", ...(noClosingText ? {} : { amount1: closingText }), prev1: debitSide ? abs(lyOpen) : abs(prev1), level: 1, desc: "TRADING" }); }
+      insertedClosing = true;
+    };
+    if (noClosingText && (!debitSide || lyOpen === 0)) {
+      diff = r2(creditAmount - debitAmount);
+      lyDiff = lyCredit - lyDebit;
     } else {
+      // A debit-side account also writes a nil closing stock when an opening stock was taken (LY_OPEN_AMOUNT <> 0, and nothing typed).
+      if (prev1 !== 0 || lyOpen !== 0 || !noClosingText) closingRow();
+      if (!noClosingText) creditAmount += closingText;
+      if (debitSide) lyCredit += lyOpen;
+      diff = r2(creditAmount - debitAmount);
+      lyDiff = lyCredit - lyDebit;
+    }
+    lyPrint = lyDiff;
+    if (debitSide ? diff < 0 : diff <= 0) {
+      if (lyDiff > 0) lyPrint = 0;
+      srNo += 1; creditCounter += 1;
+      insert({ particular1: "Gross Loss c/f", prev1: abs(lyPrint), amount1: abs(diff), level: 1, desc: "TRADING" });
+      if (debitSide) {
+        lyDiff = lyCredit - lyDebit;
+        if (lyDiff >= 0) updatePrev(srNo, { particular: "Gross Profit C/f", prev: abs(lyDiff) }); else updatePrev(srNo, { prev1: abs(lyDiff) });
+      }
       srNo += 1; debitCounter += 1;
-      insert({ particular: "Gross Profit C/f", amount: Math.abs(diff), level: 1, desc: "TRADING" });
+      insert({ particular: "Gross Loss B/d", prev: abs(lyPrint), amount: abs(diff), level: 2, desc: head });
+      if (debitSide) {
+        if (lyDiff >= 0) { updatePrev(srNo, { particular1: "Gross Profit B/d", prev1: abs(lyDiff) }); lyDebit = 0; lyCredit = abs(lyDiff); }
+        else { updatePrev(srNo, { prev: abs(lyDiff) }); lyDebit = abs(lyDiff); lyCredit = 0; }
+      }
+      sync();
+      debitAmount = abs(diff); creditAmount = 0;
+      if (!debitSide) { lyDebit = abs(lyDiff); lyCredit = 0; }
+    } else {
+      lyPrint = lyDiff;
+      if (debitSide ? lyDiff < 0 : lyDiff > 0) lyPrint = 0;
+      srNo += 1; debitCounter += 1;
+      insert({ particular: "Gross Profit C/f", prev: abs(lyPrint), amount: abs(diff), level: 1, desc: "TRADING" });
+      if (debitSide) {
+        lyDiff = lyCredit - lyDebit;
+        if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "Gross Loss c/f", prev1: abs(lyDiff) });
+      }
       srNo += 1;
-      insert({ particular1: "Gross Profit B/d", amount1: Math.abs(diff), level: 2, desc: balanceHead });
+      insert({ particular1: "Gross Profit B/d", prev1: abs(lyPrint), amount1: abs(diff), level: 2, desc: head });
+      if (debitSide) {
+        if (lyDiff >= 0) { updatePrev(srNo, { prev1: abs(lyDiff) }); lyDebit = 0; lyCredit = abs(lyDiff); }
+        else { updatePrev(srNo, { particular: "Gross Loss B/d", prev: abs(lyDiff) }); lyDebit = abs(lyDiff); lyCredit = 0; }
+      }
       creditCounter += 1;
       sync();
-      debitAmount = 0; creditAmount = Math.abs(diff);
+      debitAmount = 0; creditAmount = abs(diff);
+      if (!debitSide) { lyDebit = 0; lyCredit = abs(lyDiff); }
     }
     even();
     diff = 0;
+    lyDiff = 0;
   };
   /** The profit and loss account's close (level 2 to the next): the net profit or loss and its appropriation line. */
-  const closeProfitLoss = () => {
+  const closeProfitLoss = (debitSide: boolean) => {
     diff = half(r2(creditAmount - debitAmount));
+    lyDiff = lyCredit - lyDebit;
+    lyPrint = lyDiff;
     if (diff >= 0) {
+      if (lyDiff < 0) lyPrint = 0;
       srNo += 1; debitCounter += 1;
-      insert({ particular: "NET PROFIT", amount: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      insert({ particular: "NET PROFIT", prev: abs(lyPrint), amount: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      lyDiff = lyCredit - lyDebit;
+      if (debitSide) { if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "NET LOSS", prev1: abs(lyDiff) }); }
       if (capital("0903")) {
         srNo += 1; creditCounter += 1;
-        insert({ particular1: "NET PROFIT B/d", amount1: Math.abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION" });
+        insert({ particular1: "NET PROFIT B/d", prev1: abs(lyPrint), amount1: abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION" });
+        if (debitSide) {
+          if (lyDiff >= 0) { updatePrev(srNo, { prev1: abs(lyDiff) }); lyCredit = abs(lyDiff); lyDebit = 0; }
+          else { updatePrev(srNo, { particular: "NET LOSS", prev: abs(lyDiff) }); lyCredit = 0; lyDebit = abs(lyDiff); }
+        }
       }
       sync();
-      creditAmount = Math.abs(diff); debitAmount = 0; profitSign = -1;
+      creditAmount = abs(diff); debitAmount = 0; profitSign = -1;
+      if (!debitSide) { lyCredit = abs(lyDiff); lyDebit = 0; }
     } else {
+      if (lyDiff > 0) lyPrint = 0;
       srNo += 1; creditCounter += 1;
-      insert({ particular1: "NET LOSS", amount1: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      insert({ particular1: "NET LOSS", prev1: abs(lyPrint), amount1: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      lyDiff = lyCredit - lyDebit;
+      if (debitSide) { if (lyDiff >= 0) updatePrev(srNo, { particular: "NET PROFIT", prev: abs(lyDiff) }); else updatePrev(srNo, { prev1: abs(lyDiff) }); }
       if (capital("0903")) {
         srNo += 1; debitCounter += 1;
-        insert({ particular: "NET LOSS B/d", amount: Math.abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION" });
+        insert({ particular: "NET LOSS B/d", prev: abs(lyPrint), amount: abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION" });
+        if (debitSide) {
+          if (lyDiff >= 0) { updatePrev(srNo, { particular1: "NET Profit B/d", prev1: abs(lyDiff) }); lyCredit = abs(lyDiff); lyDebit = 0; }
+          else { updatePrev(srNo, { prev: abs(lyDiff) }); lyCredit = 0; lyDebit = abs(lyDiff); }
+        }
       }
       sync();
-      creditAmount = 0; debitAmount = Math.abs(diff); profitSign = 1;
+      creditAmount = 0; debitAmount = abs(diff); profitSign = 1;
+      if (!debitSide) { lyCredit = 0; lyDebit = abs(lyDiff); }
     }
     even();
   };
 
+  // Cash sale: the cash paid to suppliers through the cash book, taken off the transport charges of the trading account (found once, when the first debit account is posted).
+  let cashAmount = 0;
+  let cashAsked = false;
+  let transportDone = false;
+  let lastPrev = 0;
+
   for (const account of accounts) {
-    const particular = toText(account.particular);
-    const level = num(account.bs_level);
-    const balanceHead = toText(account.bs_desc);
-    let net = r2(num(account.debit) - num(account.credit));
-    if (licence === 5 && (particular === "PURCHASE BILL" || particular === "SALE BILL")) net -= Math.round(net * 0.18 * 100) / 100;
-    if (net === 0) { continue; }
-    const debitSide = net > 0;
-    if (tempLevel !== level && tempLevel !== 0) {
-      if (tempLevel === 1) {
-        // A debit-side account also writes a nil closing stock when an opening stock was taken (LY_OPEN_AMOUNT <> 0, and nothing typed).
-        if (debitSide && noClosingText && lyOpen !== 0) {
-          diff = r2(creditAmount - debitAmount);
-          if (creditCounter >= debitCounter) { creditCounter += 1; srNo += 1; insert({ particular1: "CLOSING STOCK", amount1: 0, level: 1, desc: "TRADING" }); }
-          else { creditCounter += 1; update(creditCounter, { particular1: "CLOSING STOCK", level: 1, desc: "TRADING" }); }
-          insertedClosing = true;
-          const loss = diff < 0;
-          if (loss) {
-            srNo += 1; creditCounter += 1;
-            insert({ particular1: "Gross Loss c/f", amount1: Math.abs(diff), level: 1, desc: "TRADING" });
-            srNo += 1; debitCounter += 1;
-            insert({ particular: "Gross Loss B/d", amount: Math.abs(diff), level: 2, desc: balanceHead });
-            sync(); debitAmount = Math.abs(diff); creditAmount = 0;
+    const particular = account.particular;
+    const level = account.level;
+    const balanceHead = account.head;
+    let numClosing = r2(account.debit - account.credit);
+    let numOth = r2(account.othD - account.othC);
+    let numChq = r2(account.chqD - account.chqC);
+    if (licence === 5 && (particular === "PURCHASE BILL" || particular === "SALE BILL")) {
+      const cut = (value: number) => value - Math.round(value * 0.18 * 100) / 100;
+      numClosing = cut(numClosing); numOth = cut(numOth); numChq = cut(numChq);
+    }
+    const previous = account.prev;
+    lastPrev = previous;
+    if (numClosing !== 0 || (prevMode && previous !== 0)) {
+      const debitSide = numClosing > 0 || (prevMode && previous > 0);
+      if (tempLevel !== level && tempLevel !== 0) {
+        if (tempLevel === 1) closeTrading(debitSide, balanceHead, previous);
+        else if (tempLevel === 2) closeProfitLoss(debitSide);
+      }
+      if (debitSide) {
+        if (debitCounter >= creditCounter) {
+          if (prevMode && openSr > 0 && particular === "OPENING STOCK") {
+            debitCounter += 1;
+            update(openSr, { particular, prev: previous });
           } else {
-            srNo += 1; debitCounter += 1;
-            insert({ particular: "Gross Profit C/f", amount: Math.abs(diff), level: 1, desc: "TRADING" });
+            debitCounter += 1;
             srNo += 1;
-            insert({ particular1: "Gross Profit B/d", amount1: Math.abs(diff), level: 2, desc: balanceHead });
-            creditCounter += 1; sync(); debitAmount = 0; creditAmount = Math.abs(diff);
+            if (cashMode) insert({ particular, oth: numOth, chq: numChq, amount: numClosing, level, desc: balanceHead });
+            else if (prevMode && previous > 0 && numClosing < 0) {
+              insert({ prev: previous, particular, amount: 0, level, desc: balanceHead });
+              creditCounter += 1;
+              update(creditCounter, { particular1: particular, amount1: abs(numClosing) });
+            } else insert({ prev: previous, particular, amount: numClosing, level, desc: balanceHead });
           }
-          even(); diff = 0;
         } else {
-          closeTrading(debitSide ? "debit" : "credit", balanceHead);
+          debitCounter += 1;
+          update(openSr > 0 && particular === "OPENING STOCK" ? openSr : debitCounter, { particular, ...(cashMode ? { oth: numOth, chq: numChq } : {}), amount: numClosing, ...(prevMode ? { prev: previous } : {}) });
         }
-      } else if (tempLevel === 2) {
-        closeProfitLoss();
+        if (cashSale && !cashAsked) {
+          cashAsked = true;
+          const dates = first === 2 ? `and POST_DATE BETWEEN ${fromDate} AND ${uptoDate}` : `and POST_DATE <= ${uptoDate}`;
+          cashAmount = num((await rowsOf(`SELECT SUM(CASE WHEN ledpost.POST_DBCODE = 1 THEN ledpost.POST_AMT::numeric ELSE 0.00 END) AS "total" from ${db}LEDGER_POST ledpost left join ${db}ACCOUNT ac on ac.code=ledpost.post_code where ac.BOOK in (3) and ledpost.post_book = 4 and ledpost.post_bookcd in (select code from ${db}ACCOUNT where a_pos<>'D') ${dates}`))[0]?.total);
+        }
+        if (cashSale && !transportDone) {
+          const transport = rows.filter((row) => String(row.particular ?? "").toUpperCase().includes("TRANSPORT") && String(row.desc ?? "").toUpperCase() === "TRADING").pop();
+          if (transport && transport.sr > 0) {
+            transportDone = true;
+            numClosing = abs(numClosing) - cashAmount;
+            update(transport.sr, { amount: numClosing });
+            debitAmount += abs(numClosing);
+          }
+        }
+        if (numClosing < 0) creditAmount += abs(numClosing); else debitAmount += abs(numClosing);
+        lyDebit += abs(previous);
+      } else {
+        creditAmount += abs(numClosing);
+        lyCredit += abs(previous);
+        if (creditCounter >= debitCounter) {
+          creditCounter += 1;
+          srNo += 1;
+          insert({ prev1: previous, particular1: particular, ...(cashMode ? { oth1: abs(numOth), chq1: abs(numChq) } : {}), amount1: abs(numClosing), level, desc: balanceHead });
+        } else {
+          creditCounter += 1;
+          update(creditCounter, { particular1: particular, ...(cashMode ? { oth1: abs(numOth), chq1: abs(numChq) } : {}), amount1: abs(numClosing), ...(prevMode ? { prev1: abs(previous) } : {}) });
+        }
       }
     }
-    if (debitSide) {
-      if (debitCounter >= creditCounter) {
-        debitCounter += 1;
-        srNo += 1;
-        insert({ particular, amount: net, level, desc: balanceHead });
-      } else {
-        debitCounter += 1;
-        update(openSr > 0 && particular === "OPENING STOCK" ? openSr : debitCounter, { particular, amount: net });
-      }
-      debitAmount += Math.abs(net);
-    } else {
-      creditAmount += Math.abs(net);
-      if (creditCounter >= debitCounter) {
-        creditCounter += 1;
-        srNo += 1;
-        insert({ particular1: particular, amount1: Math.abs(net), level, desc: balanceHead });
-      } else {
-        creditCounter += 1;
-        update(creditCounter, { particular1: particular, amount1: Math.abs(net) });
-      }
-    }
-    tempLevel = level;
+    if (numClosing !== 0 || (prevMode && previous !== 0)) tempLevel = level;
   }
 
   // Closing stock typed in, when the accounts never reached the end of the trading account.
   if (!insertedClosing && call.sortingText !== "None") {
     if (noClosingText) {
       diff = r2(creditAmount - debitAmount);
+      lyDiff = lyCredit - lyDebit;
     } else {
-      if (creditCounter >= debitCounter) { creditCounter += 1; srNo += 1; insert({ particular1: "CLOSING STOCK", amount1: closingText, level: 1, desc: "TRADING" }); }
-      else { creditCounter += 1; update(creditCounter, { particular1: "CLOSING STOCK", amount1: closingText, level: 1, desc: "TRADING" }); }
-      insertedClosing = true;
+      if (lastPrev !== 0 || !noClosingText) {
+        if (creditCounter >= debitCounter) { creditCounter += 1; srNo += 1; insert({ particular1: "CLOSING STOCK", prev1: abs(lastPrev), amount1: closingText, level: 1, desc: "TRADING" }); }
+        else { creditCounter += 1; update(creditCounter, { particular1: "CLOSING STOCK", amount1: closingText, prev1: abs(lastPrev), level: 1, desc: "TRADING" }); }
+        insertedClosing = true;
+      }
       creditAmount += closingText;
       diff = r2(creditAmount - debitAmount);
+      lyDiff = lyCredit - lyDebit;
     }
   }
 
@@ -2315,97 +2462,151 @@ async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable
 
   // The profit or loss of the period, put to the capital accounts.
   if (capital("0903")) {
-    creditAmount = sumOf("amount1", true);
-    debitAmount = sumOf("amount", true);
+    sums(true);
+    lyDiff = lyCredit - lyDebit;
+    lyPrint = lyDiff;
     if (creditAmount === 0 && debitAmount === 0) {
       if (diff <= 0) {
+        if (lyDiff > 0) lyPrint = 0;
         srNo += 1; creditCounter += 1;
-        insert({ particular1: "Gross Loss c/f", amount1: Math.abs(diff), level: 1, desc: "TRADING" });
+        insert({ particular1: "Gross Loss c/f", prev1: abs(lyPrint), amount1: abs(diff), level: 1, desc: "TRADING" });
+        if (lyDiff >= 0) updatePrev(srNo, { particular: "Gross Profit c/f", prev: abs(lyDiff) }); else updatePrev(srNo, { prev1: abs(lyDiff) });
         srNo += 1; debitCounter += 1;
-        insert({ particular: "Gross Loss B/d", amount: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
-        sync(); debitAmount = Math.abs(diff); creditAmount = 0;
+        insert({ particular: "Gross Loss B/d", prev: abs(lyPrint), amount: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+        if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "Gross Profit B/d", prev1: abs(lyDiff) });
+        sync(); debitAmount = abs(diff); creditAmount = 0; lyDebit = abs(lyDiff); lyCredit = 0;
       } else {
+        lyPrint = lyDiff;
+        if (lyDiff < 0) lyPrint = 0;
         srNo += 1; debitCounter += 1;
-        insert({ particular: "Gross Profit C/f", amount: Math.abs(diff), level: 1, desc: "TRADING" });
+        insert({ particular: "Gross Profit C/f", prev: abs(lyPrint), amount: abs(diff), level: 1, desc: "TRADING" });
+        if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "Gross Loss c/f", prev1: abs(lyDiff) });
         srNo += 1;
-        insert({ particular1: "Gross Profit B/d", amount1: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
-        creditCounter += 1; sync(); debitAmount = 0; creditAmount = Math.abs(diff);
+        insert({ particular1: "Gross Profit B/d", prev1: abs(lyPrint), amount1: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+        if (lyDiff >= 0) updatePrev(srNo, { prev1: abs(lyDiff) }); else updatePrev(srNo, { particular: "Gross Loss B/d", prev: abs(lyDiff) });
+        creditCounter += 1; sync(); debitAmount = 0; creditAmount = abs(diff); lyDebit = 0; lyCredit = abs(lyDiff);
       }
       even();
     }
     diff = half(r2(creditAmount - debitAmount));
+    lyDiff = lyCredit - lyDebit;
+    lyPrint = lyDiff;
     if (diff >= 0) {
+      if (lyDiff < 0) lyPrint = 0;
       if (!appropriated) {
         srNo += 1; debitCounter += 1;
-        insert({ particular: "NET PROFIT", amount: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+        insert({ particular: "NET PROFIT", prev: abs(lyPrint), amount: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+        if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "NET LOSS", prev1: abs(lyDiff) });
         srNo += 1; creditCounter += 1;
-        insert({ particular1: "NET PROFIT B/d", amount1: Math.abs(diff), level: 3, desc: "", desc1: "PROFIT & LOSS APPROPRIATION" });
+        insert({ particular1: "NET PROFIT B/d", prev1: abs(lyPrint), amount1: abs(diff), level: 3, desc: "", desc1: "PROFIT & LOSS APPROPRIATION" });
+        if (lyDiff >= 0) updatePrev(srNo, { prev1: abs(lyDiff) }); else updatePrev(srNo, { particular1: "NET LOSS B/d", prev1: abs(lyDiff) });
       }
-      sync(); creditAmount = Math.abs(diff); debitAmount = 0; profitSign = -1;
+      sync(); creditAmount = abs(diff); debitAmount = 0; lyCredit = abs(lyDiff); lyDebit = 0; profitSign = -1;
     } else {
+      if (lyDiff > 0) lyPrint = 0;
       if (!appropriated) {
         srNo += 1; creditCounter += 1;
-        insert({ particular1: "NET LOSS", amount1: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+        insert({ particular1: "NET LOSS", prev1: abs(lyPrint), amount1: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+        if (lyDiff > 0) updatePrev(srNo, { particular: "NET PROFIT", prev: abs(lyDiff) }); else updatePrev(srNo, { prev1: abs(lyDiff) });
         srNo += 1; debitCounter += 1;
-        insert({ particular: "NET LOSS B/d", amount: Math.abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION", desc1: "PROFIT & LOSS APPROPRIATION" });
+        insert({ particular: "NET LOSS B/d", prev: abs(lyPrint), amount: abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION", desc1: "PROFIT & LOSS APPROPRIATION" });
+        if (lyDiff > 0) updatePrev(srNo, { particular1: "NET PROFIT B/d", prev1: abs(lyDiff) }); else if (lyDiff < 0) updatePrev(srNo, { particular: "NET LOSS B/d", prev: abs(lyDiff) });
       }
-      sync(); creditAmount = 0; debitAmount = Math.abs(diff); profitSign = 1;
+      sync(); creditAmount = 0; debitAmount = abs(diff); lyCredit = 0; lyDebit = abs(lyDiff); profitSign = 1;
     }
     even();
   }
   if (!capital("0903")) {
-    const single = rows.length === 1;
-    creditAmount = sumOf("amount1", !single);
-    debitAmount = sumOf("amount", !single);
+    sums(rows.length !== 1);
     diff = half(r2(creditAmount - debitAmount));
+    lyDiff = lyCredit - lyDebit;
+    lyPrint = lyDiff;
   }
   if (partnership) {
     if (creditAmount === 0 && debitAmount === 0) {
-      creditAmount = sumOf("amount1", false);
-      debitAmount = sumOf("amount", false);
+      creditAmount = sumOf("amount1", false); debitAmount = sumOf("amount", false);
       diff = half(r2(creditAmount - debitAmount));
     }
+    if (prevMode && lyCredit === 0 && lyDebit === 0) {
+      lyCredit = sumOf("prev1", false); lyDebit = sumOf("prev", false);
+      lyDiff = lyCredit - lyDebit;
+      lyPrint = lyDiff;
+    }
     if (diff > 0) {
+      if (lyDiff < 0) lyPrint = 0;
       srNo += 1;
-      insert({ particular: "NET PROFIT", amount: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      insert({ particular: "NET PROFIT", prev: abs(lyPrint), amount: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "NET LOSS", prev1: abs(lyDiff) });
       profitSign = -1;
     } else if (diff < 0) {
+      if (lyDiff > 0) lyPrint = 0;
       srNo += 1;
-      insert({ particular1: "NET LOSS", amount1: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      insert({ particular1: "NET LOSS", prev1: abs(lyPrint), amount1: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" });
+      if (lyDiff >= 0) updatePrev(srNo, { particular: "NET PROFIT", prev: abs(lyDiff) }); else updatePrev(srNo, { prev1: abs(lyDiff) });
       profitSign = 1;
     }
   } else if (diff >= 0) {
-    if (!capital("0903")) { srNo += 1; insert({ particular: "NET PROFIT", amount: Math.abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" }); }
+    if (lyDiff < 0) lyPrint = 0;
+    if (!capital("0903")) { srNo += 1; insert({ particular: "NET PROFIT", prev: abs(lyPrint), amount: abs(diff), level: 2, desc: "", desc1: "PROFIT & LOSS" }); }
     srNo += 1;
-    insert({ particular: "APPROPRIATE PROFIT", amount: Math.abs(diff), level: 3, desc: "", desc1: "PROFIT & LOSS APPROPRIATION" });
+    insert({ particular: "APPROPRIATE PROFIT", prev: abs(lyPrint), amount: abs(diff), level: 3, desc: "", desc1: "PROFIT & LOSS APPROPRIATION" });
+    if (lyDiff >= 0) updatePrev(srNo, { prev: abs(lyDiff) }); else updatePrev(srNo, { particular1: "APPROPRIATE LOSS", prev1: abs(lyDiff) });
     profitSign = -1;
   } else {
+    if (lyDiff > 0) lyPrint = 0;
     srNo += 1;
-    insert({ particular1: "APPROPRIATE LOSS", amount1: Math.abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION" });
+    insert({ particular1: "APPROPRIATE LOSS", prev1: abs(lyPrint), amount1: abs(diff), level: 3, desc: "PROFIT & LOSS APPROPRIATION" });
+    if (lyDiff > 0) updatePrev(srNo, { particular: "APPROPRIATE PROFIT", prev: abs(lyDiff) }); else updatePrev(srNo, { prev1: abs(lyDiff) });
     profitSign = 1;
   }
-  diff = Math.abs(diff);
+  diff = abs(diff);
 
-  // Profit shared among the partners (Profit Transfer): a line for each, by its percentage.
-  if (partnership && check("CHK_PROFIT_TRF")) {
-    const partners = await rowsOf(`SELECT ac.name AS "name", ac.a_perc AS "perc", ac.code AS "code", left(bs.bs_code,4) AS "bs_code" FROM ${db}ACCOUNT ac left join ${db}balsheet bs on bs.bs_key=ac.bs_id where ac.a_pos<>'D' and (left(bs.bs_code,4)='0901' or left(bs.bs_code,4)='0902' or left(bs.bs_code,4)='0904' or left(bs.bs_code,4)='0905') order by name`);
+  // Profit shared among the partners (Profit Transfer): a line for each, by its percentage (not once the year-ending entry has been passed), and what the procedure writes into AC_BALANCE.OS_BILLDIFF:
+  // the partners' shares, the profit account's profit and the closing stock account's closing amount. The report runs read-only, so the writes are queued on the loader and the request carries them out afterwards.
+  const year = call.yearId;
+  const setBilldiff = (where: string, value: number) => { loader.writes.push({ sql: `UPDATE ${db}ac_balance SET os_billdiff = 0 WHERE year_id = $1 AND ${where}`, params: [year] }); if (value !== 0) loader.writes.push({ sql: `UPDATE ${db}ac_balance SET os_billdiff = $2::numeric::money WHERE year_id = $1 AND ${where}`, params: [year, value] }); };
+  const partnerSql = (codes: string[], ordered: boolean) => `SELECT ac.name AS "name", ac.a_perc AS "perc", ac.code AS "code", left(bs.bs_code,4) AS "bs_code" FROM ${db}ACCOUNT ac left join ${db}balsheet bs on bs.bs_key=ac.bs_id where ac.a_pos<>'D' and (${codes.map((code) => `left(bs.bs_code,4)='${code}'`).join(" or ")})${ordered ? " order by name" : ""}`;
+  let sharedOut = 0;
+  let totalPercent = 0;
+  if (capital("0901")) setBilldiff(`code IN (SELECT ac.code FROM ${db}ACCOUNT ac left join ${db}balsheet bs on bs.bs_key=ac.bs_id WHERE ac.a_pos<>'D' AND left(bs.bs_code,4)='0901')`, 0);
+  if (partnership) {
+    const partners = await rowsOf(partnerSql(["0901", "0902", "0904", "0905"], true));
     partners.sort((a, b) => sqlServerCompare(toText(a.name), toText(b.name)));
     for (const partner of partners) {
-      const perc = toText(partner.bs_code) === "0901" ? 100 : num(partner.perc);
-      const entry = Math.round(diff * perc / 100 * 100) / 100 * profitSign;
-      srNo += 1;
-      insert({ particular: `${toText(partner.name)} == >> ${perc}%`, amount: Math.abs(entry), level: 20, desc: "PROFIT_DIST" });
+      if (check("CHK_PROFIT_TRF") && !productWise) {
+        const perc = toText(partner.bs_code) === "0901" ? 100 : num(partner.perc);
+        let entry = 0;
+        if (perc > 0) {
+          entry = Math.round(diff * perc / 100 * 100) / 100 * profitSign;
+          setBilldiff(`code = ${num(partner.code)}`, entry);
+          sharedOut += entry;
+          totalPercent += perc;
+        }
+        srNo += 1;
+        insert({ particular: `${toText(partner.name)} == >> ${perc}%`, amount: abs(entry), level: 20, desc: "PROFIT_DIST" });
+      } else setBilldiff(`code = ${num(partner.code)}`, 0);
       if (toText(partner.bs_code) === "0901") break;
     }
   }
+  const profitLeft = (totalPercent !== 100 ? diff - sharedOut : 0) * profitSign;
+  if (!productWise) setBilldiff(`code IN (SELECT code FROM ${db}ACCOUNT WHERE ac_opensty = 'PR')`, profitLeft);
+  else {
+    const partners = await rowsOf(partnerSql(["0901", "0902", "0904"], false));
+    for (const partner of partners) { setBilldiff(`code = ${num(partner.code)}`, 0); if (toText(partner.bs_code) === "0901") break; }
+  }
+  setBilldiff(`code IN (SELECT code FROM ${db}ACCOUNT WHERE ac_opensty = 'CB')`, num(text1));
 
-  // The table.
+  // The table: the columns of the options chosen, in the procedure's order.
   const table = new ResultTable();
   table.setKind("Sr_No", "decimal");
+  if (prevMode) table.setKind("Previous_Year", "decimal");
   table.addColumn("PARTICULAR");
+  if (cashMode) { table.setKind("OTH_AMOUNT", "decimal"); table.setKind("CHQ_AMOUNT", "decimal"); }
   table.setKind("CURRENT_AMOUNT", "decimal");
   if (check("CHK_PROFIT_PERC")) table.setKind("Perc", "decimal");
+  if (prevMode) table.setKind("Previous_Year_1", "decimal");
   table.addColumn("PARTICULAR_1");
+  if (cashMode) { table.setKind("OTH_AMOUNT1", "decimal"); table.setKind("CHQ_AMOUNT1", "decimal"); }
   table.setKind("CURRENT_AMOUNT_1", "decimal");
   if (check("CHK_PROFIT_PERC")) table.setKind("Perc_1", "decimal");
   table.setKind("BS_LEVEL", "decimal");
@@ -2414,7 +2615,10 @@ async function profitLoss(loader: Loader, plan: ReportPlan): Promise<ResultTable
   rows.sort((a, b) => a.sr - b.sr);
   for (const row of rows) {
     if (num(row.level) === 3) { row.desc = ""; row.desc1 = "PROFIT & LOSS APPROPRIATION"; }
-    table.insert({ Sr_No: row.sr, PARTICULAR: row.particular, CURRENT_AMOUNT: row.amount, PARTICULAR_1: row.particular1, CURRENT_AMOUNT_1: row.amount1, BS_LEVEL: row.level, BS_DESC: row.desc, BS_DESC1: row.desc1 });
+    table.insert({
+      Sr_No: row.sr, ...(prevMode ? { Previous_Year: row.prev } : {}), PARTICULAR: row.particular, ...(cashMode ? { OTH_AMOUNT: row.oth, CHQ_AMOUNT: row.chq } : {}), CURRENT_AMOUNT: row.amount,
+      ...(prevMode ? { Previous_Year_1: row.prev1 } : {}), PARTICULAR_1: row.particular1, ...(cashMode ? { OTH_AMOUNT1: row.oth1, CHQ_AMOUNT1: row.chq1 } : {}), CURRENT_AMOUNT_1: row.amount1, BS_LEVEL: row.level, BS_DESC: row.desc, BS_DESC1: row.desc1,
+    });
   }
   if (check("CHK_PROFIT_PERC")) {
     const sale = await rowsOf(`SELECT coalesce(SUM(CASE WHEN ledpost.POST_DBCODE = 2 THEN ledpost.POST_AMT::numeric ELSE ledpost.POST_AMT::numeric *-1 END),0) AS "sale" from ${db}LEDGER_POST ledpost left join ${db}ACCOUNT ac on ac.code=ledpost.post_code left join ${db}LEDGER led on led.led_key=ledpost.led_id where ac.book=8 and ac.a_pos<>'D' and left(doc_no1,3) <> 'END' and led.doc_pos<>'D'`
@@ -3119,10 +3323,6 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   if (!summary && check("CHK_FACTVAL") && check("CHK_FACTOR") && filter !== "NONE" && filter !== "") throw notPorted("Factor Value in the Ledger (its running value by the factor balance)");
   if (filter === "AVERAGE VALUE") throw notPorted("The Average Value valuation (the procedure compares the closing quantity with a variable that is empty in this run and keeps a running count across products, so its figures are not reproducible)");
   if (!["NONE", "REPORT RATE", "", ...VALUATIONS].includes(filter)) throw notPorted(`The "${call.filterText}" valuation`);
-  // These three write the closing value or rate into the account and product masters; the web reports run read-only, so they are not carried out.
-  for (const [option, caption] of [["CHK_UPD_MASTER", "Update Value In Master"], ["CHK_UPD_RATE", "Update Rate In Master"], ["CHK_GST_OPEN", "Update Rate as Before GST"]] as const) {
-    if (check(option)) throw new ReportRefusal(`${caption} writes to the master tables, and the web reports are read-only: untick it, or run it from the desktop.`, "Not ported yet");
-  }
   if (check("CHK_AGECOL") && !summary) throw notPorted("The Age columns option of the Ledger first combo (it is in the Summary)");
   // Above Days / Below Days (Ledger): the additions older (or newer) than the typed number of days are taken out; the issues have no days. The balances still run over every line.
   const daysLimit = call.text[0] !== undefined && call.text[0].trim() !== "" ? Number(call.text[0]) : null;
@@ -3429,6 +3629,31 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
     // The closing row, like the opening (which is in ADD, this is in LESS, so the subtotal's ADD and LESS balance): the balance at the end of the period, only when it is above nil (a nil or negative stock has no closing row) (the balance after the last line, which the lines taken out by Above / Below Days still count in).
     if (running > 0) table.insert({ ...ledgerAddons(product), ROW_DATA_TYPE: "CLOSINGS", SORTING_COL: `${product.short}${desktopDate(call.upto)}   Z`, PROD_SHORT: product.short, SELECTED_PRODUCT: product.desc, SMART_SELECTED_PRODUCT: product.desc, NAME: "Closing Balance", Prod_key: product.key, LESS_QTY: running,
       ...(withRate ? { RATE: entry.rate, VALUE: entry.value } : {}) });
+  }
+  // Update Rate In Master (CHK_UPD_RATE): each product's rate of the report goes into P_RATE of its RP balance row of the year. Update Rate as Before GST (CHK_GST_OPEN): its rate into GST_CLOSE_RATE
+  // and its closing quantity (the factor balance with Factor Value) into GST_CLOSE_QTY, empty for a product the report does not list (the procedure's left join). Summary with a valuation only.
+  if ((check("CHK_UPD_RATE") || check("CHK_GST_OPEN")) && summary && withRate) {
+    const shorts: string[] = []; const rates: number[] = []; const quantities: number[] = [];
+    const quantityColumn = check("CHK_FACTVAL") && check("CHK_FACTOR") ? "BAL_FACT" : "CLSG_QTY";
+    for (const row of table.rows) {
+      const short = toText(table.get(row, "PROD_SHORT"));
+      if (short === "") continue;
+      shorts.push(short); rates.push(num(table.get(row, "RATE"))); quantities.push(num(table.get(row, quantityColumn)));
+    }
+    const base = `FROM unnest($2::text[], $3::numeric[], $4::numeric[]) AS v(short, rate, qty)`;
+    if (check("CHK_UPD_RATE")) loader.writes.push({ sql: `UPDATE ${db}prod_balance pb SET p_rate = v.rate ${base} WHERE v.short = pb.p_short AND pb.prec_flag = 'RP' AND pb.year_id = $1`, params: [call.yearId, shorts, rates, quantities] });
+    if (check("CHK_GST_OPEN")) loader.writes.push({ sql: `UPDATE ${db}prod_balance pb SET gst_close_rate = (SELECT v.rate ${base} WHERE v.short = pb.p_short LIMIT 1), gst_close_qty = (SELECT v.qty ${base} WHERE v.short = pb.p_short LIMIT 1) WHERE pb.prec_flag = 'RP' AND pb.year_id = $1`, params: [call.yearId, shorts, rates, quantities] });
+  }
+  // Update Value In Master (Summary with a valuation): as the procedure does for the Summary, the total of the VALUE column goes into OS_BILLDIFF of the closing stock account
+  // (AC_OPENSTY = CB, active) of the year, and for a between-date report the total of the opening values into its LAST_YEAR (the way it writes the stock head's total). The Profit / Loss
+  // reads them back as its Closing and Opening Amount. The report runs read-only, so the writes are queued on the loader and the request carries them out once the report has run.
+  if (check("CHK_UPD_MASTER") && summary && withRate) {
+    const total = (column: string) => (table.columns.includes(column) ? Math.round(table.rows.reduce((sum, row) => sum + num(table.get(row, column)), 0) * 100) / 100 : null);
+    const closing = total("VALUE");
+    const opened = between ? total("OPEN_VALUE") : null;
+    const where = `WHERE year_id = $1 AND code IN (SELECT code FROM ${db}ACCOUNT WHERE ac_opensty = 'CB' AND a_pos = 'A')`;
+    if (closing !== null) loader.writes.push({ sql: `UPDATE ${db}ac_balance SET os_billdiff = $2::numeric::money ${where}`, params: [call.yearId, closing] });
+    if (opened !== null) loader.writes.push({ sql: `UPDATE ${db}ac_balance SET last_year = $2::numeric::money ${where}`, params: [call.yearId, opened] });
   }
   return table;
 }

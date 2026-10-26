@@ -1,6 +1,6 @@
 import type { Client } from "pg";
 import { transaction } from "@/lib/db";
-import { trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { readSession } from "@/lib/master-program/session";
 import type { MasterSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
@@ -21,9 +21,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Ask AI is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 403, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -31,7 +30,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "The request body is not JSON" }, { status: 400, headers });
   }
   if (!body || !body.session) return Response.json({ error: "session is required" }, { status: 400, headers });
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   try {
     /** The memory is kept in its own write transaction (the answer runs read-only); a failure there never stops an answer. */
     const memory = async <T,>(work: (client: Client, session: MasterSession) => Promise<T>): Promise<T | null> => {

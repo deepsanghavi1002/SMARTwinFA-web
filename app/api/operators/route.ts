@@ -1,11 +1,18 @@
 import { readOperators } from "@/lib/company-menu";
+import { currentUser, signInRequired } from "@/lib/auth/request";
+import { canManageUsers } from "@/lib/auth/roles";
 
-export async function GET() {
+/** Every active desktop operator, for admins only: a platform admin picks one to work as, admins link users to them. */
+export async function GET(request: Request) {
+  const headers = { "cache-control": "no-store" };
   try {
-    return Response.json({ operators: await readOperators() }, { headers: { "cache-control": "no-store" } });
+    const user = await currentUser(request);
+    if (!user) return signInRequired(headers);
+    if (!canManageUsers(user.role)) return Response.json({ error: "Only an administrator sees the operator list" }, { status: 403, headers });
+    return Response.json({ operators: await readOperators() }, { headers });
   } catch (error) {
     console.error("Operator list error:", error);
     const message = error instanceof Error ? error.message : "Operator list could not be loaded";
-    return Response.json({ error: message }, { status: 503, headers: { "cache-control": "no-store" } });
+    return Response.json({ error: message }, { status: 503, headers });
   }
 }
