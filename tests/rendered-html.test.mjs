@@ -89,6 +89,9 @@ test("keeps the latest migrated application surface wired into the root route", 
   assert.match(page, /<MasterProgram /);
   assert.match(page, /home-splash/);
   assert.match(startup, /stage.*"login".*"company".*"ready"/s);
+  // The Legacy / Modern choice is kept in the browser, and the server's page stays Legacy.
+  assert.match(startup, /localStorage\.setItem\(VIEW_KEY/);
+  assert.match(startup, /useSyncExternalStore\(subscribeModernView, readModernView, \(\) => false\)/);
   for (const action of ["Save", "Cancel", "Refresh", "Export", "Quit", "Delete Row", "Hide Column", "Restore Cell Value"]) {
     assert.match(master, new RegExp(action));
   }
