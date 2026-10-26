@@ -35,6 +35,15 @@ test("the company menu is operator scoped and refills per accounting year", () =
   assert.doesNotMatch(startupGate, /\?login=/);
 });
 
+// smart_system came from a desktop that kept many clients: only the companies (and the years
+// holding them) whose own database is on this server may be listed, and a single company opens
+// without the selection screen.
+test("only this installation's companies and years are listed, and one company opens directly", () => {
+  assert.match(companyMenu, /AND schemata\.schema_name IS NOT NULL/);
+  assert.equal((companyMenu.match(/AND \$\{onServer\}|WHERE \$\{onServer\}/g) ?? []).length, 3, "every year query is limited to years with a company on this server");
+  assert.match(startupGate, /if \(rows\.length === 1 && rows\[0\]\.available\) setStage\("ready"\)/);
+});
+
 test("no credential column ever leaves the database", () => {
   const code = companyMenu.replace(/^\s*\/\/.*$/gm, "");
   assert.doesNotMatch(code, /user_pw/, "the obfuscated password column must never be selected");

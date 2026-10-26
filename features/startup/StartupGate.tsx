@@ -135,6 +135,12 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const openBefore = useRef<{ year: string; company: string } | null>(null);
   /** The company to highlight when the year list refills after Exit put the year back. */
   const restoreCompany = useRef<string | null>(null);
+  /**
+   * Set at sign-in: when the newest year holds exactly one company, it opens without the company
+   * screen (a client's installation normally carries just its own company, one database per year).
+   * SETUP > COMPANY > SELECT still opens the screen to change the year.
+   */
+  const autoOpen = useRef(false);
 
   /**
    * After the server accepted the sign-in (or the page opened with a live session): straight to
@@ -148,7 +154,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     setYear("");
     setCompanies([]);
     setCompany("");
-    if (me.operator) { setOperator(me.operator); setStage("company"); return; }
+    if (me.operator) { autoOpen.current = true; setOperator(me.operator); setStage("company"); return; }
     if (me.user.choosesOperator) {
       const response = await fetch("/api/operators", { cache: "no-store" });
       const body = await response.json() as { operators?: Operator[]; error?: string };
@@ -229,6 +235,11 @@ export function StartupGate({ children }: { children: ReactNode }) {
         setCompany(back ? back.id : (rows.find((item) => item.available) ?? rows[0])?.id ?? "");
         setDataError("");
         setCompaniesLoading(false);
+        // Only the first list after sign-in (the newest year) may skip the screen.
+        if (autoOpen.current) {
+          autoOpen.current = false;
+          if (rows.length === 1 && rows[0].available) setStage("ready");
+        }
       })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
@@ -248,6 +259,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     void fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => undefined);
     openBefore.current = null;
+    autoOpen.current = false;
     setFromMenu(false);
     setPassword("");
     setError("");
@@ -288,6 +300,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     if (!response?.ok || !body.operator) { setDataError(body.error || "The operator could not be chosen"); return; }
     setAccountingYears([]);
     chooseYear("");
+    autoOpen.current = true;
     setOperator(body.operator);
     setStage("company");
   };
@@ -348,9 +361,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
       setSigningIn(false);
     }
   };
-  const changeOperator = user?.choosesOperator
-    ? () => { void enter({ user, operator: null, problem: null }); }
-    : null;
+  /** A platform admin may go back to the operator screen from the company screen. */
+  const canChangeOperator = Boolean(user?.choosesOperator);
+  const changeOperator = () => { if (user) void enter({ user, operator: null, problem: null }); };
 
   // The operator screen is the same in both views: only SMARTwinFA's own staff see it.
   if (stage === "operator") {
@@ -607,9 +620,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         <Button variant="contained" disabled={!canContinue} onClick={confirmCompany} sx={{ minWidth: 160, py: 1.1, fontWeight: 700 }}>✓ OK</Button>
                         <Button variant="outlined" onClick={leaveCompany} sx={{ minWidth: 160, py: 1.1, fontWeight: 700, color: "#dc2626", borderColor: "#d1d5db", "&:hover": { borderColor: "#dc2626", backgroundColor: "#fee2e2" } }}>✕ CLOSE</Button>
                       </Stack>
-                      {(manageUsers || changeOperator) && (
+                      {(manageUsers || canChangeOperator) && (
                         <Stack direction="row" spacing={2} sx={{ justifyContent: "center", fontSize: 14 }}>
-                          {changeOperator && !fromMenu && <Button size="small" onClick={changeOperator}>Change operator ({operator?.loginName})</Button>}
+                          {canChangeOperator && !fromMenu && <Button size="small" onClick={changeOperator}>Change operator ({operator?.loginName})</Button>}
                           {manageUsers}
                         </Stack>
                       )}
@@ -644,7 +657,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
               <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></label>
               {dataError && <p className="login-error" role="alert">{dataError}</p>}
               <div className="company-actions"><button disabled={!canContinue} onClick={confirmCompany}>✓ Ok</button><button onClick={leaveCompany}>↩ Exit</button></div>
-              {(manageUsers || changeOperator) && <p className="company-admin-links">{changeOperator && !fromMenu && <button type="button" onClick={changeOperator}>Change operator ({operator?.loginName})</button>} {manageUsers}</p>}
+              {(manageUsers || canChangeOperator) && <p className="company-admin-links">{canChangeOperator && !fromMenu && <button type="button" onClick={changeOperator}>Change operator ({operator?.loginName})</button>} {manageUsers}</p>}
             </div>
           </section>}
         </main>
