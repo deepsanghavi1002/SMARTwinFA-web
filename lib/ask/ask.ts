@@ -212,6 +212,15 @@ async function summaryDetail(ctx: Ctx, detail: string): Promise<AskAnswer | null
   // A row of the revenue by Sales Man / Area ...: its customers.
   const groupOf = /^grp:(\d+):([^:]*):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(detail);
   if (groupOf) return groupCustomers(ctx, Number(groupOf[1]), decodeURIComponent(groupOf[2]), groupOf[3], groupOf[4]);
+  // A row of the highest expenses: the entries of that expense account in the dates of the row.
+  const entriesOf = /^expd:(\d+):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(detail);
+  if (entriesOf) {
+    const found = await rows(ctx, `SELECT l.doc_date AS d, l.full_docno AS doc, btrim(COALESCE(bk.name, '')) AS paid_from, btrim(COALESCE(l.narration, '')) AS narration, l.amount::numeric AS amount, ac.name AS name FROM ${ctx.sch}.ledger l JOIN ${ctx.sch}.account ac ON ac.code = l.code LEFT JOIN ${ctx.sch}.account bk ON bk.code = l.book_code`
+      + ` WHERE l.book = 15 AND l.doc_pos = 'A' AND l.code = $1 AND l.doc_date >= $2::date AND l.doc_date <= $3::date ORDER BY l.doc_date, l.led_key LIMIT 1000`, [Number(entriesOf[1]), entriesOf[2], entriesOf[3]]);
+    const out = found.map((row) => ({ d: dmy(row.d), doc: String(row.doc ?? ""), paid_from: String(row.paid_from ?? ""), narration: String(row.narration ?? ""), amount: num(row.amount) }));
+    return { id: 0, title: `${found.length > 0 ? String(found[0].name ?? "").trim() : "Expense"}: entries (${out.length})`, columns: [date("d", "Date"), text("doc", "Voucher"), text("paid_from", "Account"), text("narration", "Narration"), money("amount", "Amount")],
+      rows: out.length === 0 ? [] : [...out, { d: "", doc: "", paid_from: "", narration: "Total", amount: out.reduce((sum, row) => sum + row.amount, 0) }], note: `${dmy(entriesOf[2])} to ${dmy(entriesOf[3])}: the Expense book entries of this account, with tax.` };
+  }
   // A line of the payables to suppliers: the bills falling due in its days.
   const supplierDue = /^supdue:(-?\d+):(-?\d+)$/.exec(detail);
   if (supplierDue) return supplierDueDetail(ctx, Number(supplierDue[1]), Number(supplierDue[2]));
@@ -577,7 +586,7 @@ T.push({
   id: 11, question: "What are today's total sales?", defaultPeriod: "today", terms: [/sales?|sold|selling/, /total|how much|what/], not: [/compar|versus|\bvs\b|invoice|party|customer|product|return|cancel|profit|highest|most/],
   run: async (ctx) => {
     const t = (await netSales(ctx, ctx.period.from, ctx.period.to, false))[0];
-    return { id: 11, title: "Total sales", columns: [text("item", "Item"), money("value", "Value")], rows: [{ item: "Entries", value: t.entries }, { item: "Sales (before tax)", value: t.sales }, { item: "Less: returns", value: -t.returns }, { item: "Net sales", value: t.net }], note: `${ctx.period.label}. ${SALES_NOTE}` };
+    return { id: 11, title: "Total sales", choices: ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "This quarter", "Last quarter", "This half year", "Last half year", "This year"].map((label) => ({ label, question: `What are the total sales ${label.toLowerCase()}?` })), columns: [text("item", "Item"), money("value", "Value")], rows: [{ item: "Entries", value: t.entries }, { item: "Sales (before tax)", value: t.sales }, { item: "Less: returns", value: -t.returns }, { item: "Net sales", value: t.net }], note: `${ctx.period.label}. ${SALES_NOTE}` };
   },
 });
 
@@ -1238,7 +1247,7 @@ T.push({
 });
 
 T.push({
-  id: 95, question: "How much payment is expected this week?", defaultPeriod: "none", terms: [/expect|forecast|predict|likely|collect|receiv|coming/, /payments?|collection|money|amount|cash/, /week/],
+  id: 95, question: "How much payment is expected this week?", defaultPeriod: "none", terms: [/expect|forecast|predict|likely|collect|receiv|coming/, /payments?|collection|money|amount|cash/, /week/], not: [/\bdid\b|\breceived\b/],
   run: async (ctx) => {
     const last = iso(endOfWeek(ctx.today));
     const list = (await paymentForecast(ctx)).filter((bill) => bill.expectedIso <= last);
@@ -2139,7 +2148,7 @@ async function cashOrBank(ctx: Ctx, id: number, book: 4 | 6, title: string): Pro
 T.push({ id: 41, question: "What is today's cash balance?", defaultPeriod: "none", terms: [/cash/, /balance|how much|in hand/], not: [/bank|book|daily|ledger/], run: (ctx) => cashOrBank(ctx, 41, 4, "Cash balance") });
 T.push({ id: 42, question: "Show all bank balances.", defaultPeriod: "none", terms: [/bank/, /balance|balances/], not: [/reco|reconcil|difference/], run: (ctx) => cashOrBank(ctx, 42, 6, "Bank balances") });
 
-async function cashEntries(ctx: Ctx, id: number, title: string, side: 1 | 2, books: string): Promise<AskAnswer> {
+async function cashEntries(ctx: Ctx, id: number, title: string, side: 1 | 2, books: string, ask: (when: string) => string): Promise<AskAnswer> {
   const found = await rows(ctx,
     `SELECT l.doc_date AS d, l.full_docno AS doc, btrim(COALESCE(ac.name, '')) AS party, btrim(COALESCE(bk.name, '')) AS book, l.amount::numeric AS amount FROM ${ctx.sch}.ledger l`
     + ` LEFT JOIN ${ctx.sch}.account ac ON ac.code = l.code LEFT JOIN ${ctx.sch}.account bk ON bk.code = l.book_code WHERE l.book IN (${books}) AND l.doc_pos = 'A' AND l.ac_dbcode = $3`
@@ -2147,12 +2156,13 @@ async function cashEntries(ctx: Ctx, id: number, title: string, side: 1 | 2, boo
   const out = found.map((row) => ({ d: dmy(row.d), doc: String(row.doc ?? ""), party: String(row.party), book: String(row.book), amount: num(row.amount) }));
   return {
     id, title, columns: [date("d", "Date"), text("doc", "Document"), text("party", "Party"), text("book", "Book"), money("amount", "Amount")],
+    choices: ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "This year", "All"].map((label) => ({ label, question: ask(label === "All" ? "for all dates" : label.toLowerCase()) })),
     rows: out.length === 0 ? [] : [...out, { d: "", doc: "", party: `Total (${out.length})`, book: "", amount: out.reduce((sum, row) => sum + row.amount, 0) }], note: `${ctx.period.label}: cash and bank book entries.`,
   };
 }
 
-T.push({ id: 43, question: "How much money did we receive today?", defaultPeriod: "today", terms: [/receive|received|receipts?|collection|collected/], not: [/payment|paid|overdue|outstanding|customers?|invoice|cheque|bill/], run: (ctx) => cashEntries(ctx, 43, "Money received", 2, "4, 6") });
-T.push({ id: 44, question: "Show today's payments.", defaultPeriod: "today", terms: [/payments?|paid|pay out|paid out/], not: [/receipt|received|overdue|outstanding|cheque|salary|supplier|customers?|due|pending/], run: (ctx) => cashEntries(ctx, 44, "Payments made", 1, "4, 6") });
+T.push({ id: 43, question: "How much money did we receive today?", defaultPeriod: "today", terms: [/receive|received|receipts?|collection|collected/], not: [/payment|paid|overdue|outstanding|customers?|invoice|cheque|bill/], run: (ctx) => cashEntries(ctx, 43, "Money received", 2, "4, 6", (when) => `How much money did we receive ${when}?`) });
+T.push({ id: 44, question: "Show today's payments.", defaultPeriod: "today", terms: [/payments?|paid|pay out|paid out/], not: [/receipt|received|overdue|outstanding|cheque|salary|supplier|customers?|due|pending/], run: (ctx) => cashEntries(ctx, 44, "Payments made", 1, "4, 6", (when) => `Show payments ${when}.`) });
 
 T.push({
   id: 45, question: "List expenses for the current month.", defaultPeriod: "month", terms: [/expenses?/], not: [/compar|increase|increased|more than|salary|last month/],
@@ -3670,6 +3680,93 @@ T.push({
   },
 });
 
+/** Finished (PROD-FG) or semi-finished (PROD-SFG) goods produced in the period, item wise: the added (stock_nat A) lines of the production vouchers, amount at the line's rate (cost rate where it has no rate). */
+async function productionMade(ctx: Ctx, id: number, modules: readonly string[], title: string, saleRated: boolean): Promise<AskAnswer> {
+  const inModules = `upper(btrim(pl.trn_module)) IN (${modules.map((module) => `'${module}'`).join(", ")}) AND pl.stock_nat = 'A' AND pl.il_pos = 'A' AND pl.il_date >= $1::date AND pl.il_date <= $2::date`;
+  // Finished production: each line's gross is quantity x the price list sale rate of its day (rounded to 2), its net is the gross at Other Perc 75 % (68 % Export Perc for a product whose name starts with Export), rounded to 0, as the Production Summary report works it out.
+  // Semi finished: quantity x the item's last purchase rate (value over quantity) up to the period's end, else its opening rate, else its report rate (prod_balance.rep_rate).
+  const found = saleRated
+    ? await rows(ctx,
+      `SELECT btrim(COALESCE(pm.prod_desc, '')) AS product, COUNT(*) AS entries, SUM(x.quantity) AS qty, SUM(CASE WHEN left(btrim(COALESCE(pm.prod_desc, '')), 6) = 'Export' THEN round(round(x.quantity * COALESCE(x.sale_rate, 0), 2) * ${EXPORT_PERC} / 100, 0) ELSE round(round(x.quantity * COALESCE(x.sale_rate, 0), 2) * ${OTHER_PERC} / 100, 0) END) AS amount`
+      + ` FROM (SELECT pl.prod_id, pl.quantity::numeric AS quantity, (SELECT round(pr.pl_srate::numeric, 2) FROM ${ctx.sch}.pricelist pr WHERE pr.prod_id = pl.prod_id AND pr.pl_wefrom <= pl.il_date AND (pr.pl_weupto >= pl.il_date OR pr.pl_weupto IS NULL) AND pr.pl_srate > 0 AND pr.pl_pos <> 'D' ORDER BY pr.pl_wefrom DESC LIMIT 1) AS sale_rate`
+      + ` FROM ${ctx.sch}.prod_ledger pl WHERE ${inModules}) x JOIN ${ctx.sch}.product_master pm ON pm.prod_key = x.prod_id GROUP BY x.prod_id, pm.prod_desc ORDER BY 1 LIMIT 1000`, [ctx.period.from, ctx.period.to])
+    : await rows(ctx,
+      `WITH made AS (SELECT pl.prod_id, COUNT(*) AS entries, SUM(pl.quantity::numeric) AS qty FROM ${ctx.sch}.prod_ledger pl WHERE ${inModules} GROUP BY pl.prod_id),`
+      + ` buy AS (SELECT DISTINCT ON (pl.prod_id) pl.prod_id, pl.il_value::numeric / NULLIF(pl.quantity::numeric, 0) AS rate FROM ${ctx.sch}.prod_ledger pl JOIN ${ctx.sch}.ledger l ON l.led_key = pl.led_id`
+      + ` WHERE pl.book = ${PURCHASE} AND pl.il_pos = 'A' AND pl.inventory = 'Y' AND l.doc_pos = 'A' AND l.doc_date <= $2::date AND pl.quantity::numeric > 0 AND pl.prod_id IN (SELECT prod_id FROM made) ORDER BY pl.prod_id, l.doc_date DESC, pl.il_key DESC),`
+      + ` bal AS (SELECT prod_id, MAX(open_rate::numeric) AS open_rate, MAX(rep_rate::numeric) AS rep_rate FROM ${ctx.sch}.prod_balance WHERE year_id = $3 GROUP BY prod_id)`
+      + ` SELECT btrim(COALESCE(pm.prod_desc, '')) AS product, made.entries, made.qty, made.qty * COALESCE(NULLIF(buy.rate, 0), NULLIF(bal.open_rate, 0), NULLIF(bal.rep_rate, 0), 0) AS amount`
+      + ` FROM made JOIN ${ctx.sch}.product_master pm ON pm.prod_key = made.prod_id LEFT JOIN buy ON buy.prod_id = made.prod_id LEFT JOIN bal ON bal.prod_id = made.prod_id ORDER BY 1 LIMIT 1000`, [ctx.period.from, ctx.period.to, ctx.session.yearId]);
+  const out = found.map((row) => ({ product: String(row.product ?? ""), entries: num(row.entries), qty: num(row.qty), amount: num(row.amount) }));
+  return {
+    id, title, columns: [text("product", "Product"), int("entries", "Entries"), qty("qty", "Quantity"), money("amount", "Amount")],
+    choices: ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "This year", "All"].map((label) => ({ label, question: `${title} ${label === "All" ? "for all dates" : label.toLowerCase()}.` })),
+    rows: out.length === 0 ? [] : [...out, { product: "Total", entries: out.reduce((sum, row) => sum + row.entries, 0), qty: out.reduce((sum, row) => sum + row.qty, 0), amount: out.reduce((sum, row) => sum + row.amount, 0) }],
+    note: `${ctx.period.label}: the ${modules.join(" / ")} production entries (stock added), item wise. ${saleRated
+      ? `Amount = net production: quantity x the price list sale rate of the day, then ${OTHER_PERC}% (${EXPORT_PERC}% for Export products), rounded to whole rupees per entry.`
+      : "Amount = quantity x rate; the rate is the item's last purchase rate, else its opening rate, else its report rate."}`,
+  };
+}
+
+const OTHER_PERC = 75;
+const EXPORT_PERC = 68;
+
+T.push({
+  id: 150, question: "Show today's finished product production.", defaultPeriod: "today", terms: [/finished|\bfg\b/, /products?|goods|items?/, /production|produced|made|manufactur/], not: [/semi|\bsfg\b|margin|profit|cost/],
+  run: (ctx) => productionMade(ctx, 150, ["PROD-FG"], "Finished product production", true),
+});
+T.push({
+  id: 151, question: "Show today's semi finished product production.", defaultPeriod: "today", terms: [/semi|\bsfg\b/, /products?|goods|items?|finished/, /production|produced|made|manufactur/],
+  run: (ctx) => productionMade(ctx, 151, ["PROD-SFG", "PROD-MULTI"], "Semi finished product production", false),
+});
+
+const PERIOD_BUTTONS = ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "This quarter", "Last quarter", "This half year", "Last half year", "This year"];
+
+T.push({
+  id: 152, question: "What were our highest expenses this week?", defaultPeriod: "month",
+  terms: [/expenses?|expenditure|spending/, /highest|largest|biggest|most|top|major/, /what|which|show|list|our|were|are/],
+  not: [/compar|increase|increased|categories|category|salary|last year|same days/],
+  run: async (ctx) => {
+    const found = await rows(ctx,
+      `SELECT ac.code, btrim(ac.name) AS name, COUNT(*) AS entries, SUM(l.amount::numeric) AS amount FROM ${ctx.sch}.ledger l JOIN ${ctx.sch}.account ac ON ac.code = l.code`
+      + ` WHERE l.book = 15 AND l.doc_pos = 'A' AND l.doc_date >= $1::date AND l.doc_date <= $2::date GROUP BY ac.code, ac.name ORDER BY SUM(l.amount::numeric) DESC LIMIT 100`, [ctx.period.from, ctx.period.to]);
+    const out = found.map((row, at) => ({ no: at + 1, name: String(row.name), entries: num(row.entries), amount: num(row.amount), detail: `expd:${num(row.code)}:${ctx.period.from}:${ctx.period.to}` }));
+    const total = sumOf(out, (row) => row.amount);
+    return {
+      id: 152, title: "Highest expenses", columns: [int("no", "No."), text("name", "Expense"), int("entries", "Entries"), money("amount", "Amount"), money("share", "Share %")],
+      choices: PERIOD_BUTTONS.map((label) => ({ label, question: `What were our highest expenses ${label.toLowerCase()}?` })),
+      rows: out.length === 0 ? [] : [...out.map((row) => ({ ...row, share: pctOf(row.amount, total) })), { no: "", name: "Total", entries: sumOf(out, (row) => row.entries), amount: total, share: 100 }],
+      note: `${ctx.period.label}: the Expense book, with tax, by expense account, highest first. Click a row to show its entries, click again to hide them.`,
+    };
+  },
+});
+
+T.push({
+  id: 153, question: "How much sales did each salesman achieve this week?", defaultPeriod: "month",
+  terms: [/salesm[ae]n|sales ?persons?|sales ?rep/, /sales?|sold|revenue|business/, /each|achiev|how much|wise|by|per/],
+  not: [/profit|outstanding|overdue|product/],
+  run: async (ctx) => {
+    const groups = await dimensionGroups(ctx, DIMENSIONS[0]);
+    const choices = PERIOD_BUTTONS.map((label) => ({ label, question: `How much sales did each salesman achieve ${label.toLowerCase()}?` }));
+    if (!groups) return { id: 153, title: "Sales by salesman", columns: [text("item", "Item")], rows: [], choices, note: "The account master has no Sales Man field, so customers cannot be grouped by salesman." };
+    const totals = new Map<string, { customers: number; entries: number; sales: number; returns: number }>();
+    for (const row of await netSales(ctx, ctx.period.from, ctx.period.to, true)) {
+      if (row.net === 0 && row.sales === 0) continue;
+      const name = groups.of.get(row.code) ?? "(not set)";
+      const entry = totals.get(name) ?? totals.set(name, { customers: 0, entries: 0, sales: 0, returns: 0 }).get(name)!;
+      entry.customers += 1; entry.entries += row.entries; entry.sales += row.sales; entry.returns += row.returns;
+    }
+    const list = [...totals].map(([name, entry]) => ({ name, ...entry, net: entry.sales - entry.returns })).sort((a, b) => b.net - a.net);
+    const total = sumOf(list, (row) => row.net);
+    return {
+      id: 153, title: `Sales by ${groups.label}`, choices, columns: [int("no", "No."), text("name", groups.label), int("customers", "Customers"), int("entries", "Entries"), ...salesColumns, money("share", "Share %")],
+      rows: list.length === 0 ? [] : [...list.map((row, at) => ({ no: at + 1, name: row.name, customers: row.customers, entries: row.entries, sales: row.sales, returns: -row.returns, net: row.net, share: pctOf(row.net, total), detail: `grp:0:${encodeURIComponent(row.name)}:${ctx.period.from}:${ctx.period.to}` })),
+        { no: "", name: "Total", customers: sumOf(list, (row) => row.customers), entries: sumOf(list, (row) => row.entries), sales: sumOf(list, (row) => row.sales), returns: -sumOf(list, (row) => row.returns), net: total, share: 100 }],
+      note: `${ctx.period.label}. ${SALES_NOTE} Each customer's sales are credited to the ${groups.label} set in its account master.`,
+    };
+  },
+});
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Reading the question
 
@@ -3679,6 +3776,7 @@ function periodOf(question: string, fallback: Template["defaultPeriod"], session
   const now = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const text = question.toLowerCase();
   const range = (from: Date, to: Date, label: string): Period => ({ from: iso(from), to: iso(to), label: `${label} (${dmy(from)} to ${dmy(to)})` });
+  if (/all dates|all days|all time|whole period/.test(text)) return range(session.tarikh1, session.tarikh2, "All dates");
   if (/yesterday/.test(text)) { const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); return range(day, day, "Yesterday"); }
   // Weeks run Monday to Sunday: this week up to today, last week whole.
   const week = /(this|current|last|previous)\s+week|weekly/.exec(text);
