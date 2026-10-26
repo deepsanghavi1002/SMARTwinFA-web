@@ -14,18 +14,28 @@ import { useHelpView } from "../grid/useHelpView";
  */
 const plain = (value: string) => value;
 
-const COLUMNS: HelpData["columns"] = [
-  { key: "date", caption: "Date", width: 90, align: "L", format: "" },
-  { key: "docNo", caption: "Doc No", width: 140, align: "L", format: "" },
-  { key: "particular", caption: "Particular", width: 260, align: "L", format: "" },
-  { key: "debit", caption: "Debit", width: 100, align: "R", format: "" },
-  { key: "credit", caption: "Credit", width: 100, align: "R", format: "" },
-  { key: "closing", caption: "Closing", width: 110, align: "R", format: "" },
-  { key: "drCr", caption: "Dr/Cr", width: 50, align: "L", format: "" },
-  { key: "chln", caption: "Chln", width: 90, align: "L", format: "" },
-  { key: "chlnDate", caption: "Chln Date", width: 90, align: "L", format: "" },
-  { key: "narration", caption: "Narration", width: 240, align: "L", format: "" },
-];
+/** The narration takes what is left of the screen, so the whole report shows without a horizontal scroll (never narrower than 120). */
+const NARRATION_WIDTH = 240;
+const columnsFor = (screenWidth: number): HelpData["columns"] => {
+  const fixed: HelpData["columns"] = [
+    { key: "sr", caption: "Sr", width: 40, align: "R", format: "" },
+    { key: "date", caption: "Date", width: 77, align: "L", format: "" },
+    { key: "docNo", caption: "Doc No", width: 113, align: "L", format: "" },
+    { key: "particular", caption: "Particular", width: 260, align: "L", format: "" },
+    { key: "debit", caption: "Debit", width: 100, align: "R", format: "" },
+    { key: "credit", caption: "Credit", width: 100, align: "R", format: "" },
+    { key: "closing", caption: "Closing", width: 99, align: "R", format: "" },
+    { key: "drCr", caption: "Dr/Cr", width: 25, align: "L", format: "" },
+    { key: "chln", caption: "Chln", width: 90, align: "L", format: "" },
+    { key: "chlnDate", caption: "Chln Date", width: 77, align: "L", format: "" },
+  ];
+  // The window keeps 32px off the screen, and the grid its scroll bar and border.
+  const room = screenWidth - 32 - 30 - fixed.reduce((sum, column) => sum + column.width, 0);
+  // A narrow screen takes the shortage from the Particular column too (down to 180) before the narration goes under 120.
+  const short = Math.max(0, 120 - room);
+  const columns = fixed.map((column) => (column.key === "particular" ? { ...column, width: Math.max(180, column.width - short) } : column));
+  return [...columns, { key: "narration", caption: "Narration", width: Math.max(120, Math.min(NARRATION_WIDTH, room)), align: "L", format: "" }];
+};
 
 export function AccountLedger({ ledger, onClose }: { ledger: AccountLedgerData; onClose: () => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -33,8 +43,8 @@ export function AccountLedger({ ledger, onClose }: { ledger: AccountLedgerData; 
   const [focusRow, setFocusRow] = useState(0);
 
   const help = useMemo((): HelpData => ({
-    columns: COLUMNS,
-    rows: ledger.rows.map((row) => ({ date: row.date, docNo: row.docNo, particular: row.particular, debit: row.debit, credit: row.credit, closing: row.closing, drCr: row.drCr, chln: row.chln, chlnDate: row.chlnDate, narration: row.narration })),
+    columns: columnsFor(typeof window === "undefined" ? 1360 : window.innerWidth),
+    rows: ledger.rows.map((row, index) => ({ sr: String(index + 1), date: row.date, docNo: row.docNo, particular: row.particular, debit: row.debit, credit: row.credit, closing: row.closing, drCr: row.drCr, chln: row.chln, chlnDate: row.chlnDate, narration: row.narration })),
     total: `${ledger.title} · ${ledger.rows.length - 2} entries`,
   }), [ledger]);
   const view = useHelpView(help, plain);

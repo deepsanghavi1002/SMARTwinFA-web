@@ -3924,3 +3924,5 @@
 .ent-filter-bar .ent-rowinfo{font-weight:600;white-space:nowrap;color:#1f3d6b}
 .ent-filter-bar .ent-f6{margin-left:auto;white-space:nowrap}
 .ent-filter-bar .ent-f6-on{background:#cdeeff;outline:1px solid #1f64b8}
+/* A header box that is only shown (the series and book side of an opened voucher). */
+.ent-box.ent-locked input,.ent-box.ent-locked button{background:#e6e6e6 !important;color:#444;cursor:not-allowed}

@@ -354,7 +354,7 @@ function groups(rows: Rule[]): Rule[][] {
   return out;
 }
 
-function pushPostAccount(ctx: Ctx, statements: Statement[], code: number, dbcode: number, amount: number, bookOfAccount: number, bookCode: string, label: string) {
+function pushPostAccount(ctx: Pick<Ctx, "loader" | "docDate" | "values">, statements: Statement[], code: number, dbcode: number, amount: number, bookOfAccount: number, bookCode: string, label: string, ledRef = "@pkval_1") {
   let side = dbcode;
   if (amount < 0) side = side === 1 ? 2 : 1;
   const signed = amount; // "+": the posting adds
@@ -369,7 +369,7 @@ function pushPostAccount(ctx: Ctx, statements: Statement[], code: number, dbcode
   statements.push({
     kind: "insert", table: "ledger_post", keyColumn: KEY_COLUMN.ledger_post, label: `${label}: ledger_post ${code}`,
     columns: ["led_id", "post_code", "post_date", "post_bookcd", "post_amt", "post_dbcode", "post_book", "year_id"],
-    values: ["@pkval_1", String(code), dateLiteral(ctx.docDate), bookCode, String(absolute), String(side), String(ctx.values.bookKey), year],
+    values: [ledRef, String(code), dateLiteral(ctx.docDate), bookCode, String(absolute), String(side), String(ctx.values.bookKey), year],
   });
 }
 
@@ -385,7 +385,12 @@ function pushPostProduct(ctx: Ctx, statements: Statement[], prodId: number, trn:
   statements.push({ kind: "sql", label, sql: `UPDATE |sys.db|prod_balance SET ${set.join(", ")} WHERE prec_flag = 'RP' AND year_id = ${year} AND prod_id = ${prodId}` });
 }
 
-export async function buildSave(loader: Loader, entryName: string, firstCombo: EntryOption, input: SaveInput, now = new Date()): Promise<SavePlan> {
+export async function buildSave(loader: Loader, entryName: string, firstCombo: EntryOption, input: SaveInput | VoucherSaveInput, now = new Date()): Promise<SavePlan> {
+  if (isVoucherStyle(entryName)) return buildVoucherSave(loader, entryName, firstCombo, input as VoucherSaveInput, now);
+  return buildInvoiceSave(loader, entryName, firstCombo, input as SaveInput, now);
+}
+
+async function buildInvoiceSave(loader: Loader, entryName: string, firstCombo: EntryOption, input: SaveInput, now: Date): Promise<SavePlan> {
   const { session } = loader;
   const warnings: string[] = [];
   const book = await bookContext(loader, entryName, firstCombo);
@@ -1010,6 +1015,7 @@ export type DeleteSummary = SavePlan["summary"];
  * rows stay as deleted rows (doc_pos / il_pos D), and the log rows record it. A bill that receipts are set off against is refused.
  */
 export async function buildDelete(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number, now = new Date()): Promise<SavePlan> {
+  if (isVoucherStyle(entryName)) return buildVoucherDelete(loader, entryName, firstCombo, uniqueKey, now);
   const { session } = loader;
   const book = await bookContext(loader, entryName, firstCombo);
   if (!book.values.bookActual) return buildStockDelete(loader, text(book.row, "stkm_short"), uniqueKey);
@@ -1086,4 +1092,337 @@ async function buildStockDelete(loader: Loader, stockModule: string, processKey:
   }
   statements.push({ kind: "sql", label: "process deleted", sql: `UPDATE |sys.db|process SET il_pos = 'D' WHERE process_key = ${processKey}` });
   return { statements, presetKeys: { pkval_3: processKey }, summary: { fullDocNo: text(process, "full_docno"), finalAmount: toDecimal(field(process, "p_amount")), bookAmount: 0, party: toInt(field(process, "code")) }, warnings: ["The special log (logfile S) is not written for a stock register's entry."] };
+}
+
+// ---------------------------------------------------------------------------------------
+// The voucher style (entry type V) of the same program: Save_Entry's voucher branch
+
+/** Entry type tag: the program name's first letter, I (invoice) or V (voucher), as the desktop's str_Entry_Style. */
+export const isVoucherStyle = (entryName: string) => entryName.trim().toUpperCase().startsWith("V");
+
+export type VoucherSaveInput = Readonly<{
+  /** Header values by lowercase control name (cmb_side, cmb_series, dtp_date, tbx_number, dtp_entrydate, tbx_entryno, tbx_narration, cmb_rev_entry). */
+  values: Readonly<Record<string, string>>;
+  /** The filled account rows (c1dg_Inputdata): ledKey of an opened voucher's row (0 for a new one), the figure on its side, the cheque number and date. */
+  rows: readonly Readonly<{
+    ledKey: number; code: number; debit: string; credit: string; chqNo: string; chqDate: string;
+    /** The row's own addon values (entrypos P, e.g. Sub Ledger) by addon key. */
+    addon?: Readonly<Record<number, string>>;
+    /** What the row sets off against the account's pending bills (the Outstanding tab): the bill's outclear key and the amount. */
+    setoffs?: readonly Readonly<{ outKey: number; amount: string }>[];
+  }>[];
+  /** The header addon values (entrypos L, e.g. Bank Name) by addon key, kept with the first row. */
+  addon?: Readonly<Record<number, string>>;
+  /** The unique_key of the opened voucher when this save changes it (Edit); absent for a new voucher. */
+  editKey?: number;
+}>;
+
+const CASH = 4;
+const BANK = 6;
+const JOURNAL = 19;
+
+/**
+ * Save_Entry for the voucher style: one ledger row per account line (doc_posting P, led_div = the row, unique_key = the first row's key), each with
+ * its two postings (the account and the day book, opposite sides); a Contra (cash / bank account in a cash / bank book, type 9) also writes the
+ * book-side row (doc_posting A). Edit changes the rows by led_key, adds new rows and marks removed rows deleted (doc_pos D, led_div 0); the old postings
+ * come off first. book_number takes the last number / date (save_order 7). The column list is the setup's entry_save_properties (entrykey_id 2).
+ */
+async function buildVoucherSave(loader: Loader, entryName: string, firstCombo: EntryOption, input: VoucherSaveInput, now: Date): Promise<SavePlan> {
+  const { session } = loader;
+  const warnings: string[] = [];
+  const book = await bookContext(loader, entryName, firstCombo);
+  const bookKey = book.values.bookKey;
+  const bookCode = book.values.bookCode;
+  const year = quote(session.yearId);
+  const screen = await loadBook(loader, entryName, firstCombo, "V");
+  const series = (input.values.cmb_series ?? "").trim();
+  let number = (input.values.tbx_number ?? "").trim();
+  const docDate = parseDesktopDate(input.values.dtp_date);
+  if (series === "" || number === "" || !docDate) throw new Error("Series, date and number are needed to save");
+  const mode: "A" | "E" = (input.editKey ?? 0) > 0 ? "E" : "A";
+
+  // The side (Cmb_Side_Leave): the first one has the account on the debit side. A journal (and a multi day book) has each row's own side.
+  const sideText = (input.values.cmb_side ?? "").trim();
+  const side = screen.sides?.find((candidate) => candidate.text === sideText);
+  const journal = bookKey === JOURNAL;
+  if (!journal && screen.sides && screen.sides.length > 0 && !side) throw new Error("Choose the Book Side");
+  const sideAc = side?.acDbcode ?? 1;
+
+  const rows = input.rows.filter((row) => Number(row.code) > 0);
+  if (rows.length === 0) throw new Error("Account Name not selected...");
+  const accounts = (await loader.readTable(`SELECT code, book, name FROM |sys.db|account WHERE code = ANY($1::int[])`, [rows.map((row) => Math.trunc(Number(row.code)))])) ?? [];
+  const lines = rows.map((row, index) => {
+    const debit = round(toNumber(row.debit), 2);
+    const credit = round(toNumber(row.credit), 2);
+    const code = Math.trunc(Number(row.code));
+    const account = accounts.find((candidate) => toInt(field(candidate, "code")) === code);
+    if (!account) throw new Error(`Row ${index + 1}: the account is not found`);
+    if (debit < 0 || credit < 0) throw new Error(`Row ${index + 1}: the amount cannot be negative`);
+    if (debit > 0 && credit > 0 && !journal) throw new Error(`Row ${index + 1}: only one of Debit and Credit can be filled`);
+    const acDbcode = journal ? (debit > 0 ? 1 : 2) : sideAc;
+    const amount = journal ? (debit > 0 ? debit : credit) : (sideAc === 1 ? debit : credit);
+    if (amount <= 0) throw new Error(`Row ${index + 1}: Amount can not be Zero`);
+    const chq = parseDesktopDate(row.chqDate);
+    const setoffs = (row.setoffs ?? []).map((item) => ({ outKey: Math.trunc(Number(item.outKey)), amount: round(toNumber(item.amount), 2) })).filter((item) => item.amount > 0);
+    if (setoffs.some((item) => !Number.isInteger(item.outKey) || item.outKey <= 0)) throw new Error(`Row ${index + 1}: a set-off bill is not valid`);
+    if (setoffs.reduce((sum, item) => sum + item.amount, 0) > amount + 0.005) throw new Error(`Row ${index + 1}: Outstanding Setoff Amount can not be greater than Voucher Amount...`);
+    return { index: index + 1, ledKey: Math.trunc(Number(row.ledKey)) || 0, code, accountBook: toInt(field(account, "book")), acDbcode, bkDbcode: acDbcode === 1 ? 2 : 1, amount, chqNo: (row.chqNo ?? "").trim(), chqDate: chq, addon: row.addon ?? {}, setoffs };
+  });
+  const keyed = lines.filter((line) => line.ledKey > 0);
+  if (new Set(keyed.map((line) => line.ledKey)).size !== keyed.length) throw new Error("A voucher row is repeated");
+  for (const line of lines) if (line.code === bookCode) throw new Error("Book and Account can't be Same...");
+  // A Contra: a cash / bank account in a cash / bank book (Voucher_AcHelp_Selection); one row only.
+  const cashBank = (value: number) => value === CASH || value === BANK;
+  const contra = cashBank(bookKey) && lines.some((line) => cashBank(line.accountBook));
+  if (contra && lines.length > 1) throw new Error("Contra entry can not have Multiple Rows");
+  const typeValue = contra ? 9 : book.values.type;
+  const debitTotal = round(lines.filter((line) => line.acDbcode === 1).reduce((sum, line) => sum + line.amount, 0), 2);
+  const creditTotal = round(lines.filter((line) => line.acDbcode === 2).reduce((sum, line) => sum + line.amount, 0), 2);
+  if (journal && Math.abs(debitTotal - creditTotal) > 0.005) throw new Error(`Debit and Credit Total are not Equal... (difference ${round(Math.abs(debitTotal - creditTotal), 2)})`);
+
+  // Opened voucher: its rows (P) and the Contra's book-side row (A), found by the unique key; a locked one cannot be changed.
+  const oldRows = mode === "E"
+    ? (await loader.readTable(`SELECT led_key, doc_posting, doc_lock, "TYPE" AS nature, doc_type FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos = 'A' ORDER BY led_key`, [input.editKey])) ?? []
+    : [];
+  if (mode === "E") {
+    if (!oldRows.some((row) => text(row, "doc_posting").toUpperCase() === "P")) throw new Error("The voucher to change was not found: it may have been deleted");
+    if (oldRows.some((row) => text(row, "doc_lock").toUpperCase() === "Y")) throw new Error("Current Entry Lock...  Changes Save not Allowed....");
+  }
+  const oldP = oldRows.filter((row) => text(row, "doc_posting").toUpperCase() === "P").map((row) => toInt(field(row, "led_key")));
+  const oldA = oldRows.filter((row) => text(row, "doc_posting").toUpperCase() === "A").map((row) => toInt(field(row, "led_key")));
+  const wasContra = oldRows.some((row) => toInt(field(row, "nature")) === 9);
+  if (mode === "E" && wasContra !== contra) throw new Error(wasContra ? "Account change not allowed in Contra entry edit" : "Contra entry can not be created in edit mode");
+  if (mode === "E") for (const line of keyed) if (!oldP.includes(line.ledKey)) throw new Error("A voucher row does not belong to this voucher");
+  const ledKeyOne = mode === "E" ? (oldP[0] ?? 0) : 0;
+
+  // The set-offs the voucher already made: they count as pending again while it is changed (the typed ones are checked against that), and are taken back before the typed ones are written.
+  const taken_ = new Map<number, number>();
+  const oldSetoffs = mode === "E" ? (await loader.readTable(`SELECT out_key, out_ag_outid, out_setoff::numeric AS setoff FROM |sys.db|outclear WHERE out_ledid = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) > 0`, [oldP])) ?? [] : [];
+  for (const row of oldSetoffs) taken_.set(toInt(field(row, "out_ag_outid")), (taken_.get(toInt(field(row, "out_ag_outid"))) ?? 0) + toDecimal(field(row, "setoff")));
+  const wanted = lines.flatMap((line) => line.setoffs.map((item) => ({ line, ...item })));
+  if (wanted.length > 0) {
+    const bills = (await loader.readTable(`SELECT out_key, out_fulldocno, code, (out_entryamt::numeric - out_setoff::numeric - out_ly_setoff::numeric) AS pending FROM |sys.db|outclear WHERE out_key = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) = 0`, [[...new Set(wanted.map((item) => item.outKey))]])) ?? [];
+    const used = new Map<number, number>();
+    for (const item of wanted) {
+      const bill = bills.find((row) => toInt(field(row, "out_key")) === item.outKey);
+      if (!bill || toInt(field(bill, "code")) !== item.line.code) throw new Error(`Row ${item.line.index}: a set-off bill does not belong to the account`);
+      const pending = toDecimal(field(bill, "pending")) + (taken_.get(item.outKey) ?? 0) - (used.get(item.outKey) ?? 0);
+      if (item.amount > pending + 0.005) throw new Error(`Outstanding Setoff Amount can not be greater than Balance Pending Amount... (${text(bill, "out_fulldocno")}: ${round(pending, 2)})`);
+      used.set(item.outKey, (used.get(item.outKey) ?? 0) + item.amount);
+    }
+  }
+
+  // Duplicate guard on the number (the voucher being changed does not count).
+  const taken = async (docNo: string) => Boolean(await loader.readTable(`SELECT led_key FROM |sys.db|ledger WHERE full_docno = $1 AND doc_pos = 'A' AND doc_posting = 'P' AND book = $2 AND doc_date BETWEEN $3 AND $4 AND unique_key <> $5`, [docNo, bookKey, session.tarikh1, session.tarikh2, mode === "E" ? input.editKey : 0]));
+  let renumberedFrom = "";
+  let fullDocNo = `${series}/${number}`;
+  if (await taken(fullDocNo)) {
+    if (mode === "E") throw new Error(`${fullDocNo} is already saved`);
+    let candidate = (await seriesDefaults(loader, entryName, book, series, now, formatDesktopDate(docDate))).number;
+    for (let tries = 0; /^\d+$/.test(candidate) && tries < 100 && (await taken(`${series}/${candidate}`)); tries += 1) candidate = String(BigInt(candidate) + BigInt(1));
+    if (!/^\d+$/.test(candidate) || (await taken(`${series}/${candidate}`))) throw new Error(`${fullDocNo} is already saved`);
+    renumberedFrom = number;
+    number = candidate;
+    fullDocNo = `${series}/${number}`;
+    warnings.push(`Number ${renumberedFrom} was already saved by another entry: this voucher takes ${number}`);
+  }
+
+  // Column sizes of the number boxes come from the setup rules (tbx_Number / tbx_EntryNo: right-justified, column_size).
+  const rules = await loadRules(loader, toInt(field(await entryProperties(loader, entryName), "entry_key")), "A");
+  const sizeOf = (box: string) => toInt(field(rules.find((rule) => text(rule, "control_name").toLowerCase() === box && toInt(field(rule, "table_order")) === 1), "column_size")) || 10;
+  const entryDate = parseDesktopDate(input.values.dtp_entrydate);
+  const narration = (input.values.tbx_narration ?? "").trim();
+  const entryNo = padLeft((input.values.tbx_entryno ?? "").trim(), sizeOf("tbx_entryno"));
+  // Doc. Type (cmb_Rev_Entry, books 4, 5, 6): saved as its letter (Regular R, Doc.Refund D, No Interest Calc N).
+  const docTypeLetter = ({ regular: "R", "doc.refund": "D", "no interest calc": "N" } as Record<string, string>)[(input.values.cmb_rev_entry ?? "").trim().toLowerCase()];
+  const rev = [4, 5, 6].includes(bookKey) ? quote(docTypeLetter || text(oldRows[0], "doc_type").trim() || "R") : "null";
+  const savedDate = dateLiteral(now);
+  const savedTime = quote(timeText(now));
+  const statements: Statement[] = [];
+  const presetKeys: Record<string, number> = {};
+  type Line = (typeof lines)[number];
+
+  // The columns of a row, as the setup's rules give them (the add and update lists are the same but for the two set-off columns and a journal's book columns).
+  const rowColumns = (line: Line, add: boolean): [string, string][] => {
+    const columns: [string, string][] = [
+      ["code", String(line.code)], ["doc_date", dateLiteral(docDate)], ["doc_no", quote(padLeft(number, sizeOf("tbx_number")))], ["doc_series", quote(series)],
+      ["full_docno", quote(fullDocNo)], ["doc_no1", quote(padLeft(line.chqNo, 10))], ["amount", String(line.amount)],
+    ];
+    if (add || !journal) columns.push(["book_amt", String(line.amount)], ["bk_dbcode", String(line.bkDbcode)]);
+    columns.push(["book", String(bookKey)], ["book_code", String(bookCode)], ["ac_dbcode", String(line.acDbcode)], ["narration", quote(narration)]);
+    if (add) columns.push(["setoff_amt", "0"], ["ly_clearamt", "0"]);
+    columns.push(["chln_date", dateLiteral(line.chqDate ?? docDate)], ["ag_book", String(book.values.agBook)], ["ag_bkcode", book.values.agCode === 0 ? "null" : String(book.values.agCode)]);
+    if (add || !journal) columns.push(["post_bkcode", String(bookCode)]);
+    columns.push(
+      ["type", String(typeValue)], ["int_type", "0"], ["entry_type", "''"], ["post_amt", String(line.amount)], ["doc_posting", "'P'"], ["doc_mode", "0"], ["doc_lock", "''"],
+      ["doc_pos", "'A'"], ["prod_amt", "0"], ["doc_remark", "''"], ["entry_sty", "''"], ["stkmdl", "''"], ["year_id", year], ["last_savedate", savedDate], ["last_savetime", savedTime],
+      ["entry_no", quote(entryNo)], ["post_date", entryDate ? dateLiteral(entryDate) : "null"], ["doc_type", rev], ["led_div", String(line.index)],
+    );
+    return columns;
+  };
+  // The Contra's book-side row (table_order 3): the other account on the other side, a fixed Auto/999999 number.
+  const contraColumns = (line: Line, add: boolean): [string, string][] => {
+    const columns: [string, string][] = [
+      ["code", String(bookCode)], ["doc_date", dateLiteral(docDate)], ["doc_no", "'999999'"], ["doc_series", "'Auto'"], ["full_docno", "'Auto/999999'"], ["doc_no1", "''"],
+      ["amount", String(line.amount)], ["book_amt", String(line.amount)], ["bk_dbcode", String(line.acDbcode)], ["book", String(line.accountBook)], ["book_code", String(line.code)], ["ac_dbcode", String(line.bkDbcode)],
+      ["narration", quote(narration)],
+    ];
+    if (add) columns.push(["setoff_amt", "0"], ["ly_clearamt", "0"]);
+    columns.push(["chln_date", "null"], ["ag_book", String(book.values.agBook)], ["ag_bkcode", book.values.agCode === 0 ? "null" : String(book.values.agCode)], ["post_bkcode", String(line.code)],
+      ["type", "9"], ["int_type", "0"], ["entry_type", "''"], ["post_amt", String(line.amount)], ["doc_posting", "'A'"], ["doc_mode", "0"], ["doc_lock", "''"], ["doc_pos", "'A'"], ["prod_amt", "0"],
+      ["doc_remark", "''"], ["entry_sty", "''"], ["stkmdl", "''"], ["year_id", year], ["last_savedate", savedDate], ["last_savetime", savedTime], ["entry_no", quote(entryNo)], ["post_date", entryDate ? dateLiteral(entryDate) : "null"]);
+    return columns;
+  };
+  const updateSql = (columns: [string, string][], key: number) => `UPDATE |sys.db|ledger SET ${columns.map(([column, value]) => `${columnName(column)} = ${value}`).join(", ")} WHERE led_key = ${key}`;
+
+  if (mode === "E") {
+    presetKeys.pkval_1 = ledKeyOne;
+    // The old postings come off first, for every row of the voucher (the Contra's book-side row has none).
+    for (const key of [...oldP, ...oldA]) statements.push(...(await reversal(loader, key, session.yearId)));
+    for (const [bill, amount] of taken_) statements.push({ kind: "sql", label: `set-off of bill ${bill} taken back`, sql: `UPDATE |sys.db|outclear SET out_setoff = out_setoff::numeric - ${amount}, clear_pos = (case when out_setoff::numeric - ${amount} + out_ly_setoff::numeric = 0 then 'P' else 'C' end) WHERE out_key = ${bill}` });
+    if (oldSetoffs.length > 0) statements.push({ kind: "sql", label: "old set-off rows", sql: `DELETE FROM |sys.db|outclear WHERE out_ledid IN (${oldP.join(", ")}) AND COALESCE(out_ag_outid, 0) > 0` });
+    // The addon rows are written afresh below (one per account row).
+    statements.push({ kind: "sql", label: "old addon rows", sql: `DELETE FROM |sys.db|addon_aentry WHERE aona_ledid IN (${[...oldP, ...oldA].join(", ")}) AND aona_recid = 'L'` });
+  }
+
+  const addonDefs = (await loader.readTable(`SELECT fiel_key, fiel_save, fiel_type FROM |sys.db|addon_fld WHERE fiel_relate = 'A' AND fiel_pos <> 'D'`)) ?? [];
+  const ref = (line: Line) => (line.ledKey > 0 ? String(line.ledKey) : `@il_${line.index}`);
+  const firstRef = mode === "E" ? String(ledKeyOne) : "@il_1";
+  for (const line of lines) {
+    if (mode === "E" && line.ledKey > 0) {
+      statements.push({ kind: "sql", label: `row ${line.index}: update ledger`, sql: updateSql(rowColumns(line, false), line.ledKey) });
+    } else {
+      const columns = rowColumns(line, true);
+      statements.push({ kind: "insert", table: "ledger", keyColumn: KEY_COLUMN.ledger, columns: columns.map(([column]) => column), values: columns.map(([, value]) => value), capture: line.index === 1 && mode === "A" ? "pkval_1" : undefined, ilLine: line.index, label: `row ${line.index}: ledger` });
+      // unique_key: the first row's own key; every later row (and a new row of an edit) carries it.
+      statements.push({ kind: "sql", label: `row ${line.index}: unique_key`, sql: `UPDATE |sys.db|ledger SET unique_key = ${firstRef} WHERE led_key = @il_${line.index}` });
+    }
+    if (contra) {
+      if (mode === "E" && oldA[0]) {
+        statements.push({ kind: "sql", label: "contra row: update ledger", sql: updateSql(contraColumns(line, false), oldA[0]) });
+      } else {
+        const columns = contraColumns(line, true);
+        statements.push({ kind: "insert", table: "ledger", keyColumn: KEY_COLUMN.ledger, columns: columns.map(([column]) => column), values: columns.map(([, value]) => value), ilLine: 2, label: "contra row: ledger" });
+        statements.push({ kind: "sql", label: "contra row: unique_key", sql: `UPDATE |sys.db|ledger SET unique_key = ${firstRef} WHERE led_key = @il_2` });
+      }
+    }
+    // Save_CodePost: the account on its side and the day book on the other, both for this row's key.
+    const post = { loader, docDate, values: book.values };
+    pushPostAccount(post, statements, line.code, line.acDbcode, line.amount, line.accountBook, String(bookCode), `row ${line.index} account`, ref(line));
+    pushPostAccount(post, statements, bookCode, line.bkDbcode, line.amount, 1, String(bookCode), `row ${line.index} book`, ref(line));
+    // The set-offs of the row (Outstanding tab): its own outclear row per bill (out_ag_outid = the bill), and the bill's out_setoff goes up.
+    for (const item of line.setoffs) {
+      statements.push({
+        kind: "insert", table: "outclear", keyColumn: KEY_COLUMN.outclear, label: `row ${line.index}: set-off of bill ${item.outKey}`,
+        columns: ["out_ledid", "out_fulldocno", "out_date", "out_entryamt", "out_setoff", "out_ly_setoff", "out_on_acamt", "out_dbcode", "out_ag_outid", "out_entrybook", "code", "ref_no", "set_off", "clear_pos", "year_id"],
+        values: [ref(line), quote(fullDocNo), dateLiteral(docDate), String(line.amount), String(item.amount), "0", "0", String(line.acDbcode), String(item.outKey), String(bookKey), String(line.code), "''", "1", "'C'", year],
+      });
+      statements.push({ kind: "sql", label: `row ${line.index}: bill ${item.outKey} set off`, sql: `UPDATE |sys.db|outclear SET out_setoff = out_setoff::numeric + ${item.amount}, clear_pos = 'C' WHERE out_key = ${item.outKey}` });
+    }
+    // ADDON_AENTRY: one row per account row (its own addon values; the first row also holds the header addon values).
+    const addonValues = { ...(line.index === 1 ? input.addon ?? {} : {}), ...line.addon };
+    if (Object.values(addonValues).some((value) => String(value).trim() !== "")) {
+      const columns = ["aona_accode", "aona_ledid", "aona_recid"];
+      const values = [String(line.code), ref(line), "'L'"];
+      for (const [key, value] of Object.entries(addonValues)) {
+        const def = addonDefs.find((item) => toInt(field(item, "fiel_key")) === Number(key));
+        if (!def) continue;
+        const save = text(def, "fiel_save").trim();
+        if (!/^[A-Za-z0-9_]+$/.test(save)) continue;
+        if (text(def, "fiel_type").toUpperCase() === "M") {
+          const sub = (await loader.readTable(`SELECT sub_code FROM |sys.db|addon_sub WHERE para_id = $1 AND sub_pos <> 'D' AND BTRIM(sub_name) = $2 LIMIT 1`, [Number(key), String(value).trim()]))?.[0];
+          columns.push(`key_${save}`, `txt_${save}`);
+          values.push(sub ? String(toInt(field(sub, "sub_code"))) : "null", quote(String(value)));
+        } else {
+          columns.push(`input_${save}`);
+          values.push(quote(String(value)));
+        }
+      }
+      if (columns.length > 3) statements.push({ kind: "insert", table: "addon_aentry", keyColumn: KEY_COLUMN.addon_aentry, columns, values, label: `row ${line.index}: addon` });
+    }
+  }
+  // Rows taken out of the voucher stay as deleted rows (doc_pos D, led_div 0).
+  for (const key of oldP) if (!lines.some((line) => line.ledKey === key)) statements.push({ kind: "sql", label: `old row ${key} removed`, sql: `UPDATE |sys.db|ledger SET doc_pos = 'D', led_div = 0 WHERE led_key = ${key}` });
+
+  // BOOK_NUMBER (the last save order): the last number, date and cheque date of the series.
+  const tokens = { ...book.values, series, docNo: number, docDate: formatDesktopDate(docDate) };
+  const where = replaceEntryTokens(text(rules.find((rule) => text(rule, "table_name").toUpperCase() === "BOOK_NUMBER" && text(rule, "query_where") !== ""), "query_where"), tokens);
+  const bookNumber = (await loader.readTable(replaceEntryTokens(`Select bkno.*, bkset.* from |sys.db|book_number bkno left join |sys.db|book_setup bkset on bkno.bn_id=bkset.bs_rec where bkno.bn_series ='|sys.doc_series|' and bkno.bn_pos<>'D' and bkset.bksetup_pos<>'D' and bkset.book_code =|sys.book_code| order by bkno.bn_from desc`, tokens)))?.[0];
+  if (where !== "" && bookNumber) {
+    const set: string[] = [];
+    if (formula(">", number, text(bookNumber, "bn_docno"))) set.push(`bn_docno = ${quote(number)}`);
+    const lastDate = parseDesktopDate(field(bookNumber, "bn_lastdate"));
+    if (!lastDate || docDate > lastDate) set.push(`bn_lastdate = ${dateLiteral(docDate)}`);
+    const chqNo = lines.map((line) => line.chqNo).filter((value) => value !== "").sort().pop() ?? "";
+    if (/^\d+$/.test(chqNo) && formula(">", chqNo, text(bookNumber, "bn_docno1"))) set.push(`bn_docno1 = ${quote(chqNo)}`);
+    const lastChq = parseDesktopDate(field(bookNumber, "bn_lastchlndate"));
+    const chqDate = lines.map((line) => line.chqDate).filter((value): value is Date => value !== null).sort((a, b) => a.getTime() - b.getTime()).pop();
+    if (chqDate && (!lastChq || chqDate > lastChq)) set.push(`bn_lastchlndate = ${dateLiteral(chqDate)}`);
+    if (set.length > 0) statements.push({ kind: "sql", label: "book_number", sql: `UPDATE |sys.db|book_number SET ${set.join(", ")} WHERE ${where.replace(/bn_id\s*=\s*\(\s*select/i, "bn_id in (select")}` });
+  }
+
+  // logfile S: the special log, a readable copy of the voucher in captions.
+  if (toText(session.setup.logfile).toUpperCase() === "S") {
+    const pair = (key: string, value: string) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`;
+    const label = (name: string, fallback: string) => (screen.controls.find((control) => control.name === name)?.label || fallback).replace(/^\*\s*/, "");
+    const names = new Map(accounts.map((row) => [toInt(field(row, "code")), text(row, "name").trim()]));
+    const top = `[{${[
+      pair("!*Led_key", firstRef), pair("Daybook", firstCombo.text), pair("user", session.loginName), pair("savedate", formatDesktopDate(now)), pair("savetime", timeText(now)), pair("machine_name", "WEB"),
+      ...(side ? [pair(label("cmb_side", "Book Side"), side.text)] : []),
+      pair(label("cmb_series", "Series"), series), pair(label("dtp_date", "Date"), formatDesktopDate(docDate)), pair(label("tbx_number", "Number"), number),
+      pair(label("tbx_narration", "Narration"), narration), pair("Debit Total", debitTotal.toFixed(2)), pair("Credit Total", creditTotal.toFixed(2)),
+    ].join(",")}}]`;
+    const items = `[${lines.map((line) => `{${[
+      pair(`!${line.index === 1 ? "*" : ""}Led_key`, ref(line)), pair("Sr.", String(line.index)), pair("Account Head", names.get(line.code) ?? ""),
+      pair("Debit", line.acDbcode === 1 ? line.amount.toFixed(2) : ""), pair("Credit", line.acDbcode === 2 ? line.amount.toFixed(2) : ""),
+      pair("Chq. Number", line.chqNo), pair("Chq. Date", line.chqDate ? formatDesktopDate(line.chqDate) : ""),
+    ].join(",")}}`).join(",")}]`;
+    const fields = `{${[pair("book", String(bookKey)), pair("book_code", String(bookCode)), pair("full_docno", fullDocNo), pair("type", String(typeValue)), pair("year_id", session.yearId)].join(",")}}`;
+    statements.push({
+      kind: "insert", table: "log_entry", schema: `${session.companySchema}_biglog`, keyColumn: "lentry_key", label: "special log (log_entry)",
+      columns: ["lentry_top_bottom", "lentry_items", "lentry_slab", "lentry_outstand", "lentry_addon", "lentry_einvoice", "lentry_fields", "lentry_mode", "lentry_user", "lentry_ledid", "lentry_processid", "lentry_code", "lentry_book", "lentry_bookcode", "lentry_savedate", "lentry_savetime", "lentry_machine_name"],
+      values: [quote(top), quote(items), "''", "''", "''", "''", quote(fields), quote(mode), String(session.userNo), firstRef, "null", String(lines[0].code), String(bookKey), String(bookCode), savedDate, quote(clock12(now)), quote("WEB")],
+    });
+  }
+  const total = Math.max(debitTotal, creditTotal);
+  return { statements, presetKeys, summary: { fullDocNo, finalAmount: total, bookAmount: total, party: lines[0].code, ...(renumberedFrom ? { renumberedFrom } : {}) }, warnings };
+}
+
+/**
+ * Delete of a saved voucher (EntryNat "D"): the postings of every row come off the balances, the set-offs it made are taken back from the bills,
+ * the rows (and a Contra's book-side row) stay as deleted rows (doc_pos D), and the special log records it.
+ */
+async function buildVoucherDelete(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number, now: Date): Promise<SavePlan> {
+  const { session } = loader;
+  const book = await bookContext(loader, entryName, firstCombo);
+  const rows = (await loader.readTable(`SELECT l.led_key, l.code, l.doc_posting, l.doc_lock, l.full_docno, l.narration, l.led_div, l.ac_dbcode, l.amount::numeric AS amount_n, a.name FROM |sys.db|ledger l LEFT JOIN |sys.db|account a ON a.code = l.code WHERE l.unique_key = $1 AND l.doc_pos = 'A' ORDER BY l.led_div, l.led_key`, [uniqueKey])) ?? [];
+  const mine = rows.filter((row) => text(row, "doc_posting").toUpperCase() === "P");
+  if (mine.length === 0) throw new Error("The voucher to delete was not found: it may be deleted already");
+  if (rows.some((row) => text(row, "doc_lock").toUpperCase() === "Y")) throw new Error("Current Entry Lock...  Changes Save not Allowed....");
+  const keys = rows.map((row) => toInt(field(row, "led_key")));
+  const statements: Statement[] = [];
+  for (const key of keys) statements.push(...(await reversal(loader, key, session.yearId)));
+  // What this voucher set off against bills comes off them before its rows go.
+  for (const row of (await loader.readTable(`SELECT out_ag_outid, out_setoff::numeric AS setoff FROM |sys.db|outclear WHERE out_ledid = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) > 0`, [keys])) ?? []) {
+    const bill = toInt(field(row, "out_ag_outid"));
+    const amount = toDecimal(field(row, "setoff"));
+    statements.push({ kind: "sql", label: `set-off of bill ${bill} taken back`, sql: `UPDATE |sys.db|outclear SET out_setoff = out_setoff::numeric - ${amount}, clear_pos = (case when out_setoff::numeric - ${amount} + out_ly_setoff::numeric = 0 then 'P' else 'C' end) WHERE out_key = ${bill}` });
+  }
+  statements.push({ kind: "sql", label: "outstanding rows", sql: `DELETE FROM |sys.db|outclear WHERE out_ledid IN (${keys.join(", ")})` });
+  statements.push({ kind: "sql", label: "addon row", sql: `DELETE FROM |sys.db|addon_aentry WHERE aona_ledid IN (${keys.join(", ")}) AND aona_recid = 'L'` });
+  statements.push({ kind: "sql", label: "ledger deleted", sql: `UPDATE |sys.db|ledger SET doc_pos = 'D' WHERE unique_key = ${uniqueKey}` });
+  const first = mine[0];
+  if (toText(session.setup.logfile).toUpperCase() === "S") {
+    const pair = (key: string, value: string) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`;
+    const top = `[{${[pair("!*Led_key", String(toInt(field(first, "led_key")))), pair("Daybook", firstCombo.text), pair("user", session.loginName), pair("savedate", formatDesktopDate(now)), pair("savetime", timeText(now)), pair("machine_name", "WEB"), pair("Number", text(first, "full_docno")), pair("Narration", text(first, "narration"))].join(",")}}]`;
+    const items = `[${mine.map((row, index) => `{${[pair(`!${index === 0 ? "*" : ""}Led_key`, String(toInt(field(row, "led_key")))), pair("Sr.", `${index + 1} *Deleted`), pair("Account Head", text(row, "name").trim()), pair(toInt(field(row, "ac_dbcode")) === 1 ? "Debit" : "Credit", toDecimal(field(row, "amount_n")).toFixed(2))].join(",")}}`).join(",")}]`;
+    const fields = `{${[pair("book", String(book.values.bookKey)), pair("book_code", String(book.values.bookCode)), pair("full_docno", text(first, "full_docno")), pair("year_id", session.yearId)].join(",")}}`;
+    statements.push({
+      kind: "insert", table: "log_entry", schema: `${session.companySchema}_biglog`, keyColumn: "lentry_key", label: "special log (log_entry)",
+      columns: ["lentry_top_bottom", "lentry_items", "lentry_slab", "lentry_outstand", "lentry_addon", "lentry_einvoice", "lentry_fields", "lentry_mode", "lentry_user", "lentry_ledid", "lentry_processid", "lentry_code", "lentry_book", "lentry_bookcode", "lentry_savedate", "lentry_savetime", "lentry_machine_name"],
+      values: [quote(top), quote(items), "''", "''", "''", "''", quote(fields), "'D'", String(session.userNo), String(toInt(field(first, "led_key"))), "null", String(toInt(field(first, "code"))), String(book.values.bookKey), String(book.values.bookCode), dateLiteral(now), quote(clock12(now)), quote("WEB")],
+    });
+  }
+  const total = mine.reduce((sum, row) => sum + toDecimal(field(row, "amount_n")), 0);
+  return { statements, presetKeys: { pkval_1: toInt(field(first, "led_key")) }, summary: { fullDocNo: text(first, "full_docno"), finalAmount: total, bookAmount: 0, party: toInt(field(first, "code")) }, warnings: [] };
 }

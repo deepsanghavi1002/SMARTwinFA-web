@@ -13,7 +13,7 @@ import { useHelpView } from "../grid/useHelpView";
  * are the ones the party's data has. Esc, or ×, gives the keyboard back to the help.
  */
 const plain = (value: string) => value;
-const WIDTH: Record<string, number> = { date: 90, docNo: 140, party: 220, book: 150, product: 260, addQty: 90, lessQty: 90, rate: 90, value: 110 };
+const WIDTH: Record<string, number> = { sr: 50, ref: 130, amount: 110, pending: 110, drCr: 60, days: 60, date: 90, docNo: 140, party: 220, book: 150, product: 260, addQty: 90, lessQty: 90, rate: 90, value: 110 };
 
 export function PartyStock({ stock, onClose }: { stock: PartyStockData; onClose: () => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -36,13 +36,13 @@ export function PartyStock({ stock, onClose }: { stock: PartyStockData; onClose:
   }, [onClose]);
 
   return (
-    <div className="ent-log-back" role="dialog" aria-modal="true" aria-label="PARTYWISE STOCK">
+    <div className="ent-log-back" role="dialog" aria-modal="true" aria-label={stock.caption ?? "PARTYWISE STOCK"}>
       <div ref={host} className="ent-details-host">
         <HelpList
           help={shown}
           focusRow={Math.min(focusRow, shown.rows.length - 1)}
           onFocusRow={setFocusRow}
-          searchKey={stock.columns.some((column) => column.key === "product") ? "product" : "party"}
+          searchKey={stock.columns.some((column) => column.key === "product") ? "product" : stock.columns.some((column) => column.key === "party") ? "party" : "docNo"}
           title={stock.caption ?? "PARTYWISE STOCK"}
           onClose={onClose}
           onEscape={onClose}
