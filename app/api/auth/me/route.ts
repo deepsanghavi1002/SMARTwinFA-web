@@ -1,6 +1,7 @@
 import { readOperator } from "@/lib/company-menu";
 import { publicUser } from "@/lib/auth/public-user";
 import { currentUser, signInRequired } from "@/lib/auth/request";
+import { logError } from "@/lib/log";
 
 /**
  * The signed-in user and the operator they open the books as. `operator` is null for a platform
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
         : null;
     return Response.json({ user: publicUser(user), operator, problem }, { headers });
   } catch (error) {
-    console.error("Session read error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The session could not be read" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/me", action: "Session read", error });
+    return Response.json({ error: "The session could not be read", requestId }, { status: 503, headers });
   }
 }

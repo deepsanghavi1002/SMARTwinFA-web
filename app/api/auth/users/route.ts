@@ -3,6 +3,7 @@ import { transaction } from "@/lib/db";
 import { readOperators } from "@/lib/company-menu";
 import { publicOrigin, setPasswordLink, currentUser, signInRequired } from "@/lib/auth/request";
 import { assignableRoles, canManageRole, canManageUsers, isRole, type Role } from "@/lib/auth/roles";
+import { logError } from "@/lib/log";
 import {
   activeOperatorLogin, audit, AuthInputError, cleanDisplayName, cleanEmail, cleanLogin, createUser, findUserById,
   issuePasswordToken, listUsers, revokeUserSessions, TOKEN_HOURS, updateUser, type AuthUser, type SessionUser,
@@ -77,8 +78,8 @@ export async function GET(request: Request) {
     const operators = (await readOperators()).map((operator) => ({ ...operator, linkedUsers: linked.get(operator.loginName.toUpperCase()) ?? [] }));
     return Response.json({ users, roles: assignableRoles(actor.role), operators, me: actor.id }, { headers });
   } catch (error) {
-    console.error("User list error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The users could not be read right now" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/users", action: "User list", error });
+    return Response.json({ error: "The users could not be read right now", requestId }, { status: 503, headers });
   }
 }
 
@@ -156,7 +157,7 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof Refusal) return Response.json({ error: error.message }, { status: error.status, headers });
     if (error instanceof AuthInputError) return Response.json({ error: error.message }, { status: 400, headers });
-    console.error("User change error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The change could not be saved right now" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/users", action: "User change", error });
+    return Response.json({ error: "The change could not be saved right now", requestId }, { status: 503, headers });
   }
 }

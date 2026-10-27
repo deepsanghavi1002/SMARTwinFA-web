@@ -5,6 +5,7 @@ import { publicUser } from "@/lib/auth/public-user";
 import { authReady } from "@/lib/auth/request";
 import { audit, createSession, readPasswordToken, recordLoginSuccess, setPasswordWithToken } from "@/lib/auth/store";
 import { looksLikeToken, tokenHash } from "@/lib/auth/tokens";
+import { logError } from "@/lib/log";
 
 /**
  * The set-password link (an invitation, or a reset an administrator issued). GET says whether the
@@ -25,8 +26,8 @@ export async function GET(request: Request) {
     if (!link) return Response.json({ valid: false, error: DEAD_LINK }, { headers });
     return Response.json({ valid: true, purpose: link.purpose, login: link.user.login, displayName: link.user.displayName }, { headers });
   } catch (error) {
-    console.error("Set-password link error:", error instanceof Error ? error.message : error);
-    return Response.json({ valid: false, error: "The link could not be checked right now" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/set-password", action: "Set-password link", error });
+    return Response.json({ valid: false, error: "The link could not be checked right now", requestId }, { status: 503, headers });
   }
 }
 
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
       headers: { ...headers, "set-cookie": sessionCookie(done.session, requestIsHttps(request)) },
     });
   } catch (error) {
-    console.error("Set-password error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The password could not be set right now" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/set-password", action: "Set-password", error });
+    return Response.json({ error: "The password could not be set right now", requestId }, { status: 503, headers });
   }
 }

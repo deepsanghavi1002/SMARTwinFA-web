@@ -1,4 +1,5 @@
 import { readAddonGroups, readAddonRecords } from "@/lib/addon-master";
+import { logError } from "@/lib/log";
 
 /**
  * Addon sub master data for the company opened at startup.
@@ -26,8 +27,8 @@ export async function GET(request: Request) {
     }
     return Response.json({ records: await readAddonRecords(schema, Number(group)) }, { headers });
   } catch (error) {
-    console.error("Addon master error:", error);
+    const requestId = logError({ request, route: "/api/addon-master", action: "Addon master", error });
     const message = error instanceof Error ? error.message : "Addon master could not be loaded";
-    return Response.json({ error: message }, { status: 503, headers });
+    return Response.json({ error: message, requestId }, { status: 503, headers });
   }
 }

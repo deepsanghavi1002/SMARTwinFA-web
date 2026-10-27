@@ -2,6 +2,7 @@ import { transaction } from "@/lib/db";
 import { readOperator } from "@/lib/company-menu";
 import { currentUser, signInRequired } from "@/lib/auth/request";
 import { activeOperatorLogin, audit, setSessionOperator } from "@/lib/auth/store";
+import { logError } from "@/lib/log";
 
 /** A platform admin chooses which legacy operator this session opens the books as. Nobody else may. */
 export async function POST(request: Request) {
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     if (!login) return Response.json({ error: `The operator ${wanted} is not present in the company system database` }, { status: 400, headers });
     return Response.json({ operator: await readOperator(login) }, { headers });
   } catch (error) {
-    console.error("Operator choice error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The operator could not be chosen right now" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/operator", action: "Operator choice", error });
+    return Response.json({ error: "The operator could not be chosen right now", requestId }, { status: 503, headers });
   }
 }

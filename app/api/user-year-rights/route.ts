@@ -5,6 +5,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { loadYearRights, saveYearRights, yearUsers } from "@/lib/user-year-rights";
+import { logError } from "@/lib/log";
 
 /**
  * Setup > Security > User Year Rights: the users, one user's companies, and the save. The session is rebuilt on every call, and only a
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: body.action !== "save", timeoutMs: 30000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("User year rights error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/user-year-rights", action: "User year rights", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

@@ -5,6 +5,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { lookupGst, reserveLookup } from "@/lib/gst-check";
+import { logError } from "@/lib/log";
 
 /**
  * Utility > Check Gst No Online: one look-up at the e-invoice gateway. The company's e-invoice login never leaves the server, and only a
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
     }, { timeoutMs: 30000 });
     return Response.json({ detail: await lookupGst(login, gstNo) }, { headers });
   } catch (error) {
-    console.error("Check Gst No error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/gst-check", action: "Check Gst No", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }
