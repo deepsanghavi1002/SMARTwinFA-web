@@ -1371,11 +1371,19 @@ async function buildVoucherSave(loader: Loader, entryName: string, firstCombo: E
       pair("Debit", line.acDbcode === 1 ? line.amount.toFixed(2) : ""), pair("Credit", line.acDbcode === 2 ? line.amount.toFixed(2) : ""),
       pair("Chq. Number", line.chqNo), pair("Chq. Date", line.chqDate ? formatDesktopDate(line.chqDate) : ""),
     ].join(",")}}`).join(",")}]`;
+    // The addon part: every addon field of the register (the header ones on the first row), blank or not.
+    const addonItems = screen.voucherAddon ?? { header: [], row: [] };
+    const addonCaption = (item: { label: string }) => item.label.replace(/^\*\s*/, "").trim();
+    const addonLog = `[${lines.map((line) => `{${[
+      pair(`!${line.index === 1 ? "*" : ""}Led_key`, ref(line)), pair("Sr.", String(line.index)),
+      ...(line.index === 1 ? addonItems.header : []).map((item) => pair(addonCaption(item), String(input.addon?.[item.key] ?? ""))),
+      ...addonItems.row.map((item) => pair(addonCaption(item), String(line.addon?.[item.key] ?? ""))),
+    ].join(",")}}`).join(",")}]`;
     const fields = `{${[pair("book", String(bookKey)), pair("book_code", String(bookCode)), pair("full_docno", fullDocNo), pair("type", String(typeValue)), pair("year_id", session.yearId)].join(",")}}`;
     statements.push({
       kind: "insert", table: "log_entry", schema: `${session.companySchema}_biglog`, keyColumn: "lentry_key", label: "special log (log_entry)",
       columns: ["lentry_top_bottom", "lentry_items", "lentry_slab", "lentry_outstand", "lentry_addon", "lentry_einvoice", "lentry_fields", "lentry_mode", "lentry_user", "lentry_ledid", "lentry_processid", "lentry_code", "lentry_book", "lentry_bookcode", "lentry_savedate", "lentry_savetime", "lentry_machine_name"],
-      values: [quote(top), quote(items), "''", "''", "''", "''", quote(fields), quote(mode), String(session.userNo), firstRef, "null", String(lines[0].code), String(bookKey), String(bookCode), savedDate, quote(clock12(now)), quote("WEB")],
+      values: [quote(top), quote(items), "''", "''", quote(addonLog), "''", quote(fields), quote(mode), String(session.userNo), firstRef, "null", String(lines[0].code), String(bookKey), String(bookCode), savedDate, quote(clock12(now)), quote("WEB")],
     });
   }
   const total = Math.max(debitTotal, creditTotal);

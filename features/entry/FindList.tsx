@@ -36,7 +36,7 @@ const TYPE_PAUSE_MS = 1200;
  * the total keeps the entries with the text in any column. Enter or a double-click opens the
  * entry for editing (C1Help_EntryPreview_DoubleClick → Restore_Entry).
  */
-export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, onTick }: { preview: HelpList | null; style: CSSProperties; onOpen: (row: Readonly<Record<string, string>>) => void; mode?: FindMode; onMode?: (next: FindMode) => void; /** Range print: the entries ticked (unique keys) and the click that ticks one; the Tick column shows when given. */ ticked?: readonly number[]; onTick?: (uniqueKey: number) => void }) {
+export function FindList({ preview, style, onOpen, mode = "", onMode, outstanding = false, ticked, onTick }: { preview: HelpList | null; style: CSSProperties; onOpen: (row: Readonly<Record<string, string>>) => void; mode?: FindMode; onMode?: (next: FindMode) => void; /** A voucher: the second button is "With Outstanding" (each row's set-offs) in place of "With product". */ outstanding?: boolean; /** Range print: the entries ticked (unique keys) and the click that ticks one; the Tick column shows when given. */ ticked?: readonly number[]; onTick?: (uniqueKey: number) => void }) {
   const columns = useMemo(() => (preview?.columns ?? []).filter((column) => column.key.toLowerCase() !== "tick"), [preview]);
   const filters = useColumnFilters();
   const [search, setSearch] = useState("");
@@ -48,6 +48,14 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, on
   /** What typing in the list has found so far: marked on the cell it landed on, as the master grid's type-to-find. */
   const [found, setFound] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  /** The height that shows whole rows only (no cut row at the bottom); null until measured. */
+  const [fit, setFit] = useState<number | null>(null);
+  const hidden = useRef(false);
+  /** The entry the cursor is on (its own ledger row on a voucher): after All fields / With Outstanding the list comes again and the cursor stays on it. */
+  const stay = useRef<{ key: string; column: number } | null>(null);
+  const keyOf = (row: Readonly<Record<string, string>> | undefined) => (row ? `${row.led_key_raw ?? ""}/${row.unique_key ?? ""}` : "");
+  const latest = useRef({ row: 0, column: 0 });
   const grid = useRef<HTMLDivElement>(null);
   /** The right-click menu (as the report grids have), and what the last copy said. Columns here are not moved or hidden. */
   const [menu, setMenu] = useState<(GridMenuPlace & { col: number; row: number }) | null>(null);
@@ -69,6 +77,10 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, on
       let longest = 0;
       for (const row of allRows) longest = Math.max(longest, helpCell(row[column.key] ?? "", column.format).length);
       const wanted = Math.max(column.caption.length * 7 + 34, longest * 7 + 16, column.format.startsWith("dd") ? 104 : 0);
+      // A voucher's Dr/Cr holds two letters: narrower than its heading would make it (the heading still shows whole).
+      // The date column is 10% narrower than its widest text would make it.
+      if (column.format.startsWith("dd")) { widths[column.key] = Math.round(wanted * 0.9); continue; }
+      if (column.key === "dr_cr") { widths[column.key] = Math.round(wanted * 0.85); continue; }
       widths[column.key] = Math.min(Math.max(280, column.width || 0), Math.max(30, column.width || 90, wanted));
     }
     return widths;
@@ -106,16 +118,40 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, on
   useEffect(() => {
     if (!preview) return;
     const docNo = columns.findIndex((column) => column.key.toLowerCase() === "doc_no");
+    const kept = stay.current ? rows.findIndex((row) => keyOf(row) === stay.current!.key) : -1;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the cursor moves with the keyboard focus, which needs the list drawn
-    setCurrent({ row: 0, column: docNo >= 0 ? docNo : Math.min(1, Math.max(0, columns.length - 1)) });
+    if (kept >= 0 && stay.current) setCurrent({ row: kept, column: Math.min(stay.current.column, Math.max(0, columns.length - 1)) });
+    else setCurrent({ row: 0, column: docNo >= 0 ? docNo : Math.min(1, Math.max(0, columns.length - 1)) });
     scroller.current?.focus({ preventScroll: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new list moves the cursor; the rows it looks in come with it
   }, [preview, columns]);
   // The current row stays on a row the filters leave.
   const currentRow = Math.min(current.row, Math.max(0, rows.length - 1));
+  useEffect(() => { stay.current = { key: keyOf(rows[currentRow]), column: current.column }; });
+  useEffect(() => { latest.current = { row: currentRow, column: current.column }; });
   // The window of rows drawn: where the list is scrolled to and how tall it is.
   const [frame, setFrame] = useState({ top: 0, height: 700 });
+  /** Scrolls the list so the current row and column are in view. */
+  const showCurrent = () => {
+    const box = scroller.current;
+    if (!box) return;
+    const rowTop = HEAD_HEIGHT + latest.current.row * ROW_HEIGHT;
+    if (rowTop < box.scrollTop + HEAD_HEIGHT) box.scrollTop = rowTop - HEAD_HEIGHT;
+    else if (rowTop + ROW_HEIGHT > box.scrollTop + box.clientHeight) box.scrollTop = rowTop + ROW_HEIGHT - box.clientHeight;
+  };
   const measure = () => {
     const box = scroller.current;
+    const outer = wrap.current;
+    if (outer && box) {
+      // The tab is hidden (display none) while an entry is open: its scroll position is lost, so on showing again the current row is brought back into view.
+      if (outer.clientHeight === 0) hidden.current = true;
+      else {
+        const extra = box.offsetHeight - box.clientHeight;
+        const wanted = HEAD_HEIGHT + Math.max(1, Math.floor((outer.clientHeight - extra - HEAD_HEIGHT) / ROW_HEIGHT)) * ROW_HEIGHT + extra;
+        setFit((now) => (now === wanted ? now : wanted));
+        if (hidden.current) { hidden.current = false; requestAnimationFrame(() => { showCurrent(); box.focus({ preventScroll: true }); }); }
+      }
+    }
     if (box) setFrame((now) => (now.top === box.scrollTop && now.height === box.clientHeight ? now : { top: box.scrollTop, height: box.clientHeight }));
   };
   useEffect(() => {
@@ -124,6 +160,7 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, on
     if (!box || typeof ResizeObserver === "undefined") return;
     const watch = new ResizeObserver(measure);
     watch.observe(box);
+    if (wrap.current) watch.observe(wrap.current);
     return () => watch.disconnect();
   }, []);
   // The current row stays in view (the rows are drawn from the window, so it is not looked up in the page).
@@ -217,7 +254,8 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, on
   return (
     <div ref={grid} className="ent-find" style={style}>
       <div className="mp-help-title ent-find-title"><span><HelpIcon name="file-text" /><b className="mp-help-name">FIND / EDIT HELP</b></span></div>
-      <div ref={scroller} className="ent-grid ent-find-grid" tabIndex={0} role="grid" aria-label="Entries" aria-rowcount={rows.length} onKeyDown={keys} onScroll={measure} onContextMenu={contextMenu}>
+      <div ref={wrap} className="ent-find-wrap">
+      <div ref={scroller} className="ent-grid ent-find-grid" style={fit === null ? undefined : { height: fit }} tabIndex={0} role="grid" aria-label="Entries" aria-rowcount={rows.length} onKeyDown={keys} onScroll={measure} onContextMenu={contextMenu}>
         <table style={{ width: tableWidth }}>
           <colgroup>{tickWidth > 0 && <col style={{ width: tickWidth }} />}{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>
           <thead>
@@ -248,12 +286,13 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, ticked, on
           </tbody>
         </table>
       </div>
+      </div>
       <div className="ent-find-foot">
         {copied && <span className="ent-find-copied" role="status">{copied}</span>}
         <span>{preview ? `Total Records : ${rows.length}${rows.length !== allRows.length ? ` of ${allRows.length}` : ""}` : ""}</span>
         <label className="ent-find-search">Search <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="text in any column" aria-label="Search the entries" /></label>
         {onMode && <button type="button" className={`mp-btn mp-btn-blue ent-all-fields ${mode === "fields" ? "ent-all-on" : ""}`} aria-pressed={mode === "fields"} title="Show every field of each entry: slab amounts and addons (read when pressed; quicker than with product)" onClick={() => onMode(mode === "fields" ? "" : "fields")}><Icon name="list" />{mode === "fields" ? "Basic fields" : "All fields"}</button>}
-        {onMode && <button type="button" className={`mp-btn mp-btn-blue ent-all-fields ${mode === "products" ? "ent-all-on" : ""}`} aria-pressed={mode === "products"} title="Show every field of each entry and each product line (read when pressed; takes longer)" onClick={() => onMode(mode === "products" ? "" : "products")}><Icon name="list" />{mode === "products" ? "Basic fields" : "With product"}</button>}
+        {onMode && <button type="button" className={`mp-btn mp-btn-blue ent-all-fields ${mode === "products" ? "ent-all-on" : ""}`} aria-pressed={mode === "products"} title={outstanding ? "Show every field of each entry and each row's outstanding set-offs (read when pressed; takes longer)" : "Show every field of each entry and each product line (read when pressed; takes longer)"} onClick={() => onMode(mode === "products" ? "" : "products")}><Icon name="list" />{mode === "products" ? "Basic fields" : outstanding ? "With Outstanding" : "With product"}</button>}
         {Object.keys(filters.filters).length > 0 && <button type="button" className="ent-link-button" onClick={filters.clearAll}>Clear filters</button>}
         <span className="ent-find-tip">type in the list to find · Enter / double-click opens the entry · right-click: copy</span>
       </div>

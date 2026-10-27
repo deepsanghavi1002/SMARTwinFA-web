@@ -117,6 +117,8 @@ export type BookScreen = Readonly<{
   controls: readonly InvoiceControl[];
   /** Voucher only: the Book Side list (Payment / Receipt ...) with the series each side offers; acDbcode is the account's side (1 debit, 2 credit). */
   sides?: readonly Readonly<{ text: string; value: string; acDbcode: number; series: readonly EntryOption[] }>[];
+  /** Voucher only: the company flags that allow more than one account row (entry_para MULTIDAY, for a day book; MULTIJV, for a journal with debit and credit both on many rows). A journal itself always takes many rows. */
+  voucherMulti?: Readonly<{ daybook: boolean; jv: boolean }>;
   /** The product grid (c1dg_Inputdata): its columns and how many rows it offers. */
   product: Readonly<{ columns: readonly EntryColumn[]; rows: number; frozen: number; totals: readonly string[] }>;
   slabRows: readonly SlabRow[];

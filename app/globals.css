@@ -2500,7 +2500,8 @@
 
 .ent-find{position:absolute;display:flex;flex-direction:column;gap:2px}
 
-.ent-find .ent-find-grid{position:relative;flex:1;min-height:0;outline:none}
+.ent-find .ent-find-wrap{flex:1;min-height:0;position:relative}
+.ent-find .ent-find-grid{position:relative;height:100%;outline:none}
 
 .ent-find .ent-find-grid:focus-visible{box-shadow:inset 0 0 0 2px #ffb400}
 
