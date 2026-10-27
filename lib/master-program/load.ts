@@ -1,4 +1,5 @@
 import type { Client } from "pg";
+import { logWarn } from "../log";
 import { parseMoney, PROGRAM_BODY_COLUMNS, publicSetup, toSetup } from "../master-rules";
 import { properHeading } from "./heading";
 import { isMultiPick } from "./multi-pick";
@@ -50,7 +51,9 @@ export class Loader {
       return result.rows.length > 0 ? result.rows : null;
     } catch (error) {
       await this.client.query(`ROLLBACK TO SAVEPOINT ${name}`);
-      this.warnings.push(`${error instanceof Error ? error.message : String(error)} :: ${text.slice(0, 300)}`);
+      const warning = `${error instanceof Error ? error.message : String(error)} :: ${text.slice(0, 300)}`;
+      this.warnings.push(warning);
+      logWarn(warning, { action: "master readTable" });
       return null;
     }
   }
@@ -252,7 +255,9 @@ async function ctrl(loader: Loader, source: string, context: SysValueContext): P
   try {
     return await replaceSysValues(source, context, sysValueLookups(loader.client, loader.session.companySchema));
   } catch (error) {
-    loader.warnings.push(`${error instanceof Error ? error.message : String(error)} :: ${source.slice(0, 200)}`);
+    const warning = `${error instanceof Error ? error.message : String(error)} :: ${source.slice(0, 200)}`;
+    loader.warnings.push(warning);
+    logWarn(warning, { action: "master sys-value replace" });
     return source;
   }
 }

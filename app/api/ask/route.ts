@@ -6,6 +6,7 @@ import type { MasterSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { ask, hasTemplate, matchedId, partyScope, questionList, searchParties, searchProducts } from "@/lib/ask/ask";
 import { ensureMemory, forget, listMemory, noteMissed, recall, remember } from "@/lib/ask/memory";
+import { logError } from "@/lib/log";
 
 /**
  * Ask AI (no model): a question is matched to a fixed list and answered by a fixed read-only query over the open company's tables
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
       try {
         return await transaction(async (client) => { await ensureMemory(client); return await work(client, await readSession(client, key)); }, { timeoutMs: 10000 });
       } catch (error) {
-        console.error("Ask AI memory error:", error instanceof Error ? error.message : error);
+        logError({ request, route: "/api/ask", action: "Ask AI memory", error });
         return null;
       }
     };
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
     }
     return Response.json(reply, { headers });
   } catch (error) {
-    console.error("Ask AI error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: error instanceof Error ? error.message : "The question could not be answered" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/ask", action: "Ask AI", error });
+    return Response.json({ error: error instanceof Error ? error.message : "The question could not be answered", requestId }, { status: 500, headers });
   }
 }

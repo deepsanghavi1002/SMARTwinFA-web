@@ -7,6 +7,7 @@ import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { formatDesktopDate, parseDesktopDate } from "@/lib/master-program/legacy";
 import { YEAR_BOOKS, yearChart } from "@/lib/yearchart/query";
+import { logError } from "@/lib/log";
 
 /**
  * The Multi Year Chart Report's server (the desktop's Report_MultyYearChart): the year at set-up, then each year's two totals
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: true, timeoutMs: 120000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Year chart error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The chart request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/year-chart", action: "Year chart", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The chart request failed", requestId }, { status: 500, headers });
   }
 }

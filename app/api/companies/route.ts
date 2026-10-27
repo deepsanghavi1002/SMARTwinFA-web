@@ -1,5 +1,6 @@
 import { readCompanies } from "@/lib/company-menu";
 import { requireOperator } from "@/lib/auth/request";
+import { logError } from "@/lib/log";
 
 /** The companies the session's operator may open in one year. A `login` query parameter is ignored. */
 export async function GET(request: Request) {
@@ -13,8 +14,8 @@ export async function GET(request: Request) {
   try {
     return Response.json({ companies: await readCompanies(operator, Number(year)) }, { headers });
   } catch (error) {
-    console.error("Company list error:", error);
+    const requestId = logError({ request, route: "/api/companies", action: "Company list", error, userId: operator });
     const message = error instanceof Error ? error.message : "Company list could not be loaded";
-    return Response.json({ error: message }, { status: 503, headers });
+    return Response.json({ error: message, requestId }, { status: 503, headers });
   }
 }

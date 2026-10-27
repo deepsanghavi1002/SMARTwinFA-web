@@ -6,6 +6,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import type { DashboardRightRow } from "@/lib/user-dashboard-rights";
 import { dashboardUsers, loadDashboardRights, saveDashboardRights } from "@/lib/user-dashboard-rights";
+import { logError } from "@/lib/log";
 
 /**
  * Setup > Security > User Dashboard Rights: the users, one user's dashboard blocks, and the save. The session is rebuilt on every call, and only a
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: body.action !== "save", timeoutMs: 30000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("User dashboard rights error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/user-dashboard-rights", action: "User dashboard rights", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

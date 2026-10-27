@@ -7,6 +7,7 @@ import "./modern-ui.css";
 // Phones and tablets: the menu drawer, the bottom bar, touch sizes. Last, so it wins over the desktop layers above.
 import "./responsive.css";
 import { MessageBoxHost } from "../features/ui/MessageBox";
+import { ClientErrorReporter } from "../features/ui/ClientErrorReporter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -62,6 +63,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${figtree.variable} ${sora.variable} antialiased`}
       >
         {children}
+        <ClientErrorReporter />
         {/* The one message box every screen uses (features/ui/MessageBox). */}
         <MessageBoxHost />
       </body>

@@ -7,6 +7,8 @@ const PUBLIC_API: Readonly<Record<string, readonly string[]>> = {
   "/api/auth/login": ["POST"],
   "/api/auth/logout": ["POST"],
   "/api/auth/set-password": ["GET", "POST"],
+  // Browser error reports, also from the sign-in screen (the route caps size and rate itself).
+  "/api/client-log": ["POST"],
 };
 
 export function isPublicApi(pathname: string, method: string): boolean {

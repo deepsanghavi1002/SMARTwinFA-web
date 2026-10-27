@@ -2,6 +2,7 @@ import { readOnly } from "@/lib/db";
 import { requireOperator } from "@/lib/auth/request";
 import { readPw, toText } from "@/lib/master-program/legacy";
 import { SYSTEM_SCHEMA } from "@/lib/master-program/session";
+import { logError } from "@/lib/log";
 
 /**
  * The screen saver's password: the operator's own USER_SCREEN_PW in smart_system.user_master (Read_pw, compared trimmed and without case,
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
     if (!ok) await new Promise((resolve) => setTimeout(resolve, 800));
     return Response.json({ ok }, { headers });
   } catch (error) {
-    console.error("Unlock error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The password could not be checked" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/unlock", action: "Unlock", error, userId: operator });
+    return Response.json({ error: "The password could not be checked", requestId }, { status: 500, headers });
   }
 }

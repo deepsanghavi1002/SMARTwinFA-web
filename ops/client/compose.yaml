@@ -59,6 +59,13 @@ services:
     container_name: ${CLIENT_ID}-db
     restart: unless-stopped
     labels: *client-labels
+    # Statements slower than 2 s are logged, with who ran them (user, database, application) so a slow or failing query can be traced.
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=2000
+      - -c
+      - "log_line_prefix=%m [%p] %u@%d %a "
     environment:
       POSTGRES_DB: smartwin_data_intake
       POSTGRES_USER: smartwinfa_web

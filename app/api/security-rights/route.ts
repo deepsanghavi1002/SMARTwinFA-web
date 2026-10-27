@@ -6,6 +6,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { loadSecurityRows, saveSecurityRows, securityUsers } from "@/lib/security-rights";
 import type { SecuritySave } from "@/lib/security-rights";
+import { logError } from "@/lib/log";
 
 /**
  * Setup > Security > Menu Book Rights: the users, one user's rights, and the save. The session is rebuilt from smart_system on every call,
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: !writes, timeoutMs: 60000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Security rights error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The security request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/security-rights", action: "Security rights", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The security request failed", requestId }, { status: 500, headers });
   }
 }
