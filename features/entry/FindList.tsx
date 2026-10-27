@@ -52,6 +52,9 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, outstandin
   /** The height that shows whole rows only (no cut row at the bottom); null until measured. */
   const [fit, setFit] = useState<number | null>(null);
   const hidden = useRef(false);
+  /** The entry the cursor is on (its own ledger row on a voucher): after All fields / With Outstanding the list comes again and the cursor stays on it. */
+  const stay = useRef<{ key: string; column: number } | null>(null);
+  const keyOf = (row: Readonly<Record<string, string>> | undefined) => (row ? `${row.led_key_raw ?? ""}/${row.unique_key ?? ""}` : "");
   const latest = useRef({ row: 0, column: 0 });
   const grid = useRef<HTMLDivElement>(null);
   /** The right-click menu (as the report grids have), and what the last copy said. Columns here are not moved or hidden. */
@@ -75,6 +78,8 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, outstandin
       for (const row of allRows) longest = Math.max(longest, helpCell(row[column.key] ?? "", column.format).length);
       const wanted = Math.max(column.caption.length * 7 + 34, longest * 7 + 16, column.format.startsWith("dd") ? 104 : 0);
       // A voucher's Dr/Cr holds two letters: narrower than its heading would make it (the heading still shows whole).
+      // The date column is 10% narrower than its widest text would make it.
+      if (column.format.startsWith("dd")) { widths[column.key] = Math.round(wanted * 0.9); continue; }
       if (column.key === "dr_cr") { widths[column.key] = Math.round(wanted * 0.85); continue; }
       widths[column.key] = Math.min(Math.max(280, column.width || 0), Math.max(30, column.width || 90, wanted));
     }
@@ -113,12 +118,16 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, outstandin
   useEffect(() => {
     if (!preview) return;
     const docNo = columns.findIndex((column) => column.key.toLowerCase() === "doc_no");
+    const kept = stay.current ? rows.findIndex((row) => keyOf(row) === stay.current!.key) : -1;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the cursor moves with the keyboard focus, which needs the list drawn
-    setCurrent({ row: 0, column: docNo >= 0 ? docNo : Math.min(1, Math.max(0, columns.length - 1)) });
+    if (kept >= 0 && stay.current) setCurrent({ row: kept, column: Math.min(stay.current.column, Math.max(0, columns.length - 1)) });
+    else setCurrent({ row: 0, column: docNo >= 0 ? docNo : Math.min(1, Math.max(0, columns.length - 1)) });
     scroller.current?.focus({ preventScroll: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new list moves the cursor; the rows it looks in come with it
   }, [preview, columns]);
   // The current row stays on a row the filters leave.
   const currentRow = Math.min(current.row, Math.max(0, rows.length - 1));
+  useEffect(() => { stay.current = { key: keyOf(rows[currentRow]), column: current.column }; });
   useEffect(() => { latest.current = { row: currentRow, column: current.column }; });
   // The window of rows drawn: where the list is scrolled to and how tall it is.
   const [frame, setFrame] = useState({ top: 0, height: 700 });

@@ -880,8 +880,15 @@ export async function partyDetails(loader: Loader, entryName: string, firstCombo
       .split("CAST(0 AS DECIMAL(18,4)) as \"out_setoff_old\"").join(`CAST(${mine} AS DECIMAL(18,4)) as "out_setoff_old"`)
       .split("CAST(0 AS DECIMAL(18,4)) as \"out_setoff_file\"").join(`CAST(${mine} AS DECIMAL(18,4)) as "out_setoff_file"`);
   }
-  const outRows = outSql !== "" ? (await loader.readTable(replaceEntryTokens(outSql, book.values))) ?? [] : [];
+  const outRead = outSql !== "" ? (await loader.readTable(replaceEntryTokens(outSql, book.values))) ?? [] : [];
+  // An entry being changed lists the bills it already sets off first, then the other pending bills, each part oldest bill first.
+  const dateOf = (row: Row) => parseDesktopDate(toText(displayValue(field(row, "out_date"))))?.getTime() ?? 0;
+  const outRows = (voucher ? voucher.ledKey > 0 : editKey > 0)
+    ? [...outRead].sort((one, two) => Number(toDecimal(field(two, "out_setoff")) > 0) - Number(toDecimal(field(one, "out_setoff")) > 0) || dateOf(one) - dateOf(two))
+    : outRead;
   const outstanding = outRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
+  // The Sr. column counts the rows as listed (the sort above moved the set-off bills first).
+  outstanding.forEach((row, index) => { if ("serial" in row) row.serial = String(index + 1); });
   const { stateCode, taxGroup } = await partyTaxGroup(loader, code, docDate);
   // HELP_ADDRESS: all the party's addresses; another than the first adds "Ship to" lines (Display_Address).
   const addressRows = (await loader.readTable(`SELECT address_id, address_1, address_2, address_3, city, pin_code, tel_no, mobile_no, contact FROM |sys.db|address WHERE code = $1 AND a_pos <> 'D' ORDER BY address_id`, [code])) ?? [];
@@ -953,7 +960,10 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
       const pair = totals.get(toInt(row.unique_key));
       mutable.final_amt = pair ? Math.max(pair[0], pair[1]).toFixed(2) : "";
     }
-    columns.splice(amountAt + 1, 0, { key: "dr_cr", caption: "Dr/Cr", width: 50, align: "L", format: "" }, { key: "final_amt", caption: "Final Amt.", width: 110, align: "R", format: "N2" });
+    // Chq. No. belongs to a bank book only.
+    if (book.values.bookKey !== 6) for (let at = columns.length - 1; at >= 0; at -= 1) if (columns[at].key.toLowerCase() === "doc_no1") columns.splice(at, 1);
+    const amountAt2 = columns.findIndex((column) => column.key.toLowerCase() === "amount");
+    columns.splice(amountAt2 + 1, 0, { key: "dr_cr", caption: "Dr/Cr", width: 50, align: "L", format: "" }, { key: "final_amt", caption: "Final Amt.", width: 110, align: "R", format: "N2" });
   }
   // A debit / credit note's list also shows the book each entry is against and its nature.
   if (book.entryFor === "DrCr" && shown.length > 0) {

@@ -29,7 +29,7 @@ export type EntryLog = Readonly<{ versions: LogVersion[]; rows: LogRow[]; docNo:
 
 const SECTIONS: readonly { column: string; label: (style: string) => string }[] = [
   { column: "lentry_top_bottom", label: () => "TOP" },
-  { column: "lentry_items", label: (style) => (style === "I" ? "ITEM" : "VOUCHER DETAILS") },
+  { column: "lentry_items", label: (style) => (style === "I" ? "ITEM" : "ACCOUNT") },
   { column: "lentry_slab", label: () => "SLAB" },
   { column: "lentry_outstand", label: () => "OUTSTANDING" },
   { column: "lentry_addon", label: () => "ADDON" },
@@ -49,7 +49,8 @@ function objects(text: string): Record<string, unknown>[] {
 export async function entryLog(loader: Loader, entryName: string, firstCombo: EntryOption, uniqueKey: number): Promise<EntryLog> {
   const { session } = loader;
   const book = await bookContext(loader, entryName, firstCombo);
-  const style = "I";
+  // A voucher lists its account rows as ACCOUNT, and its group headings carry no ruled line.
+  const style = entryName.trim().toUpperCase().startsWith("V") ? "V" : "I";
   const led = (await loader.readTable(`SELECT led_key, doc_no FROM |sys.db|ledger WHERE unique_key = $1 AND book = $2`, [uniqueKey, book.values.bookKey]))?.[0];
   const ledKey = toInt(field(led, "led_key"));
   if (ledKey <= 0) throw new Error("The entry was not found");
@@ -85,7 +86,7 @@ export async function entryLog(loader: Loader, entryName: string, firstCombo: En
       const label = section.label(style);
       const list = objects(toText(row[section.column]));
       if (list.length === 0) continue;
-      put("head", label, label, "Group Head: ", version, `${label}  --------------------------------------------------`);
+      put("head", label, label, "Group Head: ", version, style === "V" ? label : `${label}  --------------------------------------------------`);
       for (const item of list) {
         // The key of the row (!*Il_key, !Slab_key ...) names the row the other fields belong to.
         const keyField = Object.keys(item).find((name) => name.startsWith("!"));
