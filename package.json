@@ -15,7 +15,8 @@
     "clone:sqlserver-source": "node scripts/clone-rishabh-sqlserver-to-postgres.mjs",
     "test:repository-safety": "node --test tests/repository-safety-check.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "typecheck": "tsc --noEmit --incremental false"
+    "typecheck": "tsc --noEmit --incremental false",
+    "theme": "node scripts/generate-modern-theme.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

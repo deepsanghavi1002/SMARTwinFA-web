@@ -3,6 +3,10 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-27 (Modern view: Midnight × Emerald, Light and Dark)
+- New: `app/modern-ui.css`, `app/modern-theme.generated.css` (built by `npm run theme` from `scripts/generate-modern-theme.mjs`; `tests/modern-theme.test.mjs` fails when it is stale), `features/home/ModernHome.tsx`, `features/ui/modernTheme.ts`. The Modern view now has a Light/Dark choice (sun/moon button and More menu; remembered, follows the system the first time). Legacy is untouched. Modern gets a navy sidebar, new home (greeting, balances, sales vs purchase, shortcuts), Excel-style report grid with column letters and a cell bar.
+- Change: `app/layout.tsx`, `app/page.tsx`, `features/startup/StartupGate.tsx`, `features/report/OutputGrid.tsx`, `features/grid/levelStyle.ts`. Login and company screens, report level colours follow the theme.
+
 ## 2026-10-26 (Web sign-in and company screen)
 - New: `lib/auth/`, `middleware.ts`, `app/api/auth/*`, `app/set-password/page.tsx`, `app/admin/users/page.tsx`, `scripts/auth-invite.mts`. Users set their own web password from a one-time link and sign in with user name or email; every `/api` call needs a session, and routes take the operator from the session, never from the request. Roles: platform admin (chooses the operator), company admin, employee. Users screen: add users, onboard desktop operators, issue links, disable, change role/operator. The `SMARTWINFA_TRUSTED_LOCAL_MODE` gates and the `SKIP_LOGIN` / `dev-login` bypass are gone.
 - Change: `lib/company-menu.ts`, `features/startup/StartupGate.tsx`. The company screen lists only companies whose database is on this server (and only years holding one); when the newest year has one company it opens directly after sign-in.
