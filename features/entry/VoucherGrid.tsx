@@ -33,11 +33,15 @@ const SHOWN_ROWS = 6;
  * the end of a row goes to the next row's Account, ↑ / ↓ move between rows, Ctrl+Del removes the row.
  */
 export function VoucherGrid({
-  columns, lines, debitOpen, creditOpen, style, totalsStyle, accountText, locked, accountLocked, tools, totals, addonItems,
+  columns, lines, singleRow, finishAfter, debitOpen, creditOpen, style, totalsStyle, accountText, locked, accountLocked, tools, totals, addonItems,
   onCell, onAddon, onAmountEnter, onEnd, onAccountDouble, onAccountText, onAccountKeys, onAccountFocus, onAccountBlur, onDeleteRow,
 }: {
   columns: readonly EntryColumn[];
   lines: readonly VoucherLine[];
+  /** A day book without MULTIDAY: the voucher is one account row (the desktop's grid has the one row). */
+  singleRow: boolean;
+  /** After the last cell of this row the account entry is over (F5 pressed for the user): the screen goes on to the addon grid. */
+  finishAfter: (row: number) => boolean;
   debitOpen: boolean;
   creditOpen: boolean;
   style: CSSProperties;
@@ -75,7 +79,7 @@ export function VoucherGrid({
   const align = (column: EntryColumn) => (column.align === "R" || isMoney(column) ? "right" : column.align === "C" ? "center" : "left");
   const openCell = (column: EntryColumn, row: number) => {
     if (locked || !column.editable) return false;
-    if (isAccount(column)) return row <= lines.length && !(accountLocked && lines[row]?.code);
+    if (isAccount(column)) return (singleRow ? row === 0 : row <= lines.length) && !(accountLocked && lines[row]?.code);
     if (!lines[row] || lines[row].code === 0) return false;
     const key = column.key.toLowerCase();
     return key === "debit_amt" ? debitOpen : key === "credit_amt" ? creditOpen : true;
@@ -92,6 +96,7 @@ export function VoucherGrid({
     const at = order.findIndex((entry) => entry.key === key);
     const after = order.slice(at + 1).find((entry) => entry.open);
     if (after) focusCell(row, after.key);
+    else if (singleRow || finishAfter(row)) onEnd?.();
     else { const account = columns.find(isAccount); if (account) focusCell(row + 1, account.key); }
   };
   const next = (row: number, key: string) => {
