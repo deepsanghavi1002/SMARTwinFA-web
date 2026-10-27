@@ -93,8 +93,8 @@ const VOUCHER_DATE_BUTTON = 21;
 const VOUCHER_HEIGHT = ROW * 7 + 19;
 /** The voucher's account help opens at the top of the grid's 3rd row (tab strip 18, heading and two rows of ROW above it). */
 const VOUCHER_HELP_TOP = TAB_TOP + 18 + ROW + 2 * ROW - 2;
-/** The voucher's address box is taller, so its 4th line shows whole; it reaches up into the register's row (right of the Add / Edit label). */
-const VOUCHER_ADDRESS = { top: 13, height: 80 }; // the voucher grid: heading + 6 whole rows + horizontal scroll bar
+/** The voucher's address box is taller, so its 5 lines (14px each, 2px apart, padding and border) show whole; it reaches up into the register's row (right of the Add / Edit label). */
+const VOUCHER_ADDRESS = { top: 13, height: 86 }; // the voucher grid: heading + 6 whole rows + horizontal scroll bar
 const VOUCHER_ADDON_TOP = PRODUCT_TOP + VOUCHER_HEIGHT + 24;
 const SLAB_HEIGHT = ROW * 5 + 2; // heading + 4 rows
 const PAGE_HEIGHT = SLAB_TOP + SLAB_HEIGHT + 3;
@@ -932,7 +932,18 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     setHelpAt(0);
     void openHelp("account");
   };
-  const editVoucherCell = (row: number, key: string, value: string) => setVlines((current) => current.map((line, index) => {
+  /** A journal without MULTIJV takes many rows on one side only: debit on many rows and credit on many rows is refused (the desktop's "Multiple JV serial on both side not allowed"). */
+  const editVoucherCell = (row: number, key: string, value: string) => {
+    if (journal && !book?.voucherMulti?.jv && (key === "debit_amt" || key === "credit_amt") && toNumber(value) > 0) {
+      const rows = vlines.map((line, index) => (index === row ? { ...line, cells: { ...line.cells, [key]: value } } : line));
+      if (rows.filter((line) => toNumber(line.cells.debit_amt) > 0).length > 1 && rows.filter((line) => toNumber(line.cells.credit_amt) > 0).length > 1) {
+        void say("Multiple JV serial on both side not allowed...", "Entry Warning");
+        return;
+      }
+    }
+    applyVoucherCell(row, key, value);
+  };
+  const applyVoucherCell = (row: number, key: string, value: string) => setVlines((current) => current.map((line, index) => {
     if (index !== row) return line;
     // One figure per row unless the book is a journal: typing one side clears the other.
     const cells = { ...line.cells, [key]: value };
@@ -1278,7 +1289,7 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (next === "") { setFindMode(""); return; }
     if (!previewAll[next]) {
       if (!register) return;
-      setBusy(next === "products" ? "All fields with product" : "All fields");
+      setBusy(next === "products" ? (voucher ? "All fields with outstanding" : "All fields with product") : "All fields");
       try {
         const body = await call<{ preview: HelpData }>("preview-all", { firstCombo: register, series: values.cmb_series ?? "", withProducts: next === "products" });
         setPreviewAll((now) => ({ ...now, [next]: body.preview }));
@@ -1296,8 +1307,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
   const openEntry = useCallback(async (row: Readonly<Record<string, string>>) => {
     if (!register || !book) return;
     if (String(row.name ?? "").toLowerCase().includes("cancel invoice")) { await say("A cancelled invoice number opens for editing on the desktop only (not ported yet).", "Entry"); return; }
-    if ((filledLines(lines).length > 0 || filledVoucherLines(vlines).length > 0) && restored === null) {
-      const answer = await messageBox.ask("The entry on screen is not saved. Open the chosen entry instead?", "Find / Edit", ["Yes", "No"], { defaultButton: "No" });
+    // NewEditContinue: an entry being added, the same entry reloaded, or another entry taken while one is open - each is asked, with the desktop's words (No is the default).
+    const sameEntry = restored !== null && restored === Number(row.unique_key);
+    const working = filledLines(lines).length > 0 || filledVoucherLines(vlines).length > 0;
+    if (restored === null ? working : true) {
+      const words = restored === null ? "Add Entry not Save, will be lost! Do you want to continue with New Edit/Del ?" : sameEntry ? "Same Entry Reload will lost any unsave changes! Do you want to continue with Edit/Del ?" : "Last Edit Entry not Save, will be lost! Do you want to continue with New Edit/Del ?";
+      const answer = await messageBox.ask(words, "Entry Edit/Delete", ["Yes", "No"], { defaultButton: "No" });
       if (answer !== "Yes") return;
     }
     setBusy("Opening the entry");
@@ -1455,12 +1470,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     }
   };
 
-  // The register chosen: the keyboard goes to the series as soon as the screen is drawn.
+  // The register chosen: the keyboard goes to the series (a voucher: to the Book Side first, which may be changed) as soon as the screen is drawn.
   useEffect(() => {
     if (!book || !focusSeries.current) return;
-    const target = screenRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button");
+    const target = (voucher ? screenRef.current?.querySelector<HTMLElement>(".ent-head [data-box=cmb_side] input, .ent-head [data-box=cmb_side] button") : null) ?? screenRef.current?.querySelector<HTMLElement>(".ent-head [data-first] input, .ent-head [data-first] button");
     if (target) { focusSeries.current = false; target.focus(); }
-  }, [book]);
+  }, [book, voucher]);
 
   // Zoom from a report row (Comman_Entry with Zoom_Ledid): the voucher's register is chosen, then the entry opens as from Find / Edit.
   const zoomStarted = useRef(false);
@@ -1791,20 +1806,6 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   // ---- Voucher header keys
   /** An opened voucher shows its Series and Book Side only (changing them is not allowed). */
   const frozenOnEdit = (name: string) => voucher && isRestored && (name === "cmb_series" || name === "cmb_side");
-  /** The Book Side is not a stop of the keyboard (Daybook -> Series, and back); a click on it still opens it. */
-  const sideByMouse = useRef(false);
-  const skipSide = (event: ReactFocusEvent<HTMLElement>, name: string) => {
-    if (!voucher || name !== "cmb_side") return;
-    if (sideByMouse.current) { sideByMouse.current = false; return; }
-    const from = event.relatedTarget as Element | null;
-    if (!from || event.currentTarget.contains(from)) return;
-    const forward = Boolean(from.closest("#ent-register"));
-    if (!forward && !from.closest("[data-box=cmb_series]")) return;
-    // Back from the Series: the Daybook is shut once a register is chosen, so the keyboard stays on the Series.
-    const back = formRef.current?.querySelector<HTMLInputElement>("#ent-register input");
-    const target = forward || !back || back.disabled ? formRef.current?.querySelector<HTMLElement>("[data-box=cmb_series] input") : back;
-    target?.focus();
-  };
   /** The last box of the voucher's header (Number, or Entry No. when the book has it): Enter / Tab goes to the first account row, whose help opens on its account. */
   const lastHeadBox = (book ?? ghost)?.controls.some((item) => item.name === "tbx_entryno") ? "tbx_entryno" : "tbx_number";
   const voucherLastBoxKey = (event: ReactKeyboardEvent<HTMLElement>, name: string) => {
@@ -1828,8 +1829,6 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}${frozenOnEdit(item.name) ? " ent-locked" : ""}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})}
         inert={frozenOnEdit(item.name)}
         onBlur={(event) => leaveBox(event, item.name)}
-        onMouseDown={() => { if (item.name === "cmb_side") sideByMouse.current = true; }}
-        onFocus={(event) => skipSide(event, item.name)}
         onKeyDownCapture={(event) => voucherLastBoxKey(event, item.name)}
       >
         {item.type === "CB" ? (
@@ -2316,9 +2315,9 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           {view && (
             <div className="ent-tabs" style={{ top: TAB_TOP, height: PAGE_HEIGHT + 20 }} inert={!book}>
               <div className="ent-tab-strip" role="tablist">
-                <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "ent-tab-on" : ""} onClick={() => void openTab("all")}>{voucher ? "Voucher" : "Product & Slab"}</button>
-                {def?.tabs.outstanding && <button type="button" role="tab" aria-selected={tab === "outstanding"} className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}>Outstanding</button>}
-                <button type="button" role="tab" aria-selected={tab === "find"} className={tab === "find" ? "ent-tab-on" : ""} onClick={() => void openTab("find")}>Find / Edit</button>
+                <button type="button" role="tab" aria-selected={tab === "all"} data-hotkey={voucher ? "v" : undefined} className={tab === "all" ? "ent-tab-on" : ""} onClick={() => void openTab("all")}>{voucher ? <HotkeyLabel text="Voucher" hotkey="v" /> : "Product & Slab"}</button>
+                {def?.tabs.outstanding && <button type="button" role="tab" aria-selected={tab === "outstanding"} data-hotkey="o" className={tab === "outstanding" ? "ent-tab-on" : ""} onClick={() => void openTab("outstanding")}><HotkeyLabel text="Outstanding" hotkey="o" /></button>}
+                <button type="button" role="tab" aria-selected={tab === "find"} data-hotkey="e" className={tab === "find" ? "ent-tab-on" : ""} onClick={() => void openTab("find")}><HotkeyLabel text="Find / Edit" hotkey="e" /></button>
                 {def?.tabs.eway && <button type="button" role="tab" aria-selected={tab === "eway"} className={tab === "eway" ? "ent-tab-on" : ""} onClick={() => void openTab("eway")}>E-Way Bill</button>}
               </div>
               <div className="ent-page" style={{ height: PAGE_HEIGHT }} role="tabpanel">
@@ -2328,6 +2327,8 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                       <VoucherGrid
                         columns={voucherColumns}
                         lines={vlines}
+                        singleRow={!journal && !book?.voucherMulti?.daybook && filledVoucherLines(vlines).length <= 1}
+                        finishAfter={(row) => isRestored && !(vlines[row + 1]?.code > 0)}
                         debitOpen={journal || sideDbcode === 1}
                         creditOpen={journal || sideDbcode === 2}
                         style={{ left: 3, right: 6, top: PRODUCT_TOP, height: VOUCHER_HEIGHT }}
@@ -2450,7 +2451,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                     />
                   </>
                 )}
-                {(tab === "find" || preview) && <FindList preview={(findMode && previewAll[findMode]) || preview} mode={findMode} onMode={(next) => void chooseFindMode(next)} ticked={ticked} onTick={tickEntry} style={{ left: 3, right: 3, top: 3, bottom: 3, ...(tab === "find" ? {} : { display: "none" }) }} onOpen={(row) => void openEntry(row)} />}
+                {(tab === "find" || preview) && <FindList preview={(findMode && previewAll[findMode]) || preview} mode={findMode} onMode={(next) => void chooseFindMode(next)} outstanding={voucher} ticked={ticked} onTick={tickEntry} style={{ left: 3, right: 3, top: 3, bottom: 3, ...(tab === "find" ? {} : { display: "none" }) }} onOpen={(row) => void openEntry(row)} />}
                 {tab === "eway" && (() => { const needed = ewayDue() || (isRestored && ewayControls.some((item) => item.type === "TB" && (values[item.name] ?? "").trim() !== "")); return <div className={needed ? "ent-eway" : "ent-eway ent-eway-off"} inert={!needed} title={needed ? undefined : "E-Way Bill is not required for this entry"}>{ewayControls.flatMap(control)}</div>; })()}
               </div>
             </div>
@@ -2485,9 +2486,9 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored && ticked.length === 0} title="Print the opened invoice, or the entries ticked by Range: Standard (bill preview with a Print button) or Special (later)" onClick={() => setPrinting(true)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps, the addon lists and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setHelpKind(null); void refreshAddonLists(); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!book || voucher} title="Range print: tick the entries from a number to a number of the series, then Print" onClick={() => setRangeOpen(true)}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
-        {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="Keep up to five JPEG / PDF files with this entry (written when the entry is saved)" onClick={() => void uploadDocuments()}><Icon name="image" />Upload Document</button>}
+        {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" data-hotkey="u" aria-keyshortcuts="Alt+U" disabled={!isRestored} title="Keep up to five JPEG / PDF files with this entry (written when the entry is saved)" onClick={() => void uploadDocuments()}><Icon name="image" /><HotkeyLabel text="Upload Document" hotkey="u" /></button>}
         {def?.buttons.einvoice && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="E-invoice is not ported yet" onClick={notPorted("E-invoice")}><Icon name="export" />E-Invoice</button>}
-        {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" />Log</button>}
+        {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" data-hotkey="l" aria-keyshortcuts="Alt+L" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>}
         <div className="ent-status" aria-live="polite">
           {busy && <span className="mp-busy">{busy}…</span>}
           {onRate && <span title="F7 in the Rate cell shows this product's rate in every book and party, newest first"><b>F7</b>-Product Rate</span>}

@@ -562,6 +562,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
     taxGroup,
     controls: controls.map((control) => (control.name === "cmb_series" ? { ...control, options: seriesOptions, initial: series } : control.name === "cmb_side" ? { ...control, options: sides.map((side) => ({ text: side.text, value: side.value })), initial: sides[0]?.text ?? "" } : control)),
     sides,
+    ...(voucher ? { voucherMulti: { daybook: para(session.setup, "entry_para", "MULTIDAY,"), jv: para(session.setup, "entry_para", "MULTIJV,") } } : {}),
     // The desktop offers Field_LastValue.Count() (2000) rows: enough for any bill.
     product: { columns, rows: inventory ? 200 : 0, frozen, totals },
     slabRows,
@@ -929,10 +930,31 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
   if (!helpRow) throw new Error(`${stockOnly ? "STOCK_PREVIEW" : helpName} is not in smart_setup.help_table`);
   // Edit is allowed for every series of the register, so the list is not narrowed to the series on the screen.
   const listQuery = text(helpRow, "help_query").replace(/\s+and\s+[\w.]+\s*=\s*'\|sys\.doc_series\|'/gi, "");
-  const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(listQuery), book.values))) ?? [];
+  // A voucher's list row is one ledger row (an account row of the voucher): its own key and side are read along for the Dr/Cr, Final Amt. and Outstanding columns.
+  const voucher = entryName.trim().toUpperCase().startsWith("V");
+  const rows = (await loader.readTable(replaceEntryTokens(blankCoalesceAsText(voucher ? listQuery.replace(/(select\s+FALSE\s+as\s+"Tick"\s*,)/i, "$1led.led_key AS led_key_raw,led.ac_dbcode AS dbcode_raw,") : listQuery), book.values))) ?? [];
   const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
   const shown = rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, displayValue(value)])));
   const columns = keys.length > 0 ? await helpColumns(loader, helpName, "E", keys) : [];
+  if (voucher && shown.length > 0) {
+    // Amount (the row's own), the row's Dr/Cr, and the voucher's Final Amt. (the larger of its debit and credit totals, as the screen's Entry Final Amt.).
+    const amountAt = columns.findIndex((column) => column.key.toLowerCase() === "amount");
+    if (amountAt >= 0) columns[amountAt] = { ...columns[amountAt], caption: "Amount" };
+    const sums = (await loader.readTable(`SELECT unique_key, ac_dbcode, SUM(amount::numeric) AS total FROM |sys.db|ledger WHERE unique_key = ANY($1::int[]) AND doc_pos <> 'D' AND COALESCE(doc_posting, '') <> 'A' GROUP BY unique_key, ac_dbcode`, [[...new Set(shown.map((row) => toInt(row.unique_key)))]])) ?? [];
+    const totals = new Map<number, [number, number]>();
+    for (const sum of sums) {
+      const pair = totals.get(toInt(field(sum, "unique_key"))) ?? [0, 0];
+      pair[toInt(field(sum, "ac_dbcode")) === 1 ? 0 : 1] += toDecimal(field(sum, "total"));
+      totals.set(toInt(field(sum, "unique_key")), pair);
+    }
+    for (const row of shown) {
+      const mutable = row as Record<string, string>;
+      mutable.dr_cr = toInt(row.dbcode_raw) === 1 ? "Dr" : toInt(row.dbcode_raw) === 2 ? "Cr" : "";
+      const pair = totals.get(toInt(row.unique_key));
+      mutable.final_amt = pair ? Math.max(pair[0], pair[1]).toFixed(2) : "";
+    }
+    columns.splice(amountAt + 1, 0, { key: "dr_cr", caption: "Dr/Cr", width: 50, align: "L", format: "" }, { key: "final_amt", caption: "Final Amt.", width: 110, align: "R", format: "N2" });
+  }
   // A debit / credit note's list also shows the book each entry is against and its nature.
   if (book.entryFor === "DrCr" && shown.length > 0) {
     const own = (await loader.readTable(`SELECT unique_key, ag_bkcode, "TYPE" AS nature FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [shown.map((row) => toInt(row.unique_key))])) ?? [];
@@ -961,10 +983,14 @@ export async function entryPreview(loader: Loader, entryName: string, firstCombo
   if (shown.length > 0 && !stockOnly) {
     const keys = shown.map((row) => toInt(row.unique_key)).filter((key) => key > 0);
     const ledgerKeys = new Map(((await loader.readTable(`SELECT unique_key, led_key FROM |sys.db|ledger WHERE unique_key = ANY($1::int[])`, [keys])) ?? []).map((row) => [toInt(field(row, "unique_key")), toInt(field(row, "led_key"))]));
-    const counts = new Map(((await loader.readTable(`SELECT out_ledid, COUNT(*) AS n FROM |sys.db|outclear WHERE out_ledid = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) > 0 AND out_setoff::numeric > 0 GROUP BY out_ledid`, [[...ledgerKeys.values()]])) ?? []).map((row) => [toInt(field(row, "out_ledid")), toInt(field(row, "n"))]));
+    const ownKey = (row: Record<string, string>) => (voucher && toInt(row.led_key_raw) > 0 ? toInt(row.led_key_raw) : ledgerKeys.get(toInt(row.unique_key)) ?? 0);
+    const counts = new Map(((await loader.readTable(`SELECT out_ledid, COUNT(*) AS n FROM |sys.db|outclear WHERE out_ledid = ANY($1::int[]) AND COALESCE(out_ag_outid, 0) > 0 AND out_setoff::numeric > 0 GROUP BY out_ledid`, [voucher ? shown.map(ownKey) : [...ledgerKeys.values()]])) ?? []).map((row) => [toInt(field(row, "out_ledid")), toInt(field(row, "n"))]));
     if (counts.size > 0) {
-      for (const row of shown) (row as Record<string, string>).out_rows = String(counts.get(ledgerKeys.get(toInt(row.unique_key)) ?? 0) ?? 0);
-      columns.push({ key: "out_rows", caption: "Outstanding Row", width: 110, align: "R", format: "" });
+      for (const row of shown) (row as Record<string, string>).out_rows = String(counts.get(ownKey(row)) ?? 0);
+      columns.push({ key: "out_rows", caption: "O/s Row", width: 62, align: "R", format: "" });
+      // A voucher's list ends with O/s Row, then Short.
+      const shortAt = voucher ? columns.findIndex((column) => column.key.toLowerCase() === "a_short") : -1;
+      if (shortAt >= 0) columns.push(...columns.splice(shortAt, 1));
     }
   }
   return {
