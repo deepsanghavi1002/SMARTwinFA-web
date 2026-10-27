@@ -7,8 +7,9 @@ Written for the setup described in "SMARTwinFA Cloud Setup" (30 clients, Cloudfl
 ops/
   smartwinfa.sh            one command for everything below
   fleet/                   the ops stack (one per host)
-    compose.yaml           Portainer, Grafana + Loki + Alloy, Uptime Kuma, the admin site, cloudflared (profile "tunnel")
-    admin/                 the admin site (Caddy): one address for the three tools, and its landing page
+    compose.yaml           the control panel, Portainer, Grafana + Loki + Alloy, Uptime Kuma, the admin site, cloudflared (profile "tunnel")
+    panel/                 the control panel: a card per client, and each client's page (no dependencies, Node)
+    admin/                 the admin site (Caddy): one address for all of the above
     alloy/config.alloy     reads every container's log, labels it client / service / level
     loki-config.yaml       log store, 30 days
     grafana/               Loki data source + the "SMARTwinFA Clients" dashboard
@@ -47,7 +48,7 @@ tools under one address such as `https://admin.smartwinfa.com`:
 
 | Path | Tool |
 |---|---|
-| `/` | landing page with links to the tools |
+| `/` | the control panel (see below) |
 | `/grafana/` | Grafana: the "SMARTwinFA Clients" logs dashboard |
 | `/portainer/` | Portainer: stacks and containers |
 | everything else (`/dashboard`, `/status/...`) | Uptime Kuma (it cannot run under a sub-path) |
@@ -61,6 +62,22 @@ tools under one address such as `https://admin.smartwinfa.com`:
 - Memory is capped per tool (`mem_limit` in `fleet/compose.yaml`, about 1.4 GB in all at most) so the dashboard cannot
   crowd out the clients on a small server.
 - When port 8000 is already taken on the host, set `PORTAINER_EDGE_PORT` (Portainer's edge tunnel for on-prem agents).
+
+### The control panel
+
+The home page of the admin site. Sign in with `PANEL_PASSWORD` from `ops/fleet/.env` (`fleet up` makes one when it
+is empty; sign-ins last 12 hours and end when the panel restarts).
+
+- **Clients:** one card per client stack on this host, found by the `smartwinfa.client` label, so a new client appears
+  by itself. Green: everything runs. Amber: errors in the last hour, a part still starting, or the last backup is more
+  than 36 hours old (or there is none). Red: the app's `/api/health` does not answer, or a part (web, api, db, backup)
+  is stopped or unhealthy. Each card shows the parts, errors in the last hour, the last backup and the app version.
+- **A client's page:** its parts (state, uptime, memory, image), errors per hour for 24 hours, its backups, and its logs
+  with filters (part, errors / warnings, period, text). **Restart app** restarts the api and web containers (users stay
+  signed in). **Backup now** writes `manual-<date>-<time>.dump` next to the nightly ones. **Open in Grafana** opens the
+  same client in the logs dashboard for longer searches.
+- It uses the Docker socket (to read the containers and for those two actions) and Loki, about 20 MB of memory.
+  "Errors" are log lines the log collector labels error, fatal or panic.
 
 ## Windows PC with nothing installed
 
