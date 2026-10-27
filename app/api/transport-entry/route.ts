@@ -6,6 +6,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { invoiceExists, loadBills, loadTransportOptions, saveTransportEntry, tdsFor } from "@/lib/transport-entry";
 import type { TransportSave } from "@/lib/transport-entry";
+import { logError } from "@/lib/log";
 
 /**
  * Transaction > Transport Entry: the lists, a transport's open bills, the TDS of an amount, the duplicate invoice check and the save.
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: body.action !== "save", timeoutMs: body.action === "save" ? 60000 : 30000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Transport entry error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/transport-entry", action: "Transport entry", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

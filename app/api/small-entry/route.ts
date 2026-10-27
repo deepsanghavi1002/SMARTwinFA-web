@@ -9,6 +9,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { loadEntry, loadEntryGrid } from "@/lib/small-entry/load";
 import { saveEntry } from "@/lib/small-entry/save";
 import type { EditedRow, EntryDefinition, EntryOption, EntryState } from "@/lib/small-entry/types";
+import { logError } from "@/lib/log";
 
 /**
  * The generic small-entry screen's server, as /api/master-program is the master screen's.
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: !writes, timeoutMs: 60000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Small entry error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The small entry request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/small-entry", action: "Small entry", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The small entry request failed", requestId }, { status: 500, headers });
   }
 }

@@ -5,6 +5,7 @@ import { publicUser } from "@/lib/auth/public-user";
 import { authReady } from "@/lib/auth/request";
 import { audit, createSession, findUserForLogin, recordLoginFailure, recordLoginSuccess } from "@/lib/auth/store";
 import { randomToken } from "@/lib/auth/tokens";
+import { logError } from "@/lib/log";
 
 /**
  * Sign-in with user name (or email) and password. Every refusal gives the same answer, so the
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
       headers: { ...headers, "set-cookie": sessionCookie(signedIn.token, requestIsHttps(request)) },
     });
   } catch (error) {
-    console.error("Sign-in error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "Sign-in is not available right now" }, { status: 503, headers });
+    const requestId = logError({ request, route: "/api/auth/login", action: "Sign-in", error });
+    return Response.json({ error: "Sign-in is not available right now", requestId }, { status: 503, headers });
   }
 }

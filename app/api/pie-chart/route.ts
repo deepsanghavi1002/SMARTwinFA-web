@@ -8,6 +8,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { formatDesktopDate, parseDesktopDate } from "@/lib/master-program/legacy";
 import { PIE_BOOKS, PIE_SIDES, pieAddons, pieSlices } from "@/lib/piechart/query";
 import type { PieBook, PieSide } from "@/lib/piechart/query";
+import { logError } from "@/lib/log";
 
 /**
  * The Pie Chart screen's server (the desktop's Report_PieChart): the addon list and the year at set-up, then the slices of
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: true, timeoutMs: 120000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Pie chart error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The pie chart request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/pie-chart", action: "Pie chart", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The pie chart request failed", requestId }, { status: 500, headers });
   }
 }

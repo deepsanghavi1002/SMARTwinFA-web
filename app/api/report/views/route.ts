@@ -4,6 +4,7 @@ import { requireOperator } from "@/lib/auth/request";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
+import { logError } from "@/lib/log";
 
 /**
  * Saved views of a report (web only): a name for a selection (and the Group By on its output),
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
     }, { timeoutMs: 15000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Report views error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/report/views", action: "Report views", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

@@ -7,6 +7,7 @@ import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { formatDesktopDate, parseDesktopDate } from "@/lib/master-program/legacy";
 import { DASH_BALANCES, DASH_KINDS, balanceAccounts, dashboardData, monthVouchers } from "@/lib/dashboard/query";
+import { logError } from "@/lib/log";
 
 /**
  * The Dashboard's server (the desktop's Dashboard form): Report > Dashboard (REP_DASHBOARD) and Analysis > Multi Year > Yearly Dashboard
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: true, timeoutMs: 120000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Dashboard error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The dashboard request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/dashboard", action: "Dashboard", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The dashboard request failed", requestId }, { status: 500, headers });
   }
 }

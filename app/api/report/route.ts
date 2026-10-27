@@ -14,6 +14,7 @@ import { readEntryLog } from "@/lib/report/log";
 import { zoomTarget } from "@/lib/report/zoom";
 import type { ReportDefinition, ReportOutput, ReportSelection } from "@/lib/report/types";
 import { packedOutputStream } from "@/lib/report/wire";
+import { logError, logWarn } from "@/lib/log";
 
 /**
  * The generic report screen's server (the desktop's Report_Combine). Only a report named by a
@@ -77,7 +78,8 @@ async function runtimeDefaults(client: { query: (sql: string) => Promise<{ rows:
       const field = found.fields[0]?.name;
       const amounts = field === undefined ? [] : found.rows.map((row) => Number(String(row[field] ?? "").replace(/[^0-9.-]/g, ""))).filter((value) => Number.isFinite(value) && value !== 0);
       if (amounts.length > 0) out[box.name] = amounts[0].toFixed(box.decimals > 0 ? box.decimals : 2);
-    } catch {
+    } catch (error) {
+      logWarn(`Report default for ${box.name} failed: ${error instanceof Error ? error.message : String(error)}`, { route: "/api/report", action: "runtime default", query: sql.slice(0, 300) });
       await client.query("ROLLBACK TO SAVEPOINT runtime_default").catch(() => undefined);
     }
   }
@@ -148,7 +150,7 @@ export async function POST(request: Request) {
     return Response.json(result, { headers });
   } catch (error) {
     if (error instanceof ReportRefusal) return Response.json({ refusal: { message: error.message, caption: error.caption } }, { headers });
-    console.error("Report error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The report request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/report", action: `Report ${String(body?.action ?? "")} ${String(body?.reportName ?? "")}`.trim(), companyKey: body?.session ? `${body.session.companyId}/${body.session.yearKey}` : null, error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The report request failed", requestId }, { status: 500, headers });
   }
 }

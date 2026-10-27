@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { logEvent } from "./log.ts";
 
 /**
  * A connection is opened and closed inside the request that uses it, and
@@ -46,14 +47,28 @@ async function withClient<T>(run: (client: Client) => Promise<T>) {
   }
 }
 
+/** A query slower than this many milliseconds is logged (SLOW_QUERY_MS, default 1000); faster ones are not. */
+function slowQueryMs(): number {
+  const configured = Number(process.env.SLOW_QUERY_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 1000;
+}
+
+/** The statement text for a log line: whitespace folded, cut short, never the parameters. */
+export function sqlForLog(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 300 ? `${flat.slice(0, 300)}...` : flat;
+}
+
 export async function query(text: string, params?: unknown[]) {
   const start = Date.now();
   try {
     const res = await withClient((client) => client.query(text, params));
-    console.log("Executed query", { text, duration: Date.now() - start, rows: res.rowCount });
+    const duration = Date.now() - start;
+    if (duration >= slowQueryMs()) logEvent("warn", "Slow query", { action: "query", durationMs: duration, rows: res.rowCount, sql: sqlForLog(text) });
     return res;
   } catch (error) {
-    console.error("Database query error", { text, error });
+    // The driver's message names the failing statement's problem; the parameters stay out of the log.
+    logEvent("error", error instanceof Error ? error.message : String(error), { action: "query", durationMs: Date.now() - start, sql: sqlForLog(text) });
     throw error;
   }
 }
