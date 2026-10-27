@@ -1,0 +1,217 @@
+/*
+ * Phones and tablets, in both views (Legacy and Modern). Loaded after every other stylesheet, and every rule here is written as
+ * `html:not(#r) …` (an id's weight, never matching anything) so it wins over the desktop layers without !important.
+ *
+ * The pattern is the one the well-known admin kits share (shadcn/ui's Sidebar with its mobile Sheet, Tabler and AdminLTE's off-canvas
+ * sidebar, Material's bottom navigation):
+ *   - 781px and up: the sidebar stays as it was (Modern) or the top menu bar (Legacy). Nothing here applies.
+ *   - 780px and down: the menu is an off-canvas drawer opened from the ☰ in the title bar or the bottom bar, with a scrim; it closes on
+ *     Escape, on the scrim, on its ×, and when a screen is chosen. Groups open in place (an accordion), at every level.
+ *   - A bottom bar holds the controls used most: Home, Menu, open Windows, Ask AI.
+ *   - Reports and grids keep their own horizontal scroll with the head and first columns pinned (app/globals.css); here the Selection /
+ *     Output tabs move above the report so the grid gets the full width.
+ * The drawer takes its colours from the Modern tokens (--mx-*) and falls back to the Legacy blues where they are not set.
+ */
+
+/* ── what only a small screen shows is hidden everywhere else ──────────── */
+.nav-toggle, .nav-close, .nav-scrim, .bottom-nav, .menu-bar-error { display: none; }
+/* The heading row is only a box in the drawer; in the sidebar and the Legacy bar its children lay out as they always did. */
+.menu-bar-head { display: contents; }
+/* The report's pinned total row (features/report/OutputGrid) is for phones only. */
+.rp-total-pinned { display: none; }
+
+/* ── safe areas (notches, the home bar) and the on-screen keyboard ─────── */
+html:not(#r) .winfa-window {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-top: env(safe-area-inset-top);
+}
+html:not(#r) .startup-desktop {
+  padding-left: max(18px, env(safe-area-inset-left));
+  padding-right: max(18px, env(safe-area-inset-right));
+  padding-top: max(18px, env(safe-area-inset-top));
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 540px) {
+  html:not(#r) .startup-desktop {
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 780px) {
+  /* ── the window: title bar, context strip, work area, bottom bar ─────── */
+  html:not(#r) .winfa-window {
+    height: 100vh; height: 100dvh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+  html:not(#r) .status-strip { display: none; }
+
+  /* title bar: ☰, the app mark, the open windows as scrolling tabs */
+  html:not(#r) .title-bar { min-height: 52px; height: auto; padding: 0 6px; gap: 4px; align-items: center; }
+  html:not(#r) .nav-toggle { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--mx-text, #123a76); cursor: pointer; touch-action: manipulation; }
+  html:not(#r) .nav-toggle:active { background: var(--mx-head, #dbe9fb); }
+  html:not(#r) .title-home { flex: none; min-width: 44px; height: 44px; justify-content: center; }
+  html:not(#r) .title-bar .window-controls { display: none; }
+  html:not(#r) .window-tabs { height: 100%; padding: 8px 0 0 4px; gap: 4px; }
+  html:not(#r) .window-tab { height: 42px; max-width: 62vw; }
+  html:not(#r) .window-tab-on { height: 44px; }
+  html:not(#r) .window-tab-name { padding: 0 4px 0 12px; font-size: 13px; }
+  html:not(#r) .window-tab-btn { display: none; }
+  html:not(#r) .window-tab-x { width: 40px; font-size: 20px; opacity: 1; }
+  /* the Open list: the bottom bar's Windows button opens it, as a sheet above the bar */
+  html:not(#r) .window-list { position: static; margin: 0; height: auto; }
+  html:not(#r) .window-list-button { display: none; }
+  html:not(#r) .window-list-menu {
+    position: fixed; left: 8px; right: 8px; top: auto; bottom: calc(64px + env(safe-area-inset-bottom));
+    min-width: 0; max-width: none; max-height: 60dvh; overflow-y: auto; padding: 6px; border-radius: 14px;
+    background: var(--mx-surface, #fff); color: var(--mx-text, #123a76); border: 1px solid var(--mx-border, #789493); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  }
+  html:not(#r) .window-list-menu button { min-height: 48px; padding: 10px 14px; border-radius: 10px; background: transparent; color: inherit; font-size: 14px; white-space: normal; }
+  html:not(#r) .window-list-menu button:hover, html:not(#r) .window-list-menu button:focus { background: var(--mx-head, #dbe9fb); }
+
+  /* context strip: the company, the year, ⋮ */
+  html:not(#r) .context-strip { display: flex; align-items: center; min-height: 44px; height: auto; grid-template-columns: none !important; padding: 0 4px 0 0; overflow: visible !important; }
+  html:not(#r) .context-strip > * { min-width: 0; padding: 0 10px; border-right: 0; }
+  html:not(#r) .context-strip > strong { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  html:not(#r) .context-strip > span:not(.running) { flex: 0 1 auto; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  html:not(#r) .context-strip > span:nth-of-type(n+2), html:not(#r) .context-strip > .running { display: none; }
+  html:not(#r) .context-strip .ask-button { display: none; }
+  html:not(#r) .context-strip .context-end { margin-left: auto; padding: 0; display: flex; align-items: center; flex: none; }
+  html:not(#r) .more-button, html:not(#r) .theme-toggle { width: 44px; height: 44px; margin: 0; font-size: 20px; }
+  html:not(#r) .more-menu .more-panel { min-width: 220px; max-width: calc(100vw - 8px); }
+  html:not(#r) .more-menu .more-panel button { min-height: 48px; font-size: 14px; }
+
+  /* ── the drawer: the menu bar, off-canvas ────────────────────────────── */
+  html:not(#r) .menu-bar {
+    position: fixed; z-index: 1400; top: 0; bottom: 0; left: 0; width: min(88vw, 340px); height: auto; max-height: none;
+    display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: none;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left); gap: 0;
+    background: var(--mx-nav, #fff); color: var(--mx-nav-text, #123a76);
+    border: 0; border-right: 1px solid var(--mx-nav-line, #c3d3e6); box-shadow: none;
+    transform: translateX(-102%); visibility: hidden;
+    transition: transform 0.22s ease, visibility 0s linear 0.22s, box-shadow 0.22s ease;
+  }
+  html:not(#r) .menu-bar.nav-open { transform: none; visibility: visible; box-shadow: 0 0 48px rgba(0, 0, 0, 0.5); transition: transform 0.22s ease, box-shadow 0.22s ease; }
+  html:not(#r) .nav-scrim { display: block; position: fixed; z-index: 1390; inset: 0; padding: 0; border: 0; background: rgba(5, 8, 14, 0.55); animation: nav-scrim-in 0.2s ease; }
+  @keyframes nav-scrim-in { from { opacity: 0; } }
+  html:not(#r) .menu-bar-head { display: flex; position: sticky; top: 0; z-index: 2; align-items: center; justify-content: space-between; padding: 6px 6px 6px 16px; background: var(--mx-nav, #fff); border-bottom: 1px solid var(--mx-nav-line, #c3d3e6); }
+  html:not(#r) .menu-bar-title { display: block; padding: 0; color: var(--mx-accent, #1a4fa5); font-family: var(--mx-display, inherit); font-size: 16px; font-weight: 700; }
+  html:not(#r) .nav-close { display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: inherit; font-size: 28px; line-height: 1; cursor: pointer; }
+  html:not(#r) .nav-close:active { background: var(--mx-nav-hover, #e8f0fb); }
+  html:not(#r) .menu-bar-error { display: block; margin: 8px 16px; color: var(--mx-coral, #b23f17); font-size: 13px; }
+
+  html:not(#r) .menu-root { position: static; display: block; }
+  html:not(#r) .menu-root > button {
+    display: block; position: relative; width: 100%; min-width: 0; height: auto; min-height: 52px; padding: 0 44px 0 16px; line-height: 52px;
+    border: 0; border-bottom: 1px solid var(--mx-nav-line, #e6edf5); border-radius: 0; background: transparent; box-shadow: none;
+    color: inherit; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; text-align: left; touch-action: manipulation;
+  }
+  html:not(#r) .menu-root > button::after { content: "▾"; position: absolute; right: 18px; top: 0; width: auto; height: auto; margin: 0; border: 0; background: none; font-size: 14px; line-height: 52px; opacity: 0.8; transition: transform 0.15s; transform: none; }
+  html:not(#r) .menu-root > button.open::after { transform: rotate(180deg); }
+  html:not(#r) .menu-root > button::before { content: none; }
+  html:not(#r) .menu-root > button.open, html:not(#r) .menu-root > button.open:hover { color: var(--mx-accent, #fff); background: var(--mx-nav-on, #1f5fc0); box-shadow: inset 3px 0 0 var(--mx-accent, #fff); }
+  html:not(#r) .menu-root > .dropdown, html:not(#r) .menu-root > .dropdown.open-menu {
+    position: static; display: none; width: auto; min-width: 0; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none;
+    background: var(--mx-nav-deep, #f5f9fe);
+  }
+  html:not(#r) .menu-root > .dropdown.open-menu { display: block; }
+  html:not(#r) .dropdown > button, html:not(#r) .dropdown > .menu-branch > button,
+  html:not(#r) .submenu > button, html:not(#r) .submenu > .menu-branch > button {
+    display: grid; grid-template-columns: 0 minmax(0, 1fr) auto; column-gap: 0; align-items: center; width: 100%; min-width: 0; height: auto; min-height: 48px; padding: 6px 16px 6px 28px;
+    border: 0; border-bottom: 1px solid var(--mx-nav-line, #e6edf5); border-radius: 0; background: transparent; box-shadow: none;
+    color: var(--mx-nav-text, #123a76); font-size: 14px; font-weight: 600; text-align: left; white-space: normal; touch-action: manipulation;
+  }
+  html:not(#r) .submenu > button, html:not(#r) .submenu > .menu-branch > button { padding-left: 44px; font-size: 13.5px; }
+  html:not(#r) .submenu .submenu > button, html:not(#r) .submenu .submenu > .menu-branch > button { padding-left: 60px; }
+  /* shortcut keys mean nothing on a phone; a branch keeps its arrow */
+  html:not(#r) .dropdown > button > b, html:not(#r) .submenu > button > b { display: none; }
+  html:not(#r) .menu-branch > button > b { display: inline; font-size: 20px; opacity: 0.8; transition: transform 0.15s; }
+  html:not(#r) .menu-branch.open-branch > button > b { transform: rotate(90deg); }
+  html:not(#r) .menu-branch > .submenu {
+    position: static; display: none; width: auto; min-width: 0; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none;
+    background: var(--mx-nav-deep, #eef4fc);
+  }
+  html:not(#r) .menu-branch.open-branch > .submenu { display: block; }
+  html:not(#r) .menu-root > button:hover, html:not(#r) .dropdown button:hover, html:not(#r) .submenu button:hover { color: inherit; background: var(--mx-nav-hover, #e8f0fb); }
+  html:not(#r) .menu-root > button.open:hover { color: var(--mx-accent, #fff); background: var(--mx-nav-on, #1f5fc0); }
+  html:not(#r) .dropdown button:focus-visible, html:not(#r) .menu-root > button:focus-visible { outline: 2px solid var(--mx-accent, #ffb400); outline-offset: -2px; }
+
+  /* ── the bottom bar ──────────────────────────────────────────────────── */
+  html:not(#r) .bottom-nav {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding-bottom: env(safe-area-inset-bottom);
+    background: var(--mx-surface, #fff); border-top: 1px solid var(--mx-border, #c3d3e6); color: var(--mx-muted, #41576b);
+  }
+  html:not(#r) .bottom-nav > button {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; min-height: 56px; padding: 4px 2px;
+    border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-size: 11px; font-weight: 600; touch-action: manipulation; cursor: pointer;
+  }
+  html:not(#r) .bottom-nav > button > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html:not(#r) .bottom-nav > button:disabled { opacity: 0.4; }
+  html:not(#r) .bottom-nav > button:active:not(:disabled) { background: var(--mx-head, #e8f0fb); }
+  html:not(#r) .bottom-nav > button[aria-current="page"], html:not(#r) .bottom-nav > button[aria-pressed="true"], html:not(#r) .bottom-nav > button[aria-expanded="true"] { color: var(--mx-sky, #1f5fc0); }
+
+  /* ── Ask AI: a full-height sheet above the bottom bar ───────────────── */
+  html:not(#r) .ask-panel, html:not(#r) .ask-panel.ask-max { top: env(safe-area-inset-top); right: 0; left: 0; bottom: calc(56px + env(safe-area-inset-bottom)); width: auto; border-left: 0; }
+  html:not(#r) .ask-panel.ask-min { top: auto; left: auto; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); width: min(240px, calc(100vw - 16px)); }
+  html:not(#r) .ask-grip { display: none; }
+  html:not(#r) .ask-panel > header button { min-width: 44px; min-height: 44px; }
+
+  /* ── home ────────────────────────────────────────────────────────────── */
+  html:not(#r) .mh { padding: 16px 16px 20px; gap: 16px; }
+  html:not(#r) .mh h1 { font-size: 24px; }
+  html:not(#r) .mh-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; }
+  html:not(#r) .mh-card { padding: 14px 16px; }
+  html:not(#r) .mh-card-value { font-size: 22px; }
+  html:not(#r) .mh-panel { padding: 16px; }
+  html:not(#r) .mh-bars { height: 160px; gap: 4px; }
+  html:not(#r) .mh-actions { width: 100%; }
+  html:not(#r) .mh-actions > button { flex: 1 1 0; }
+
+  /* ── reports: Selection / Output tabs above the report, not a rail at its right ─ */
+  html:not(#r) .rp-body { flex-direction: column-reverse; }
+  html:not(#r) .rp-vtabs { flex: none; width: auto; flex-direction: row; gap: 8px; padding: 6px 8px; border-left: 0; border-bottom: 1px solid var(--rp-line, #c9d8ea); }
+  html:not(#r) .rp-vtabs > button { writing-mode: horizontal-tb; flex: 1 1 0; min-height: 44px; margin: 0; padding: 0 12px; border: 1px solid var(--rp-line, #c9d8ea); border-radius: 10px; letter-spacing: 0.02em; font-size: 14px; }
+  html:not(#r) .rp-cellbar { display: none; }
+  /* the button ribbon under a grid is one row that scrolls sideways, not two or three that eat the grid's height */
+  html:not(#r) .mp-ribbon .mp-rtabs, html:not(#r) .mp-ribbon .mp-rpanels { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+  html:not(#r) .mp-ribbon .mp-rtabs::-webkit-scrollbar, html:not(#r) .mp-ribbon .mp-rpanels::-webkit-scrollbar { display: none; }
+  html:not(#r) .mp-ribbon .mp-rtabs > *, html:not(#r) .mp-ribbon .mp-rpanels > * { flex: none; }
+  /* OK / Quit stay in reach while the selection scrolls */
+  html:not(#r) .rp-select .rp-actions { position: sticky; bottom: 0; z-index: 4; }
+  /* the final total stays at the foot of the output while its rows scroll */
+  html:not(#r) .rp-out-scroll .rp-total-pinned { display: flex; position: sticky !important; left: 0; bottom: 0; z-index: 4; box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.18); }
+  html:not(#r) .rp-out-scroll .rp-total-pinned .mp-cell { font-weight: 700; }
+  html:not(#r) .rp-out-scroll .rp-total-pinned .mp-rownum { position: sticky; left: 0; z-index: 3; }
+}
+
+/* very small phones */
+@media (max-width: 380px) {
+  html:not(#r) .context-strip > span:not(.running) { display: none; }
+}
+
+/* landscape phones: little height, so the bars shrink */
+@media (max-width: 900px) and (max-height: 500px) {
+  html:not(#r) .title-bar { min-height: 44px; }
+  html:not(#r) .bottom-nav > button { min-height: 44px; flex-direction: row; gap: 6px; }
+  html:not(#r) .window-list-menu { bottom: calc(52px + env(safe-area-inset-bottom)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(#r) .menu-bar, html:not(#r) .menu-bar.nav-open, html:not(#r) .nav-scrim { transition: none; animation: none; }
+}
+
+/* ── touch: 44px targets, no zoom-on-focus, no hover-only reveal ───────── */
+@media (pointer: coarse) {
+  html:not(#r) .mp-btn, html:not(#r) .mp-rtab, html:not(#r) .mp-btn-big, html:not(#r) .mh-primary, html:not(#r) .mh-ghost,
+  html:not(#r) .login-button, html:not(#r) .rp-actions .mp-btn, html:not(#r) .msgbox button, html:not(#r) .window-tab-name, html:not(#r) .window-list-button { min-height: 44px; }
+  html:not(#r) .window-tab-x, html:not(#r) .window-tab-btn, html:not(#r) .startup-title button, html:not(#r) .mp-dialog-close { min-width: 44px; min-height: 44px; }
+  /* iOS zooms the page when a field under 16px takes focus; grid cells keep the grid's own size */
+  html:not(#r) .winfa-window :is(input, select, textarea):not(.mp-cell *, .mp-grid-combo *),
+  html:not(#r) .startup-desktop :is(input, select, textarea) { font-size: 16px; }
+  html:not(#r) .winfa-window :is(input[type="checkbox"], input[type="radio"]) { width: 22px; height: 22px; }
+}

@@ -150,7 +150,7 @@ export function ModernHome<N extends HomeNode<N>>({ menus, onOpen }: { menus: re
       {state === "none" && (
         <section className="mh-panel mh-empty" aria-label="Getting started">
           <h2>Choose a menu to start</h2>
-          <p>Use the menu on the left to open an entry or a report. Your balances and charts appear here when the Dashboard report is on your menu.</p>
+          <p>Use the menu to open an entry or a report. Your balances and charts appear here when the Dashboard report is on your menu.</p>
         </section>
       )}
 

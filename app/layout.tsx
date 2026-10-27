@@ -4,6 +4,8 @@ import "./globals.css";
 // The Modern view's Light and Dark colours (generated from the rules above by `npm run theme`), then the Modern design layer on top.
 import "./modern-theme.generated.css";
 import "./modern-ui.css";
+// Phones and tablets: the menu drawer, the bottom bar, touch sizes. Last, so it wins over the desktop layers above.
+import "./responsive.css";
 import { MessageBoxHost } from "../features/ui/MessageBox";
 
 const geistSans = Geist({
@@ -39,6 +41,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Under the notch and home bar (the layout pads itself with env(safe-area-inset-*)), and the on-screen keyboard shrinks the page
+  // instead of covering its lower half. Zoom stays on: pinching a report is how a phone reads a wide table.
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({
