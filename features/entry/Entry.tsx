@@ -1836,7 +1836,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           item.place === "E" ? (
             <EntryCell kind="combo" cellId={`eway:${item.name}`} value={value} options={item.options} tools={tools} ariaLabel={item.label} onChange={set} onEnter={() => ewayAfter(`eway:${item.name}`)} />
           ) : item.name === "cmb_series" ? (
-            <SearchCombo ariaLabel={item.label} options={seriesList(item)} value={seriesList(item).find((option) => option.text === value) ?? null} onChoose={(option) => void chooseSeries(option.text)} />
+            <SearchCombo ariaLabel={item.label} options={seriesList(item)} value={seriesList(item).find((option) => option.text === value) ?? (value.trim() !== "" ? { text: value, value } : null)} onChoose={(option) => void chooseSeries(option.text)} />
           ) : (
             <SearchCombo
               ariaLabel={item.label}
@@ -1952,6 +1952,12 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const at = cells.findIndex((cell) => cell.getAttribute("data-cell") === cellId);
     const tallied = !amountFollows && entryAmount > 0 && Math.abs(outstandingSetoff - entryAmount) < 0.005;
     const next = cells[at + 1];
+    // An opened voucher: Enter walks the bills that hold a set-off (the sorted first rows); after the last of them the window is left.
+    if (voucher && isRestored) {
+      const nextRow = Number(next?.getAttribute("data-cell")?.replace(/^os/, ""));
+      if (next && money(setoff[nextRow]) > 0) next.focus(); else finishSetoff();
+      return;
+    }
     if (tallied) { finishSetoff(); return; }
     (next ?? cells[0])?.focus();
   };
@@ -2088,7 +2094,17 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     generateSetoffNarration();
     if (!voucher) { afterOutstanding(); return; }
     setTab("all");
-    setTimeout(() => focusEntryCell(formRef.current, `${outRow + 1}:name`), 80);
+    // Back on the voucher grid: the keyboard goes to the cell after the figure of the row set off; at the end of the row, to the next row, or - when no other row is used (an opened voucher, or a one-row day book) - out of the grid.
+    setTimeout(() => {
+      const cells = [...(formRef.current?.querySelectorAll<HTMLElement>(`.ent-grid[aria-label=Vouchers] [data-cell^="${outRow}:"]`) ?? [])];
+      const ids = cells.map((cell) => cell.getAttribute("data-cell") ?? "");
+      const side = ids.findIndex((id) => id === `${outRow}:${toNumber(vlines[outRow]?.cells.debit_amt) > 0 ? "debit_amt" : "credit_amt"}`);
+      const next = ids[side + 1];
+      if (side >= 0 && next) { focusEntryCell(formRef.current, next); return; }
+      const lonely = !journal && !book?.voucherMulti?.daybook && filledVoucherLines(vlines).length <= 1;
+      if (lonely || (isRestored && !(vlines[outRow + 1]?.code > 0))) { void endVoucherRows(); return; }
+      focusEntryCell(formRef.current, `${outRow + 1}:name`);
+    }, 80);
   };
   /**
    * Product code, Qty, Q.Uom and the item-wise GST are compulsory; Rate and R.Uom too unless the book (book_properties stkm_ropt O) leaves them optional.
@@ -2224,7 +2240,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               />
             </span>
             {view && <span className="ent-side" style={{ left: voucher ? VOUCHER_SIDE_LEFT : 406, top: 6 }} title="Book posting side">{view.side}</span>}
-            {view?.balance && <span className="ent-balance" style={{ left: 238, top: 28 }} title="Book balance as on the last date of the year">{view.balance}</span>}
+            {view?.balance && !journal && <span className="ent-balance" style={{ left: 238, top: 28 }} title="Book balance as on the last date of the year">{view.balance}</span>}
             <div style={{ display: "contents" }} inert={!book}>{headControls.flatMap(control)}</div>
             {view && headControls.some((item) => item.name === "dtp_date") && (() => {
               const dateBox = headControls.find((item) => item.name === "dtp_date")!.box;
@@ -2474,7 +2490,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
                 </>
               )}
               <span className="ent-label ent-final-label" style={{ left: 2, top: FOOT_TOP, width: 130 }}>Entry Final Amt.:</span>
-              <output className="ent-final" style={{ left: 138, top: FOOT_TOP, width: 101 }} aria-label="Entry final amount">{amountText(String(voucher ? voucherTotals.final : slabResult.final), 2) || "0.00"}</output>
+              <output className="ent-final" style={{ left: 138, top: FOOT_TOP, width: 131 }} aria-label="Entry final amount">{amountText(String(voucher ? voucherTotals.final : slabResult.final), 2) || "0.00"}</output>
               {footControls.flatMap(control)}
             </div>
           )}

@@ -93,7 +93,7 @@ export async function entryAll(loader: Loader, entryName: string, firstCombo: En
     { key: "head_nature", caption: "CN / DN Nature", width: 130, align: "L", read: (row) => headNames.kinds.get(toInt(field(row, "nature"))) ?? "" },
     { key: "head_contra", caption: "Contra / Exp. Name", width: 160, align: "L", read: (row) => headNames.accounts.get(toInt(field(row, "post_bkcode"))) ?? "" },
     { key: "head_doc_type", caption: "Doc. Type", width: 110, align: "L", read: (row) => (voucher ? ({ R: "Regular", D: "Doc.Refund", N: "No Interest Calc" } as Record<string, string>)[text(row, "doc_type").toUpperCase()] ?? "" : "") },
-    { key: "head_chq_date", caption: "Chq. Date", width: 90, align: "L", read: (row) => { const date = voucher ? parseDesktopDate(field(row, "chln_date")) : null; return date && date.getFullYear() > 1950 ? formatDesktopDate(date) : ""; } },
+    { key: "head_chq_date", caption: "Chq. Date", width: 90, align: "L", read: (row) => { const date = voucher && book.values.bookKey === 6 ? parseDesktopDate(field(row, "chln_date")) : null; return date && date.getFullYear() > 1950 ? formatDesktopDate(date) : ""; } },
     { key: "head_rev", caption: "Reverse Entry", width: 90, align: "L", read: (row) => (text(row, "rev_charge") === "" ? "" : text(row, "rev_charge")) },
     { key: "eway_supply", caption: ewayLabel("cmb_supplytype", "Supply Type"), width: 100, align: "L", read: ewayList("cmb_supplytype", "supply_type") },
     { key: "eway_sub_supply", caption: ewayLabel("cmb_subsupplytype", "Sub Supply Type"), width: 120, align: "L", read: ewayList("cmb_subsupplytype", "sub_supply_type") },

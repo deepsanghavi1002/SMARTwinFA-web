@@ -41,11 +41,13 @@ export async function entryBill(loader: Loader, entryName: string, firstCombo: E
   if (!led) throw new Error("The entry is not found (deleted, or not posted)");
 
   const companyRow = (await loader.readTable(
-    `SELECT name, bill_name, bill_add, o_address1, o_address2, o_address3, o_city, o_pincode, o_tel, o_mobile, o_emailid, gst_no, panno1, state_name FROM smart_system.company WHERE co_key = $1`, [session.companyKey]))?.[0];
+    `SELECT name, bill_name, bill_add, o_address1, o_address2, o_address3, o_city, o_pincode, f_address1, f_address2, f_address3, f_city, f_pincode, r_address1, r_address2, r_address3, r_city, r_pincode, e_address1, e_address2, e_address3, o_tel, o_mobile, o_emailid, gst_no, panno1, state_name FROM smart_system.company WHERE co_key = $1`, [session.companyKey]))?.[0];
   const companyName = text(companyRow, "bill_name") || text(companyRow, "name") || session.companyName;
   const billAdd = text(companyRow, "bill_add");
-  const companyLines = billAdd !== "" ? billAdd.split(/\r?\n|,\s{2,}/).map((line) => line.trim()).filter(Boolean)
-    : [text(companyRow, "o_address1"), text(companyRow, "o_address2"), text(companyRow, "o_address3"), [text(companyRow, "o_city"), text(companyRow, "o_pincode")].filter(Boolean).join(" - ")];
+  // bill_add is the letter of the company address the bill carries (O office, F factory, R registered, E extra); a longer text is the address itself.
+  const addressSet = /^[ofre]$/i.test(billAdd) ? billAdd.toLowerCase() : billAdd === "" ? "o" : "";
+  const companyLines = addressSet === "" ? billAdd.split(/\r?\n|,\s{2,}/).map((line) => line.trim()).filter(Boolean)
+    : [text(companyRow, `${addressSet}_address1`), text(companyRow, `${addressSet}_address2`), text(companyRow, `${addressSet}_address3`), [text(companyRow, `${addressSet}_city`), text(companyRow, `${addressSet}_pincode`)].filter(Boolean).join(" - ")];
   const given = (name: string) => { const value = text(companyRow, name); return value === "0" ? "" : value; };
   const contact = [given("o_tel") && `Tel: ${given("o_tel")}`, given("o_mobile") && `Mobile: ${given("o_mobile")}`, given("o_emailid") && `Email: ${given("o_emailid")}`].filter(Boolean).join("   ");
 
@@ -67,7 +69,7 @@ export async function entryBill(loader: Loader, entryName: string, firstCombo: E
       billTo: { name: "", lines: [], gstin: "", state: "", pan: "", phone: "" }, shipTo: { name: "", lines: [], gstin: "", state: "", pan: "", phone: "" },
       addons: headerAddons, lines: [], totals: [],
       finalAmount: fixed(Math.max(debit, credit), 2), inWords: amountInWords(Math.max(debit, credit)),
-      voucher: { daybook: firstCombo.text, side, rows, debitTotal: fixed(debit, 2), creditTotal: fixed(credit, 2), showChq: rows.some((row) => row.chqNo !== "") },
+      voucher: { daybook: firstCombo.text, side: screen.bookKey === 19 ? "" : side, rows, debitTotal: fixed(debit, 2), creditTotal: fixed(credit, 2), showChq: screen.bookKey === 6 && rows.some((row) => row.chqNo !== "") },
     };
   }
   const partyName = entry.values.tbx_partyname ?? "";
