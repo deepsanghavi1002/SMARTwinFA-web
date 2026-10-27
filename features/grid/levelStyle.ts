@@ -26,6 +26,15 @@ export const LEVEL_COLOURS: readonly LevelColour[] = [
 
 export const GRAND_TOTAL_COLOUR: LevelColour = { fill: "#f9c9c9", text: "#6b1212", rule: "#d96b6b" };
 
+/** The same levels on the Modern view's dark theme (on screen only: print and export keep the light fills above). */
+export const DARK_LEVEL_COLOURS: readonly LevelColour[] = [
+  { fill: "#251d44", text: "#d6c9ff", rule: "#5b4a99" }, // purple
+  { fill: "#3b1b2c", text: "#ffc6da", rule: "#8f4466" }, // pink
+  { fill: "#12294a", text: "#c3dfff", rule: "#2f5e9a" }, // blue
+  { fill: "#3a3010", text: "#ffeaa3", rule: "#8a7416" }, // yellow
+];
+export const DARK_GRAND_TOTAL_COLOUR: LevelColour = { fill: "#3f1818", text: "#ffc9c9", rule: "#a04444" };
+
 /** What a user's own screen colour is changed to when it is one of the four (provision, see resolveLevelColours). */
 export const LIGHT_RED: LevelColour = { fill: "#fbd9d9", text: "#6b1212", rule: "#e48a8a" };
 
@@ -66,10 +75,10 @@ export type RowLook = Readonly<{
 export type RowKind = "heading" | "subtotal" | "total" | "detail";
 
 /** How one row looks. `level` is the heading's or subtotal's level (ignored for a detail and the total). */
-export function rowLook(kind: RowKind, level: number, colours: readonly LevelColour[] = LEVEL_COLOURS): RowLook {
+export function rowLook(kind: RowKind, level: number, colours: readonly LevelColour[] = LEVEL_COLOURS, grand: LevelColour = GRAND_TOTAL_COLOUR): RowLook {
   if (kind === "detail") return { bold: false, indent: 0, captionRight: false };
   if (kind === "total") {
-    return { background: GRAND_TOTAL_COLOUR.fill, color: GRAND_TOTAL_COLOUR.text, bold: true, borderTop: `3px double ${GRAND_TOTAL_COLOUR.rule}`, borderBottom: `1px solid ${GRAND_TOTAL_COLOUR.rule}`, indent: 0, captionRight: true };
+    return { background: grand.fill, color: grand.text, bold: true, borderTop: `3px double ${grand.rule}`, borderBottom: `1px solid ${grand.rule}`, indent: 0, captionRight: true };
   }
   const at = clampLevel(level);
   const colour = colours[at] ?? LEVEL_COLOURS[at];

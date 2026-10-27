@@ -65,9 +65,14 @@ export function useStartupActions() {
   return useContext(StartupActionsContext);
 }
 
+export type ModernTheme = "light" | "dark";
+
 export type ViewModeContextValue = {
   modernView: boolean;
   setModernView: React.Dispatch<React.SetStateAction<boolean>>;
+  /** The Modern view's colour theme: the one chosen here, or the browser's own light / dark setting until then. */
+  modernTheme: ModernTheme;
+  setModernTheme: (next: ModernTheme) => void;
 };
 
 const ViewModeContext = createContext<ViewModeContextValue | null>(null);
@@ -95,6 +100,32 @@ function subscribeModernView(listener: () => void) {
   return () => { viewListeners.delete(listener); window.removeEventListener("storage", onStorage); };
 }
 
+/** Light or Dark for the Modern view, kept in this browser (the browser's own setting decides until one is chosen). */
+const THEME_KEY = "modern-theme";
+let themeNow: ModernTheme | null = null;
+const themeListeners = new Set<() => void>();
+function readModernTheme(): ModernTheme {
+  if (themeNow === null) {
+    let stored: string | null = null;
+    try { stored = window.localStorage.getItem(THEME_KEY); } catch { stored = null; }
+    let system: ModernTheme = "light";
+    try { system = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch { system = "light"; }
+    themeNow = stored === "dark" || stored === "light" ? stored : system;
+  }
+  return themeNow;
+}
+function writeModernTheme(next: ModernTheme) {
+  themeNow = next;
+  try { window.localStorage.setItem(THEME_KEY, next); } catch { /* the choice is only a convenience */ }
+  for (const listener of themeListeners) listener();
+}
+function subscribeModernTheme(listener: () => void) {
+  themeListeners.add(listener);
+  const onStorage = (event: StorageEvent) => { if (event.key === THEME_KEY) { themeNow = null; listener(); } };
+  window.addEventListener("storage", onStorage);
+  return () => { themeListeners.delete(listener); window.removeEventListener("storage", onStorage); };
+}
+
 export function useViewMode() {
   return useContext(ViewModeContext);
 }
@@ -115,13 +146,21 @@ export function ViewSwitchButton({ className = "" }: { className?: string }) {
   );
 }
 
-const modernTheme = createTheme({
-  palette: {
-    mode: "light",
-    primary: { main: "#1976d2" },
-    secondary: { main: "#26a69a" },
-    background: { default: "#eef4fb", paper: "#ffffff" },
-  },
+const muiTheme = (mode: ModernTheme) => createTheme({
+  palette: mode === "dark"
+    ? {
+      mode: "dark",
+      primary: { main: "#F5B544", contrastText: "#0E131B" },
+      secondary: { main: "#5AA9FF" },
+      background: { default: "#090C12", paper: "#111722" },
+      text: { primary: "#E9EEF5", secondary: "#8A96A8" },
+    }
+    : {
+      mode: "light",
+      primary: { main: "#1976d2" },
+      secondary: { main: "#26a69a" },
+      background: { default: "#eef4fb", paper: "#ffffff" },
+    },
   shape: { borderRadius: 6 },
   typography: {
     fontFamily: "Roboto, Aptos, Segoe UI, Arial, sans-serif",
@@ -130,6 +169,8 @@ const modernTheme = createTheme({
     button: { textTransform: "none", fontWeight: 600 },
   },
 });
+const muiLight = muiTheme("light");
+const muiDark = muiTheme("dark");
 
 export function StartupGate({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<"login" | "operator" | "company" | "ready">("login");
@@ -154,6 +195,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [company, setCompany] = useState("");
   // The server's page is Legacy; the browser switches to the remembered view once it has started.
   const modernView = useSyncExternalStore(subscribeModernView, readModernView, () => false);
+  const modernTheme = useSyncExternalStore(subscribeModernTheme, readModernTheme, (): ModernTheme => "light");
+  const dark = modernView && modernTheme === "dark";
+  // The page itself carries the view and theme, so overlays outside the screens (message boxes, pop-ups) follow them too.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (modernView) root.dataset.mtheme = modernTheme; else delete root.dataset.mtheme;
+  }, [modernView, modernTheme]);
   /** The company screen was opened from the menu (not after the login): Exit goes back to the company that was open. */
   const [fromMenu, setFromMenu] = useState(false);
   const openBefore = useRef<{ year: string; company: string } | null>(null);
@@ -333,7 +381,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     : null;
   const canContinue = Boolean(selectedYear && selectedCompany?.available);
 
-  const viewModeValue = useMemo(() => ({ modernView, setModernView: writeModernView }), [modernView]);
+  const viewModeValue = useMemo(() => ({ modernView, setModernView: writeModernView, modernTheme, setModernTheme: writeModernTheme }), [modernView, modernTheme]);
 
   if (stage === "ready" && operator && selectedYear && selectedCompany) {
     const selection: StartupSelection = {
@@ -351,7 +399,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       <ViewModeContext.Provider value={viewModeValue}>
         <StartupSelectionContext.Provider value={selection}>
           <StartupActionsContext.Provider value={actions}>
-            <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>
+            <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`} data-mtheme={modernView ? modernTheme : undefined}>
               {children}
             </div>
           </StartupActionsContext.Provider>
@@ -416,10 +464,14 @@ export function StartupGate({ children }: { children: ReactNode }) {
   }
 
   if (modernView) {
+    // The sign-in and company screens are drawn with MUI props, so their colours come from this table for the chosen theme.
+    const T = dark
+      ? { page: "radial-gradient(circle at top, #1b2740 0%, #0e131b 55%, #090c12 100%)", shadow: "0 18px 42px rgba(0, 0, 0, 0.5)", title: "#E9EEF5", sub: "#8A96A8", accent: "#F5B544", line: "#222C3C", line2: "#34425A", head: "#161E2B", text: "#E9EEF5", sel: "#F5B544", selText: "#F5B544", disabled: "#566275", selBg: "#1B2433", selHover: "#222C3C", hover: "#161E2B", rowOff: "#0E131B", row: "#111722", button: "linear-gradient(135deg, #F5B544 0%, #D98E1F 100%)", buttonText: "#0E131B", side: "linear-gradient(180deg,#0e131b 0%,#172033 72%,#1f2d45 100%)" }
+      : { page: "radial-gradient(circle at top, #f9fcff 0%, #e5f0fb 24%, #cfe2f4 52%, #a8c4e8 100%)", shadow: "0 18px 42px rgba(25, 50, 95, 0.14)", title: "#1a3a52", sub: "#6b7c8c", accent: "#1976d2", line: "#dbe6ef", line2: "#b9c6d2", head: "#eef2f6", text: "#28394a", sel: "#1565c0", selText: "#0d47a1", disabled: "#93a1b0", selBg: "#dbe9fb", selHover: "#d3e3f8", hover: "#f2f7fd", rowOff: "#f5f7f9", row: "#fff", button: "linear-gradient(135deg, #1565c0 0%, #0f7c90 58%)", buttonText: "#fff", side: "linear-gradient(180deg,#173f7c 0%,#1565c0 72%,#1f8ca5 100%)" };
     return (
-      <ThemeProvider theme={modernTheme}>
+      <ThemeProvider theme={dark ? muiDark : muiLight}>
         <CssBaseline />
-        <div className="view-mode modern-view">
+        <div className="view-mode modern-view" data-mtheme={modernTheme}>
           <Box
             sx={{
               minHeight: "100vh",
@@ -427,17 +479,17 @@ export function StartupGate({ children }: { children: ReactNode }) {
               placeItems: "center",
               p: 2.5,
               background:
-                "radial-gradient(circle at top, #f9fcff 0%, #e5f0fb 24%, #cfe2f4 52%, #a8c4e8 100%)",
+                T.page,
             }}
           >
             {stage === "login" ? (
-              <Card sx={{ width: "min(860px, 100%)", overflow: "hidden", borderRadius: 2, boxShadow: "0 18px 42px rgba(25, 50, 95, 0.14)" }}>
+              <Card sx={{ width: "min(860px, 100%)", overflow: "hidden", borderRadius: 2, boxShadow: T.shadow }}>
                 <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "280px minmax(0,1fr)" } }}>
                   <Box
                     sx={{
                       p: { xs: 3, md: 4 },
                       color: "#fff",
-                      background: "linear-gradient(180deg,#173f7c 0%,#1565c0 72%,#1f8ca5 100%)",
+                      background: T.side,
                       display: "grid",
                       alignContent: "space-between",
                       gap: 2,
@@ -456,8 +508,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
                   <CardContent sx={{ p: { xs: 3, md: 3.5 } }}>
                     <Stack component="form" spacing={3} onSubmit={(event) => { event.preventDefault(); login(); }}>
                       <Stack spacing={0.5}>
-                        <Typography variant="h4" sx={{ color: "#1a3a52", fontWeight: 700, fontSize: "2rem" }}>Welcome Back!</Typography>
-                        <Typography variant="body2" sx={{ color: "#6b7c8c" }}>Please login to continue</Typography>
+                        <Typography variant="h4" sx={{ color: T.title, fontWeight: 700, fontSize: "2rem" }}>Welcome Back!</Typography>
+                        <Typography variant="body2" sx={{ color: T.sub }}>Please login to continue</Typography>
                       </Stack>
                       <TextField
                         label="Today's Date"
@@ -465,7 +517,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         slotProps={{
                           htmlInput: { readOnly: true },
                           input: {
-                            startAdornment: <InputAdornment position="start"><span style={{ color: "#1976d2", fontSize: 18, marginRight: 4 }}>📅</span></InputAdornment>
+                            startAdornment: <InputAdornment position="start"><span style={{ color: T.accent, fontSize: 18, marginRight: 4 }}>📅</span></InputAdornment>
                           }
                         }}
                         fullWidth
@@ -477,7 +529,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         onChange={(event) => setUsername(event.target.value)}
                         slotProps={{
                           input: {
-                            startAdornment: <InputAdornment position="start"><span style={{ color: "#1976d2", fontSize: 18, marginRight: 4 }}>👤</span></InputAdornment>
+                            startAdornment: <InputAdornment position="start"><span style={{ color: T.accent, fontSize: 18, marginRight: 4 }}>👤</span></InputAdornment>
                           }
                         }}
                         fullWidth
@@ -490,13 +542,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
                         onChange={(event) => setPassword(event.target.value)}
                         slotProps={{
                           input: {
-                            startAdornment: <InputAdornment position="start"><span style={{ color: "#1976d2", fontSize: 18, marginRight: 4 }}>🔒</span></InputAdornment>,
+                            startAdornment: <InputAdornment position="start"><span style={{ color: T.accent, fontSize: 18, marginRight: 4 }}>🔒</span></InputAdornment>,
                             endAdornment: (
                               <InputAdornment position="end">
                                 <IconButton
                                   onClick={() => setShowPassword(!showPassword)}
                                   edge="end"
-                                  sx={{ color: "#6b7c8c" }}
+                                  sx={{ color: T.sub }}
                                 >
                                   {showPassword ? "🙈" : "👁️"}
                                 </IconButton>
@@ -516,13 +568,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
                           disabled={signingIn || checking}
                           sx={{
                             flex: 1,
-                            background: "linear-gradient(135deg, #1565c0 0%, #0f7c90 58%)",
+                            background: T.button, color: T.buttonText,
                             textTransform: "none",
                             fontSize: "1rem",
                             fontWeight: 700,
                             py: 1.3,
                             '&:hover': {
-                              background: "linear-gradient(135deg, #1565c0 0%, #0f7c90 58%)",
+                              background: T.button, color: T.buttonText,
                               filter: "brightness(1.1)"
                             }
                           }}
@@ -555,7 +607,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
                 </Box>
               </Card>
             ) : (
-              <Card sx={{ width: "min(1000px, 100%)", overflow: "hidden", borderRadius: 3, boxShadow: "0 22px 48px rgba(25, 50, 95, 0.16)" }}>
+              <Card sx={{ width: "min(1000px, 100%)", overflow: "hidden", borderRadius: 3, boxShadow: T.shadow }}>
                 <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "300px minmax(0,1fr)" } }}>
                   <Box
                     sx={{
@@ -576,20 +628,20 @@ export function StartupGate({ children }: { children: ReactNode }) {
                   <CardContent sx={{ p: { xs: 3, md: 3.5 } }}>
                     <Stack spacing={2}>
                       <Stack spacing={0.5}>
-                        <Typography variant="h4" sx={{ color: "#173b57", fontSize: { xs: "1.9rem", md: "2.15rem" } }}>Company Selection</Typography>
-                        <Typography variant="body2" sx={{ color: "#6d8393" }}>Select accounting year and company to continue</Typography>
+                        <Typography variant="h4" sx={{ color: T.title, fontSize: { xs: "1.9rem", md: "2.15rem" } }}>Company Selection</Typography>
+                        <Typography variant="body2" sx={{ color: T.sub }}>Select accounting year and company to continue</Typography>
                       </Stack>
 
                       <Stack spacing={0.75}>
-                        <Typography variant="subtitle2" sx={{ color: "#1976d2", fontWeight: 700 }}>Accounting Year</Typography>
-                        <Paper variant="outlined" sx={{ borderColor: "#dbe6ef", boxShadow: "none", maxHeight: 108, overflow: "auto" }}>
+                        <Typography variant="subtitle2" sx={{ color: T.accent, fontWeight: 700 }}>Accounting Year</Typography>
+                        <Paper variant="outlined" sx={{ borderColor: T.line, boxShadow: "none", maxHeight: 108, overflow: "auto" }}>
                           <List dense disablePadding>
                             {!accountingYears.length && <ListItemText sx={{ px: 1.5, py: 1 }} primary="Loading accounting years…" />}
                             {accountingYears.map((item) => (
                               <ListItemButton key={item.id} selected={year === item.id} onClick={() => chooseYear(item.id)}>
                                 <ListItemText
                                   primary={item.label}
-                                  slotProps={{ primary: { sx: { fontWeight: year === item.id ? 700 : 500, color: year === item.id ? "#1565c0" : "#28394a" } } }}
+                                  slotProps={{ primary: { sx: { fontWeight: year === item.id ? 700 : 500, color: year === item.id ? T.sel : T.text } } }}
                                 />
                               </ListItemButton>
                             ))}
@@ -598,15 +650,15 @@ export function StartupGate({ children }: { children: ReactNode }) {
                       </Stack>
 
                       <Stack spacing={0.75}>
-                        <Typography variant="subtitle2" sx={{ color: "#1976d2", fontWeight: 700 }}>Select Company</Typography>
-                        <Paper variant="outlined" sx={{ borderColor: "#8fa2b4", boxShadow: "none", maxHeight: 240, overflow: "auto" }}>
-                          <Box sx={{ display: "grid", gridTemplateColumns: "minmax(240px,1fr) 130px minmax(150px,.7fr)", position: "sticky", top: 0, background: "#eef2f6", fontWeight: 700, fontSize: 13, borderBottom: "1px solid #8fa2b4" }}>
-                            <Box sx={{ px: 1, py: .75, borderRight: "1px solid #b9c6d2" }}>NAME</Box>
-                            <Box sx={{ px: 1, py: .75, borderRight: "1px solid #b9c6d2" }}>CO_SHORT</Box>
+                        <Typography variant="subtitle2" sx={{ color: T.accent, fontWeight: 700 }}>Select Company</Typography>
+                        <Paper variant="outlined" sx={{ borderColor: T.line2, boxShadow: "none", maxHeight: 240, overflow: "auto" }}>
+                          <Box sx={{ display: "grid", gridTemplateColumns: "minmax(240px,1fr) 130px minmax(150px,.7fr)", position: "sticky", top: 0, background: T.head, fontWeight: 700, fontSize: 13, borderBottom: "1px solid #8fa2b4" }}>
+                            <Box sx={{ px: 1, py: .75, borderRight: `1px solid ${T.line2}` }}>NAME</Box>
+                            <Box sx={{ px: 1, py: .75, borderRight: `1px solid ${T.line2}` }}>CO_SHORT</Box>
                             <Box sx={{ px: 1, py: .75 }}>ADDRESS_1</Box>
                           </Box>
-                          {companiesLoading && <Box sx={{ px: 1, py: 1.25, color: "#6d8393" }}>Loading companies…</Box>}
-                          {!companiesLoading && !companies.length && <Box sx={{ px: 1, py: 1.25, color: "#6d8393" }}>No company is opened for this accounting year.</Box>}
+                          {companiesLoading && <Box sx={{ px: 1, py: 1.25, color: T.sub }}>Loading companies…</Box>}
+                          {!companiesLoading && !companies.length && <Box sx={{ px: 1, py: 1.25, color: T.sub }}>No company is opened for this accounting year.</Box>}
                           {companies.map((item) => (
                             <Box
                               key={item.id}
@@ -623,15 +675,15 @@ export function StartupGate({ children }: { children: ReactNode }) {
                                 font: "inherit",
                                 fontSize: 14,
                                 border: 0,
-                                borderBottom: "1px solid #dbe3ea",
+                                borderBottom: `1px solid ${T.line}`,
                                 cursor: item.available ? "pointer" : "not-allowed",
-                                color: item.available ? (company === item.id ? "#0d47a1" : "#28394a") : "#93a1b0",
-                                background: company === item.id ? "#dbe9fb" : item.available ? "#fff" : "#f5f7f9",
-                                "&:hover": { background: item.available ? (company === item.id ? "#d3e3f8" : "#f2f7fd") : "#f5f7f9" },
+                                color: item.available ? (company === item.id ? T.selText : T.text) : T.disabled,
+                                background: company === item.id ? T.selBg : item.available ? T.row : T.rowOff,
+                                "&:hover": { background: item.available ? (company === item.id ? T.selHover : T.hover) : T.rowOff },
                               }}
                             >
-                              <Box sx={{ px: 1, py: .75, borderRight: "1px solid #e4eaf0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</Box>
-                              <Box sx={{ px: 1, py: .75, borderRight: "1px solid #e4eaf0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.code}</Box>
+                              <Box sx={{ px: 1, py: .75, borderRight: `1px solid ${T.line}`, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</Box>
+                              <Box sx={{ px: 1, py: .75, borderRight: `1px solid ${T.line}`, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.code}</Box>
                               <Box sx={{ px: 1, py: .75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.address}</Box>
                             </Box>
                           ))}
@@ -663,7 +715,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
 
   return (
     <ViewModeContext.Provider value={viewModeValue}>
-      <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`}>
+      <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`} data-mtheme={modernView ? modernTheme : undefined}>
         <main className="startup-desktop">
           {stage === "login" ? <section className="login-window" aria-label="User login screen">
             <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>

@@ -1,0 +1,193 @@
+/*
+ * The Modern view's design layer: "Midnight" (dark) and its light counterpart. It is loaded after modern-theme.generated.css, so it
+ * wins where it speaks; everything it does not name keeps the colours the generator derived from the screens' own rules. It applies only
+ * while html[data-mtheme] is set, which is only while the Modern view is on.
+ */
+
+/* ── tokens ─────────────────────────────────────────────────────────────── */
+html[data-mtheme="light"] {
+  --mx-bg: #f2f4f8; --mx-surface: #ffffff; --mx-surface2: #f6f8fb; --mx-head: #edf0f5; --mx-border: #dce1ea; --mx-line: #e7ebf1;
+  --mx-text: #0e1420; --mx-muted: #566275; --mx-amber: #94600a; --mx-sky: #1f63c4; --mx-mint: #167a4b; --mx-coral: #b23f17;
+  --mx-sel: #e3eefd; --mx-ring: #1f63c4; --mx-tint-sky: #e6f0fd; --mx-tint-amber: #fdf2dc; --mx-tint-mint: #e2f6eb; --mx-tint-coral: #fce7df;
+  --mx-shadow: 0 1px 2px rgba(14, 20, 32, 0.06), 0 8px 24px rgba(14, 20, 32, 0.06);
+}
+html[data-mtheme="dark"] {
+  --mx-bg: #090c12; --mx-surface: #111722; --mx-surface2: #161e2b; --mx-head: #161e2b; --mx-border: #222c3c; --mx-line: #1b2433;
+  --mx-text: #e9eef5; --mx-muted: #8a96a8; --mx-amber: #f5b544; --mx-sky: #7cb8ff; --mx-mint: #5fd39a; --mx-coral: #ff8a65;
+  --mx-sel: #16294a; --mx-ring: #f5b544; --mx-tint-sky: #0f1c2e; --mx-tint-amber: #231c0f; --mx-tint-mint: #0f2219; --mx-tint-coral: #2a1712;
+  --mx-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+html[data-mtheme] {
+  --mx-accent: #f5b544; --mx-accent-ink: #0e131b;
+  --mx-nav: #0e131b; --mx-nav-deep: #0a0e15; --mx-nav-line: #1b2230; --mx-nav-text: #c3ccd9; --mx-nav-hover: #161e2b; --mx-nav-on: #1b2433;
+}
+html[data-mtheme] body {
+  --mx-font: var(--font-figtree), "Aptos", "Segoe UI", Arial, sans-serif;
+  --mx-display: var(--font-sora), var(--font-figtree), "Aptos", "Segoe UI", sans-serif;
+}
+html[data-mtheme="dark"], html[data-mtheme="dark"] body { background: #090c12; color: #e9eef5; color-scheme: dark; }
+html[data-mtheme="light"], html[data-mtheme="light"] body { background: #f2f4f8; color-scheme: light; }
+
+/* ── the window: title bar, header strip, work area, status line ───────── */
+html[data-mtheme] .modern-view .winfa-window,
+html[data-mtheme] .modern-view .winfa-window button,
+html[data-mtheme] .modern-view .winfa-window input,
+html[data-mtheme] .modern-view .winfa-window select,
+html[data-mtheme] .modern-view .winfa-window textarea { font-family: var(--mx-font); }
+html[data-mtheme] .modern-view .winfa-window { border-color: var(--mx-border); background: var(--mx-bg); }
+html[data-mtheme] .modern-view .title-bar { background: var(--mx-surface); border-bottom: 1px solid var(--mx-border); }
+html[data-mtheme] .modern-view .title-bar strong { color: var(--mx-text); font-family: var(--mx-display); letter-spacing: -0.01em; }
+html[data-mtheme] .modern-view .window-controls button { color: var(--mx-muted); border-left-color: var(--mx-line); }
+html[data-mtheme] .modern-view .context-strip { background: var(--mx-surface); color: var(--mx-text); border-bottom: 1px solid var(--mx-border); }
+html[data-mtheme] .modern-view .context-strip > * { border-right: 1px solid var(--mx-line); }
+html[data-mtheme] .modern-view .context-strip strong { color: var(--mx-text); font-family: var(--mx-display); font-weight: 700; }
+html[data-mtheme] .modern-view .context-strip .running { color: var(--mx-muted); }
+html[data-mtheme] .modern-view .context-strip .context-end { border-right: 0; }
+html[data-mtheme] .modern-view .context-tools button,
+html[data-mtheme] .modern-view .more-button { color: var(--mx-text); }
+html[data-mtheme] .modern-view .more-button:hover,
+html[data-mtheme] .modern-view .more-button[aria-expanded="true"],
+html[data-mtheme] .modern-view .theme-toggle:hover { background: var(--mx-head); }
+html[data-mtheme] .modern-view .ask-button { border: 0; background: var(--mx-accent); color: var(--mx-accent-ink); font-weight: 700; }
+html[data-mtheme] .modern-view .ask-button:hover,
+html[data-mtheme] .modern-view .ask-button[aria-pressed="true"] { filter: brightness(1.06); }
+.theme-toggle { width: 28px; height: 24px; margin: 0 2px; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 4px; color: inherit; background: transparent; cursor: pointer; }
+html[data-mtheme] .modern-view .more-menu { display: inline-flex; align-items: center; }
+html[data-mtheme] .modern-view .more-menu .more-panel { background: var(--mx-surface); color: var(--mx-text); border: 1px solid var(--mx-border); box-shadow: var(--mx-shadow); }
+html[data-mtheme] .modern-view .more-menu .more-panel button { color: var(--mx-text); }
+html[data-mtheme] .modern-view .more-menu .more-panel button:hover,
+html[data-mtheme] .modern-view .more-menu .more-panel button:focus-visible { background: var(--mx-accent); color: var(--mx-accent-ink); }
+html[data-mtheme] .modern-view .more-menu .more-panel hr { border-top-color: var(--mx-border); }
+html[data-mtheme] .modern-view .work-area { background: var(--mx-bg); }
+html[data-mtheme] .modern-view .status-strip { background: var(--mx-surface2); color: var(--mx-muted); border-top: 1px solid var(--mx-border); }
+html[data-mtheme] .modern-view .status-strip span { border-right: 1px solid var(--mx-line); }
+
+/* ── the menu: a navy rail in both themes, amber for what is open ──────── */
+@media (min-width: 781px) {
+  html[data-mtheme] .modern-view .menu-bar { background: var(--mx-nav); border-right: 1px solid var(--mx-nav-line); box-shadow: none; }
+  html[data-mtheme] .modern-view .menu-bar-title { color: var(--mx-accent); font-family: var(--mx-display); letter-spacing: -0.01em; }
+  html[data-mtheme] .modern-view .menu-root > button { color: var(--mx-nav-text); background: transparent; border-bottom: 1px solid var(--mx-nav-line); font-weight: 600; letter-spacing: 0.04em; }
+  html[data-mtheme] .modern-view .menu-root > button:hover { color: #ffffff; background: var(--mx-nav-hover); }
+  html[data-mtheme] .modern-view .menu-root > button.open,
+  html[data-mtheme] .modern-view .menu-root > button.open:hover { color: var(--mx-accent); background: var(--mx-nav-on); box-shadow: inset 3px 0 0 var(--mx-accent); }
+  html[data-mtheme] .modern-view .menu-root > .dropdown { background: var(--mx-nav-deep); }
+  html[data-mtheme] .modern-view .dropdown > button,
+  html[data-mtheme] .modern-view .dropdown > .menu-branch > button { color: var(--mx-nav-text); background: transparent; border-bottom: 1px solid var(--mx-nav-line); font-weight: 600; }
+  html[data-mtheme] .modern-view .dropdown > button:hover,
+  html[data-mtheme] .modern-view .dropdown > button:focus,
+  html[data-mtheme] .modern-view .dropdown > .menu-branch > button:hover { color: #ffffff; background: var(--mx-nav-hover); }
+  html[data-mtheme] .modern-view .submenu { background: #080b11; }
+  html[data-mtheme] .modern-view .submenu > button,
+  html[data-mtheme] .modern-view .submenu > .menu-branch > button { color: #a9b6c9; background: transparent; border-bottom: 1px solid var(--mx-nav-line); }
+  html[data-mtheme] .modern-view .submenu > button:hover,
+  html[data-mtheme] .modern-view .submenu > .menu-branch > button:hover { color: var(--mx-accent); background: var(--mx-nav-hover); }
+}
+
+/* ── home (features/home/ModernHome.tsx) ───────────────────────────────── */
+.mh { height: 100%; overflow: auto; padding: 24px 32px 28px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box; color: var(--mx-text); font-family: var(--mx-font); }
+.mh-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.mh-date { font-size: 13px; color: var(--mx-muted); }
+.mh h1 { margin: 4px 0 2px; font-family: var(--mx-display); font-weight: 800; font-size: 28px; letter-spacing: -0.03em; }
+.mh-co { font-size: 13px; color: var(--mx-muted); }
+.mh-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mh-primary, .mh-ghost { height: 38px; padding: 0 16px; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.mh-primary { border: 0; background: var(--mx-accent); color: var(--mx-accent-ink); }
+.mh-ghost { border: 1px solid var(--mx-border); background: var(--mx-surface); color: var(--mx-text); font-weight: 600; }
+.mh-primary:hover { filter: brightness(1.06); }
+.mh-ghost:hover { background: var(--mx-head); }
+.mh-note { font-size: 13px; color: var(--mx-muted); }
+.mh-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.mh-card { display: flex; flex-direction: column; gap: 6px; padding: 18px 20px; border: 1px solid var(--mx-border); border-radius: 16px; background: var(--mx-surface); color: var(--mx-text); box-shadow: var(--mx-shadow); text-align: left; font: inherit; cursor: pointer; }
+.mh-card:hover { border-color: var(--mx-ring); }
+.mh-card-label { font-size: 13px; color: var(--mx-muted); }
+.mh-card-value { font-family: var(--mx-display); font-weight: 800; font-size: 28px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.mh-card-note { font-size: 12px; color: var(--mx-muted); }
+.mh-sky .mh-card-value { color: var(--mx-sky); }
+.mh-amber .mh-card-value { color: var(--mx-amber); }
+.mh-mint .mh-card-value { color: var(--mx-mint); }
+.mh-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 14px; }
+@media (max-width: 1100px) { .mh-row { grid-template-columns: minmax(0, 1fr); } }
+.mh-panel { padding: 20px 22px; border: 1px solid var(--mx-border); border-radius: 16px; background: var(--mx-surface); box-shadow: var(--mx-shadow); display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.mh-panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.mh-panel h2 { margin: 0; font-family: var(--mx-display); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
+.mh-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mx-muted); font-variant-numeric: tabular-nums; }
+.mh-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-left: 8px; }
+.mh-dot-sale, .mh-bar-sale { background: var(--mx-sky); }
+.mh-dot-buy, .mh-bar-buy { background: var(--mx-accent); }
+.mh-bars { display: flex; align-items: stretch; gap: 8px; height: 210px; }
+.mh-month { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.mh-pair { width: 100%; flex: 1 1 auto; display: flex; align-items: flex-end; justify-content: center; gap: 3px; min-height: 0; border-bottom: 1px solid var(--mx-border); }
+.mh-bar { width: 38%; max-width: 22px; border-radius: 4px 4px 0 0; min-height: 2px; }
+.mh-month-label { font-size: 11px; color: var(--mx-muted); }
+.mh-period { font-size: 12px; color: var(--mx-muted); }
+.mh-today { margin: 0; display: grid; gap: 10px; }
+.mh-today > div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--mx-line); }
+.mh-today dt { color: var(--mx-muted); }
+.mh-today dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mh-link { align-self: flex-start; border: 0; background: transparent; color: var(--mx-sky); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; padding: 0; }
+.mh-empty p { margin: 0; color: var(--mx-muted); font-size: 14px; max-width: 60ch; }
+.mh-credit { margin-top: auto; font-size: 12px; color: var(--mx-muted); text-align: right; }
+.mh-credit strong { color: var(--mx-text); }
+
+/* ── grids: neutral heads, a ring on the active cell, a tint on its row ── */
+html[data-mtheme] .mp-scroll { background: var(--mx-surface); }
+html[data-mtheme] .mp-cell { color: var(--mx-text); background: var(--mx-surface); border-right-color: var(--mx-line); border-bottom-color: var(--mx-line); }
+html[data-mtheme] .mp-row.mp-alt .mp-cell { background: var(--mx-surface2); }
+html[data-mtheme] .mp-head .mp-cell { background: var(--mx-head); color: var(--mx-text); border-right-color: var(--mx-border); border-bottom-color: var(--mx-border); }
+html[data-mtheme] .mp-head .mp-cell.mp-filtered { background: var(--mx-tint-amber); color: var(--mx-amber); }
+html[data-mtheme] .mp-row .mp-cell.mp-rownum { background: var(--mx-head) !important; color: var(--mx-muted); border-right-color: var(--mx-border); }
+html[data-mtheme] .mp-frozen { background: var(--mx-surface); }
+html[data-mtheme] .mp-row.mp-alt .mp-frozen { background: var(--mx-surface2); }
+html[data-mtheme] .mp-row.mp-current-row .mp-cell { background: var(--mx-sel); color: var(--mx-text); }
+html[data-mtheme] .mp-row.mp-current-row .mp-rownum { color: var(--mx-ring); }
+html[data-mtheme] .mp-row.mp-selected .mp-cell { background: var(--mx-sel); }
+html[data-mtheme] .mp-cell.mp-current,
+html[data-mtheme] .rp-cell-on { outline: 2px solid var(--mx-ring); outline-offset: -2px; background: var(--mx-sel) !important; color: var(--mx-text) !important; }
+html[data-mtheme] .rp-cell-sel { background: var(--mx-sel) !important; }
+html[data-mtheme] .rp-out-scroll:focus { box-shadow: inset 0 0 0 2px var(--mx-ring); }
+html[data-mtheme] .rp-out-scroll .mp-cell.rp-frozen-edge { border-right: 2px solid var(--mx-border); }
+html[data-mtheme] .rp-output-head { color: var(--mx-muted); }
+html[data-mtheme] .rp-output-head b { color: var(--mx-text); font-family: var(--mx-display); }
+/* Column letters in the heads, as a spreadsheet has them. */
+html[data-mtheme] .rp-out-scroll .mp-row.mp-head { counter-reset: xl; }
+html[data-mtheme] .rp-out-scroll .mp-row.mp-head .mp-cell:not(.mp-rownum):not(.rp-tree) { counter-increment: xl; }
+html[data-mtheme] .rp-out-scroll .mp-head-label::before { content: counter(xl, upper-alpha); margin-right: 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; color: var(--mx-muted); }
+/* The cell bar above a report: the active cell's reference and what it holds. */
+.rp-cellbar { display: none; }
+html[data-mtheme] .rp-cellbar { display: flex; align-items: stretch; margin: 0 8px 6px; border: 1px solid var(--mx-border); border-radius: 8px; background: var(--mx-surface); overflow: hidden; font-size: 12px; color: var(--mx-text); }
+html[data-mtheme] .rp-cellbar > span { padding: 5px 10px; white-space: nowrap; }
+html[data-mtheme] .rp-cellref { min-width: 56px; text-align: center; font-weight: 700; background: var(--mx-head); border-right: 1px solid var(--mx-border); }
+html[data-mtheme] .rp-cellfx { font-style: italic; font-weight: 700; color: var(--mx-muted); border-right: 1px solid var(--mx-border); }
+html[data-mtheme] .rp-cellval { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+
+/* ── the button ribbon under grids, and buttons in general ─────────────── */
+html[data-mtheme] .mp-ribbon { background: var(--mx-surface2); border-top: 1px solid var(--mx-border); color: var(--mx-text); }
+html[data-mtheme] .mp-ribbon .mp-rtabs { background: var(--mx-surface2); border-bottom: 1px solid var(--mx-border); padding-top: 4px; }
+html[data-mtheme] .mp-ribbon .mp-rtab { color: var(--mx-muted); background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; font-weight: 600; height: 26px; }
+html[data-mtheme] .mp-ribbon .mp-rtab:hover { color: var(--mx-text); background: var(--mx-head); }
+html[data-mtheme] .mp-ribbon .mp-rtab-on,
+html[data-mtheme] .mp-ribbon .mp-rtab-on:hover { color: var(--mx-text); background: var(--mx-surface); border: 0; border-bottom: 2px solid var(--mx-ring); box-shadow: none; }
+html[data-mtheme] .mp-ribbon .mp-rpanel { border-color: var(--mx-border); }
+html[data-mtheme] .mp-btn,
+html[data-mtheme] .rp-output .mp-btn,
+html[data-mtheme] .rp-actions .mp-btn { border: 1px solid var(--mx-border) !important; border-radius: 8px; background: var(--mx-surface); color: var(--mx-text); box-shadow: none; text-shadow: none; font-weight: 600; }
+html[data-mtheme] .mp-ribbon .mp-btn { border-radius: 8px; }
+html[data-mtheme] .mp-btn:hover:not(:disabled) { background: var(--mx-head); filter: none; }
+html[data-mtheme] .mp-btn .mp-icon { stroke: currentColor; }
+html[data-mtheme] .mp-btn.mp-btn-blue,
+html[data-mtheme] .rp-output .mp-btn.mp-btn-blue { color: var(--mx-sky); }
+html[data-mtheme] .mp-btn.mp-btn-red,
+html[data-mtheme] .rp-output .mp-btn.mp-btn-red { color: var(--mx-coral); background: var(--mx-tint-coral); }
+html[data-mtheme] .mp-btn.mp-btn-green,
+html[data-mtheme] .mp-btn.mp-btn-excel { color: var(--mx-mint); }
+html[data-mtheme] .mp-btn.mp-btn-pdf { color: var(--mx-coral); }
+html[data-mtheme] .mp-btn.mp-btn-teal { color: var(--mx-sky); }
+html[data-mtheme] .mp-btn:disabled { opacity: 0.5; }
+html[data-mtheme] .mp-search { background: var(--mx-surface); border: 1px solid var(--mx-border); color: var(--mx-text); }
+html[data-mtheme] .mp-search input { color: var(--mx-text); background: transparent; }
+html[data-mtheme] .rp-run-info { background: var(--mx-surface); border: 1px solid var(--mx-border); color: var(--mx-text); }
+html[data-mtheme] .rp-actions { background: var(--mx-surface2); border-color: var(--mx-border); }
+html[data-mtheme] .rp-actions .mp-btn.rp-ok { background: var(--mx-accent); color: var(--mx-accent-ink); border-color: var(--mx-accent) !important; text-shadow: none; }
+html[data-mtheme] .rp-actions .mp-btn.rp-quit { background: var(--mx-tint-coral); color: var(--mx-coral); text-shadow: none; }
+html[data-mtheme] .rp-actions .rp-ok .mp-icon,
+html[data-mtheme] .rp-actions .rp-quit .mp-icon { stroke: currentColor; filter: none; }

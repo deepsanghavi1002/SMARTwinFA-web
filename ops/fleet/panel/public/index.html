@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMARTwinFA Admin</title>
+<link rel="stylesheet" href="/panel/style.css">
+<script type="module" src="/panel/app.js"></script>
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="#/">SMARTwinFA <span>control panel</span></a>
+  <nav>
+    <a href="#/">Clients</a>
+    <a href="/grafana/" target="_blank" rel="noopener">Logs search</a>
+    <a href="/dashboard" target="_blank" rel="noopener">Uptime</a>
+    <a class="quiet" href="/portainer/" target="_blank" rel="noopener">Containers (advanced)</a>
+    <button type="button" id="signout" class="link" hidden>Sign out</button>
+  </nav>
+</header>
+<main id="view" aria-live="polite"><p class="muted">Loading…</p></main>
+</body>
+</html>
