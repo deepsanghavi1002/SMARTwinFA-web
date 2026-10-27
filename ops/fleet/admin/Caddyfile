@@ -1,7 +1,7 @@
 # The staff site (e.g. https://admin.smartwinfa.com): one address for the fleet tools. Each tool keeps its own sign-in;
 # no password is added here, because Portainer and Grafana use the Authorization header themselves. Gate the address
 # with Cloudflare Access (staff only, with MFA) instead.
-#   /             this page: links to the tools
+#   /, /panel/*   the control panel (a card per client; its own sign-in)
 #   /grafana/     logs of every client (Grafana serves itself from this sub-path)
 #   /portainer/   every stack and container (the prefix is taken off; Portainer's pages use relative paths)
 #   anything else Uptime Kuma (it cannot run under a sub-path, so it has the rest: /dashboard, /status ...)
@@ -25,8 +25,10 @@
 	}
 
 	handle / {
-		root * /srv
-		file_server
+		reverse_proxy panel:8080
+	}
+	handle /panel/* {
+		reverse_proxy panel:8080
 	}
 
 	handle {

@@ -4,8 +4,9 @@ name: smartwinfa-fleet
 #   Portainer    http://localhost:9000  - every stack and container: start, stop, update, logs, console
 #   Grafana      http://localhost:3001  - logs of every client in one place ("SMARTwinFA Clients" dashboard)
 #   Uptime Kuma  http://localhost:3002  - up/down checks and alerts for each client address
-#   Admin site   http://localhost:9090  - all three on one address (e.g. https://admin.smartwinfa.com, behind Cloudflare Access):
-#                /grafana/, /portainer/, and Uptime Kuma on the rest; publish it as http://smartwinfa-admin:80
+#   Admin site   http://localhost:9090  - everything on one address (e.g. https://admin.smartwinfa.com, behind Cloudflare Access):
+#                / is the control panel (a card per client), /grafana/, /portainer/, and Uptime Kuma on the rest;
+#                publish it as http://smartwinfa-admin:80
 # Memory is capped per tool (mem_limit) so the dashboard cannot crowd out the clients on a small server.
 # Loki stores the logs; Alloy reads every container's log and labels it with its client.
 # cloudflared (profile "tunnel") publishes the client addresses through Cloudflare when TUNNEL_TOKEN is set.
@@ -81,6 +82,28 @@ services:
       - uptime_data:/app/data
     networks: [fleet]
 
+  # The control panel (ops/fleet/panel): a card per client, and each client's logs, errors, parts and backups,
+  # with Restart app and Backup now. It reads the Docker socket (and uses it for those two actions) and Loki.
+  panel:
+    image: node:24-alpine
+    container_name: smartwinfa-panel
+    restart: unless-stopped
+    mem_limit: 96m
+    command: ["node", "/panel/server.mjs"]
+    environment:
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?Set PANEL_PASSWORD in ops/fleet/.env (ops/smartwinfa.sh fleet up makes one)}
+      LOKI_URL: http://loki:3100
+    volumes:
+      - ./panel:/panel:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/panel/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on: [loki]
+    networks: [fleet]
+
   admin:
     image: caddy:2.10.2-alpine
     container_name: smartwinfa-admin
@@ -89,9 +112,8 @@ services:
     ports:
       - "${FLEET_BIND:-127.0.0.1}:${ADMIN_PORT:-9090}:80"
     volumes:
-      - ./admin/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./admin/index.html:/srv/index.html:ro
-    depends_on: [grafana, portainer, uptime-kuma]
+      - ./admin:/etc/caddy:ro
+    depends_on: [panel, grafana, portainer, uptime-kuma]
     networks: [fleet]
 
   cloudflared:

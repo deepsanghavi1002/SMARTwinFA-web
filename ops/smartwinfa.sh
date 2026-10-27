@@ -47,6 +47,10 @@ fleet_prepare() {
     sed -i "s/^GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')/" "$FLEET/.env"
     echo "created ops/fleet/.env (Grafana admin password inside)"
   fi
+  if [ -z "$(setting "$FLEET/.env" PANEL_PASSWORD)" ]; then
+    set_setting "$FLEET/.env" PANEL_PASSWORD "$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+    echo "set PANEL_PASSWORD in ops/fleet/.env (the control panel's sign-in)"
+  fi
   if [ ! -f "$FLEET/.portainer-admin-password" ]; then
     head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' > "$FLEET/.portainer-admin-password"
     chmod 600 "$FLEET/.portainer-admin-password"
