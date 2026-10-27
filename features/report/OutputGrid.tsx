@@ -1126,6 +1126,20 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               );
             })}
           </div>
+          {/* Phones: the final total stays at the foot of the report while the rows scroll (a copy pulled over the real total row by its
+              negative margin, so the two meet at the end of the list). Hidden at other widths: app/responsive.css. */}
+          {(() => {
+            const last = shown[shown.length - 1]?.row;
+            if (!last || kindOf(last) !== "total") return null;
+            return (
+              <div className="mp-row rp-total rp-total-pinned" aria-hidden="true" style={{ marginTop: -ROW }}>
+                <div className="mp-cell mp-rownum" />
+                {spill(last).map(({ column, col, width }) => (
+                  <div key={column.key} className={`mp-cell ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`} style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: align(column), ...rowStyle(last) }}>{last.values[column.key] ?? ""}</div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
       <div className={`rp-panel-host${(charting || panel !== null) ? " rp-panel-on" : ""}${panelMin ? " rp-panel-min" : ""}`}>
