@@ -3927,3 +3927,35 @@
 .ent-filter-bar .ent-f6-on{background:#cdeeff;outline:1px solid #1f64b8}
 /* A header box that is only shown (the series and book side of an opened voucher). */
 .ent-box.ent-locked input,.ent-box.ent-locked button{background:#e6e6e6 !important;color:#444;cursor:not-allowed}
+
+/* Web sign-in: the operator screen's note, the admin links, the set-password form and the users screen. */
+.operator-note{margin:0 0 14px;color:#366182;font-size:12px}
+.manage-users-link{color:#1a6fc0;font-size:12px;font-weight:600}
+.company-admin-links{display:flex;justify-content:center;gap:14px;margin:12px 0 0;font-size:12px}
+.company-admin-links button{border:0;background:none;color:#1a6fc0;font:inherit;font-weight:600;cursor:pointer}
+.set-password-form{display:grid;gap:9px;color:#355a79;font-size:12px}
+.set-password-form label{display:grid;grid-template-columns:120px 1fr;align-items:center;font-weight:600}
+.set-password-form input{height:28px;padding:3px 8px;border:1px solid #97b9d6;border-radius:8px}
+.set-password-form small{color:#67839e}
+.set-password-form .login-button{justify-self:end}
+.user-admin{max-width:1180px;margin:0 auto;padding:20px 16px 48px;color:#1b3952;font-family:"Segoe UI",Tahoma,Arial,sans-serif;font-size:13px}
+.user-admin header{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.user-admin h1{margin:0;font-size:22px;color:#20517f}
+.user-admin h2{margin:26px 0 8px;font-size:15px;color:#20517f}
+.user-admin a{color:#1a6fc0}
+.user-admin-note{max-width:780px;color:#4d6a83}
+.user-admin-error{padding:8px 12px;border:1px solid #e3a0a8;border-radius:8px;background:#fdecee;color:#9b2232}
+.user-admin-link{display:grid;gap:6px;margin:12px 0;padding:12px 14px;border:1px solid #8fc7a2;border-radius:10px;background:#edf9f1}
+.user-admin-link div{display:flex;gap:8px}
+.user-admin-link input{flex:1;min-width:0;height:30px;padding:3px 8px;border:1px solid #97b9d6;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.user-admin-table{overflow-x:auto;border:1px solid #c9dbea;border-radius:10px}
+.user-admin table{width:100%;border-collapse:collapse}
+.user-admin th,.user-admin td{padding:7px 9px;border-bottom:1px solid #e1ebf3;text-align:left;white-space:nowrap}
+.user-admin th{background:#eef5fb;font-weight:600}
+.user-admin tr.disabled td{color:#93a1b0}
+.user-admin td.actions{display:flex;gap:6px}
+.user-admin button{height:28px;padding:0 10px;border:1px solid #8fb2cd;border-radius:7px;background:linear-gradient(180deg,#fff,#e5f0fa);color:#234460;font-weight:600;cursor:pointer}
+.user-admin button:disabled{opacity:.55;cursor:default}
+.user-admin select,.user-admin input{height:28px;padding:2px 6px;border:1px solid #b5cbe0;border-radius:6px;background:#fff}
+.user-admin-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end;max-width:1000px}
+.user-admin-form label{display:grid;gap:4px;font-weight:600}

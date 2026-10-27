@@ -5,7 +5,7 @@ import { register } from "node:module";
 // The library's modules import each other without the ".ts" the bundler adds; add it here.
 const resolveTs = `export async function resolve(specifier, context, next) {
   try { return await next(specifier, context); }
-  catch (error) { if (specifier.startsWith(".") && !/\.[cm]?[jt]s$/.test(specifier)) return next(specifier + ".ts", context); throw error; }
+  catch (error) { if (specifier.startsWith(".") && !/\\.[cm]?[jt]s$/.test(specifier)) return next(specifier + ".ts", context); throw error; }
 }`;
 register(`data:text/javascript,${encodeURIComponent(resolveTs)}`, import.meta.url);
 const { multiYearStock } = await import("../lib/report/multiYearStock.ts");

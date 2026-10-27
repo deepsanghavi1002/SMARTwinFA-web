@@ -1,5 +1,6 @@
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
@@ -16,9 +17,8 @@ const headers = { "cache-control": "no-store" };
 const PROGRAM = "EINVOICE_TOKEN";
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Get E Invoice Token is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 403, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "The request body is not JSON" }, { status: 400, headers });
   }
   if (!body || !body.session) return Response.json({ error: "session is required" }, { status: 400, headers });
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   try {
     const { session, plan } = await transaction(async (client) => {
       const opened = await readSession(client, key);

@@ -161,7 +161,7 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 50: return logReport(loader, plan);
     case 98: return missingNumber(loader, plan);
     case 111: return queryReport(loader, plan);
-    case 67: return reminderReport(loader, plan);
+    case 67: return reminderReport(loader);
     default: throw new ReportRefusal(`Report ${plan.call.reportKey} is not available in the web version yet.`, "Not ported yet");
   }
 }
@@ -503,7 +503,6 @@ async function ageing(loader: Loader, plan: ReportPlan, company?: { short: strin
   const billSide = sale ? 1 : 2;
   const adviceSide = sale ? 2 : 1;
   const upto = desktopDate(call.upto);
-  const yearStart = desktopDate(call.tarikh1);
 
   // The bills: the setup's own select, from and where, with the setoffs up to the Upto date.
   // With PDC the setup's |sys.stpds| ... |sys.endpds| pair also takes in the receipts (payments) dated after Upto; without it the pair is nothing.
@@ -2739,14 +2738,9 @@ async function balanceHeads(loader: Loader, plan: ReportPlan, db: string, startT
 }
 
 async function balanceSheet(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
-  const { session } = loader;
   const { call } = plan;
   const db = call.database;
-  const frag = (sql: string) => pgFragment(sql, plan, session.companySchema);
-  const rowsOf = async (sql: string) => (await runReportSql(loader, frag(sql))).rows;
   const check = (name: string) => call.checkQuery.includes(`${name},`);
-  const licence = call.licence;
-  const reverse = check("CHK_BSREVERSE");
   const startText = desktopDate(call.tarikh1);
   const uptoText = desktopDate(call.upto);
   const r2 = (value: number) => Math.round((value + Math.sign(value) * 1e-9) * 100) / 100;

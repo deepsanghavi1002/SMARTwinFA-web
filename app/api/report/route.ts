@@ -1,6 +1,7 @@
 import { readMasterLog, readSmallEntryLog } from "@/lib/master-program/extras";
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { verifyModulePassword } from "@/lib/master-program/extras";
 import { Loader } from "@/lib/master-program/load";
 import { readSession } from "@/lib/master-program/session";
@@ -74,7 +75,7 @@ async function runtimeDefaults(client: { query: (sql: string) => Promise<{ rows:
       await client.query("RELEASE SAVEPOINT runtime_default");
       // The first row with an amount (the closing stock account's, not the nil one of a stock account beside it).
       const field = found.fields[0]?.name;
-      const amounts = field === undefined ? [] : found.rows.map((row) => Number(String(row[field] ?? "").replace(/[^0-9.\-]/g, ""))).filter((value) => Number.isFinite(value) && value !== 0);
+      const amounts = field === undefined ? [] : found.rows.map((row) => Number(String(row[field] ?? "").replace(/[^0-9.-]/g, ""))).filter((value) => Number.isFinite(value) && value !== 0);
       if (amounts.length > 0) out[box.name] = amounts[0].toFixed(box.decimals > 0 ? box.decimals : 2);
     } catch {
       await client.query("ROLLBACK TO SAVEPOINT runtime_default").catch(() => undefined);
@@ -91,9 +92,8 @@ async function winfaVersion(client: { query: (sql: string) => Promise<{ rows: Re
 }
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Reports are disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.action !== "string" || !body.session || !NAME.test(String(body.reportName ?? ""))) {
     return Response.json({ error: "action, session and reportName are required" }, { status: 400, headers });
   }
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   const moduleName = String(body.menuShortName ?? "");
 
   try {

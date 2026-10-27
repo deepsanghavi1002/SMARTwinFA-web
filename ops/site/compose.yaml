@@ -1,0 +1,94 @@
+# Site kit: added on top of ops/client/compose.yaml when a client runs SMARTwinFA on their own machine (on-prem).
+# It adds the parts that let you run that machine from your control panel without opening any port:
+#   tunnel     cloudflared: the client's users reach the app at https://<client>.your-domain.com
+#   support    Portainer Edge Agent: the box appears in your Portainer (start/stop/update/logs/console).
+#              The client can switch it off at any time: ops/smartwinfa.sh site support off <id>
+#   logs       Alloy: sends this box's container logs to your Grafana/Loki, labelled client=<id>
+#   offsite    rclone: copies the nightly backups to cloud storage (Cloudflare R2 / any S3) every hour
+# Each part runs only when its settings are filled in ops/clients/<id>.env (ops/smartwinfa.sh picks the profiles).
+x-site-labels: &site-labels
+  smartwinfa.client: ${CLIENT_ID}
+  smartwinfa.site: on-prem
+
+services:
+  # The client stack's containers are marked on-prem, so a control panel on the same machine (demo) does not read their logs twice.
+  web: { labels: *site-labels }
+  api: { labels: *site-labels }
+  db: { labels: *site-labels }
+  backup: { labels: *site-labels }
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.8.1
+    profiles: [tunnel]
+    container_name: ${CLIENT_ID}-tunnel
+    restart: unless-stopped
+    labels: *site-labels
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${SITE_TUNNEL_TOKEN:-}
+    networks: [fleet]
+
+  support-agent:
+    image: portainer/agent:2.33.1
+    profiles: [support]
+    container_name: ${CLIENT_ID}-support-agent
+    restart: unless-stopped
+    labels: *site-labels
+    environment:
+      EDGE: "1"
+      EDGE_ID: ${EDGE_ID:-}
+      EDGE_KEY: ${EDGE_KEY:-}
+      # Plain http is only for a local demo; behind Cloudflare the control panel is https.
+      EDGE_INSECURE_POLL: ${EDGE_INSECURE_POLL:-0}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - support_agent_data:/data
+    networks: [fleet]
+
+  log-agent:
+    image: grafana/alloy:v1.10.2
+    profiles: [logs]
+    container_name: ${CLIENT_ID}-log-agent
+    restart: unless-stopped
+    labels: *site-labels
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    environment:
+      CLIENT_ID: ${CLIENT_ID}
+      LOKI_PUSH_URL: ${LOKI_PUSH_URL:-}
+      # Cloudflare Access service token for the log endpoint (Zero Trust > Access > Service auth). Empty for a local demo.
+      CF_ACCESS_CLIENT_ID: ${CF_ACCESS_CLIENT_ID:-none}
+      CF_ACCESS_CLIENT_SECRET: ${CF_ACCESS_CLIENT_SECRET:-none}
+    volumes:
+      - ./../site/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - log_agent_data:/var/lib/alloy/data
+    networks: [fleet]
+
+  offsite-backup:
+    image: rclone/rclone:1.71.1
+    profiles: [offsite]
+    container_name: ${CLIENT_ID}-offsite-backup
+    restart: unless-stopped
+    labels: *site-labels
+    environment:
+      RCLONE_CONFIG_OFFSITE_TYPE: s3
+      RCLONE_CONFIG_OFFSITE_PROVIDER: ${OFFSITE_PROVIDER:-Cloudflare}
+      RCLONE_CONFIG_OFFSITE_ENDPOINT: ${OFFSITE_ENDPOINT:-}
+      RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${OFFSITE_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${OFFSITE_SECRET_ACCESS_KEY:-}
+      OFFSITE_BUCKET: ${OFFSITE_BUCKET:-}
+      CLIENT_ID: ${CLIENT_ID}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "offsite: copying /backups to offsite:$${OFFSITE_BUCKET}/$${CLIENT_ID} every hour"
+        while true; do
+          if rclone copy /backups "offsite:$${OFFSITE_BUCKET}/$${CLIENT_ID}" --include '*.dump' --s3-no-check-bucket; then echo "offsite: copied $$(ls /backups | wc -l) files"; else echo "offsite: ERROR copy failed"; fi
+          sleep 3600
+        done
+    volumes:
+      - backups:/backups:ro
+
+volumes:
+  support_agent_data:
+  log_agent_data:

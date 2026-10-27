@@ -53,3 +53,8 @@ connection.ini
 .scratch/
 tsconfig.tsbuildinfo
 repost-timing.log
+
+# SMARTwinFA fleet secrets (ops/)
+/ops/fleet/.env
+/ops/fleet/.portainer-admin-password
+/ops/clients/*.env

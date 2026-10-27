@@ -347,6 +347,48 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     say(`View "${view.name}" applied. Press OK to run it.`);
   };
 
+  /** The selection the output was generated from, for Create Group. */
+  const generatedWith = useRef<ReportSelection | null>(null);
+  /** The dates the output on screen is for (Compare periods). */
+  const [generatedPeriod, setGeneratedPeriod] = useState({ from: "", upto: "" });
+  // Btn_ok_Click: GenerateReport.
+  const generate = async (quiet = false): Promise<boolean> => {
+    if (!def || busy) return false;
+    if (!def.ported) {
+      await messageBox.alert(`${def.head || title} is not available in the web version yet.\nIts output has not been ported; the selection can be seen but not run.`, "Not ported yet");
+      return false;
+    }
+    if (def.dates.fromVisible && def.dates.uptoVisible && from === upto) {
+      const yes = await messageBox.confirm(`It Seems You Have Selected From And Upto Date\nSame As ${from}\nIt Will Generate Report Only For ${from}\n\nAre You Sure You Want To Continue?`, "Same Date Selection");
+      if (!yes) return false;
+    }
+    saveLastDates({ from, upto });
+    setBusy("Generating report");
+    say("Reading database and collecting data for inputs...");
+    try {
+      const chosen = selectionNow();
+      const reply = await call<{ output: ReportOutput }>("generate", { selection: chosen });
+      generatedWith.current = chosen;
+      setGeneratedPeriod({ from: chosen.from, upto: chosen.upto });
+      if (reply.refusal) { say("Report generation failed...", "", true); if (!quiet) await refuse(reply.refusal); return false; }
+      setOutput(reply.output);
+      setOutputRun((count) => count + 1);
+      setTab("output");
+      // The rows and the generation time show by Arrange Columns in the output, not here.
+      say("", "F6 : Summarize F4 : Unsummarize");
+      return true;
+    } catch (error) {
+      say("Report generation failed...", "", true);
+      await messageBox.alert(error instanceof Error ? error.message : String(error), "Report generation failed", "error");
+      return false;
+    } finally {
+      setBusy("");
+    }
+  };
+
+  // The runs that start themselves (a zoomed window's change, Zoom_Accode, Ask AI) are steps fired by the definition or another window arriving, not by
+  // an event of this screen: each sets the selection and the run follows on the next render, when it is in. So these effects set state on purpose.
+  /* eslint-disable react-hooks/set-state-in-effect */
   // A window zoomed from this one changed data (an entry saved or deleted): the report runs again when this window is next in front.
   const windowLink = useWindowLink();
   const inFront = useWindowActiveNow();
@@ -356,6 +398,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     void generate();
   }, [inFront, windowLink.stale, output, busy]);
 
+  const desktopDay = (iso: string) => { const [year, month, day] = iso.split("-"); return `${day}/${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(month) - 1]}/${year}`; };
   // Report_Combine_Activated with Zoom_Accode: the account is ticked in the Account help, the first group (Account) is ticked and the report is run.
   const zoomStarted = useRef(false);
   const [zoomRun, setZoomRun] = useState(false);
@@ -382,7 +425,6 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   // first group is ticked with everything in its list (nothing was picked: the whole of it) and it is run again.
   const autoStarted = useRef(false);
   const [autoGo, setAutoGo] = useState(false);
-  const desktopDay = (iso: string) => { const [year, month, day] = iso.split("-"); return `${day}/${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(month) - 1]}/${year}`; };
   useEffect(() => {
     if (!autoRun || !def || zoomAccount || autoStarted.current) return;
     autoStarted.current = true;
@@ -441,41 +483,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       setZoomRun(true);
     });
   }, [autoGo]);
-
-  // Btn_ok_Click: GenerateReport.
-  const generate = async (quiet = false): Promise<boolean> => {
-    if (!def || busy) return false;
-    if (!def.ported) {
-      await messageBox.alert(`${def.head || title} is not available in the web version yet.\nIts output has not been ported; the selection can be seen but not run.`, "Not ported yet");
-      return false;
-    }
-    if (def.dates.fromVisible && def.dates.uptoVisible && from === upto) {
-      const yes = await messageBox.confirm(`It Seems You Have Selected From And Upto Date\nSame As ${from}\nIt Will Generate Report Only For ${from}\n\nAre You Sure You Want To Continue?`, "Same Date Selection");
-      if (!yes) return false;
-    }
-    saveLastDates({ from, upto });
-    setBusy("Generating report");
-    say("Reading database and collecting data for inputs...");
-    try {
-      const chosen = selectionNow();
-      const reply = await call<{ output: ReportOutput }>("generate", { selection: chosen });
-      generatedWith.current = chosen;
-      setGeneratedPeriod({ from: chosen.from, upto: chosen.upto });
-      if (reply.refusal) { say("Report generation failed...", "", true); if (!quiet) await refuse(reply.refusal); return false; }
-      setOutput(reply.output);
-      setOutputRun((count) => count + 1);
-      setTab("output");
-      // The rows and the generation time show by Arrange Columns in the output, not here.
-      say("", "F6 : Summarize F4 : Unsummarize");
-      return true;
-    } catch (error) {
-      say("Report generation failed...", "", true);
-      await messageBox.alert(error instanceof Error ? error.message : String(error), "Report generation failed", "error");
-      return false;
-    } finally {
-      setBusy("");
-    }
-  };
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   /** The selection as the screen first opened it: the first combo, the dates, the groups, every help un-ticked, the options and lists at their defaults. */
   const clearSelection = () => {
@@ -538,10 +546,6 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   const [gridInfo, setGridInfo] = useState({ rows: "", totals: "" });
   const onGridInfo = useCallback((rows: string, totals: string) => setGridInfo((current) => (current.rows === rows && current.totals === totals ? current : { rows, totals })), []);
   const onGridStatus = useCallback((status: OutputStatus) => say(status.message, status.hotKeys, status.red ?? false), [say]);
-  /** The selection the output was generated from, for Create Group. */
-  const generatedWith = useRef<ReportSelection | null>(null);
-  /** The dates the output on screen is for (Compare periods). */
-  const [generatedPeriod, setGeneratedPeriod] = useState({ from: "", upto: "" });
   const loadGroup = useCallback(async (fields: readonly string[]) => {
     if (!generatedWith.current) return null;
     setBusy("Generating report");

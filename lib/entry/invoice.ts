@@ -481,7 +481,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
       else if (system === "sys.var.str_inventory" && first !== "Y" && book.slab) inventory = false;
     }
   }
-  const sides = voucher ? await voucherSides(loader, book, allEvents, replace) : [];
+  const sides = voucher ? await voucherSides(loader, book, allEvents) : [];
   // The voucher's addon fields by the register: events 39 (header, entrypos L) and 40 (a column of each account row, entrypos P) read addon_fld for the book.
   const voucherAddon = voucher
     ? {
@@ -591,7 +591,7 @@ export async function loadBook(loader: Loader, entryName: string, firstCombo: En
  * GT given / taken), BOOK_SIDE lists their names, and the side picked sets the account's side (Cmb_Side_Leave: first item account debit,
  * second account credit) which picks the series list (cmb_side's LF event, bn_dbcode = the book's side).
  */
-async function voucherSides(loader: Loader, book: BookContext, events: readonly Row[], replace: (sql: string) => string): Promise<NonNullable<BookScreen["sides"]>> {
+async function voucherSides(loader: Loader, book: BookContext, events: readonly Row[]): Promise<NonNullable<BookScreen["sides"]>> {
   const letters = text((await loader.readTable(`SELECT book_side FROM |sys.db|book_properties WHERE book_key = $1`, [book.values.bookKey]))?.[0], "book_side").trim();
   if (letters === "") return [];
   const list = (await loader.readTable(`SELECT combo_list, crv_key FROM ${SETUP_SCHEMA}.combo_runvalue WHERE BTRIM(combo_run_id) = 'BOOK_SIDE' AND STRPOS($1, BTRIM(combo_run_value)) > 0 ORDER BY crv_key`, [letters])) ?? [];

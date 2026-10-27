@@ -1,5 +1,6 @@
 import { transaction } from "@/lib/db";
-import { allowedMasterMenu, trustedDevelopmentEnabled } from "@/lib/master-program/access";
+import { allowedMasterMenu } from "@/lib/master-program/access";
+import { requireOperator } from "@/lib/auth/request";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { addGridBeforeEdit, checkStateChange, defaAddValue, defaAgainst, defaFixValue, deleteBlocked, duplicateQuery, helpGrid, onChangeReplace, plywoodConversion, recordExist, stateShortCode, uomFormula } from "@/lib/master-program/events";
 import type { EventRequest } from "@/lib/master-program/events";
@@ -29,9 +30,8 @@ const headers = { "cache-control": "no-store" };
 const WRITES = new Set(["add-save", "edit-save"]);
 
 export async function POST(request: Request) {
-  if (!trustedDevelopmentEnabled(process.env.SMARTWINFA_TRUSTED_LOCAL_MODE)) {
-    return Response.json({ error: "Master migration is disabled until authenticated sessions are implemented. SMARTWINFA_TRUSTED_LOCAL_MODE=true is for isolated development with disposable data only." }, { status: 503, headers });
-  }
+  const operator = await requireOperator(request, headers);
+  if (operator instanceof Response) return operator;
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.action !== "string" || !body.session || !PROGRAM.test(String(body.programName ?? ""))) {
     return Response.json({ error: "action, session and programName are required" }, { status: 400, headers });
   }
-  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: String(body.session.loginName ?? "") };
+  const key: SessionKey = { companyId: Number(body.session.companyId), yearKey: Number(body.session.yearKey), loginName: operator };
   // A dry run still executes every statement (and takes the key locks), so it needs a
   // read-write transaction; the save rolls its own savepoint back before returning.
   const writes = WRITES.has(body.action);

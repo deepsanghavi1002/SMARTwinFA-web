@@ -409,11 +409,15 @@ are rewritten in code (`entryDialect`: GetNumbers, tax_type, TO_CHAR of money; p
 
 One generic web master for all MASTER menus (`lib/master-program/`, `features/master-program/`).
 
-- [ ] Legacy password verification: `smart_setup.user_master.user_pw` is a 12-character
-  obfuscation; the desktop algorithm is not in the repo, so the app runs in `migration-test` mode
-  and does not verify passwords. Needed before launch. (2026-08-27)
-- [ ] Remove the temporary `SMARTWINFA_SKIP_LOGIN` bypass before launch (also `app/api/dev-login`
-  and its call in `features/startup/StartupGate.tsx`). (2026-10)
+- [x] Web sign-in replaces legacy password verification: users set their own web password from a
+  one-time link (`web_auth` schema, `lib/auth/`, `middleware.ts`); `user_pw` is never read. Every
+  /api route needs a session, and the operator comes from the session, never the request.
+  First admin: `docker exec <client>-web node scripts/auth-invite.mts <email> --url <address>`. (2026-10-26)
+- [x] Removed the temporary `SMARTWINFA_SKIP_LOGIN` bypass and `app/api/dev-login`. (2026-10-26)
+- [ ] Sign-in follow-ups: email the set-password links (today the admin copies them); check in
+  `readSession` that the operator may open the requested company and year (USER_YEAR / WEBSITE),
+  as the company screen already filters; two web users linked to one operator share its
+  `lentry_user` in the books. (2026-10-26)
 - [ ] `docs/testing/control-coverage.csv`: most controls were still "discovered", not tested on
   real data (93 of 108 at 2026-08-27); re-run the coverage. (2026-08-27)
 - [ ] Seed re-export: the dump's non-ASCII characters are already lost as "?" (money columns and

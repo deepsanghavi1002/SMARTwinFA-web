@@ -134,6 +134,7 @@ export function FormulaColumns({ output, shown, specs, onChange, onClose, others
     );
   }
   return createPortal(
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- a press on the backdrop outside the box closes it; Escape does from the keyboard
     <div className="dash-modal" role="dialog" aria-modal="true" aria-label="Add Column" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="dash-drill fc-dialog">
         <header><h3>Add Column</h3><button type="button" className="pc-btn pc-btn-outline" title="Minimize: the other tabs can be looked at, and the formula is kept" onClick={() => setMinimized(true)}>Minimize</button><button type="button" className="pc-btn pc-btn-danger" onClick={onClose}>Close</button></header>
@@ -187,7 +188,7 @@ export function FormulaColumns({ output, shown, specs, onChange, onClose, others
           {error && <p className="fc-error" role="alert">{error}</p>}
           <p className="fc-hint">
             A column named on its own is the cell of the row; inside SUM, AVERAGE, MIN, MAX or COUNT it is the whole column, so <b>=SUM(QTY*RATE)</b> adds up each row&apos;s QTY times RATE (one figure, shown on the last row).
-            Also: + - * / ^ &amp; % ( ), = &lt;&gt; &lt; &gt; &lt;= &gt;=, IF, AND, OR, NOT, ROUND, ABS, INT, SQRT, MOD, IFERROR, SUMIF(range, criteria, sum_range), COUNTIF, AVERAGEIF, VLOOKUP("value","Report!C:H",column,0) (another open report; a value on several lines of it adds their figures up). In Excel the column is a real formula.
+            Also: + - * / ^ &amp; % ( ), = &lt;&gt; &lt; &gt; &lt;= &gt;=, IF, AND, OR, NOT, ROUND, ABS, INT, SQRT, MOD, IFERROR, SUMIF(range, criteria, sum_range), COUNTIF, AVERAGEIF, VLOOKUP(&quot;value&quot;,&quot;Report!C:H&quot;,column,0) (another open report; a value on several lines of it adds their figures up). In Excel the column is a real formula.
           </p>
           <div className="fc-columns" aria-label="Columns you can use">
             {shown.filter((column) => column.key !== editing).map((column, index) => (

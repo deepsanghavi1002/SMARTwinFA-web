@@ -212,6 +212,7 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
   useEffect(() => {
     if (!inFront || !windowLink.stale || !from || !upto) return;
     windowLink.clearStale();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- another window's save marks this one stale; it is acted on when this one is in front again
     setDrill(null);
     void load(from, upto);
   }, [inFront, windowLink.stale]);
@@ -275,6 +276,7 @@ export function Dashboard({ reportName, menuShortName, title, onClose }: { repor
                       <Plot>{(size) => <Bars points={points} size={size} accent={chart.accent} id={chart.kind} onPick={(point) => void pick(chart.kind, chart.title, point)} />}</Plot>
                       <ul className="dash-legend">
                         {points.map((point, index) => (
+                          // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- a legend line repeats its bar's pick for the mouse
                           <li key={point.label} onClick={() => void pick(chart.kind, chart.title, point)}>
                             <i />
                             <span>{point.label}<b className="dash-amt">{money(point.value)}</b>{deltas[index] !== null && <em className={(deltas[index] as number) >= 0 ? "up" : "down"}>{(deltas[index] as number) >= 0 ? "▲" : "▼"} {Math.abs(deltas[index] as number)}%</em>}</span>

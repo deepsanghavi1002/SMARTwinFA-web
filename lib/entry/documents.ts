@@ -12,7 +12,6 @@ import type { EntryOption } from "./types";
  */
 
 type Row = Record<string, unknown>;
-const field = Loader.field;
 
 /** Largest file taken (the desktop reads the whole file into the row; a browser request carries it as text, so it is limited). */
 export const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;

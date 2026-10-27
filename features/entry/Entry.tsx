@@ -1825,6 +1825,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
     const boxStyle: CSSProperties = voucher && item.type === "DT" && item.place === "T" ? { ...placedBox, width: Number(placedBox.width) + VOUCHER_DATE_BUTTON } : placedBox;
     return [
       <label key={`${item.name}-label`} className={`ent-label ${item.compulsory ? "ent-compulsory" : ""}`} style={labelStyle} title={item.tooltip || undefined} htmlFor={`ent-${item.name}`}>{item.label}</label>,
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the box only hears focus, blur and keys bubble up from the entry control inside it
       <span
         key={item.name} data-box={item.name} className={`ent-box ent-box-${item.type}${frozenOnEdit(item.name) ? " ent-locked" : ""}`} style={boxStyle} {...(item.name === "cmb_series" ? { "data-first": "" } : {})}
         inert={frozenOnEdit(item.name)}
@@ -2286,6 +2287,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
               f1
               f7={helpKind === "account" ? (voucher ? "Outstanding" : true) : "Party-Product"}
               topSlot={helpKind === "product" && productHelp ? (
+                // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the bar keeps the keys of its own controls from reaching the help list around it
                 <div className="ent-filter-bar" onKeyDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
                   if (event.key === "F6") { event.preventDefault(); event.stopPropagation(); void togglePartyProducts(); }
                   else if (event.key === "F5") { event.preventDefault(); event.stopPropagation(); void endProducts(); }

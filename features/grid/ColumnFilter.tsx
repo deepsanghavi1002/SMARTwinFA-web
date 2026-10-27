@@ -129,6 +129,7 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
     );
   };
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the popup only keeps a mouse press inside it from reaching the heading
     <div ref={place} className="mp-filter" role="dialog" aria-label={`Filter ${caption}`}
       // The heading the list sits in takes a mouse press to select its column and keeps the press from reaching the page (so a drag does not start text selection);
       // that also kept the condition list (a native select) from opening. A press inside the list stays in the list.

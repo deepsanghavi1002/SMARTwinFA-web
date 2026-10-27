@@ -160,7 +160,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 258: return monthlyClosingStock(loader, plan);
     case 98: return missingNumber(loader, plan);
     case 111: return queryReport(loader, plan);
-    case 67: return reminderReport(loader, plan);
+    case 67: return reminderReport(loader);
     case 50: return logReport(loader, plan);
     case 11: return challanSummary(loader, plan);
     case 19: return challanPendingSummary(loader, plan);
@@ -930,7 +930,6 @@ async function outstandingClearance(loader: Loader, plan: ReportPlan): Promise<R
   const uptoText = desktopDate(upto);
   const startText = desktopDate(start);
   const start112 = dateStyle112(start);
-  const upto112 = dateStyle112(upto);
   let codes = call.selectKey[4].replace(/[()]/g, "").split(",").map((code) => Number(code.trim())).filter((code) => Number.isFinite(code) && code > 0);
   const live = `select code from ${db}ACCOUNT where a_pos<>'D'`;
   const addonIds = [0, 1, 2, 3].map((at) => new Set(call.selectKey[at].replace(/[()]/g, "").split(",").map((id) => id.trim()).filter((id) => id !== "")));
@@ -3757,7 +3756,6 @@ async function finishProductCosting(loader: Loader, plan: ReportPlan): Promise<R
   const trn = "btrim(prodled.trn_module)";
   const attributes = `adata.txt_prodcat AS prodcat, adata.txt_prodtype AS prodtype, adata.txt_prodgroup AS prodgroup`;
   const base = `${db}PRODUCT_MASTER prodmas LEFT JOIN ${db}ADDON_DATA adata ON adata.prod_id = prodmas.prod_key LEFT JOIN ${db}PROD_LEDGER prodled ON prodled.prod_id = prodmas.prod_key`;
-  const produced = `prodled.stock_nat = 'A' AND ((${trn} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD') OR ${trn} = 'PROD-FG' OR ${trn} = 'PROD-SFG' OR (${trn} = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> '')) AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL`;
   const table = new ResultTable();
 
   // ---- Consumption Require: the finish goods' production and what the same vouchers consumed ----

@@ -113,6 +113,7 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, outstandin
   useEffect(() => {
     if (!preview) return;
     const docNo = columns.findIndex((column) => column.key.toLowerCase() === "doc_no");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the cursor moves with the keyboard focus, which needs the list drawn
     setCurrent({ row: 0, column: docNo >= 0 ? docNo : Math.min(1, Math.max(0, columns.length - 1)) });
     scroller.current?.focus({ preventScroll: true });
   }, [preview, columns]);

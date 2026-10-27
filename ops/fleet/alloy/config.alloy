@@ -1,0 +1,67 @@
+// Reads the log of every container on this Docker host and sends it to Loki.
+// Labels: client (from the smartwinfa.client container label), service (web, api, db ...), container, stack.
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // On-prem site containers send their own logs (ops/site); skip them if a site runs on this machine too.
+  rule {
+    source_labels = ["__meta_docker_container_label_smartwinfa_site"]
+    regex         = "on-prem"
+    action        = "drop"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_smartwinfa_client"]
+    target_label  = "client"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "stack"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.containers.output
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.level.receiver]
+}
+
+// A "level" label (error / warn / info) so Grafana can count errors per client.
+loki.process "level" {
+  stage.regex {
+    expression = "(?i)(?P<level>error|fatal|panic|warn(?:ing)?)"
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ if .Value }}{{ ToLower .Value }}{{ else }}info{{ end }}"
+  }
+  stage.replace {
+    source     = "level"
+    expression = "(warning)"
+    replace    = "warn"
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.fleet.receiver]
+}
+
+loki.write "fleet" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,140 @@
+name: smartwinfa-fleet
+
+# The fleet (ops) stack: one per site. It watches every SMARTwinFA client stack on this Docker host.
+#   Portainer    http://localhost:9000  - every stack and container: start, stop, update, logs, console
+#   Grafana      http://localhost:3001  - logs of every client in one place ("SMARTwinFA Clients" dashboard)
+#   Uptime Kuma  http://localhost:3002  - up/down checks and alerts for each client address
+#   Admin site   http://localhost:9090  - everything on one address (e.g. https://admin.smartwinfa.com, behind Cloudflare Access):
+#                / is the control panel (a card per client), /grafana/, /portainer/, and Uptime Kuma on the rest;
+#                publish it as http://smartwinfa-admin:80
+# Memory is capped per tool (mem_limit) so the dashboard cannot crowd out the clients on a small server.
+# Loki stores the logs; Alloy reads every container's log and labels it with its client.
+# cloudflared (profile "tunnel") publishes the client addresses through Cloudflare when TUNNEL_TOKEN is set.
+# Start with: ops/smartwinfa.sh fleet up
+services:
+  portainer:
+    image: portainer/portainer-ce:2.33.1
+    restart: unless-stopped
+    command: ["-H", "unix:///var/run/docker.sock", "--admin-password-file", "/run/portainer-admin-password"]
+    mem_limit: 160m
+    ports:
+      - "${FLEET_BIND:-127.0.0.1}:9000:9000"
+      # Edge tunnel for on-prem support agents (ops/site). Behind Cloudflare publish it as its own hostname.
+      # PORTAINER_EDGE_PORT moves it on the host when 8000 is taken by something else.
+      - "${FLEET_BIND:-127.0.0.1}:${PORTAINER_EDGE_PORT:-8000}:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+      - ./.portainer-admin-password:/run/portainer-admin-password:ro
+    networks: [fleet]
+
+  loki:
+    image: grafana/loki:3.5.3
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    mem_limit: 384m
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    networks: [fleet]
+
+  alloy:
+    image: grafana/alloy:v1.10.2
+    restart: unless-stopped
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    mem_limit: 256m
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on: [loki]
+    networks: [fleet]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in ops/fleet/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/smartwinfa-clients.json
+      # Served under /grafana/ so the admin site can carry it (http://localhost:3001 still works, at /grafana/).
+      GF_SERVER_ROOT_URL: ${ADMIN_URL:-http://localhost:9090}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    mem_limit: 320m
+    ports:
+      - "${FLEET_BIND:-127.0.0.1}:3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [loki]
+    networks: [fleet]
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.23.16
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "${FLEET_BIND:-127.0.0.1}:3002:3001"
+    volumes:
+      - uptime_data:/app/data
+    networks: [fleet]
+
+  # The control panel (ops/fleet/panel): a card per client, and each client's logs, errors, parts and backups,
+  # with Restart app and Backup now. It reads the Docker socket (and uses it for those two actions) and Loki.
+  panel:
+    image: node:24-alpine
+    container_name: smartwinfa-panel
+    restart: unless-stopped
+    mem_limit: 96m
+    command: ["node", "/panel/server.mjs"]
+    environment:
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?Set PANEL_PASSWORD in ops/fleet/.env (ops/smartwinfa.sh fleet up makes one)}
+      LOKI_URL: http://loki:3100
+    volumes:
+      - ./panel:/panel:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/panel/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on: [loki]
+    networks: [fleet]
+
+  admin:
+    image: caddy:2.10.2-alpine
+    container_name: smartwinfa-admin
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "${FLEET_BIND:-127.0.0.1}:${ADMIN_PORT:-9090}:80"
+    volumes:
+      - ./admin:/etc/caddy:ro
+    depends_on: [panel, grafana, portainer, uptime-kuma]
+    networks: [fleet]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.8.1
+    profiles: [tunnel]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks: [fleet]
+
+networks:
+  # Shared with every client stack's web container, so the tunnel and Uptime Kuma can reach <client>-web:3000.
+  # Created by ops/smartwinfa.sh (fleet up / client up), whichever runs first, so it is external to this stack.
+  fleet:
+    name: smartwinfa-fleet
+    external: true
+
+volumes:
+  portainer_data:
+  loki_data:
+  alloy_data:
+  grafana_data:
+  uptime_data:

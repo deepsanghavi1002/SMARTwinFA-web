@@ -239,12 +239,6 @@ function fixedText(ctx: Ctx, raw: string, cell: (name: string) => string, il?: R
   return out;
 }
 
-const HEADER_CONTROL: Record<string, string> = {
-  dtp_date: "dtp_date", tbx_number: "tbx_number", cmb_series: "cmb_series", tbx_chlnno: "tbx_chlnno", tbx_narration: "tbx_narration",
-  tbx_credit_days: "tbx_credit_days", dtp_chlndate: "dtp_chlndate", dtp_entrydate: "dtp_entrydate", tbx_entryno: "tbx_entryno",
-  tbx_distancekm: "tbx_distancekm", tbx_ewaybillno: "tbx_ewaybillno", tbx_ewayvalid: "tbx_ewayvalid", dtp_ewaydate: "dtp_ewaydate",
-};
-
 /** A header / foot box as its rule saves it (the Control name branch of Save_Entry). */
 function headerValue(ctx: Ctx, rule: Rule): string {
   const control = text(rule, "control_name").toLowerCase();

@@ -72,7 +72,6 @@ export async function readMasterLog(loader: Loader, programId: number, firstComb
   const added = toInt(field(counts?.[0], "added"));
   const total = toInt(field(counts?.[0], "total"));
   if (total === 0) return empty("No log has been saved for this record yet");
-  const hasAdd = added > 0;
 
   const records = (await loader.readTable(
     `SELECT lmaster_mode, lmaster_top::text AS lmaster_top, lmaster_new_grid::text AS lmaster_new_grid FROM ${schema}.log_allmaster

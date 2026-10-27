@@ -14,7 +14,8 @@ import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuItem, GridMenuPlace } from "../grid/GridMenu";
-import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, DARK_GRAND_TOTAL_COLOUR, DARK_LEVEL_COLOURS, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import { useModernDark } from "../ui/modernTheme";
 import type { RowKind, RowLook } from "../grid/levelStyle";
 import { LogViewer } from "../grid/LogViewer";
 import type { LogTable } from "../grid/LogViewer";
@@ -97,6 +98,13 @@ function hexColour(colour: string): string {
   } catch {
     return "";
   }
+}
+
+/** A spreadsheet's column letters: 0 is A, 25 is Z, 26 is AA. */
+export function columnLetters(index: number): string {
+  let letters = "";
+  for (let n = index; n >= 0; n = Math.floor(n / 26) - 1) letters = String.fromCharCode(65 + (n % 26)) + letters;
+  return letters;
 }
 
 export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy, initialPivot, initialSumif }: {
@@ -185,7 +193,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | "pivot" | null>(null);
   /** The side panel (Growth, Budget, Compare, Chart ...) shrunk to a strip so the grid has the room; opening another panel shows it again. */
   const [panelMin, setPanelMin] = useState(false);
-  useEffect(() => { setPanelMin(false); }, [panel]);
+  const [panelShown, setPanelShown] = useState(panel);
+  if (panelShown !== panel) { setPanelShown(panel); setPanelMin(false); }
   const charting = panel === "chart";
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
@@ -208,8 +217,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const widthOf = layout.widthOf;
   // This report, as the other windows' VLOOKUP sees it: its names, its columns as shown, and the cells of its entry rows.
   const lookupSource = useRef({ output, columns, fallbackTitle });
-  lookupSource.current = { output, columns, fallbackTitle };
-  const ownSnapshot = useRef(() => {
+  useEffect(() => { lookupSource.current = { output, columns, fallbackTitle }; });
+  const [ownSnapshot] = useState(() => () => {
     const { output: current, columns: shown, fallbackTitle: name } = lookupSource.current;
     const entries = entryIndexes(current);
     return {
@@ -217,7 +226,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       columns: shown.map((column) => ({ key: column.key, caption: column.caption })),
       rows: entries.map((index) => shown.map((column) => cellValue(current.rows[index].values[column.key], column))),
     };
-  }).current;
+  });
   useEffect(() => registerOpenReport(ownSnapshot), [ownSnapshot]);
   // The other windows work their formulas out again when this report changes (its added columns do not count: they follow this report).
   // (From what the report is made of, not from `shaped`: with a pivot that changes whenever another report opens, which would notify again and again.)
@@ -416,10 +425,11 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
    * The bordered (coloured) cells' total: those of the current column when it is a number column
    * with borders in it, else every bordered number cell.
    */
+  const atCol = at.col;
   const borderTotals = useMemo(() => {
     if (borders.size === 0) return "";
     const byIndex = rowByIndex;
-    const currentKey = columns[at.col]?.key ?? "";
+    const currentKey = columns[atCol]?.key ?? "";
     const entries = [...borders].map((key) => { const split = key.indexOf("|"); return { row: byIndex.get(Number(key.slice(0, split))), column: output.columns.find((candidate) => candidate.key === key.slice(split + 1)) }; })
       .filter((entry) => entry.row && entry.column?.kind === "number");
     if (entries.length === 0) return "";
@@ -427,8 +437,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     const used = inCurrent.length > 0 ? inCurrent : entries;
     const places = Math.max(0, ...used.map((entry) => entry.column?.decimals ?? 0));
     const sum = selectionTotals(used.map((entry) => entry.row?.values[entry.column?.key ?? ""] ?? ""), places);
-    return sum ? `Bordered${inCurrent.length > 0 ? ` ${columns[at.col]?.caption ?? ""}` : ""} ▸ ${sum}` : "";
-  }, [borders, output, columns, at.col, rowByIndex]);
+    return sum ? `Bordered${inCurrent.length > 0 ? ` ${columns[atCol]?.caption ?? ""}` : ""} ▸ ${sum}` : "";
+  }, [borders, output, columns, atCol, rowByIndex]);
   useEffect(() => { onInfo(rowsText, [totals, borderTotals].filter(Boolean).join("   ‖   ")); }, [rowsText, totals, borderTotals, onInfo]);
 
   const lefts = useMemo(() => {
@@ -482,6 +492,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     if (!initialPivot || pivotHinted.current || withAdded.columns.length === 0) return;
     pivotHinted.current = true;
     const spec = resolvePivotHint(withAdded, initialPivot);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- once, when the first output with the named columns arrives (not an event of this grid)
     if (spec) { setPivoting({ forBase: base, spec }); resetView(); }
     const problem = pivotHintProblem(withAdded, initialPivot);
     if (problem !== "") void messageBox.alert(problem, "Pivot", "warning");
@@ -892,10 +903,13 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const headingLevel = (row: OutputRow) => headingLevelOf(row.rowType, output.headingLevels, tickOrder);
   const lookOf = (row: OutputRow): RowLook => rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), levelColours);
   const rowColours = (row: OutputRow): { background?: string; bold: boolean } => { const look = lookOf(row); return { background: look.background, bold: look.bold }; };
+  /** Modern dark: the level fills are dark tints on screen; print and export (rowColours) keep the light ones. */
+  const dark = useModernDark();
+  const screenLook = (row: OutputRow): RowLook => (dark ? rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), DARK_LEVEL_COLOURS, DARK_GRAND_TOTAL_COLOUR) : lookOf(row));
   const rowStyle = (row: OutputRow): CSSProperties | undefined => {
-    // The blank line before a main group stays white, whatever the alternate colour would be.
-    if (row.rowType === "GAP") return { background: "#ffffff" };
-    const look = lookOf(row);
+    // The blank line before a main group stays plain, whatever the alternate colour would be.
+    if (row.rowType === "GAP") return { background: "var(--mx-surface, #ffffff)" };
+    const look = screenLook(row);
     if (!look.background) return undefined;
     return { background: look.background, color: look.color, fontWeight: 700, borderTop: look.borderTop, borderBottom: look.borderBottom };
   };
@@ -1021,6 +1035,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           <button type="button" className="mp-btn mp-btn-red" onClick={exitGroup} disabled={groupBusy} title="Leave Create Group and go back to the report"><Icon name="quit" />Exit Group</button>
         </div>
       )}
+      {/* Modern view: the active cell's reference and what it holds, as a spreadsheet's formula bar (hidden in Legacy). */}
+      <div className="rp-cellbar" aria-hidden="true">
+        <span className="rp-cellref">{columnLetters(at.col)}{shown.length === 0 ? "" : at.row + 1}</span>
+        <span className="rp-cellfx">fx</span>
+        <span className="rp-cellval">{shown[at.row] ? shown[at.row].row.values[columns[at.col]?.key ?? ""] ?? "" : ""}</span>
+      </div>
       <div className="rp-out-body">
       <div className="mp-update">
         <div
@@ -1041,6 +1061,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
               <div className="mp-cell mp-rownum rp-count" aria-hidden="true" />
               {tree && <div className={`mp-cell rp-tree ${frozenCount > 0 ? "mp-frozen" : ""}`} style={frozenCount > 0 ? { left: MARK } : undefined} aria-hidden="true" />}
               {columns.map((column, col) => (
+                // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- a press on a column heading selects the column for the mouse; the grid's keys select it from the keyboard
                 <div
                   key={column.key}
                   data-head={column.key}

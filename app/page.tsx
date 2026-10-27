@@ -26,6 +26,7 @@ import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
 import { IdleGuard } from "../features/startup/IdleGuard";
 import { StartupGate, useStartupActions, useStartupSelection, useViewMode } from "../features/startup/StartupGate";
+import { ModernHome } from "../features/home/ModernHome";
 
 /**
  * The menu is data, not application code: it is read from
@@ -121,7 +122,7 @@ function launchApp(link: string) {
   anchor.remove();
 }
 
-/** The ⋮ at the right of the context strip: Legacy / Modern view, Lock and Log out. */
+/** The ⋮ at the right of the context strip: Legacy / Modern view (and, in Modern, Light / Dark), Lock and Log out. */
 function MoreMenu({ onLock, onLogout }: { onLock: () => void; onLogout: () => void }) {
   const mode = useViewMode();
   const [open, setOpen] = useState(false);
@@ -144,11 +145,26 @@ function MoreMenu({ onLock, onLogout }: { onLock: () => void; onLogout: () => vo
   const run = (action: () => void) => () => { setOpen(false); action(); };
   return (
     <div className="more-menu" ref={root}>
+      {mode?.modernView && (
+        <button
+          type="button"
+          className="theme-toggle"
+          aria-label={mode.modernTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={mode.modernTheme === "dark" ? "Light theme" : "Dark theme"}
+          onClick={() => mode.setModernTheme(mode.modernTheme === "dark" ? "light" : "dark")}
+        >
+          {mode.modernTheme === "dark"
+            ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+            : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z" /></svg>}
+        </button>
+      )}
       <button type="button" className="more-button" aria-label="More" aria-haspopup="menu" aria-expanded={open} title="More" onClick={toggle}>⋮</button>
       {open && (
         <div className="more-panel" role="menu" style={{ top: place.top, right: place.right }}>
           {mode && <button type="button" role="menuitemradio" aria-checked={!mode.modernView} onClick={run(() => mode.setModernView(false))}><span>{mode.modernView ? "" : "✓"}</span>Legacy</button>}
           {mode && <button type="button" role="menuitemradio" aria-checked={mode.modernView} onClick={run(() => mode.setModernView(true))}><span>{mode.modernView ? "✓" : ""}</span>Modern</button>}
+          {mode?.modernView && <button type="button" role="menuitemradio" aria-checked={mode.modernTheme === "light"} onClick={run(() => mode.setModernTheme("light"))}><span>{mode.modernTheme === "light" ? "✓" : ""}</span>Light theme</button>}
+          {mode?.modernView && <button type="button" role="menuitemradio" aria-checked={mode.modernTheme === "dark"} onClick={run(() => mode.setModernTheme("dark"))}><span>{mode.modernTheme === "dark" ? "✓" : ""}</span>Dark theme</button>}
           <hr />
           <button type="button" role="menuitem" onClick={run(onLock)}><span>🔒</span>Lock</button>
           <button type="button" role="menuitem" onClick={run(onLogout)}><span>⏻</span>Log out</button>
@@ -187,6 +203,7 @@ export default function Home() {
  */
 function MainMenu() {
   const selection = useStartupSelection();
+  const view = useViewMode();
   const startup = useStartupActions();
   const [menus, setMenus] = useState<MenuNode[]>([]);
   const [menuError, setMenuError] = useState("");
@@ -772,6 +789,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
                 );
               })}
             </div>
+            {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- Escape from the list button or its menu closes the list; the box only hears the key bubble up from them */}
             <div className="window-list" onKeyDown={(event) => { if (event.key === "Escape") setWindowListOpen(false); }}>
               <button type="button" className="window-list-button" aria-haspopup="menu" aria-expanded={windowListOpen} title="Open windows (Ctrl+F6: next)" onClick={() => setWindowListOpen((open) => !open)}>{windows.length} Open ▾</button>
               {windowListOpen && (
@@ -835,10 +853,10 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
               </div>
             );
           })}
-          {/* The SMART WINFA artwork already carries the logo, the tagline and
-              the Pranav Computers credit, so it is drawn as one background
-              rather than reassembled from separate elements. */}
-          {activeId === null && <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
+          {/* Legacy: the SMART WINFA artwork already carries the logo, the tagline and the Pranav Computers credit, so it is drawn as one
+              background. Modern: the company's own home (features/home/ModernHome). */}
+          {activeId === null && view?.modernView && <ModernHome menus={menus} onOpen={choose} />}
+          {activeId === null && !view?.modernView && <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
         </div>
       </section>
 
