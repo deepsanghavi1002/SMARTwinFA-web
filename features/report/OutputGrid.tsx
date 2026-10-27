@@ -14,7 +14,8 @@ import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuItem, GridMenuPlace } from "../grid/GridMenu";
-import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, DARK_GRAND_TOTAL_COLOUR, DARK_LEVEL_COLOURS, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import { useModernDark } from "../ui/modernTheme";
 import type { RowKind, RowLook } from "../grid/levelStyle";
 import { LogViewer } from "../grid/LogViewer";
 import type { LogTable } from "../grid/LogViewer";
@@ -97,6 +98,13 @@ function hexColour(colour: string): string {
   } catch {
     return "";
   }
+}
+
+/** A spreadsheet's column letters: 0 is A, 25 is Z, 26 is AA. */
+export function columnLetters(index: number): string {
+  let letters = "";
+  for (let n = index; n >= 0; n = Math.floor(n / 26) - 1) letters = String.fromCharCode(65 + (n % 26)) + letters;
+  return letters;
 }
 
 export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy, initialPivot, initialSumif }: {
@@ -895,10 +903,13 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const headingLevel = (row: OutputRow) => headingLevelOf(row.rowType, output.headingLevels, tickOrder);
   const lookOf = (row: OutputRow): RowLook => rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), levelColours);
   const rowColours = (row: OutputRow): { background?: string; bold: boolean } => { const look = lookOf(row); return { background: look.background, bold: look.bold }; };
+  /** Modern dark: the level fills are dark tints on screen; print and export (rowColours) keep the light ones. */
+  const dark = useModernDark();
+  const screenLook = (row: OutputRow): RowLook => (dark ? rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), DARK_LEVEL_COLOURS, DARK_GRAND_TOTAL_COLOUR) : lookOf(row));
   const rowStyle = (row: OutputRow): CSSProperties | undefined => {
-    // The blank line before a main group stays white, whatever the alternate colour would be.
-    if (row.rowType === "GAP") return { background: "#ffffff" };
-    const look = lookOf(row);
+    // The blank line before a main group stays plain, whatever the alternate colour would be.
+    if (row.rowType === "GAP") return { background: "var(--mx-surface, #ffffff)" };
+    const look = screenLook(row);
     if (!look.background) return undefined;
     return { background: look.background, color: look.color, fontWeight: 700, borderTop: look.borderTop, borderBottom: look.borderBottom };
   };
@@ -1024,6 +1035,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           <button type="button" className="mp-btn mp-btn-red" onClick={exitGroup} disabled={groupBusy} title="Leave Create Group and go back to the report"><Icon name="quit" />Exit Group</button>
         </div>
       )}
+      {/* Modern view: the active cell's reference and what it holds, as a spreadsheet's formula bar (hidden in Legacy). */}
+      <div className="rp-cellbar" aria-hidden="true">
+        <span className="rp-cellref">{columnLetters(at.col)}{shown.length === 0 ? "" : at.row + 1}</span>
+        <span className="rp-cellfx">fx</span>
+        <span className="rp-cellval">{shown[at.row] ? shown[at.row].row.values[columns[at.col]?.key ?? ""] ?? "" : ""}</span>
+      </div>
       <div className="rp-out-body">
       <div className="mp-update">
         <div
