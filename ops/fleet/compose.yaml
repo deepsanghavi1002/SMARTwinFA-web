@@ -4,6 +4,9 @@ name: smartwinfa-fleet
 #   Portainer    http://localhost:9000  - every stack and container: start, stop, update, logs, console
 #   Grafana      http://localhost:3001  - logs of every client in one place ("SMARTwinFA Clients" dashboard)
 #   Uptime Kuma  http://localhost:3002  - up/down checks and alerts for each client address
+#   Admin site   http://localhost:9090  - all three on one address (e.g. https://admin.smartwinfa.com, behind Cloudflare Access):
+#                /grafana/, /portainer/, and Uptime Kuma on the rest; publish it as http://smartwinfa-admin:80
+# Memory is capped per tool (mem_limit) so the dashboard cannot crowd out the clients on a small server.
 # Loki stores the logs; Alloy reads every container's log and labels it with its client.
 # cloudflared (profile "tunnel") publishes the client addresses through Cloudflare when TUNNEL_TOKEN is set.
 # Start with: ops/smartwinfa.sh fleet up
@@ -12,10 +15,12 @@ services:
     image: portainer/portainer-ce:2.33.1
     restart: unless-stopped
     command: ["-H", "unix:///var/run/docker.sock", "--admin-password-file", "/run/portainer-admin-password"]
+    mem_limit: 160m
     ports:
       - "${FLEET_BIND:-127.0.0.1}:9000:9000"
       # Edge tunnel for on-prem support agents (ops/site). Behind Cloudflare publish it as its own hostname.
-      - "${FLEET_BIND:-127.0.0.1}:8000:8000"
+      # PORTAINER_EDGE_PORT moves it on the host when 8000 is taken by something else.
+      - "${FLEET_BIND:-127.0.0.1}:${PORTAINER_EDGE_PORT:-8000}:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
@@ -26,6 +31,7 @@ services:
     image: grafana/loki:3.5.3
     restart: unless-stopped
     command: ["-config.file=/etc/loki/config.yaml"]
+    mem_limit: 384m
     volumes:
       - ./loki-config.yaml:/etc/loki/config.yaml:ro
       - loki_data:/loki
@@ -35,6 +41,7 @@ services:
     image: grafana/alloy:v1.10.2
     restart: unless-stopped
     command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    mem_limit: 256m
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -51,6 +58,10 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/smartwinfa-clients.json
+      # Served under /grafana/ so the admin site can carry it (http://localhost:3001 still works, at /grafana/).
+      GF_SERVER_ROOT_URL: ${ADMIN_URL:-http://localhost:9090}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    mem_limit: 320m
     ports:
       - "${FLEET_BIND:-127.0.0.1}:3001:3000"
     volumes:
@@ -63,10 +74,24 @@ services:
   uptime-kuma:
     image: louislam/uptime-kuma:1.23.16
     restart: unless-stopped
+    mem_limit: 256m
     ports:
       - "${FLEET_BIND:-127.0.0.1}:3002:3001"
     volumes:
       - uptime_data:/app/data
+    networks: [fleet]
+
+  admin:
+    image: caddy:2.10.2-alpine
+    container_name: smartwinfa-admin
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "${FLEET_BIND:-127.0.0.1}:${ADMIN_PORT:-9090}:80"
+    volumes:
+      - ./admin/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./admin/index.html:/srv/index.html:ro
+    depends_on: [grafana, portainer, uptime-kuma]
     networks: [fleet]
 
   cloudflared:
@@ -80,8 +105,10 @@ services:
 
 networks:
   # Shared with every client stack's web container, so the tunnel and Uptime Kuma can reach <client>-web:3000.
+  # Created by ops/smartwinfa.sh (fleet up / client up), whichever runs first, so it is external to this stack.
   fleet:
     name: smartwinfa-fleet
+    external: true
 
 volumes:
   portainer_data:

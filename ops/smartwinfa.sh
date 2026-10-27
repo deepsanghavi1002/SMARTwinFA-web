@@ -59,7 +59,7 @@ case "${1:-}" in
   fleet)
     case "${2:-}" in
       up) fleet_prepare; fleet_compose up -d
-          echo "Portainer http://localhost:9000  Grafana http://localhost:3001  Uptime Kuma http://localhost:3002" ;;
+          echo "Admin site http://localhost:$(setting "$FLEET/.env" ADMIN_PORT | grep . || echo 9090)  Portainer http://localhost:9000  Grafana http://localhost:3001/grafana/  Uptime Kuma http://localhost:3002" ;;
       tunnel) fleet_prepare; fleet_compose --profile tunnel up -d ;;
       down) fleet_compose --profile tunnel down ;;
       enroll)
