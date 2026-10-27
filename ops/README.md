@@ -7,7 +7,8 @@ Written for the setup described in "SMARTwinFA Cloud Setup" (30 clients, Cloudfl
 ops/
   smartwinfa.sh            one command for everything below
   fleet/                   the ops stack (one per host)
-    compose.yaml           Portainer, Grafana + Loki + Alloy, Uptime Kuma, cloudflared (profile "tunnel")
+    compose.yaml           Portainer, Grafana + Loki + Alloy, Uptime Kuma, the admin site, cloudflared (profile "tunnel")
+    admin/                 the admin site (Caddy): one address for the three tools, and its landing page
     alloy/config.alloy     reads every container's log, labels it client / service / level
     loki-config.yaml       log store, 30 days
     grafana/               Loki data source + the "SMARTwinFA Clients" dashboard
@@ -24,7 +25,7 @@ Needs Docker (Docker Desktop on Windows/macOS, Docker Engine on Linux). From the
 
 ```bash
 ops/smartwinfa.sh build-local          # build the app images from this checkout (tag "local")
-ops/smartwinfa.sh fleet up             # Portainer :9000, Grafana :3001, Uptime Kuma :3002
+ops/smartwinfa.sh fleet up             # admin site :9090 (Portainer :9000, Grafana :3001/grafana/, Uptime Kuma :3002)
 cp ops/clients/rishabh.env.example ops/clients/rishabh.env   # then set DB_PASSWORD
 ops/smartwinfa.sh client up rishabh    # Rishabh Plastic on http://localhost:4101
 ops/smartwinfa.sh list
@@ -38,6 +39,28 @@ ops/smartwinfa.sh list
   `ops/fleet/.portainer-admin-password` (Portainer `admin` password). Uptime Kuma asks for an admin on first visit.
 - **Uptime check:** in Uptime Kuma add an HTTP monitor `http://rishabh-web:3000/api/health` (every client's web
   container is reachable by `<id>-web` on the shared `smartwinfa-fleet` network).
+
+## The admin site (one address for the staff tools)
+
+`fleet up` also starts `smartwinfa-admin` (Caddy, port `ADMIN_PORT`, default 9090 on `FLEET_BIND`), which puts the three
+tools under one address such as `https://admin.smartwinfa.com`:
+
+| Path | Tool |
+|---|---|
+| `/` | landing page with links to the tools |
+| `/grafana/` | Grafana: the "SMARTwinFA Clients" logs dashboard |
+| `/portainer/` | Portainer: stacks and containers |
+| everything else (`/dashboard`, `/status/...`) | Uptime Kuma (it cannot run under a sub-path) |
+
+- Publish it in the Cloudflare tunnel as `admin.smartwinfa.com` -> `http://smartwinfa-admin:80`. cloudflared runs in
+  Docker on the `smartwinfa-fleet` network, so it reaches the container by name (not `localhost:9090`).
+- Set `ADMIN_URL=https://admin.smartwinfa.com` in `ops/fleet/.env` so Grafana's links use the public address.
+- Each tool keeps its own sign-in. The site adds no password of its own: Portainer and Grafana use the `Authorization`
+  header themselves, so HTTP basic auth in front of them breaks them. Put a Cloudflare Access application on the address
+  (staff emails, with MFA). Until then, anyone who finds the address reaches the tools' login pages.
+- Memory is capped per tool (`mem_limit` in `fleet/compose.yaml`, about 1.4 GB in all at most) so the dashboard cannot
+  crowd out the clients on a small server.
+- When port 8000 is already taken on the host, set `PORTAINER_EDGE_PORT` (Portainer's edge tunnel for on-prem agents).
 
 ## Windows PC with nothing installed
 
@@ -103,7 +126,7 @@ The Portainer edge tunnel (port 8000) needs its own route; test it with one site
 1. Cloudflare Zero Trust > Networks > Tunnels: create a tunnel, copy its token into `ops/fleet/.env` as `TUNNEL_TOKEN`.
 2. `ops/smartwinfa.sh fleet tunnel` starts cloudflared on the fleet network.
 3. In the tunnel, add a public hostname per client: `rishabh.your-domain.com` -> `http://rishabh-web:3000`;
-   staff tools: `ops.your-domain.com` -> `http://portainer:9000`, `logs.your-domain.com` -> `http://grafana:3000`.
+   staff tools: `admin.your-domain.com` -> `http://smartwinfa-admin:80` (see "The admin site").
 4. Zero Trust > Access: an application per hostname with who may log in (staff with MFA; each client's users only on their address).
 5. Keep `WEB_BIND=127.0.0.1` and `FLEET_BIND=127.0.0.1` so nothing is reachable except through the tunnel.
 
