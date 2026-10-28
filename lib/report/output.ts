@@ -375,7 +375,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // Planning FG Analysis (210): dates and day counts, no final total.
   // Outstanding Age Wise, Date Wise Detail: one list by date, with a running balance, and no party subtotals.
   const dateWiseList = reportKey === 5 && call.sortingText === "Date Wise" && call.filterText === "Detail";
-  const allowSubtotal = reportKey !== 210 && !dateWiseList && !((reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT");
+  const accountOnly = (reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT";
+  const allowSubtotal = reportKey !== 210 && !dateWiseList && !accountOnly;
   const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string; treeOnly?: string[] }[] = [];
   const subtotalsWanted = (flag(properties, "subtotal_req") || scheduleSubtotals || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
   // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
@@ -434,7 +435,9 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // A blank line between a group's subtotal and the next addon heading (web only), so one addon's block stands apart from the next.
   for (let at = out.length - 1; at > 0; at -= 1) if ((/^ADDON_[0-9]$/.test(out[at].rowType) || (reportKey === 17 && out[at].rowType === "PRODUCT")) && out[at - 1].kind === "subtotal") out.splice(at, 0, { kind: "data", level: -2, rowType: "GAP", values: {} });
   const finalTotal = ![18, 22, 57, 136, 138, 156, 279, 280, 281].includes(reportKey) || reportKey === 80;
-  if (finalTotal && subtotalsWanted && !(reportKey === 4 && call.formating === "MONTHLY")) {
+  // Trial Balance / Schedule with the account as the only group: one row an account, no subtotals, but the final total is still required.
+  const totalWanted = subtotalsWanted || (accountOnly && (flag(properties, "subtotal_req") || scheduleSubtotals));
+  if (finalTotal && totalWanted && !(reportKey === 4 && call.formating === "MONTHLY")) {
     const values: Record<string, unknown> = {};
     for (const column of sumColumns) values[column] = money(table.rows.reduce((sum, row) => sum + num(row[column]), 0));
     // Partywise Stock (16): the final line's RATE is the average too, shown with the tree or F6.
