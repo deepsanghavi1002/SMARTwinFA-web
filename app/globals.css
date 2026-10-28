@@ -1726,7 +1726,7 @@
 
 .mp-combos.se-head{display:grid;grid-template-columns:repeat(3,104px 220px) minmax(0,1fr);column-gap:8px;row-gap:4px;align-items:center}
 
-.se-head .se-label{color:#fff;font-weight:700;text-shadow:0 1px 0 #3d6fa8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.se-head .se-label{color:#000;font-weight:700;text-shadow:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .se-head .se-field{display:flex;min-width:0}
 

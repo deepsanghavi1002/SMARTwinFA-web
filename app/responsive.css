@@ -20,6 +20,9 @@
 /* The report's pinned total row (features/report/OutputGrid) is for phones only. */
 .rp-total-pinned { display: none; }
 
+/* ── all screen sizes: the bottom button row of Master and Small Entry ends with Quit at the very right, as Entry's does ─ */
+html:not(#r) .mp-buttons > [data-hotkey="q"] { order: 100; margin-left: auto; }
+
 /* ── safe areas (notches, the home bar) and the on-screen keyboard ─────── */
 html:not(#r) .winfa-window {
   padding-left: env(safe-area-inset-left);
@@ -146,6 +149,14 @@ html:not(#r) .startup-desktop {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding-bottom: env(safe-area-inset-bottom);
     background: var(--mx-surface, #fff); border-top: 1px solid var(--mx-border, #c3d3e6); color: var(--mx-muted, #41576b);
   }
+  /* the thick sideways slider for wide screens (features/ui/PanBar): a full row above the four buttons */
+  html:not(#r) .pan-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--mx-border, #c3d3e6); background: var(--mx-head, #dbe9fb); }
+  html:not(#r) .pan-bar > button { flex: none; width: 48px; height: 40px; padding: 0; border: 1px solid var(--mx-border, #7fa6d6); border-radius: 10px; background: var(--mx-surface, #fff); color: var(--mx-text, #123a76); font-size: 16px; touch-action: manipulation; cursor: pointer; }
+  html:not(#r) .pan-bar > input[type="range"] { flex: 1 1 auto; min-width: 0; height: 40px; margin: 0; padding: 0; accent-color: #1f64b8; touch-action: pan-y; cursor: pointer; }
+  html:not(#r) .pan-bar > input[type="range"]::-webkit-slider-runnable-track { height: 18px; border-radius: 9px; background: rgba(31, 100, 184, 0.35); }
+  html:not(#r) .pan-bar > input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 56px; height: 30px; margin-top: -6px; border: 2px solid #fff; border-radius: 15px; background: #1f64b8; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
+  html:not(#r) .pan-bar > input[type="range"]::-moz-range-track { height: 18px; border-radius: 9px; background: rgba(31, 100, 184, 0.35); }
+  html:not(#r) .pan-bar > input[type="range"]::-moz-range-thumb { width: 52px; height: 26px; border: 2px solid #fff; border-radius: 15px; background: #1f64b8; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
   html:not(#r) .bottom-nav > button {
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; min-height: 56px; padding: 4px 2px;
     border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-size: 11px; font-weight: 600; touch-action: manipulation; cursor: pointer;
@@ -160,6 +171,36 @@ html:not(#r) .startup-desktop {
   html:not(#r) .ask-panel.ask-min { top: auto; left: auto; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); width: min(240px, calc(100vw - 16px)); }
   html:not(#r) .ask-grip { display: none; }
   html:not(#r) .ask-panel > header button { min-width: 44px; min-height: 44px; }
+
+  /* ── screens: the grid's one column is the window's width, never the widest toolbar row (it was clipped, with no way to scroll to it) ─ */
+  /* Master, Entry and Report keep their full desktop layout on a phone (portrait too): the screen is as wide as on a PC and the
+     window scrolls left to right to reach all of it, instead of squeezing it into a column. */
+  html:not(#r) .app-window { overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  html:not(#r) .mp-screen { grid-template-columns: minmax(0, 1fr); min-width: 960px; }
+  html:not(#r) .mp-screen > * { min-width: 0; }
+  html:not(#r) .mp-combo { width: auto; }
+  html:not(#r) .mp-combo select, html:not(#r) .mp-combo input { width: auto; min-width: 260px; }
+  html:not(#r) .mp-add-head { width: 260px; min-width: 260px; }
+  html:not(#r) .mp-find { width: auto; }
+  /* the report's selection screen: the three desktop columns (lists, lists, the report's own list) */
+  html:not(#r) .rp-select { grid-template-columns: 220px 200px minmax(0, 1fr); overflow: hidden; }
+  html:not(#r) .rp-mid, html:not(#r) .rp-right { grid-column: auto; grid-row: auto; }
+  html:not(#r) .rp-right { min-height: 0; }
+  html:not(#r) .rp-actions { flex-wrap: nowrap; }
+  /* the sideways scroll bar is twice as tall, with a solid thumb, so it can be seen and dragged */
+  html:not(#r) .app-window::-webkit-scrollbar, html:not(#r) .ent-scroll::-webkit-scrollbar { height: 20px; width: 20px; }
+  html:not(#r) .app-window::-webkit-scrollbar-track, html:not(#r) .ent-scroll::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.18); }
+  html:not(#r) .app-window::-webkit-scrollbar-thumb, html:not(#r) .ent-scroll::-webkit-scrollbar-thumb { background: #1f64b8; border: 3px solid rgba(255, 255, 255, 0.55); border-radius: 10px; }
+  @supports not selector(::-webkit-scrollbar) {
+    html:not(#r) .app-window, html:not(#r) .ent-scroll { scrollbar-width: auto; scrollbar-color: #1f64b8 rgba(0, 0, 0, 0.18); }
+  }
+  /* Quit at the very right of its row, as in Entry: Master and Small Entry's button rows, and Small Entry's Show / Quit row */
+  html:not(#r) .mp-buttons > [data-hotkey="q"] { order: 50; margin-left: auto; }
+  html:not(#r) .mp-buttons > :is(.mp-spacer, .mp-search, .mp-count) { order: 101; }
+  html:not(#r) .mp-combos > [data-hotkey="q"], html:not(#r) .mp-combos > * > [data-hotkey="q"] { margin-left: auto; }
+  /* Entry's form is a fixed-size canvas (1130px) */
+  html:not(#r) .mp-screen.ent-screen { min-width: 1160px; }
+  html:not(#r) .ent-scroll { overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 
   /* ── home ────────────────────────────────────────────────────────────── */
   html:not(#r) .mh { padding: 16px 16px 20px; gap: 16px; }

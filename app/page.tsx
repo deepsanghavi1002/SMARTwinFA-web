@@ -22,6 +22,7 @@ import { RepostData } from "../features/utility/RepostData";
 import { TransferBalance } from "../features/utility/TransferBalance";
 import { AskAi } from "../features/ask/AskAi";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
+import { PanBar } from "../features/ui/PanBar";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
 import { IdleGuard } from "../features/startup/IdleGuard";
@@ -881,6 +882,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
 
       {/* Phones: the most used controls under the thumb. Wider screens do not show it. */}
       <nav className="bottom-nav" aria-label="Quick navigation" inert={navOpen}>
+        <PanBar />
         <button type="button" className="bottom-nav-home" aria-current={activeId === null ? "page" : undefined} onClick={goHome}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" /></svg><span>Home</span></button>
         <button type="button" className="bottom-nav-menu" aria-haspopup="true" aria-expanded={navOpen} aria-controls="app-nav" onClick={() => setNavOpen(true)}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg><span>Menu</span></button>
         <button type="button" className="bottom-nav-windows" aria-haspopup="menu" aria-expanded={windowListOpen} disabled={windows.length === 0} onClick={() => setWindowListOpen((open) => !open)}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="14" height="12" rx="2" /><path d="M7 21h14V9" /></svg><span>Windows{windows.length > 0 ? ` (${windows.length})` : ""}</span></button>
