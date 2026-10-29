@@ -29,7 +29,7 @@ const flag = (row: Row | undefined, name: string) => {
 };
 
 /** Reports whose output is ported (their SP_REPORT_STANDARD branch and Report_Combine's handling of it). */
-export const PORTED_REPORTS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 27, 35, 280, 103, 26, 150, 148, 149, 210, 212, 221, 222, 227, 228, 230, 231, 244, 248, 254, 299, 51, 153, 154, 168, 160, 216, 161, 122, 169, 171, 172, 174, 175, 177, 187, 188, 302, 189, 198, 199, 200, 203, 170, 207, 208, 209, 115, 178, 136, 116, 117, 118, 104, 105, 106, 125, 133, 138, 157, 176, 267, 279, 281, 264, 151, 163, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 162, 211, 232, 255, 143, 30, 127, 129, 130, 131, 258, 284, 158, 98, 50, 111, 67]);
+export const PORTED_REPORTS: ReadonlySet<number> = new Set([59, 60, 61, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 19, 20, 25, 49, 76, 121, 124, 159, 297, 298, 14, 27, 35, 280, 103, 26, 150, 148, 149, 210, 212, 221, 222, 227, 228, 230, 231, 244, 248, 254, 299, 51, 153, 154, 168, 160, 216, 161, 122, 169, 171, 172, 174, 175, 177, 187, 188, 302, 189, 198, 199, 200, 203, 170, 207, 208, 209, 115, 178, 136, 116, 117, 118, 104, 105, 106, 125, 133, 138, 157, 176, 267, 279, 281, 264, 151, 163, 282, 292, 31, 126, 132, 15, 16, 17, 18, 21, 22, 29, 23, 24, 32, 42, 93, 109, 119, 120, 112, 135, 152, 156, 162, 211, 232, 255, 143, 30, 127, 129, 130, 131, 258, 284, 158, 98, 50, 111, 67]);
 
 /** The help grid each help id fills, when report_controlval does not name one (UNKNOWN_HELP_GRID). */
 const KEY_COLUMN: Readonly<Record<string, string>> = {
@@ -410,6 +410,8 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
 
   let helpTabs = text(properties, "visible_helptabs_list").split(",").map((tab) => tab.trim()).filter(Boolean);
   if (session.licence !== 14 && reportKey === 51) helpTabs = helpTabs.filter((tab) => tab !== "Tab_Addon");
+  // Account / Product Transfer: the Upto help (C1HelpBook) has no tab of its own in the setup, so the Upto could not be chosen; it gets its own tab.
+  if ((reportKey === 59 || reportKey === 60) && !helpTabs.includes("Tab_Book")) helpTabs = [...helpTabs, "Tab_Book"];
 
   const fromVisible = flag(properties, "date_from");
   const uptoVisible = flag(properties, "date_upto");

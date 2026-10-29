@@ -27,10 +27,16 @@ export type MessageOptions = {
   defaultButton?: MessageButton;
   /** Shows a text box; its text comes back with the answer. */
   input?: "text" | "password";
+  /** The word "Enter" under the default button, as under a prompt's OK. */
+  enterHint?: boolean;
+  /** The message's icon also in the heading bar, before the title. */
+  titleIcon?: boolean;
 };
 type Request = Required<Pick<MessageOptions, "title" | "message" | "buttons" | "kind">> & {
   id: number;
   input?: "text" | "password";
+  enterHint?: boolean;
+  titleIcon?: boolean;
   defaultButton: MessageButton;
   returnFocus: HTMLElement | null;
   resolve: (answer: { button: MessageButton; text: string }) => void;
@@ -62,6 +68,8 @@ export function showMessage(options: MessageOptions): Promise<{ button: MessageB
       buttons,
       kind: options.kind ?? guessKind(title, buttons),
       input: options.input,
+      enterHint: options.enterHint,
+      titleIcon: options.titleIcon,
       defaultButton: options.defaultButton && buttons.includes(options.defaultButton) ? options.defaultButton : buttons[0],
       returnFocus: typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
       resolve,
@@ -86,7 +94,7 @@ function answerCurrent(button: MessageButton, text: string) {
 export const isMessageBoxOpen = () => queue.length > 0;
 
 export const messageBox = {
-  ask: (message: string, title = "Message", buttons: MessageButton[] = ["OK"], options: { kind?: MessageKind; defaultButton?: MessageButton } = {}) =>
+  ask: (message: string, title = "Message", buttons: MessageButton[] = ["OK"], options: { kind?: MessageKind; defaultButton?: MessageButton; enterHint?: boolean; titleIcon?: boolean } = {}) =>
     showMessage({ message, title, buttons, ...options }).then((answer) => answer.button),
   confirm: (message: string, title = "Confirmation") =>
     showMessage({ message, title, buttons: ["Yes", "No"] }).then((answer) => answer.button === "Yes"),
@@ -164,8 +172,11 @@ export function MessageBoxHost() {
 
   return (
     <div className="msgbox-backdrop" role="presentation">
-      <div ref={box} className={`msgbox msgbox-${request.kind}`} role="alertdialog" aria-modal="true" aria-labelledby={`msgbox-title-${request.id}`} aria-describedby={`msgbox-text-${request.id}`} style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
-        <div className="msgbox-title" id={`msgbox-title-${request.id}`} onPointerDown={startDrag} style={{ cursor: "move" }} title="Drag to move this message">{request.title}</div>
+      <div ref={box} className={`msgbox msgbox-${request.kind}${request.enterHint ? " msgbox-enterhint" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby={`msgbox-title-${request.id}`} aria-describedby={`msgbox-text-${request.id}`} style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
+        <div className="msgbox-title" id={`msgbox-title-${request.id}`} onPointerDown={startDrag} style={{ cursor: "move" }} title="Drag to move this message">
+          {request.titleIcon && <svg className="msgbox-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[request.kind]} /></svg>}
+          <span>{request.title}</span>
+        </div>
         <div className="msgbox-body">
           <svg className="msgbox-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[request.kind]} /></svg>
           <div className="msgbox-text">

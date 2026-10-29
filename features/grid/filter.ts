@@ -14,11 +14,11 @@ export type FilterDraft = { key: string; chosen: string[]; first: Condition; joi
 
 export const FILTER_OPS: Record<FilterKind, readonly (readonly [string, string])[]> = {
   text: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["begins", "Begins With"], ["ends", "Ends With"], ["contains", "Contains"], ["notContains", "Does Not Contain"], ["blank", "Is Blank"], ["notBlank", "Is Not Blank"]],
-  number: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["gt", "Greater Than"], ["ge", "Greater Than or Equal To"], ["lt", "Less Than"], ["le", "Less Than or Equal To"], ["between", "Between"], ["blank", "Is Blank or Zero"], ["notBlank", "Is Not Blank or Zero"]],
+  number: [["", "(no condition)"], ["eq", "Equals"], ["ne", "Does Not Equal"], ["gt", "Greater Than"], ["ge", "Greater Than or Equal To"], ["lt", "Less Than"], ["le", "Less Than or Equal To"], ["between", "Between"], ["blank", "Is Blank or Zero"], ["notBlank", "Is Not Blank or Zero"], ["whole", "Whole Numbers Only"], ["fraction", "With Decimals Only"]],
   date: [["", "(no condition)"], ["eq", "On"], ["ne", "Not On"], ["lt", "Before"], ["le", "On or Before"], ["gt", "After"], ["ge", "On or After"], ["between", "Between"], ["blank", "Is Blank"], ["notBlank", "Is Not Blank"]],
 };
 export const FILTER_TITLE: Record<FilterKind, string> = { text: "Text Filter", number: "Numeric Filter", date: "Date Filter" };
-export const NO_VALUE_OPS = ["", "blank", "notBlank"];
+export const NO_VALUE_OPS = ["", "blank", "notBlank", "whole", "fraction"];
 export const emptyCondition = (): Condition => ({ op: "", a: "", b: "" });
 
 /** The kind of filter a column gets from its field type (D date; N, C, I number; else text). */
@@ -46,6 +46,12 @@ export function conditionHolds(kind: FilterKind, condition: Condition, raw: stri
       case "between": return value >= Math.min(x, y) && value <= Math.max(x, y);
       case "blank": return raw.trim() === "" || value === 0;
       case "notBlank": return raw.trim() !== "" && value !== 0;
+      // A figure with no decimal part (1.00 counts as whole), or one with a decimal figure other than zeros (1.50): judged on the figure as the grid shows it (6.004 shown as 6.00 is whole).
+      case "whole": case "fraction": {
+        const seen = shown.trim() !== "" ? toDecimal(shown) : value;
+        const fractional = Math.abs(seen - Math.round(seen)) >= 0.00005;
+        return raw.trim() !== "" && (op === "fraction" ? fractional : !fractional);
+      }
       default: return true;
     }
   }

@@ -7,7 +7,9 @@ import { Loader } from "@/lib/master-program/load";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
-import { ReportRefusal } from "@/lib/report/generate";
+import { ReportRefusal, planReport } from "@/lib/report/generate";
+import { ACCOUNT_TRANSFER_REPORT, PRODUCT_TRANSFER_REPORT, VOUCHER_RENUMBER_REPORT, planAccountTransfer, planProductTransfer, planVoucherRenumber, runAccountTransfer } from "@/lib/report/accountTransfer";
+import type { AccountTransferPlan } from "@/lib/report/accountTransfer";
 import { runGroupedReport, runReport } from "@/lib/report/reportCombine";
 import { loadReport, againstBookItems, formFilterItems, lostFocusItems, slabFilterItems } from "@/lib/report/setup";
 import { readEntryLog } from "@/lib/report/log";
@@ -129,6 +131,10 @@ export async function POST(request: Request) {
             if (!previous) throw new ReportRefusal("The company has no previous year database to compare with.", "Compare periods");
             return { output: await runReport(new Loader(client, await readSession(client, { companyId: previous.companyId, yearKey: previous.yearKey, loginName: session.loginName })), body.reportName, cleanSelection(body.selection)) };
           }
+          // Entry Account Transfer is an action, not a report: checked here, done in a transaction that can write (below).
+          if (body.reportName === ACCOUNT_TRANSFER_REPORT) return { transfer: await planAccountTransfer(loader, await planReport(loader, body.reportName, cleanSelection(body.selection))) };
+          if (body.reportName === PRODUCT_TRANSFER_REPORT) return { transfer: await planProductTransfer(loader, await planReport(loader, body.reportName, cleanSelection(body.selection))) };
+          if (body.reportName === VOUCHER_RENUMBER_REPORT) return { transfer: await planVoucherRenumber(loader, await planReport(loader, body.reportName, cleanSelection(body.selection))) };
           return { output: await runReport(loader, body.reportName, cleanSelection(body.selection)) };
         }
         case "group": return { output: await runGroupedReport(loader, body.reportName, cleanSelection(body.selection), strings(body.fields).slice(0, 10)) };
@@ -145,6 +151,12 @@ export async function POST(request: Request) {
     // What the report asked to be written (Update Value In Master) is done once it has run, in a transaction that can write.
     const pendingWrites = body.action === "generate" ? used.loader?.writes ?? [] : [];
     if (pendingWrites.length > 0) await transaction(async (client) => { for (const write of pendingWrites) await client.query(write.sql, write.params); });
+    if ("transfer" in result && result.transfer) {
+      const transfer = result.transfer as AccountTransferPlan;
+      const done = await transaction(async (client) => runAccountTransfer(client, await readSession(client, key), transfer), { timeoutMs: 3_600_000 });
+      const lines = [done.message, "", transfer.summary ?? `${transfer.fromName}  >>  ${transfer.toName}`, ...(done.moved.length > 0 ? ["", ...done.moved] : [])];
+      return Response.json({ refusal: { message: lines.join("\n"), caption: "SUCCESS" } }, { headers });
+    }
     // A report's rows go packed and in pieces (a year's checklist can be hundreds of thousands of rows).
     if ("output" in result && result.output) return new Response(packedOutputStream(result.output as ReportOutput), { headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
     return Response.json(result, { headers });

@@ -1270,7 +1270,7 @@
 
 /* Prompt with a text box: Enter answers the first button, so it carries the mark. */
 
-.msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after{content:"↵ Enter";position:absolute;left:50%;top:100%;margin-top:5px;transform:translateX(-50%);padding:0 5px;border-radius:3px;background:#1f64b8;color:#fff;font-size:9px;font-weight:700;line-height:14px;white-space:nowrap;text-shadow:none;pointer-events:none}
+.msgbox-enterhint .msgbox-buttons button.msgbox-default::after,.msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after{content:"↵ Enter";position:absolute;left:50%;top:100%;margin-top:5px;transform:translateX(-50%);padding:0 5px;border-radius:3px;background:#1f64b8;color:#fff;font-size:9px;font-weight:700;line-height:14px;white-space:nowrap;text-shadow:none;pointer-events:none}
 
 
 
@@ -3959,3 +3959,9 @@
 .user-admin select,.user-admin input{height:28px;padding:2px 6px;border:1px solid #b5cbe0;border-radius:6px;background:#fff}
 .user-admin-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end;max-width:1000px}
 .user-admin-form label{display:grid;gap:4px;font-weight:600}
+
+.msgbox-title{display:flex;align-items:center;gap:8px}
+.msgbox-title-icon{width:16px;height:16px;flex:none;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+.mp-grid-combo-note{flex:none;margin-left:12px;font-variant-numeric:tabular-nums;color:#1f64b8;text-align:right}
+.mp-grid-combo-note.mp-grid-combo-neg{color:#c42636}

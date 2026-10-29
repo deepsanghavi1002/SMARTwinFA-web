@@ -13,6 +13,8 @@ export type EntryOption = Readonly<{
   against?: Readonly<{ code: number; nature: number }>;
   /** Last Year Account Outstanding, a Book entry: the Series entries (BN_ID | series text) that belong to this book. */
   series?: readonly string[];
+  /** A figure shown beside the name in a cell's list, not stored (Payment Manual Allot: the party's closing balance, +Dr / -Cr). */
+  note?: string;
 }>;
 
 /** A header control from entry_control (cmb_SmallEntry1-3, dtp_Date1-3, tbx_Text1-3). */
@@ -67,6 +69,8 @@ export type EntryColumn = Readonly<{
   /** An addon column (product master addon or a godown's column group). */
   addon: boolean;
   tooltip: string;
+  /** The column's type and limits as the status bar shows them (Number / Range:1 to 99 / Decimal:2 /), as the master's statusDisplay. */
+  status: string;
   /**
    * Every entry_grid_body setting of the column, named as the table names them (the same columns
    * as program_body, less the SQL ones), so the shared grid rules (features/grid/rules) type and

@@ -23,8 +23,10 @@ const Chevron = ({ up = false }: { up?: boolean }) => (
 const Check = () => <svg className="ui-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>;
 const SearchIcon = () => <svg className="ui-search" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></svg>;
 
-export function GridCombo({ options, current, startWith = "", place, onPick, onCancel }: {
-  options: readonly { text: string; value: string }[];
+export function GridCombo({ options, current, pointAt = "", startWith = "", place, onPick, onCancel }: {
+  /** Where the pointer rests when the cell holds nothing yet (the name entered last). */
+  pointAt?: string;
+  options: readonly { text: string; value: string; note?: string }[];
   /** The value the cell holds now. */
   current: string;
   /** A letter typed on the cell that opened the list: the search starts with it. */
@@ -42,7 +44,7 @@ export function GridCombo({ options, current, startWith = "", place, onPick, onC
     const contains = options.filter((option) => !option.text.trim().toUpperCase().startsWith(needle) && option.text.toUpperCase().includes(needle));
     return [...starts, ...contains];
   }, [options, query]);
-  const [active, setActive] = useState(() => (startWith ? 0 : Math.max(0, options.findIndex((option) => option.text === current))));
+  const [active, setActive] = useState(() => (startWith ? 0 : Math.max(0, options.findIndex((option) => option.text === current), current === "" && pointAt !== "" ? options.findIndex((option) => option.text === pointAt) : -1)));
   const list = useRef<HTMLUListElement>(null);
   /**
    * Where the mouse was last seen over the list. The highlight follows the mouse only once it
@@ -117,6 +119,7 @@ export function GridCombo({ options, current, startWith = "", place, onPick, onC
                 >
                   <span className="mp-grid-combo-tick">{isCurrent ? <Check /> : null}</span>
                   <span className="mp-grid-combo-text"><Matched text={option.text} query={query} /></span>
+                  {option.note !== undefined && <span className={`mp-grid-combo-note${option.note.startsWith("-") ? " mp-grid-combo-neg" : ""}`}>{option.note}</span>}
                 </li>
               );
             })}

@@ -59,7 +59,7 @@ export function skipRow(entryId: number, values: Values, keys: readonly string[]
     case 17: return blank(at(4)); // batch rename
     case 31: return number(at(9)) === 0; // challan / order close
     case 35: case 48: case 54: return number(cellOf(values, "Planing")) === 0 && primaryKey === 0; // production planning
-    case 46: return number(at(3)) === 0; // payment manual allot
+    case 46: return number(cellOf(values, "ALLOT_AMOUNT")) === 0; // payment manual allot (read by name: Closing Bal. and Dr/Cr come before the amount)
     case 56: return primaryKey === 0 && number(at(5)) === 0; // collection plan
     case 58: return number(at(8)) === 0; // plating in
     case 61: case 62: return blank(at(2)); // water / vehicle
@@ -83,8 +83,28 @@ export function headerDate(system: string, state: EntryState, now = new Date()):
  * the short quantity of a job card must be exactly what was planned less what was produced.
  */
 export async function checkBeforeSave(loader: Loader, entryId: number, rows: readonly EditedRow[]): Promise<string> {
-  if (entryId !== 54) return "";
   const schema = loader.session.companySchema;
+  // Payment Manual Allot: a payment is allotted only to a party we owe (closing balance below zero, Cr), and not more than that balance. Checked again here on save.
+  if (entryId === 46) {
+    const seen = new Set<number>();
+    for (const { values, deleted } of rows) {
+      const amount = number(cellOf(values, "ALLOT_AMOUNT"));
+      const code = Number(cellOf(values, "name__key") || cellOf(values, "code") || 0) || 0;
+      if (deleted) continue;
+      // The party and the Amount go together: a party without an Amount (or an Amount without a party) is not saved silently.
+      if (code > 0 && amount <= 0) return `Amount is compulsory for ${cellOf(values, "name") ?? ""}`.trim();
+      if (code === 0 && amount > 0) return "Party is compulsory for an Amount entered";
+      if (amount <= 0) continue;
+      if (seen.has(code)) return `Duplicate party ${cellOf(values, "name") ?? ""}`.trim();
+      seen.add(code);
+      const closing = Number((await loader.readTable(`select closing::numeric as closing from ${schema}.ac_balance where code = $1 and year_id = $2`, [code, loader.session.yearId]))?.[0]?.closing ?? 0);
+      const name = cellOf(values, "name") ?? "";
+      if (closing >= 0) return `No pending balance for selected party ${name}`.trim();
+      if (amount > -closing) return `Amount can not be greater than Closing Balance for ${name}`.trim();
+    }
+    return "";
+  }
+  if (entryId !== 54) return "";
   for (const { values, deleted } of rows) {
     if (deleted) continue;
     const planned = number(cellOf(values, "planing"));
