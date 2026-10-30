@@ -1739,6 +1739,7 @@
 .se-head .se-date-disabled .mp-editor{background:#e8eef6;color:#56616d}
 
 .se-head .se-actions{display:flex;align-items:center;gap:8px;min-width:0}
+.se-head .se-f5-hint{justify-self:end;align-self:center;margin:0;animation:none}
 
 .se-head .se-title{justify-self:end}
 
@@ -3961,6 +3962,7 @@
 .user-admin-form label{display:grid;gap:4px;font-weight:600}
 
 .msgbox-title{display:flex;align-items:center;gap:8px}
+.msgbox-title-logo{width:22px;height:22px;flex:none;object-fit:contain;margin-right:8px}
 .msgbox-title-icon{width:16px;height:16px;flex:none;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
 .mp-grid-combo-note{flex:none;margin-left:12px;font-variant-numeric:tabular-nums;color:#1f64b8;text-align:right}

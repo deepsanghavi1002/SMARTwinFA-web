@@ -15,9 +15,9 @@ import { keepGridFocus as keepFocusOn } from "../grid/focus";
 import { remainingAfterKey, typeAtCaret } from "../grid/caret";
 import { findNextCell } from "../grid/find";
 import { columnLefts, revealColumn, ROW_MARKER_WIDTH } from "../grid/frozen";
-import { copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
+import { columnText, copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
 import type { CopiedCell } from "../grid/clipboard";
-import { cellAt, columnMenuItems, GridMenu } from "../grid/GridMenu";
+import { cellAt, columnMenuItems, freezeMenuItems, GridMenu } from "../grid/GridMenu";
 import { LogViewer } from "../grid/LogViewer";
 import { FoundText } from "../grid/FoundText";
 import { printVertical } from "../grid/printVertical";
@@ -175,7 +175,11 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [cellEditable, setCellEditable] = useState<Record<string, boolean>>({});
   /** The Update grid's columns as the operator lays them out: order, hidden ones, widths (features/grid/useColumnLayout). */
   const setupColumns = useMemo(() => (grids?.columns ?? []).filter((column) => column.visible), [grids]);
-  const layout = useColumnLayout(setupColumns, grids?.frozen ?? 0);
+  /** Freeze / Unfreeze on the right-click menu: how many columns are frozen until a new grid is shown (else the setup's). */
+  const [frozenChosen, setFrozenChosen] = useState<number | null>(null);
+  useEffect(() => { setFrozenChosen(null); }, [grids]);
+  const frozenColumns = frozenChosen ?? grids?.frozen ?? 0;
+  const layout = useColumnLayout(setupColumns, frozenColumns);
   const { fixedKeys, columns, hiddenColumns, setHiddenColumns, columnOrder, setColumnOrder, placeColumn, moveColumn, shiftColumn, widthOf } = layout;
   const [dropMark, setDropMark] = useState<{ key: string; after: boolean } | null>(null);
   const dragColumn = useRef<string | null>(null);
@@ -932,7 +936,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
   /** Scrolls the grid sideways so the whole of a column is in sight, clear of the frozen ones (features/grid/frozen). */
   const showWholeColumn = (element: HTMLElement, key: string) =>
-    revealColumn(element, columns, widthOf, columns.findIndex((candidate) => candidate.key === key), grids?.frozen ?? 0, INDICATOR_WIDTH);
+    revealColumn(element, columns, widthOf, columns.findIndex((candidate) => candidate.key === key), frozenColumns, INDICATOR_WIDTH);
 
   /** C1dg_UpdateGrid_BeforeRowColChange + AfterRowColChange for a move to (row, key). */
   /** `editAfter`: open the editor once the cursor gets there (used when a commit makes the move wait). `byMouse`: a click on a cell goes to that cell, not on to the description of the code the cursor left (the keyboard still does). */
@@ -1189,6 +1193,20 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     if (step === 0) return;
     setComboStart("");
     setUpdatePendingMove({ row: cursor.row, key: cursor.key, step });
+  };
+
+  /** Right-click Copy Column: every row shown of the cursor's column to the clipboard (with its heading or not), for Excel, Word or Notepad. */
+  const copyColumn = async (withHeader: boolean) => {
+    const column = columnByKey.get(cursor.key);
+    if (!column) return;
+    const values = shownRows.map((row) => cellOf(records[row], column.key));
+    await navigator.clipboard?.writeText(columnText(column.caption.replace(/^\* /, ""), values, withHeader)).catch(() => undefined);
+  };
+  /** Right-click Copy Selection: the selected rows of the cursor's column only (not the whole column). */
+  const copySelection = async () => {
+    const column = columnByKey.get(cursor.key);
+    if (!column) return;
+    await navigator.clipboard?.writeText(selectedRows().map((row) => cellOf(records[row], column.key)).join("\n")).catch(() => undefined);
   };
 
   // ---- MnuCopy_Click / MnuPaste_Click
@@ -1990,7 +2008,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const visibleRows = shownRows;
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 5);
   const endIndex = Math.min(visibleRows.length, startIndex + Math.ceil(viewport / ROW_HEIGHT) + 10);
-  const frozenCount = grids ? Math.min(grids.frozen, columns.length) : 0;
+  const frozenCount = grids ? Math.min(frozenColumns, columns.length) : 0;
   const frozenLeft = columnLefts(columns, widthOf, INDICATOR_WIDTH);
   const cursorColumn = columnByKey.get(cursor.key);
   const pickedRows = new Set(selectionEnd === null ? [] : selectedRows());
@@ -2295,6 +2313,10 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
             <GridMenu at={menu} onClose={() => setMenu(null)} items={[
               { label: "Copy", onClick: () => void copyCell() },
               { label: "Paste", disabled: !copied, onClick: () => void pasteCell() },
+              ...(selectionEnd !== null ? [{ label: `Copy Selection "${(columnByKey.get(cursor.key)?.caption ?? cursor.key).replace(/^\* /, "")}" (${selectedRows().length} rows)`, title: "Copy only the selected rows of this column", onClick: () => void copySelection() }] : []),
+              { label: `Copy Column "${(columnByKey.get(cursor.key)?.caption ?? cursor.key).replace(/^\* /, "")}"`, title: "Copy the entire column with its heading, to paste in Excel, Word or Notepad", onClick: () => void copyColumn(true) },
+              { label: `Copy Column "${(columnByKey.get(cursor.key)?.caption ?? cursor.key).replace(/^\* /, "")}" (Values Only)`, title: "Copy the column values without the heading", onClick: () => void copyColumn(false) },
+              ...freezeMenuItems(setupColumns, cursor.key, frozenColumns, setFrozenChosen),
               ...columnMenuItems(layout, cursor.key, () => setColumnChooser(true)),
               { label: "Restore Cell Value (Ctrl+Z)", onClick: () => restoreCell(cursor.row, cursor.key) },
               { label: "Delete Row", onClick: () => void deleteSelected("row") },

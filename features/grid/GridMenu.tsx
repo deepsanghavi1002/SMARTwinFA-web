@@ -46,3 +46,16 @@ export function columnMenuItems(layout: MenuLayout, key: string, openArrange: ()
     { label: "Show All Columns", disabled: hiddenColumns.length === 0, onClick: () => setHiddenColumns([]) },
   ];
 }
+
+/**
+ * Freeze Columns up to the cursor's column / Unfreeze Columns, as the report's menu has them.
+ * `setupColumns` are the columns in the setup's order (the frozen ones are the first `frozen` of them);
+ * `setFrozen(null)` goes back to what the setup says.
+ */
+export function freezeMenuItems(setupColumns: readonly { key: string; caption: string }[], key: string, frozen: number, setFrozen: (count: number) => void): GridMenuItem[] {
+  const at = setupColumns.findIndex((column) => column.key === key);
+  const items: GridMenuItem[] = [];
+  if (at >= 0) items.push({ label: `Freeze Columns up to "${setupColumns[at].caption}"`, title: "These columns stay in sight while you scroll sideways", disabled: frozen === at + 1, onClick: () => setFrozen(at + 1) });
+  items.push({ label: "Unfreeze Columns", disabled: frozen === 0, onClick: () => setFrozen(0) });
+  return items;
+}

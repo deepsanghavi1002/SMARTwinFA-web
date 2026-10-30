@@ -553,8 +553,7 @@ function columnFor(key: string, plan: GridPlan): EntryColumn {
   return {
     key,
     caption: row ? `${compulsory ? "* " : ""}${text(row, "head_grid") || key}` : key,
-    // A date shown for information only (not editable) is 85 wide in every small entry, whatever the setup says.
-    width: fieldType === "D" && row && !flag(row, "update_grid_editable") ? 85 : toInt(field(row, "update_grid_width")) || 100,
+    width: toInt(field(row, "update_grid_width")) || 100,
     align: align === "R" || align === "C" ? align : fieldType === "N" || fieldType === "C" ? "R" : "L",
     visible: row ? flag(row, "update_grid_visible") : false,
     editable: row ? flag(row, "update_grid_editable") : false,
