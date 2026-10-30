@@ -86,8 +86,8 @@ Ledger / Debtors / Creditors, Both / Opening Only / Closing Only, from a later d
 headings (Book, Schedule, addon groups), Sundry Debtors / Creditors control lines, Opening Difference.
 Checked on live data: debit = credit = 44,99,94,841.83 with Print Zero on, Debtors Zone totals equal the
 control line, an Apr-May run closes where a Jun-Oct run opens.
-- [ ] Formats other than "No Formating" (Month, Daily, Weekly, 15 Days, Quater Year, Half Year): they
-  go to SP_REPORT_FORMATING branch 6, not ported. (2026-10-08)
+- [x] Formats other than "No Formating" (Month, Daily, Weekly, 15 Days, Quater Year, Half Year): ported 2026-10-30 from SP_FRT_RPT_TRIALBAL
+  (`lib/report/trialBalanceFormats.ts`). Run on live data; not compared with a desktop run. The Opening filter is refused with a format, as the procedure does.
 - [ ] Licence 14 Reference trial balance (Debtors + Reference addon, Collection / Sales Man, opening
   transfer to next year): refused. (2026-10-08)
 - [ ] Desktop quirks copied as they are, confirm with Pranav: (a) the Opening filter puts a credit

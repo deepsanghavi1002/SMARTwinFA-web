@@ -8,6 +8,7 @@ import { pgFragment, ReportRefusal } from "./generate";
 import { cashBookColumns, dayBefore, ddMmYyyy, dropColumn, tableFromFields, formatPeriod, maxOf, pushAll, groupOrderTail, insertFirst, MONTH_NAMES, requireWhere, sortRows, tableFromResult, textKey, unknownFormat, withEntryAddon } from "./library";
 import { registerSlabBook, registerSlabs, challanFrom, orderPendingFrom, orderPendingWhere, pendingChallanFrom, stockVoucher, invalidGst, gstrTaxMismatch, documentUpload, gstFormSummary, gstr3b, gstr1, gstr2, bookwise, checklistDaybook, checklistInvoice, dailyTransaction, fundFlow, interestCalculation, target, taxSummary, tdsReport, topReports, dropAnalysis, salesAnalysis, partySummary, nonFunction, partyBillPdf, physicalStock, cashBookFrom, cashBookOpening, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
 import { money, num, runReportSql, runReportSqlHashed } from "./run";
+import { trialBalanceFormats } from "./trialBalanceFormats";
 import { salesExpenseTable } from "./salesExpense";
 import type { SalesExpenseAmount } from "./salesExpense";
 import { multiYearAccounts } from "./multiYear";
@@ -73,6 +74,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 2: return journalFormats(loader, plan);
     case 3: return registerFormats(loader, plan);
     case 4: return ledgerFormats(loader, plan);
+    case 6: return trialBalanceFormats(loader, plan);
     case 14: return formSummaryFormats(loader, plan);
     case 16: return partyStock(loader, plan);
     case 211: return topReports(loader, plan);
