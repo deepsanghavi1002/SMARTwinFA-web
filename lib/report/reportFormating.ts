@@ -3722,6 +3722,15 @@ async function finishProductStock(loader: Loader, plan: ReportPlan): Promise<Res
     });
     rows.push(row);
   }
+  // Net Value Require (CHK_NETVAL): the amounts at 75% (68% for the Export items' Amount; the procedure takes their opening at 75% too), rounded to whole rupees.
+  if (call.checkQuery.includes("CHK_NETVAL,")) {
+    const whole = (value: number) => Math.round(value + Math.sign(value) * 1e-9);
+    for (const row of rows) {
+      const exported = toText(row.ITEM).slice(0, 6) === "Export";
+      row.Amount = whole(num(row.Amount) * (exported ? 68 : 75) / 100);
+      row.OPEN_AMT = whole(num(row.OPEN_AMT) * 75 / 100);
+    }
+  }
   table.rows = sortRows(rows);
   return table;
 }

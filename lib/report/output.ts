@@ -462,6 +462,21 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
     if (averaged) values[rateName] = Math.round(num(values[saleName]) / num(values[lessName]) * 100) / 100;
     out.push({ kind: "total", level: -1, rowType: "", values, caption: `${"*".repeat(groupColumns.length)}* Final Total : `, ...(averaged ? { treeOnly: [rateName] } : {}) });
   }
+  // Finish Product Costing (163), detail: the final total of the FINISH GOODS rows only (the materials under each are not added in).
+  if (reportKey === 163 && table.has("Prod_type") && !call.checkQuery.includes("CHK_SUMMARY,")) {
+    const finish = table.rows.filter((row) => cellString(row[table.name("Prod_type")!]).trim().toUpperCase() === "FINISH GOODS");
+    if (finish.length > 0) {
+      const totals = (rows: typeof finish) => {
+        const values: Record<string, unknown> = {};
+        for (const name of ["DP_RATE", "NP_RATE", "COST_RATE", "DIFF_RATE", "PRODUCTION", "PROD_VAL", "SALE", "DIFF_VAL"]) {
+          const column = table.name(name);
+          if (column) values[column] = money(rows.reduce((sum, row) => sum + num(row[column]), 0));
+        }
+        return values;
+      };
+      out.push({ kind: "total", level: -1, rowType: "", values: totals(finish), caption: "*** Final Total : " });
+    }
+  }
   void formattedReport;
   // Day book and register (no format): a last line "Total Entries : n" in the date column.
   if ((reportKey === 1 || reportKey === 3) && !formatted && table.has("selected_date")) {

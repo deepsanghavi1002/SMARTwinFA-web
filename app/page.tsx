@@ -50,6 +50,9 @@ type MenuNode = {
 };
 
 /** A menu row's letter: the one MenuText marks with "&", else the label's first letter or digit (as Windows menus do). */
+/** A screen shows its busy symbol (Loading, Generating report ...): the menu takes no click or key meanwhile. */
+const screenBusy = () => typeof document !== "undefined" && document.querySelector(".rp-working") !== null;
+
 function menuKey(node: MenuNode): string {
   if (node.accessKey) return node.accessKey.toUpperCase();
   return (node.label.match(/[A-Za-z0-9]/)?.[0] ?? "").toUpperCase();
@@ -452,7 +455,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   useEffect(() => { bringToFrontNow.current = bringToFront; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.key !== "F6" && event.key !== "Tab") || !event.ctrlKey || event.altKey || event.metaKey || isMessageBoxOpen()) return;
+      if ((event.key !== "F6" && event.key !== "Tab") || !event.ctrlKey || event.altKey || event.metaKey || isMessageBoxOpen() || screenBusy()) return;
       const list = windowsNow.current;
       if (list.length === 0) return;
       event.preventDefault();
@@ -617,6 +620,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   };
 
   const menuKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (screenBusy()) { event.preventDefault(); return; }
     const button = (event.target as HTMLElement).closest?.("button");
     if (!button || !menuBar.current?.contains(button)) return;
     const index = menus.findIndex((menu) => menu.id === (button.dataset.menuRoot ? Number(button.dataset.menuRoot) : openMenu));
@@ -691,7 +695,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     const down = (event: KeyboardEvent) => {
       if (event.key === "Alt") { lone = !event.repeat || lone; return; }
       lone = false;
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || isMessageBoxOpen()) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || isMessageBoxOpen() || screenBusy()) return;
       const match = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
       if (!match) return;
       const letter = match[1] ?? match[2];
@@ -706,7 +710,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       if (event.key !== "Alt" || !lone) return;
       lone = false;
       const bar = menuBar.current;
-      if (!bar || isMessageBoxOpen()) return;
+      if (!bar || isMessageBoxOpen() || screenBusy()) return;
       event.preventDefault();
       if (bar.contains(document.activeElement)) {
         setOpenMenu(null);

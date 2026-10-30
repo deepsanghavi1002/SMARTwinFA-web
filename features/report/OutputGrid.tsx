@@ -1110,7 +1110,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                         key={column.key}
                         data-col={col}
                         className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
-                        style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: label && look.captionRight ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
+                        style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: label && look.captionRight && output.reportKey !== 163 ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
                         data-tip={text}
                       >
                         {label && kindOf(row) === "heading" && output.subtotals && (
