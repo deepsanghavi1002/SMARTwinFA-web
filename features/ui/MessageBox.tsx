@@ -174,7 +174,8 @@ export function MessageBoxHost() {
     <div className="msgbox-backdrop" role="presentation">
       <div ref={box} className={`msgbox msgbox-${request.kind}${request.enterHint ? " msgbox-enterhint" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby={`msgbox-title-${request.id}`} aria-describedby={`msgbox-text-${request.id}`} style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
         <div className="msgbox-title" id={`msgbox-title-${request.id}`} onPointerDown={startDrag} style={{ cursor: "move" }} title="Drag to move this message">
-          {request.titleIcon && <svg className="msgbox-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[request.kind]} /></svg>}
+          {/* As the desktop's message box: the Pranav Computer logo before the title, whatever the message. */}
+          <img className="msgbox-title-logo" src="/pranav-icon.png" alt="" aria-hidden="true" draggable={false} />
           <span>{request.title}</span>
         </div>
         <div className="msgbox-body">

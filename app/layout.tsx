@@ -7,6 +7,7 @@ import "./modern-ui.css";
 // Phones and tablets: the menu drawer, the bottom bar, touch sizes. Last, so it wins over the desktop layers above.
 import "./responsive.css";
 import { MessageBoxHost } from "../features/ui/MessageBox";
+import { NoBrowserMenu } from "../features/ui/NoBrowserMenu";
 import { ClientErrorReporter } from "../features/ui/ClientErrorReporter";
 
 const geistSans = Geist({
@@ -34,8 +35,9 @@ export const metadata: Metadata = {
   title: "SMARTwinFA Web",
   description: "Cross-platform migration of SMART financial accounting.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: [{ url: "/favicon.ico", sizes: "any" }, { url: "/pranav-icon.png", type: "image/png", sizes: "256x256" }],
+    shortcut: "/favicon.ico",
+    apple: "/pranav-icon.png",
   },
 };
 
@@ -66,6 +68,7 @@ export default function RootLayout({
         <ClientErrorReporter />
         {/* The one message box every screen uses (features/ui/MessageBox). */}
         <MessageBoxHost />
+        <NoBrowserMenu />
       </body>
     </html>
   );

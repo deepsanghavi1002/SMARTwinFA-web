@@ -783,7 +783,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       {selection && <IdleGuard companyGroup={selection.companyGroup} loginName={selection.loginName} locked={locked} onLock={lock} onUnlock={unlock} onLogoff={logoutNow} />}
       <header className="title-bar" inert={navOpen}>
         <button ref={navToggle} className="nav-toggle" type="button" aria-label="Open menu" aria-haspopup="true" aria-expanded={navOpen} aria-controls="app-nav" onClick={() => setNavOpen((open) => !open)}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg></button>
-        <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
+        <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><img src="/pranav-icon.png" alt="" aria-hidden="true" draggable={false} style={{ width: 20, height: 20, marginRight: 6, objectFit: "contain" }} /><strong>SMARTwinFA</strong></button>
         {windows.length > 0 && (
           <>
             <div

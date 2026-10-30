@@ -36,9 +36,9 @@ import { remainingAfterKey, typeAtCaret } from "../grid/caret";
 import { keepGridFocus } from "../grid/focus";
 import { findNextCell } from "../grid/find";
 import { columnLefts, frozenCell, revealColumn, ROW_MARKER_WIDTH } from "../grid/frozen";
-import { copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
+import { columnText, copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
 import type { CopiedCell } from "../grid/clipboard";
-import { cellAt, columnMenuItems, GridMenu } from "../grid/GridMenu";
+import { cellAt, columnMenuItems, freezeMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuPlace } from "../grid/GridMenu";
 import { BLANK_COMPULSORY_TITLE, blankCompulsory } from "../grid/compulsory";
 import { FoundText } from "../grid/FoundText";
@@ -261,7 +261,10 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const state = useCallback(() => ({ firstCombo: first, controls }), [first, controls]);
   /** The columns as the operator lays them out: order, hidden ones, widths, frozen ones (features/grid/useColumnLayout). */
   const setupColumns = useMemo(() => grid?.columns.filter((column) => column.visible) ?? [], [grid]);
-  const frozen = Math.min(grid?.frozen ?? 0, setupColumns.length);
+  /** Freeze / Unfreeze on the right-click menu: how many columns are frozen until a new grid is shown (else the setup's). */
+  const [frozenChosen, setFrozenChosen] = useState<number | null>(null);
+  useEffect(() => { setFrozenChosen(null); }, [grid]);
+  const frozen = Math.min(frozenChosen ?? grid?.frozen ?? 0, setupColumns.length);
   const layout = useColumnLayout(setupColumns, frozen, (column) => Math.max(40, column.width));
   const { columns, widthOf } = layout;
   const licence = def?.licence ?? 0;
@@ -671,6 +674,23 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     return positions;
   };
 
+  /** Right-click Copy Column: every row shown of the cursor's column to the clipboard (with its heading or not), for Excel, Word or Notepad. */
+  const copyColumn = async (withHeader: boolean) => {
+    const column = columns[cursor.col];
+    if (!column) return;
+    const values = shownRows.map((_, position) => shownAt(position, column));
+    await navigator.clipboard?.writeText(columnText(column.caption.replace(/^\* /, ""), values, withHeader)).catch(() => undefined);
+    setMessage(`${values.length} rows of ${column.caption.replace(/^\* /, "")} copied`);
+  };
+  /** Right-click Copy Selection: the selected rows of the cursor's column only (not the whole column). */
+  const copySelection = async () => {
+    const column = columns[cursor.col];
+    if (!column) return;
+    const values = selectedPositions().map((position) => shownAt(position, column));
+    await navigator.clipboard?.writeText(values.join("\n")).catch(() => undefined);
+    setMessage(`${values.length} selected row${values.length === 1 ? "" : "s"} of ${column.caption.replace(/^\* /, "")} copied`);
+  };
+
   // ---- MnuCopy / MnuPaste (features/grid/clipboard)
   const copyCell = async () => {
     const column = columns[cursor.col];
@@ -745,6 +765,19 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   useEffect(() => { openComboNow.current = openCombo; });
   const [arrowOpen, setArrowOpen] = useState(0);
   useEffect(() => { if (arrowOpen > 0) openComboNow.current(); }, [arrowOpen]);
+
+  /** F5 on the grid (also in a cell being edited): the cell is closed, the grid is left and the cursor goes to the Save button. */
+  const saveKey = async (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "F5" || !grid) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (editing) {
+      const column = columns[cursor.col];
+      if (column && !column.options) { if (!(await commit())) return; } else { setComboStart(""); }
+      setEditing(false);
+    }
+    activeById("mp-save")?.focus();
+  };
 
   const gridKeys = async (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (editing || shownRows.length === 0) return;
@@ -970,7 +1003,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const lastLine = headLines.length + 1;
   const headLocked = Boolean(grid) || Boolean(busy);
   return (
-    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title}>
+    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title} onKeyDownCapture={(event) => void saveKey(event)}>
       {/*
         The header in three lines that line up like a grid: the lists, then the dates and text boxes,
         then the first combo with Show / Quit. Every label and every field starts at the same place in
@@ -1033,6 +1066,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
           {grid?.balance && <span className="mp-balance">{grid.balance}</span>}
           {grid?.finalAmount && <span className="mp-balance">{grid.finalAmount}</span>}
         </span>
+        {/* As the account help's "F8 Ledger": the key and what it does, at the right end of the first combo's line. */}
+        {grid && <kbd className="mp-help-f1 se-f5-hint" style={{ gridRow: lastLine, gridColumn: 7 }} title="F5 leaves the grid and goes to the Save button"><b>F5</b> to Save</kbd>}
         <span className="mp-heading se-title" style={{ gridRow: 1, gridColumn: 7 }}>{def?.caption || title}{def && def.rights.restricted && !def.rights.edit ? " · Rights: view only" : ""}</span>
       </div>
 
@@ -1157,6 +1192,10 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
             <GridMenu at={menu} onClose={() => { setMenu(null); keepGridFocus(gridFocus); }} items={[
               { label: "Copy (Ctrl+C)", onClick: () => void copyCell() },
               { label: "Paste (Ctrl+V)", disabled: !copied, onClick: () => void pasteCell() },
+              ...(selectionEnd !== null ? [{ label: `Copy Selection "${cursorColumn.caption.replace(/^\* /, "")}" (${selectedPositions().length} rows)`, title: "Copy only the selected rows of this column", onClick: () => void copySelection() }] : []),
+              { label: `Copy Column "${cursorColumn.caption.replace(/^\* /, "")}"`, title: "Copy the entire column with its heading, to paste in Excel, Word or Notepad", onClick: () => void copyColumn(true) },
+              { label: `Copy Column "${cursorColumn.caption.replace(/^\* /, "")}" (Values Only)`, title: "Copy the column values without the heading", onClick: () => void copyColumn(false) },
+              ...freezeMenuItems(setupColumns, cursorColumn.key, frozen, setFrozenChosen),
               ...columnMenuItems(layout, cursorColumn.key, () => setColumnChooser(true)),
               { label: "Restore Cell Value (Ctrl+Z)", onClick: () => restoreCell(cursor.row, cursorColumn) },
               { label: "Delete Row", disabled: !def?.canDelete, title: def?.canDelete ? undefined : "This entry does not delete rows", onClick: () => void deleteSelected("row") },
