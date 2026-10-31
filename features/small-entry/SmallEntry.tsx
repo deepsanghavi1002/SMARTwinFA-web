@@ -22,6 +22,11 @@ import { ArrangeColumns } from "../grid/ArrangeColumns";
 import { comboPlace } from "../grid/comboPlace";
 import { exportTableFrom, NOT_SUMMED } from "../grid/exportTable";
 import { GridButtons } from "../grid/GridButtons";
+import { LogViewer } from "../grid/LogViewer";
+import { RowFilterButton, rowFilterHolds } from "../grid/RowFilter";
+import { pickKindOf, ROW_PICK_HINT, useRowPick } from "../grid/RowPick";
+import type { RowFilter } from "../grid/RowFilter";
+import type { LogTable } from "../grid/LogViewer";
 import { BillsGrid } from "./BillsGrid";
 import { confirmLeave, refreshQuestion } from "../grid/prompts";
 import { nextOpenCell, rowChanged } from "../grid/rows";
@@ -140,12 +145,17 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const [message, setMessage] = useState("");
   const [warnings, setWarnings] = useState<readonly string[]>([]);
   const [yearStart, setYearStart] = useState<Date | null>(null);
+  /** The Log button: shown when the company keeps the special log (setup.logfile = S); logTable is the open Log window. */
+  const [logKept, setLogKept] = useState(false);
+  const [logTable, setLogTable] = useState<LogTable | null>(null);
   const [who, setWho] = useState({ company: "", user: "" });
   /** A combo cell's open list: where it shows, and a letter that opened it. */
   const [comboAt, setComboAt] = useState<GridComboPlace | null>(null);
   const [comboStart, setComboStart] = useState("");
   const [columnChooser, setColumnChooser] = useState(false);
   const [menu, setMenu] = useState<GridMenuPlace | null>(null);
+  /** The pen column's filter: every row, only the rows edited (not yet saved), or only the rows not edited. */
+  const [rowFilter, setRowFilter] = useState<RowFilter>("all");
   const [copied, setCopied] = useState<CopiedCell | null>(null);
   /** Type to find: the letters typed so far in the current column (not while editing). */
   const [typed, setTyped] = useState("");
@@ -222,11 +232,12 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   useEffect(() => {
     if (!selection) return;
     let cancelled = false;
-    smallEntryCall<{ entry: EntryDefinition; warnings: string[]; yearStart: string; companyName: string; userName: string }>(selection, entryName, menuShortName, "entry")
+    smallEntryCall<{ entry: EntryDefinition; warnings: string[]; yearStart: string; logFileSpecial?: boolean; companyName: string; userName: string }>(selection, entryName, menuShortName, "entry")
       .then(async (body) => {
         if (cancelled) return;
         setDef(body.entry);
         setYearStart(new Date(body.yearStart));
+        setLogKept(body.logFileSpecial === true);
         setWho({ company: body.companyName, user: body.userName });
         setWarnings([...body.entry.unsupported, ...body.warnings]);
         // The first combo opens on the entry chosen last time in this entry, this company and user (else its first).
@@ -330,12 +341,12 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
    */
   const stored = useCallback((index: number) => grid?.rows[index] ?? records[index] ?? {}, [grid, records]);
   /** Whether a row passes every column filter but `except` (the one whose list is being opened). */
-  const passesFilters = useCallback((index: number, except?: string) => Object.entries(filters).every(([key, filter]) => {
+  const passesFilters = useCallback((index: number, except?: string) => rowFilterHolds(rowFilter, edited.has(index)) && Object.entries(filters).every(([key, filter]) => {
     if (key === except) return true;
     const column = grid?.columns.find((candidate) => candidate.key === key);
     const raw = stored(index)[key] ?? "";
     return !column || filterHolds(kindOf(column), filter, raw, shownValue(column, raw));
-  }), [filters, grid, stored, kindOf]);
+  }), [filters, grid, stored, kindOf, rowFilter, edited]);
   const searchHolds = useCallback((index: number) => {
     const needle = find.trim().toLowerCase();
     return needle === "" || columns.some((column) => shownValue(column, stored(index)[column.key] ?? "").toLowerCase().includes(needle));
@@ -362,7 +373,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
 
   /** A column's distinct values as shown, for its filter list (after the other filters and the search). */
   const valuesOf = (column: EntryColumn) => sortedDistinct(liveRows.filter((index) => passesFilters(index, column.key) && searchHolds(index)).map((index) => shownValue(column, stored(index)[column.key] ?? "")));
-  const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
+  const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null || rowFilter !== "all";
 
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);
   const endIndex = Math.min(shownRows.length, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + 10);
@@ -621,9 +632,27 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     if (next) { editOnArrive.current = true; moveTo(next.row, next.col); }
   };
 
+  /** F6 (the row's values of the cell's kind) and F8 (the previous column's value): features/grid/RowPick, with this screen's own checks. */
+  const rowPicker = useRowPick<EntryColumn>({
+    columns,
+    kindOf: (column) => pickKindOf(column.fieldType),
+    valueOf: (column) => shownValue(column, records[shownRows[cursor.row]]?.[column.key] ?? ""),
+    cellOf: (column) => activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`),
+    pickable: (column) => !column.options && !column.boolean,
+    editing,
+    commit: (value) => commit(value),
+    startEdit: () => startEdit(),
+    afterFill: () => {
+      const next = nextEntry(cursor.row, cursor.col);
+      if (next) { editOnArrive.current = true; moveTo(next.row, next.col); } else keepGridFocus(gridFocus);
+    },
+    setMessage,
+  });
+
   const editorKeys = async (event: ReactKeyboardEvent<HTMLInputElement>) => {
     const column = columns[cursor.col];
     if (column && tools.keys(event, editorKindOf(column.fieldType), editText, setEditText, numberRules(column.setup), false, undefined, true)) return;
+    if (column && rowPicker.keys(event, column)) return;
     // Esc undoes what was typed: the cell keeps the value it had before editing began.
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
     if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
@@ -811,6 +840,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       setMessage(`${shownRows.length} rows copied`);
       return;
     }
+    if (event.key === "F8" && column && !column.options && !column.boolean && editableAt(cursor.row, column)) { event.preventDefault(); void rowPicker.copyPrevious(column); return; }
     if (event.key === "F3") { event.preventDefault(); findNext(); return; }
     if (event.key === "F5") { event.preventDefault(); activeById("mp-save")?.focus(); return; }
     if ((event.key === "F4" || (event.altKey && event.key === "ArrowDown")) && comboHere) { event.preventDefault(); openCombo(); return; }
@@ -834,6 +864,17 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         if (column.options) { openCombo(event.key); return; }
         // The first key goes through KeyPressEdit too: refused, replaced (a date's space) or typed.
         const record = records[shownRows[cursor.row]];
+        // A blank date cell: T, S, E, F, L (either case) fill the date straight away; a cell with a date is never changed by them.
+        if (editorKindOf(column.fieldType) === "date" && /^[a-z]$/i.test(event.key) && String(record[column.key] ?? "").trim() === "") {
+          const date = tools.dateShortcut(event.key, "");
+          if (date !== null) {
+            const index = shownRows[cursor.row];
+            const next = { ...record, [column.key]: date };
+            setRecords((rows) => rows.map((row, at) => (at === index ? next : row)));
+            settleEdited(index, next);
+            return;
+          }
+        }
         const key = fitCase(column.setup, event.key, 0);
         const outcome = keyPress(keyContext(column, record, ""), key);
         if (outcome.message) { await ask(outcome.message, "Typed Character not allowed"); return; }
@@ -935,6 +976,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     setEditing(false);
     setFind("");
     setSort(null);
+    setRowFilter("all");
     clearFilters();
     setTyped("");
     setSelectionEnd(null);
@@ -955,6 +997,28 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     await loadGrid(first);
   };
 
+  /** A pen filter was chosen: an open editor is taken first, then the first row shown opens for editing at its first editable column. */
+  const applyRowFilter = async (value: RowFilter) => {
+    if (editing && !(await commit())) return;
+    setEditing(false);
+    setRowFilter(value);
+    editOnArrive.current = true;
+    setCursor({ row: 0, col: Math.max(0, columns.findIndex((column) => column.editable)) });
+    scroller.current?.scrollTo({ top: 0 });
+    keepGridFocus(gridFocus);
+  };
+
+  /** The Log button: every save of the row under the cursor (LOG_SMALLENTRY), the Add first, each edit after it. */
+  const showLog = async () => {
+    const record = records[shownRows[cursor.row]];
+    if (!record) return;
+    setBusy("Reading log");
+    const body = await call<{ log: LogTable }>("log", { state: state(), values: record }).catch((error: unknown) => ({ log: { columns: [], rows: [], message: error instanceof Error ? error.message : String(error) } }));
+    setBusy("");
+    if (body.log.columns.length === 0) { await ask(body.log.message || "No log has been saved for this record yet", `${def?.caption || title} Log`); return; }
+    setLogTable(body.log);
+  };
+
   const save = async () => {
     if (!def || !grid) return;
     if (editing && !(await commit())) return;
@@ -969,7 +1033,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     // Func_BlankFieldValidation, as the master's: a compulsory column on screen and open on the row may not be blank.
     const blank = allocation ? "" : blankCompulsory(changedRows.map((index) => ({ rowNumber: index + 1, deleted: deleted.has(index), valueOf: (key: string) => records[index][key] })), setupColumns, (rowNumber, column) => isEditable(rowNumber - 1, column));
     if (blank !== "") { await ask(blank, BLANK_COMPULSORY_TITLE); return; }
-    if ((await ask("Save Entry To Data ?", "Entry Add Save", ["Yes", "No", "Cancel"])) !== "Yes") return;
+    if ((await ask("Confirm to save data?", "Confirm Save", ["Yes", "No"], "Yes")) !== "Yes") return;
     let editPassword: string | undefined;
     if (def.rights.editPassword) {
       const password = await messageBox.prompt("Enter Password", "Edit Password", { password: true });
@@ -1080,7 +1144,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
               role="grid"
               aria-label={def?.caption || title}
               aria-rowcount={shownRows.length}
-              className="mp-grid"
+              className="mp-grid se-grid"
               style={{ height: (shownRows.length + 1) * ROW_HEIGHT }}
               onKeyDown={(event) => void gridKeys(event)}
               onContextMenu={(event) => {
@@ -1094,7 +1158,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
               }}
             >
               <div className="mp-row mp-head" style={{ top: 0 }}>
-                <div className="mp-cell mp-rownum" aria-hidden="true" />
+                <RowFilterButton value={rowFilter} onChange={(value) => void applyRowFilter(value)} onClosed={() => keepGridFocus(gridFocus)} />
                 {columns.map((column, index) => {
                   const fixed = frozenCell(index, frozen, lefts);
                   const ruled = rowRuled(column.setup, column.editable);
@@ -1226,10 +1290,11 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
           output={output}
           refresh={{ onClick: () => void refresh() }}
           cancel={{ onClick: () => void cancel() }}
+          log={logKept ? { onClick: () => void showLog(), disabled: !current, title: "The log of the row under the cursor: every save of it, side by side" } : undefined}
           quit={{ onClick: () => void leave() }}
           arrange={{ onClick: () => setColumnChooser(true), hidden: layout.hiddenColumns.length }}
           search={{ id: "se-find", value: find, onChange: (value) => { setFind(value); setCursor({ row: 0, col: cursor.col }); scroller.current?.scrollTo({ top: 0 }); }, onEnter: findNext }}
-          clearFilters={filtering ? () => { clearFilters(); setFind(""); setSort(null); } : null}
+          clearFilters={filtering ? () => { clearFilters(); setFind(""); setSort(null); setRowFilter("all"); } : null}
           count={`${shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length}`}${edited.size - deleted.size > 0 ? ` · ${edited.size - deleted.size} changed` : ""}${deleted.size ? ` · ${deleted.size} to delete` : ""}`}
         />
       )}
@@ -1240,11 +1305,13 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         {def?.canDelete && edited.size > 0 && <span className="mp-del-hint" style={{ flex: "none", fontWeight: 700 }} title="Delete the row under the cursor (Del)">Press Del to delete row</span>}
         <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message || (current && cursorColumn ? [tooltipText(cursorColumn.setup.field_tooltips || cursorColumn.tooltip), cursorColumn.compulsory ? "Compulsory" : "", cursorColumn.status.replace(/\s*\/\s*$/, "")].filter(Boolean).join("   ·   ") : "")}</span>
         {totals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{totals}</span>}
-        {editing && cursorColumn && <span>{tools.hint(editorKindOf(cursorColumn.fieldType))}</span>}
+        {editing && cursorColumn && <span>{tools.hint(editorKindOf(cursorColumn.fieldType))}{!cursorColumn.options && !cursorColumn.boolean ? ROW_PICK_HINT : ""}</span>}
         {warnings.map((warning) => <span key={warning} className="mp-warning" title={warning}>⚠ {warning}</span>)}
       </div>
       {tools.popups}
+      {rowPicker.popup}
       {output.dialogs}
+      {logTable && <LogViewer table={logTable} title={`${def?.caption || title} Log`} onClose={() => { setLogTable(null); keepGridFocus(gridFocus); }} />}
       {columnChooser && (
         <ArrangeColumns
           items={layout.arrangeItems((column) => column.caption)}

@@ -8,7 +8,7 @@ import { Calculator } from "./Calculator";
 import type { NumberRules } from "./rules";
 import { CalendarPopup } from "./CalendarPopup";
 import type { DateRange } from "./CalendarPopup";
-import { shorthandDate } from "./dates";
+import { addMonths, shortcutDate, shorthandDate } from "./dates";
 import { useDraggable } from "./useDraggable";
 
 /**
@@ -59,6 +59,17 @@ export function useEditorTools(yearStart: Date | null, { altCalculator = true }:
     return shorthandDate(text, start, parseDesktopDate(before));
   }, [yearStart]);
 
+  /**
+   * A date field's one-letter shortcut (T today, S year start, E year end, F / L month start / end,
+   * either case) as the finished dd/MMM/yyyy text; null when the key is not one. `current` is the
+   * date the field already has (the month F and L count in).
+   */
+  const dateShortcut = useCallback((key: string, current: string): string | null => {
+    const start = yearStart && !Number.isNaN(yearStart.getTime()) ? yearStart : null;
+    const date = shortcutDate(key, start, parseDesktopDate(current));
+    return date ? formatDesktopDate(date) : null;
+  }, [yearStart]);
+
   /** Opens the calendar just under the open editor (above it when there is no room below). */
   /** `anchor`: the box the calendar opens under (else the focused editor, else the first one). */
   const openCalendar = (value: string, set: (value: string) => void, required = false, anchor?: Element | null, range?: DateRange) => {
@@ -90,6 +101,20 @@ export function useEditorTools(yearStart: Date | null, { altCalculator = true }:
       return true;
     }
     if (kind === "date" && event.altKey && event.key === "ArrowDown") { event.preventDefault(); openCalendar(value, set, required, undefined, range); return true; }
+    if (kind === "date" && event.key === "F4" && !event.altKey && !event.ctrlKey) { event.preventDefault(); openCalendar(value, set, required, undefined, range); return true; }
+    if (kind === "date" && !event.altKey && !event.ctrlKey && !event.metaKey && (event.key === "PageUp" || event.key === "PageDown")) {
+      const from = parseDesktopDate(value) ?? new Date(new Date().toDateString());
+      event.preventDefault();
+      event.stopPropagation();
+      set(formatDesktopDate(addMonths(from, event.key === "PageDown" ? 1 : -1)));
+      return true;
+    }
+    if (kind === "date" && event.key.length === 1 && /[a-z]/i.test(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      // A letter is a shortcut only while the date is blank, so a stray key never changes a date unnoticed. Once
+      // digits are typed it belongs to the month name (23sep), so S, E and F still type there.
+      const date = value === "" ? dateShortcut(event.key, value) : null;
+      if (date !== null) { event.preventDefault(); set(date); return true; }
+    }
     if (altCalculator && kind === "number" && event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); remember(); setCalc({ initial: value, rules, set }); return true; }
     if (kind === "number" && !event.ctrlKey && !event.altKey && !event.metaKey && ["+", "*", "/", "="].includes(event.key)) {
       event.preventDefault();
@@ -133,7 +158,7 @@ export function useEditorTools(yearStart: Date | null, { altCalculator = true }:
   );
 
   /** The status-bar hint while such an editor is open. */
-  const hint = (kind: EditorKind) => (kind === "date" ? "Alt+↓ Calendar · Ctrl+Del Clear" : kind === "number" ? `${altCalculator ? "Alt+C or + * / =" : "+ - * / % ="} Calculator · Ctrl+Del Clear` : "");
+  const hint = (kind: EditorKind) => (kind === "date" ? "T Today · S Year start · E Year end · F First day · L Last day · Alt+↓ Calendar · Ctrl+Del Clear" : kind === "number" ? `${altCalculator ? "Alt+C or + * / =" : "+ - * / % ="} Calculator · Ctrl+Del Clear` : "");
 
   /** The calendar and calculator windows; render once, anywhere in the screen. */
   const popups = (
@@ -167,5 +192,5 @@ export function useEditorTools(yearStart: Date | null, { altCalculator = true }:
     </>
   );
 
-  return { keys, buttons, hint, popups, typedDate, open: calc !== null || calendar !== null };
+  return { keys, buttons, hint, popups, typedDate, dateShortcut, open: calc !== null || calendar !== null };
 }

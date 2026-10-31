@@ -7,7 +7,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { loadEntry, loadEntryGrid } from "@/lib/small-entry/load";
-import { saveEntry } from "@/lib/small-entry/save";
+import { saveEntry, smallEntryLog } from "@/lib/small-entry/save";
 import type { EditedRow, EntryDefinition, EntryOption, EntryState } from "@/lib/small-entry/types";
 import { logError } from "@/lib/log";
 
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
       switch (body.action) {
         case "entry": {
           const entry = await loadEntry(loader, body.entryName, moduleName);
-          return { entry, warnings: loader.warnings, companyName: session.companyName, userName: session.loginName, yearStart: session.tarikh1.toISOString() };
+          return { entry, warnings: loader.warnings, logFileSpecial: session.flags.logFileSpecial, companyName: session.companyName, userName: session.loginName, yearStart: session.tarikh1.toISOString() };
         }
         case "grid": {
           const def = await loadEntry(loader, body.entryName, moduleName);
@@ -83,6 +83,13 @@ export async function POST(request: Request) {
           return saveEntry(loader, { entryName: body.entryName, menuShortName: moduleName, state, choices, rows, detail, dryRun: body.dryRun === true, editPassword: typeof body.editPassword === "string" ? body.editPassword : undefined });
         }
         // Payment Manual Allot: the closing balance (Dr positive, Cr negative) of the account just chosen in a row.
+        // The Log button: the log of the grid row under the cursor.
+        case "log": {
+          const def = await loadEntry(loader, body.entryName, moduleName);
+          const { state, choices } = checkedState(def, body.state);
+          const values = Object.fromEntries(Object.entries((body.values ?? {}) as Record<string, unknown>).map(([name, value]) => [String(name), String(value ?? "")]));
+          return { log: await smallEntryLog(loader, { entryName: body.entryName, state, choices, values }) };
+        }
         case "closing": {
           const rows = (await client.query(`SELECT closing FROM ${session.companySchema}.ac_balance WHERE code = $1 AND year_id = $2`, [Number(body.code) || 0, session.yearId])).rows as { closing: string | number | null }[];
           return { closing: Number(rows[0]?.closing ?? 0) };

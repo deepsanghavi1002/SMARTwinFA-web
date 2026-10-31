@@ -11,6 +11,8 @@ import { ADD_TYPE_ENTRIES, rowSystemValues } from "./lastYear";
 import type { RowValues } from "./lastYear";
 import { overlayEdits, PAYMENT_ENTRIES, PAYMENT_ROW_KEY, paymentStatements } from "./payments";
 import { Loader } from "../master-program/load";
+import { readSmallEntryLog } from "../master-program/extras";
+import type { MasterLogTable } from "../master-program/extras";
 import { formatDesktopDate, formatDesktopTime, parseDesktopDate, removeTableAlias, toInt, toText } from "../master-program/legacy";
 import { readRights, SETUP_SCHEMA } from "../master-program/session";
 import { columnFor, entryNature, entryProperties, gridPlan, loadEntryGrid, PORTED_ENTRIES, planColumns, replaceEntryValues } from "./load";
@@ -148,7 +150,7 @@ function saveLoop(rules: readonly Row[], rows: readonly EditedRow[], plan: GridP
       // Quick Data (6) updates the ledger by its own key, the grid's first column.
       const tableWhere = options.context.entryId === 6 && table === "ledger" ? `led_key=${toInt(cell(values, keys[0] ?? ""))}` : where;
       if (queryType === "I") {
-        if (fields.length > 0) statements.push({ sql: "", insert: { table, fields, values: fieldValues } });
+        if (fields.length > 0) statements.push({ sql: "", insert: { table, fields, values: fieldValues, row: rowIndex } });
       } else if (queryType === "D") {
         if (tableWhere !== "") statements.push({ sql: `Delete from ${table} where ${tableWhere}` });
       } else if (queryType === "U" && sets.length > 0 && tableWhere !== "") {
@@ -284,17 +286,23 @@ function systemValue(system: string, values: Readonly<Record<string, string>>, o
 // ---------------------------------------------------------------------------------------
 // The special log (setup.logfile = 'S'): one LOG_SMALLENTRY row per saved grid row
 
-async function specialLog(loader: Loader, entryId: number, request: SaveRequest, controls: readonly EntryControl[], plan: GridPlan, keys: readonly string[], firstLabel: string, rows: readonly EditedRow[], savedRows: ReadonlySet<number>, pkColumn: string, queryTypeOf: (row: EditedRow) => string): Promise<string[]> {
+async function specialLog(loader: Loader, entryId: number, request: SaveRequest, controls: readonly EntryControl[], plan: GridPlan, keys: readonly string[], firstLabel: string, rows: readonly EditedRow[], savedRows: ReadonlySet<number>, pkColumn: string, queryTypeOf: (row: EditedRow) => string, insertedKeys: ReadonlyMap<string, number>): Promise<string[]> {
   const { session, client } = loader;
   const schema = `${session.companySchema}_biglog`;
   const columns = new Set(((await loader.readTable("SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'log_smallentry'", [schema])) ?? []).map((row) => text(row, "column_name").toLowerCase()));
   if (columns.size === 0) { loader.warnings.push(`Special log skipped: ${schema}.log_smallentry does not exist in PostgreSQL`); return []; }
   const now = new Date();
   const q = '"';
-  const top = [`${q}!${firstLabel}${q}: ${q}${request.state.firstCombo?.text ?? ""}${q}`, `${q}user${q}: ${q}${session.loginName}${q}`, `${q}save date${q}: ${q}${formatDesktopDate(now)}${q}`, `${q}save time${q}: ${q}${formatDesktopTime(now)}${q}`, `${q}machine${q}: ${q}WEB${q}`];
+  const top = [`${q}!*${firstLabel}${q}: ${q}${request.state.firstCombo?.text ?? ""}${q}`, `${q}user${q}: ${q}${session.loginName}${q}`, `${q}save date${q}: ${q}${formatDesktopDate(now)}${q}`, `${q}save time${q}: ${q}${formatDesktopTime(now)}${q}`, `${q}machine${q}: ${q}WEB${q}`];
   for (const control of controls) top.push(`${q}${control.label}${q}: ${q}${request.state.controls[control.name] ?? ""}${q}`);
   const topText = `[{${top.join(",")}}]`;
   const written: string[] = [];
+  // A row added in this save has no key on the screen. The key its insert was given (the entry's table, as the desktop finds it by the
+  // table's primary key) is kept in ISMALL_ENTRY_PKV: the exact key the save used for that row, not worked out afterwards.
+  const whereTable = keys.reduce((found, key) => {
+    const item = [...plan.body].reverse().find((candidate) => candidate.column.toLowerCase() === key.toLowerCase());
+    return !columnFor(key, plan).visible && flag(item?.row, "field_in_upd_where") ? text(item?.row, "database_name") : found;
+  }, "").toLowerCase();
   for (const [index, edited] of rows.entries()) {
     if (!savedRows.has(index)) continue;
     let start = "";
@@ -319,9 +327,19 @@ async function specialLog(loader: Loader, entryId: number, request: SaveRequest,
       const shown = column.fieldType === "N" ? Number(value.replace(/,/g, "") || 0).toLocaleString("en-US", { minimumFractionDigits: Math.min(5, column.decimals), maximumFractionDigits: Math.min(5, column.decimals) }) : value;
       details += `,${q}${mark}${column.caption}${q}: ${q}${shown}${q}`;
     }
+    const added = toInt(cell(edited.values, pkColumn)) <= 0 && !edited.deleted ? insertedKeys.get(`${index}|${whereTable}`) ?? 0 : 0;
+    if (added > 0) {
+      // The key now exists: the record shows it where the screen had none.
+      updWhere = updWhere.replace(/ - (?=,|$)/g, () => ` - ${added}`);
+      start = start.replace(`${q}: ${q}${q},${q}Row${q}`, () => `${q}: ${q}${added}${q},${q}Row${q}`);
+    }
     const grid = `${start}${details}}]`;
-    const pkv = toInt(cell(edited.values, pkColumn));
-    const previous = columns.has("lsmall_pkv") ? await loader.readTable(`SELECT 1 FROM ${schema}.log_smallentry WHERE lsmall_smallid = $1 AND lsmall_pkv = $2 LIMIT 1`, [entryId, pkv]) : null;
+    const pkv = added > 0 ? added : toInt(cell(edited.values, pkColumn));
+    // Add or Edit: has this row been logged before? By ISMALL_ENTRY_PKV (the row's key, kept on every log record); a record logged before that field existed is found by the key in LSMALL_UPDWHERE ("Row: 00001 - 95397").
+    const previous = pkv <= 0 ? null
+      : columns.has("ismall_entry_pkv") && (await loader.readTable(`SELECT 1 FROM ${schema}.log_smallentry WHERE lsmall_smallid = $1 AND ismall_entry_pkv = $2 LIMIT 1`, [entryId, pkv]))?.length ? [{}]
+      : columns.has("lsmall_updwhere") ? await loader.readTable(`SELECT 1 FROM ${schema}.log_smallentry WHERE lsmall_smallid = $1 AND lsmall_updwhere ~ $2 LIMIT 1`, [entryId, `(^|,)Row: [0-9]+ - ${pkv}(,|$)`])
+      : null;
     const choice = (name: string) => controls.some((control) => control.name === name) ? (request.state.controls[name] ?? "") : "";
     const date = (name: string) => { const parsed = parseDesktopDate(request.state.controls[name] ?? ""); return parsed ? formatDesktopDate(parsed) : formatDesktopDate(now); };
     const all: Record<string, unknown> = {
@@ -330,7 +348,7 @@ async function specialLog(loader: Loader, entryId: number, request: SaveRequest,
       lsmall_user: session.userNo, lsmall_firstname: request.state.firstCombo?.text ?? "", lsmall_firstvalue: toInt(request.state.firstCombo?.value),
       lsmall_savedate: formatDesktopDate(now), lsmall_savetime: now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }), lsmall_machine_name: "WEB",
       lsmall_fc_selection: request.state.firstCombo?.text ?? "", lsmall_group: choice("cmb_smallentry1"), lsmall_filter: choice("cmb_smallentry2"), lsmall_sorting: choice("cmb_smallentry3"),
-      lsmall_from: date("dtp_date"), lsmall_upto: date("dtp_date2"), lsmall_pkv: pkv, lsmall_mode: previous ? (queryTypeOf(edited) === "U" ? "E" : "D") : "A",
+      lsmall_from: date("dtp_date"), lsmall_upto: date("dtp_date2"), ismall_entry_pkv: pkv > 0 ? pkv : null, lsmall_mode: previous ? (queryTypeOf(edited) === "U" ? "E" : "D") : "A",
     };
     const names = Object.keys(all).filter((name) => columns.has(name));
     await runStatement(client, `INSERT INTO ${schema}.log_smallentry (${names.join(",")}) VALUES (${names.map((_, at) => `$${at + 1}`).join(",")})`, names.map((name) => all[name]));
@@ -345,6 +363,22 @@ async function specialLog(loader: Loader, entryId: number, request: SaveRequest,
 async function columnNames(client: Loader["client"], schema: string, table: string): Promise<Map<string, string>> {
   const rows = (await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2", [schema, table.toLowerCase()])).rows as { column_name: string }[];
   return new Map(rows.map((row) => [row.column_name.toLowerCase(), row.column_name]));
+}
+
+/**
+ * The Log button of a small entry: every save of the grid row under the cursor (LOG_SMALLENTRY), the Add first and then
+ * each edit, side by side. The row is found by its key, the grid's key column the save logs (the same one saveEntry picks).
+ */
+export async function smallEntryLog(loader: Loader, request: Pick<SaveRequest, "entryName" | "state" | "choices"> & { values: Readonly<Record<string, string>> }): Promise<MasterLogTable> {
+  const properties = await entryProperties(loader, request.entryName);
+  const entryId = toInt(field(properties, "entry_key"));
+  const plan = await gridPlan(loader, request.entryName, request.state, request.choices);
+  const keys = await planColumns(loader, plan);
+  const first = toInt(cell(request.values, keys[0] ?? ""));
+  const second = toInt(cell(request.values, keys[1] ?? ""));
+  const pkv = PK_IN_FIRST_COLUMN.has(entryId) ? first || second : second || first;
+  if (pkv <= 0) return { columns: [], rows: [], message: "This row has not been saved yet, so it has no log" };
+  return readSmallEntryLog(loader, entryId, String(pkv));
 }
 
 export async function saveEntry(loader: Loader, request: SaveRequest): Promise<EntrySaveResult> {
@@ -466,6 +500,8 @@ export async function saveEntry(loader: Loader, request: SaveRequest): Promise<E
   try {
     // Keys of rows inserted so far, by the name their statement captured them under ({{name}}).
     const captured = new Map<string, string>();
+    // The key each inserted grid row got, by "row|table": exactly what the insert used, for the log.
+    const insertedKeys = new Map<string, number>();
     const fill = (text: string) => text
       .replace(/\{\{(\w+)\}\}/g, (all, name: string) => captured.get(name) ?? all)
       .replace(/\|?@(pkval_\d+)\|?/gi, (all, name: string) => captured.get(name.toLowerCase()) ?? all);
@@ -487,6 +523,11 @@ export async function saveEntry(loader: Loader, request: SaveRequest): Promise<E
         const key = keyField !== "" && has(keyField) ? null : await allocateKey(client, schema, table, keyField);
         const allFields = key && !has(key.column.replace(/"/g, "")) ? [key.column, ...fields] : fields;
         const allValues = key && !has(key.column.replace(/"/g, "")) ? [String(key.value), ...values] : values;
+        if (statement.insert.row !== undefined) {
+          const id = key ? key.value : toInt(values[fields.findIndex((name) => name.toLowerCase() === keyField.toLowerCase())] ?? "");
+          const slot = `${statement.insert.row}|${table.toLowerCase()}`;
+          if (id > 0 && !insertedKeys.has(slot)) insertedKeys.set(slot, id);
+        }
         if (capture) captured.set(capture, key ? String(key.value) : values[fields.findIndex((name) => name.toLowerCase() === keyField.toLowerCase())] ?? "null");
         // A few columns came across in capitals (ledger."TYPE", account."LIMIT"): name them as the table does.
         const actual = await columnNames(client, schema, table);
@@ -500,7 +541,7 @@ export async function saveEntry(loader: Loader, request: SaveRequest): Promise<E
     }
     if (session.flags.logFileSpecial) {
       const queryTypeOf = (edited: EditedRow) => (edited.deleted ? "D" : toInt(cell(edited.values, pkColumn)) > 0 ? "U" : "I");
-      executed.push(...await specialLog(loader, entryId, request, controls, plan, keys, text(properties, "first_label_caption"), request.rows, savedRows, pkColumn, queryTypeOf));
+      executed.push(...await specialLog(loader, entryId, request, controls, plan, keys, text(properties, "first_label_caption"), request.rows, savedRows, pkColumn, queryTypeOf, insertedKeys));
     }
     if (request.dryRun) await client.query("ROLLBACK TO SAVEPOINT small_entry_save");
     else await client.query("RELEASE SAVEPOINT small_entry_save");

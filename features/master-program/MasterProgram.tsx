@@ -41,6 +41,9 @@ import { selectionTotals as totalsOf } from "../grid/totals";
 import { useDraggable } from "../grid/useDraggable";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { useGridOutput } from "../grid/useGridOutput";
+import { RowFilterButton, rowFilterHolds } from "../grid/RowFilter";
+import { pickKindOf, ROW_PICK_HINT, useRowPick } from "../grid/RowPick";
+import type { RowFilter } from "../grid/RowFilter";
 import { useLookupSource } from "../grid/useLookupSource";
 import { GridButtons } from "../grid/GridButtons";
 import { confirmLeave, refreshQuestion } from "../grid/prompts";
@@ -171,6 +174,8 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   /** Both grids exactly as loaded, so a row changed and changed back is no longer marked edited. */
   const [original, setOriginal] = useState<{ records: readonly UpdateRecord[]; backup: readonly UpdateRecord[] }>({ records: [], backup: [] });
   const [edited, setEdited] = useState<Set<number>>(new Set());
+  /** The pen column's filter (features/grid/RowFilter): every row, the rows edited, or the rows not edited. */
+  const [rowFilter, setRowFilter] = useState<RowFilter>("all");
   const [deleted, setDeleted] = useState<Set<number>>(new Set());
   const [cellEditable, setCellEditable] = useState<Record<string, boolean>>({});
   /** The Update grid's columns as the operator lays them out: order, hidden ones, widths (features/grid/useColumnLayout). */
@@ -469,6 +474,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   const resetScreen = () => {
     setEditing(false);
     setEdited(new Set());
+    setRowFilter("all");
     setDeleted(new Set());
     setAddEditing(false);
     setAddChanged(false);
@@ -504,6 +510,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const needle = find.trim().toLowerCase();
     const stored = (row: number) => backup[row] ?? records[row];
     let rows = liveRows.filter((row) => {
+      if (!rowFilterHolds(rowFilter, edited.has(row))) return false;
       for (const [key, filter] of Object.entries(filters)) {
         const column = columnByKey.get(key);
         if (column && !columnFilterHolds(column, filter, stored(row))) return false;
@@ -523,7 +530,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       rows = [...rows].sort((a, b) => (sort.dir === "asc" ? compare(a, b) : compare(b, a)));
     }
     return rows;
-  }, [liveRows, records, backup, filters, find, sort, columns, columnByKey]);
+  }, [liveRows, records, backup, filters, find, sort, columns, columnByKey, rowFilter, edited]);
 
   /** Distinct stored values of a column, for its filter list. */
   const valuesOf = (column: UpdateColumn) => {
@@ -1427,6 +1434,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         }
         return;
       case "F2": event.preventDefault(); await startEdit(); return;
+      case "F8": if (column && !column.options && isEditable(cursor.row, column)) { event.preventDefault(); await rowPicker.copyPrevious(column); return; } break;
       case "F3": event.preventDefault(); findNext(); return;
       case "F4": event.preventDefault(); if (isComboCell(cursor.row, column)) { setComboStart(""); await startEdit(); } else restoreToAdd(); return;
       case "F5": event.preventDefault(); activeById("mp-save")?.focus(); return;
@@ -1469,6 +1477,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         return;
       }
       if (column && isEditable(cursor.row, column)) {
+        // A blank date cell: T, S, E, F, L (either case) fill the date straight away; a cell with a date is never changed by them.
+        if (editorKindOf(column.setup.field_type) === "date" && /^[a-z]$/i.test(event.key) && cellOf(records[cursor.row], column.key).trim() === "") {
+          const date = tools.dateShortcut(event.key, "");
+          if (date !== null) { setCell(cursor.row, column.key, date); markEdited(cursor.row); return; }
+        }
         const key = fitCase(column.setup, event.key, programId);
         const outcome = keyPress({ setup: column.setup, masterGrid: false, programId, licence, cellValue: cellOf(records[cursor.row], column.key), editorText: "", yearStart: yearStartText }, key);
         if (outcome.message) { await ask(outcome.message, "Typed Character not allowed"); return; }
@@ -1492,6 +1505,23 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   };
 
 
+  /** F6 (the row's values of the cell's kind) and F8 (the previous column's value): features/grid/RowPick, with this screen's own checks. */
+  const rowPicker = useRowPick<UpdateColumn>({
+    columns,
+    kindOf: (column) => pickKindOf(column.setup.field_type),
+    valueOf: (column) => shownText(records[cursor.row], column),
+    cellOf: (column) => activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`),
+    pickable: (column) => !column.options,
+    editing,
+    commit: (value) => commitEdit(value),
+    startEdit: () => startEdit(),
+    afterFill: () => {
+      gridFocus.current?.focus();
+      setUpdatePendingMove({ row: cursor.row, key: cursor.key, step: 1 });
+    },
+    setMessage,
+  });
+
   /** The open editor's own keys (KeyPressEdit). */
   const editorKeys = async (event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
     const column = columnByKey.get(cursor.key);
@@ -1499,6 +1529,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     // Esc undoes what was typed: the cell keeps the value it had before editing began.
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
     if (tools.keys(event, editorKindOf(column.setup.field_type), editText, setEditText, numberRules(column.setup))) return;
+    if (rowPicker.keys(event, column)) return;
     if (event.key === "Enter" || event.key === "Tab") {
       event.preventDefault();
       if (await commitEdit()) {
@@ -1844,6 +1875,23 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
     const next = nextEditable(row, key, step);
     if (next) void moveTo(next.row, next.key).then((moved) => { if (moved) void startEdit(undefined, next); });
   });
+  /** A pen filter was chosen: an open editor is taken first; once the rows are re-filtered, the first row shown opens for editing at its first editable column. */
+  const rowFilterArrive = useRef(false);
+  const applyRowFilter = async (value: RowFilter) => {
+    if (value === rowFilter) return;
+    if (editing && !(await commitEdit())) return;
+    rowFilterArrive.current = true;
+    setRowFilter(value);
+  };
+  useEffect(() => {
+    if (!rowFilterArrive.current || editing || busy) return;
+    rowFilterArrive.current = false;
+    const row = shownRows[0];
+    const column = row === undefined ? undefined : columns.find((candidate) => isEditable(row, candidate));
+    if (row === undefined || !column) return;
+    scroller.current?.scrollTo({ top: 0 });
+    void moveTo(row, column.key).then((moved) => { if (moved) void startEdit(undefined, { row, key: column.key }); });
+  }, [shownRows]);
   useEffect(() => {
     if (updateGo.current === null || editing) return;
     const { row, key, edit } = updateGo.current;
@@ -1984,7 +2032,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   // Master_ProgramGrid_KeyUp: Escape anywhere outside an editor or message asks to leave.
   const windowActive = useWindowActive();
   const escapeState = useRef({ editing, addEditing, leave, licence, close: onClose, busyElsewhere: false });
-  useEffect(() => { escapeState.current = { editing, addEditing, leave, licence, close: onClose, busyElsewhere: typed !== "" || openFilter !== null || columnChooser || tools.open || output.open || logTable !== null }; });
+  useEffect(() => { escapeState.current = { editing, addEditing, leave, licence, close: onClose, busyElsewhere: rowPicker.open || typed !== "" || openFilter !== null || columnChooser || tools.open || output.open || logTable !== null }; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // A window behind (another program open in front of it) does not answer.
@@ -2049,7 +2097,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       />
     );
   };
-  const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null;
+  const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null || rowFilter !== "all";
   return (
     <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""} ${busy ? "mp-working" : ""}`} role="region" aria-label={def?.heading || title}>
       {busy === "Saving" && <div className="mp-busy-overlay" role="status" aria-live="polite"><div className="mp-busy-card"><span className="mp-spinner" aria-hidden="true" /><b>Saving…</b><span>Please wait</span></div></div>}
@@ -2196,7 +2244,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               }}
             >
               <div className="mp-row mp-head" style={{ top: 0 }}>
-                <div className="mp-cell mp-rownum" aria-hidden="true" />
+                <RowFilterButton value={rowFilter} onChange={(value) => void applyRowFilter(value)} onClosed={keepGridFocus} />
                 {columns.map((column, index) => {
                   return (
                     <div
@@ -2364,7 +2412,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
               ))}
             </>}
             search={{ id: "mp-find", value: find, onChange: setFind, onEnter: findNext }}
-            clearFilters={filtering ? () => { setFilters({}); setFind(""); setSort(null); } : null}
+            clearFilters={filtering ? () => { setFilters({}); setFind(""); setSort(null); setRowFilter("all"); } : null}
             count={`${shownRows.length === liveRows.length ? `${liveRows.length} records` : `${shownRows.length} of ${liveRows.length}`}${edited.size ? ` · ${edited.size} changed` : ""}${deleted.size ? ` · ${deleted.size} to delete` : ""}`}
           />
         ) : tab === "add" ? (
@@ -2403,6 +2451,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       )}
 
       {tools.popups}
+      {rowPicker.popup}
 
       <div className="mp-status">
         <span>{rowStatus}</span>
@@ -2410,7 +2459,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         {selectionTotals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{selectionTotals}</span>}
         <span>{(() => {
           const setup = editing ? cursorColumn?.setup : addEditing ? addRows[addCursor]?.setup : undefined;
-          return (setup && tools.hint(editorKindOf(setup.field_type))) || hotKeys;
+          return (setup && `${tools.hint(editorKindOf(setup.field_type))}${editing && !cursorColumn?.options ? ROW_PICK_HINT : ""}`) || hotKeys;
         })()}</span>
         {warnings.length > 0 && <span className="mp-warn" title={warnings.join("\n")}>{warnings.length} setup query warning{warnings.length === 1 ? "" : "s"}</span>}
       </div>

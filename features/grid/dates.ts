@@ -3,6 +3,40 @@ import { parseDesktopDate } from "../../lib/master-program/legacy";
 /** Typing dates in any grid (master, small entry, entry, reports). */
 const MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
+/** The day the accounting year ends: a year after `yearStart`, less a day. */
+export function yearEndOf(yearStart: Date): Date {
+  return new Date(yearStart.getFullYear() + 1, yearStart.getMonth(), yearStart.getDate() - 1);
+}
+
+/**
+ * The one-letter date shortcuts (either case): T today, S accounting year start, E accounting
+ * year end, F first day and L last day of the month of `base` (else today's). Today is kept
+ * inside the accounting year. Null for any other key, and for S / E when the year is not known.
+ */
+export function shortcutDate(key: string, yearStart: Date | null, base: Date | null, today: Date = new Date()): Date | null {
+  const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const k = key.toLowerCase();
+  if (k === "s") return yearStart ? day(yearStart) : null;
+  if (k === "e") return yearStart ? yearEndOf(yearStart) : null;
+  if (k === "t") {
+    const now = day(today);
+    if (!yearStart) return now;
+    const end = yearEndOf(yearStart);
+    return now < day(yearStart) ? day(yearStart) : now > end ? end : now;
+  }
+  const month = base ?? day(today);
+  if (k === "f") return new Date(month.getFullYear(), month.getMonth(), 1);
+  if (k === "l") return new Date(month.getFullYear(), month.getMonth() + 1, 0);
+  return null;
+}
+
+/** `date` moved by whole months, the day kept (or cut to the month's last day). */
+export function addMonths(date: Date, months: number): Date {
+  const first = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  return new Date(first.getFullYear(), first.getMonth(), Math.min(date.getDate(), last));
+}
+
 /**
  * Short ways to type a date. "2309", "23/9", "23-9" and "23sep" are 23 September in the
  * accounting year (tarikh1..tarikh2: a month before the year's start month falls in its

@@ -3967,3 +3967,28 @@
 
 .mp-grid-combo-note{flex:none;margin-left:12px;font-variant-numeric:tabular-nums;color:#1f64b8;text-align:right}
 .mp-grid-combo-note.mp-grid-combo-neg{color:#c42636}
+
+/* Small entry: the current row keeps the dark blue; only the cell the keyboard is in is light blue with a blue frame, as in the entry grids. */
+html .se-grid .mp-row .mp-cell.mp-current,html .se-grid .mp-row.mp-current-row .mp-cell.mp-current.mp-readonly{background:#8fd8f8!important;color:#000;outline:2px solid #1f64b8;outline-offset:-2px}
+html .se-grid .mp-cell.mp-current .mp-editor-wrap,html .se-grid .mp-cell.mp-current .mp-editor{background:#cdeeff;color:#000}
+html .se-grid .mp-cell.mp-current .mp-combo-arrow{background:#1f64b8;color:#fff}
+
+/* Small entry header: the box the keyboard is in (lists, dates, text, buttons) is light blue with a blue frame, like the entry screen. */
+html .se-head :is(input,select,textarea,.mp-control,.search-combo):focus{background:#cdeeff;outline:2px solid #1f64b8;outline-offset:-2px}
+html .se-head .se-field:focus-within .mp-editor-wrap,html .se-head .se-field:focus-within .mp-editor,html .se-head .se-field:focus-within .search-combo input{background:#cdeeff}
+/* Show / Quit and the other coloured buttons keep their own colour when tabbed to, only brighter with the gold frame. */
+html .se-head .mp-btn:focus{filter:brightness(1.18) saturate(1.1);box-shadow:0 0 0 2px #fff,0 0 0 4px #ffb400,0 3px 8px #0005;transform:translateY(-1px);outline:none}
+
+/* Small entry: the pen at the top of the row-marker column filters the rows by edited / not edited. */
+.mp-head .mp-rownum-head{padding:0;display:flex;align-items:center;justify-content:center}
+.mp-rowfilter{width:16px;height:100%;padding:0;border:0;background:transparent;color:#5a6f86;font-size:10px;line-height:1;cursor:pointer}
+.mp-rowfilter:hover{color:#1f64b8}
+.mp-rowfilter.mp-rowfilter-on{background:#ffb400;color:#000;font-weight:700}
+
+/* F3 in an open editor: the row's other values of the cell's kind to pick from. */
+.mp-rowpick{position:fixed;z-index:60;min-width:240px;max-width:360px;max-height:260px;overflow:auto;border:1px solid #1f64b8;background:#fff;box-shadow:2px 4px 10px #0004;font-size:12px;outline:none}
+.mp-rowpick-title{padding:3px 8px;background:#1f3d6b;color:#fff;font-size:11px}
+.mp-rowpick-item{display:flex;justify-content:space-between;gap:16px;padding:3px 8px;cursor:pointer}
+.mp-rowpick-item b{font-weight:600;color:#0b2c57}
+.mp-rowpick-item.mp-rowpick-active{background:#8fd8f8}
+.mp-rowpick-empty{padding:6px 8px;color:#5a6f86}
