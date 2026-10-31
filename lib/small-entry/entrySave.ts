@@ -20,7 +20,7 @@ type Values = Readonly<Record<string, string>>;
  */
 export type EntryStatement = Readonly<{
   sql: string;
-  insert?: Readonly<{ table: string; fields: string[]; values: string[]; capture?: string; biglog?: boolean }>;
+  insert?: Readonly<{ table: string; fields: string[]; values: string[]; capture?: string; biglog?: boolean; /** The grid row (index) the insert saves, so the key it gets can be logged against that row. */ row?: number }>;
   /** A SELECT whose first value later statements use as @<capture> (a query_add_type S rule). */
   select?: Readonly<{ sql: string; capture: string }>;
 }>;

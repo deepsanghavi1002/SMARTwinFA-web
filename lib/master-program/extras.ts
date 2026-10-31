@@ -93,12 +93,17 @@ export async function readSmallEntryLog(loader: Loader, entryId: number, pkv: st
   if (!identifier.test(schema)) return empty("The log database name is not valid");
   const have = new Set(((await loader.readTable("SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'log_smallentry'", [schema])) ?? []).map((row) => toText(field(row, "column_name")).toLowerCase()));
   if (have.size === 0) return empty(`No other-entry log: ${schema}.log_smallentry does not exist`);
-  const keyed = have.has("lsmall_pkv") && pkv !== "";
+  // Every log record keeps its row's key in ISMALL_ENTRY_PKV. A record logged before that field existed has none and is found by the key in LSMALL_UPDWHERE ("Row: 00001 - 95397"); the first record is the Add.
+  const keyed = have.has("ismall_entry_pkv") && /^\d+$/.test(pkv);
+  const byText = !keyed && pkv !== "" && have.has("lsmall_updwhere") && /^\d+$/.test(pkv);
+  const hasMode = have.has("lsmall_mode");
+  // Save order: the Add is the first save; a record logged before LSMALL_MODE existed has no mode and counts as the Add when it is the first.
+  const order = have.has("lsmall_key") ? "lsmall_key" : "lsmall_savedate, ctid";
   const found = (await loader.readTable(
-    `SELECT lsmall_mode, lsmall_top::text AS lsmall_top, lsmall_grid::text AS lsmall_grid FROM ${schema}.log_smallentry WHERE lsmall_smallid = $1${keyed ? " AND lsmall_pkv = $2" : ""} ORDER BY lsmall_mode <> 'A', lsmall_savedate, ctid`,
-    keyed ? [entryId, pkv] : [entryId],
+    `SELECT ${hasMode ? "lsmall_mode" : "'' AS lsmall_mode"}, lsmall_top::text AS lsmall_top, lsmall_grid::text AS lsmall_grid FROM ${schema}.log_smallentry WHERE lsmall_smallid = $1${keyed ? " AND (ismall_entry_pkv = $2::int OR (ismall_entry_pkv IS NULL AND lsmall_updwhere ~ $3))" : byText ? " AND lsmall_updwhere ~ $2" : ""} ORDER BY ${order}`,
+    keyed ? [entryId, pkv, `(^|,)Row: [0-9]+ - ${pkv}(,|$)`] : byText ? [entryId, `(^|,)Row: [0-9]+ - ${pkv}(,|$)`] : [entryId],
   )) ?? [];
-  const list = found.map((record) => ({ mode: toText(field(record, "lsmall_mode")), top: toText(field(record, "lsmall_top")), grid: toText(field(record, "lsmall_grid")) }));
+  const list = found.map((record, at) => ({ mode: toText(field(record, "lsmall_mode")).trim() || (at === 0 ? "A" : "E"), top: toText(field(record, "lsmall_top")), grid: toText(field(record, "lsmall_grid")) }));
   if (list.length === 0) return empty("No log has been saved for this record yet");
   return buildLogTable(list, list.filter((record) => record.mode === "A").length, list.length);
 }
@@ -125,11 +130,13 @@ function buildLogTable(records: readonly LogPiece[], added: number, total: numbe
     let position = "";
     for (const record of records) {
       const mode = record.mode;
+      // The top is one object per record, so each edit record is the next edit column (a small entry's top key starts "!", not "!*").
+      if (column === "top" && (mode === "E" || mode === "D")) editCount += 1;
       for (const item of parse(record[column])) {
         for (const [name, raw] of Object.entries(item)) {
           const value = raw === null || raw === undefined ? "" : String(raw);
           const edit = mode === "E" || mode === "D";
-          if (name.startsWith("!*") && edit) editCount += 1;
+          if (column === "grid" && name.startsWith("!*") && edit) editCount += 1;
           if (name.startsWith("!")) { position = value; continue; }
           const sort = `${prefix}${position}${name}`;
           if (mode === "A") {
