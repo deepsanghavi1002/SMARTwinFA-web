@@ -4927,6 +4927,63 @@ html[data-mtheme="light"] .mp-grid-combo-note {
 html[data-mtheme="light"] .mp-grid-combo-note.mp-grid-combo-neg {
     color: #c42636
 }
+html[data-mtheme="light"] .se-grid .mp-row .mp-cell.mp-current, html[data-mtheme="light"] .se-grid .mp-row.mp-current-row .mp-cell.mp-current.mp-readonly {
+    background: #dee3ea !important;
+    color: #000000;
+    outline: 2px solid #a9b3c6;
+    outline-offset: -2px
+}
+html[data-mtheme="light"] .se-grid .mp-cell.mp-current .mp-editor-wrap, html[data-mtheme="light"] .se-grid .mp-cell.mp-current .mp-editor {
+    background: #eef2f9;
+    color: #000000
+}
+html[data-mtheme="light"] .se-grid .mp-cell.mp-current .mp-combo-arrow {
+    background: #1f64b8;
+    color: #fff
+}
+html[data-mtheme="light"] .se-head :is(input,select,textarea,.mp-control,.search-combo):focus {
+    background: #eef2f9;
+    outline: 2px solid #a9b3c6;
+    outline-offset: -2px
+}
+html[data-mtheme="light"] .se-head .se-field:focus-within .mp-editor-wrap, html[data-mtheme="light"] .se-head .se-field:focus-within .mp-editor, html[data-mtheme="light"] .se-head .se-field:focus-within .search-combo input {
+    background: #eef2f9
+}
+html[data-mtheme="light"] .se-head .mp-btn:focus {
+    box-shadow: 0 0 0 2px #fff,0 0 0 4px #ffb400,0 3px 8px #0005;
+    outline: none
+}
+html[data-mtheme="light"] .mp-rowfilter {
+    border: 0;
+    background: transparent;
+    color: #5a6f86
+}
+html[data-mtheme="light"] .mp-rowfilter:hover {
+    color: #1f64b8
+}
+html[data-mtheme="light"] .mp-rowfilter.mp-rowfilter-on {
+    background: #ffb400;
+    color: #000000
+}
+html[data-mtheme="light"] .mp-rowpick {
+    border: 1px solid #a9b3c6;
+    background: #ffffff;
+    box-shadow: 2px 4px 10px #0004;
+    outline: none
+}
+html[data-mtheme="light"] .mp-rowpick-title {
+    background: #1f3d6b;
+    color: #fff
+}
+html[data-mtheme="light"] .mp-rowpick-item b {
+    color: #1d2c45
+}
+html[data-mtheme="light"] .mp-rowpick-item.mp-rowpick-active {
+    background: #dee3ea
+}
+html[data-mtheme="light"] .mp-rowpick-empty {
+    color: #5a6f86
+}
 html[data-mtheme="light"] .modern-view {
     --modern-bg: #fafbfd;
     --modern-surface: #ffffff;
@@ -10344,6 +10401,63 @@ html[data-mtheme="dark"] .mp-grid-combo-note {
 }
 html[data-mtheme="dark"] .mp-grid-combo-note.mp-grid-combo-neg {
     color: #e16572
+}
+html[data-mtheme="dark"] .se-grid .mp-row .mp-cell.mp-current, html[data-mtheme="dark"] .se-grid .mp-row.mp-current-row .mp-cell.mp-current.mp-readonly {
+    background: #1f2735 !important;
+    color: #edeff3;
+    outline: 2px solid #3d485c;
+    outline-offset: -2px
+}
+html[data-mtheme="dark"] .se-grid .mp-cell.mp-current .mp-editor-wrap, html[data-mtheme="dark"] .se-grid .mp-cell.mp-current .mp-editor {
+    background: #151b24;
+    color: #edeff3
+}
+html[data-mtheme="dark"] .se-grid .mp-cell.mp-current .mp-combo-arrow {
+    background: #1f64b8;
+    color: #fff
+}
+html[data-mtheme="dark"] .se-head :is(input,select,textarea,.mp-control,.search-combo):focus {
+    background: #151b24;
+    outline: 2px solid #3d485c;
+    outline-offset: -2px
+}
+html[data-mtheme="dark"] .se-head .se-field:focus-within .mp-editor-wrap, html[data-mtheme="dark"] .se-head .se-field:focus-within .mp-editor, html[data-mtheme="dark"] .se-head .se-field:focus-within .search-combo input {
+    background: #151b24
+}
+html[data-mtheme="dark"] .se-head .mp-btn:focus {
+    box-shadow: 0 0 0 2px #fff,0 0 0 4px #ffb400,0 3px 8px #0005;
+    outline: none
+}
+html[data-mtheme="dark"] .mp-rowfilter {
+    border: 0;
+    background: transparent;
+    color: #8c96a8
+}
+html[data-mtheme="dark"] .mp-rowfilter:hover {
+    color: #629de5
+}
+html[data-mtheme="dark"] .mp-rowfilter.mp-rowfilter-on {
+    background: #805e0e;
+    color: #edeff3
+}
+html[data-mtheme="dark"] .mp-rowpick {
+    border: 1px solid #3d485c;
+    background: #0e1218;
+    box-shadow: 2px 4px 10px #0004;
+    outline: none
+}
+html[data-mtheme="dark"] .mp-rowpick-title {
+    background: #1f3d6b;
+    color: #fff
+}
+html[data-mtheme="dark"] .mp-rowpick-item b {
+    color: #c5ccd9
+}
+html[data-mtheme="dark"] .mp-rowpick-item.mp-rowpick-active {
+    background: #1f2735
+}
+html[data-mtheme="dark"] .mp-rowpick-empty {
+    color: #8c96a8
 }
 html[data-mtheme="dark"] .modern-view {
     --modern-bg: #10151c;
