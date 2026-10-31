@@ -4,6 +4,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { repostData } from "@/lib/utility/repost";
+import { logError } from "@/lib/log";
 
 /**
  * Utility > Re-Post Data: SP_REPOST_DATA for the open company and year. It rewrites balances and postings, so it runs only for a company whose
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
     }, { timeoutMs: 3_600_000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Re-Post Data error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/utility/repost", action: "Re-Post Data", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

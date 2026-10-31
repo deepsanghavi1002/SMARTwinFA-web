@@ -4,7 +4,7 @@ import { activeScope, activeById, useWindowCloser } from "../ui/activeWindow";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useStartupSelection } from "../startup/StartupGate";
-import { formatDesktopDate, getPermission, parseDesktopDate, toText } from "../../lib/master-program/legacy";
+import { formatDesktopDate, getPermission, parseDesktopDate, toDecimal, toText } from "../../lib/master-program/legacy";
 import type { PermissionSource } from "../../lib/master-program/legacy";
 import type { EntryColumn, EntryDefinition, EntryGrid, EntryOption, SaveOutcome } from "../../lib/small-entry/types";
 import { smallEntryCall } from "./api";
@@ -36,9 +36,9 @@ import { remainingAfterKey, typeAtCaret } from "../grid/caret";
 import { keepGridFocus } from "../grid/focus";
 import { findNextCell } from "../grid/find";
 import { columnLefts, frozenCell, revealColumn, ROW_MARKER_WIDTH } from "../grid/frozen";
-import { copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
+import { columnText, copyCell as copyOf, gridText, pastedMessage, pasteValue } from "../grid/clipboard";
 import type { CopiedCell } from "../grid/clipboard";
-import { cellAt, columnMenuItems, GridMenu } from "../grid/GridMenu";
+import { cellAt, columnMenuItems, freezeMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuPlace } from "../grid/GridMenu";
 import { BLANK_COMPULSORY_TITLE, blankCompulsory } from "../grid/compulsory";
 import { FoundText } from "../grid/FoundText";
@@ -66,6 +66,9 @@ type SaveReply = SaveOutcome & { needs?: "edit-password" };
 type Cursor = { row: number; col: number };
 
 /** A record's value by field name, whatever case the query gave the column. */
+/** The record's own spelling of a column's key (the query's case), else the name as given. */
+const valueKeyOf = (record: Readonly<Record<string, string>>, name: string): string => Object.keys(record).find((candidate) => candidate.toLowerCase() === name.toLowerCase()) ?? name;
+
 function valueIn(record: Readonly<Record<string, string>> | undefined, name: string): string | undefined {
   if (!record) return undefined;
   const lower = name.split(".").pop()!.trim().toLowerCase();
@@ -86,6 +89,31 @@ function listFor(column: EntryColumn | undefined, record: Record<string, string>
   const ids = chosen === "" ? undefined : bookColumn?.options?.find((option) => option.text === chosen)?.series;
   return ids ? options.filter((option) => ids.includes(`${option.value}|${option.text.trim()}`)) : options;
 }
+
+/** Payment Manual Allot: the name entered last above this row (else the last one entered anywhere), where the Account Name list starts. */
+function lastNameEntered(records: readonly Record<string, string>[], deleted: ReadonlySet<number>, index: number | undefined): string {
+  const nameOf = (at: number) => (records[at]?.name ?? records[at]?.NAME ?? "").trim();
+  const named = (at: number) => !deleted.has(at) && nameOf(at) !== "";
+  const above = index === undefined ? undefined : [...records.keys()].filter((at) => at < index && named(at)).pop();
+  const last = above ?? [...records.keys()].filter((at) => at !== index && named(at)).pop();
+  return last === undefined ? "" : nameOf(last);
+}
+
+/** The first combo's last choice per entry, company and user, kept in this browser. */
+const firstKey = (selection: { companyId: string | number; loginName: string } | null, entryName: string) => `smartwinfa.se.first.${selection?.companyId ?? ""}.${selection?.loginName ?? ""}.${entryName}`;
+function lastFirst(selection: { companyId: string | number; loginName: string } | null, entryName: string): { text: string; value: string } | null {
+  try { return JSON.parse(localStorage.getItem(firstKey(selection, entryName)) ?? "null"); } catch { return null; }
+}
+function rememberFirst(selection: { companyId: string | number; loginName: string } | null, entryName: string, option: { text: string; value: string }) {
+  try { localStorage.setItem(firstKey(selection, entryName), JSON.stringify({ text: option.text, value: option.value })); } catch { /* private window: nothing is kept */ }
+}
+
+/**
+ * A quantity-type number column: type N or C, but not money. The setup does not mark money, so a
+ * column of two decimals (rupees and paise) is money and keeps its buttons; counts and quantities
+ * (0, 3, 4 places) edit plain and open the calculator only from a sign.
+ */
+const plainNumber = (column: { fieldType: string; decimals: number }) => (column.fieldType === "N" || column.fieldType === "C") && column.decimals !== 2;
 
 export function SmallEntry({ entryName, menuShortName, title, onClose }: { entryName: string; menuShortName: string; title: string; onClose: () => void }) {
   const selection = useStartupSelection();
@@ -175,7 +203,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   // The shared grid library (features/grid): column filters, and the editors' calculator, calendar and date typing.
   const columnFilters = useColumnFilters();
   const { filters, clearAll: clearFilters } = columnFilters;
-  const tools = useEditorTools(yearStart);
+  const tools = useEditorTools(yearStart, { altCalculator: false });
   useEffect(() => {
     const release = () => { dragSelect.current = false; };
     document.addEventListener("mouseup", release);
@@ -201,7 +229,9 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         setYearStart(new Date(body.yearStart));
         setWho({ company: body.companyName, user: body.userName });
         setWarnings([...body.entry.unsupported, ...body.warnings]);
-        setFirst(body.entry.firstCombo?.options[0] ?? null);
+        // The first combo opens on the entry chosen last time in this entry, this company and user (else its first).
+        const remembered = lastFirst(selection, entryName);
+        setFirst(body.entry.firstCombo?.options.find((option) => option.value === remembered?.value && option.text === remembered?.text) ?? body.entry.firstCombo?.options[0] ?? null);
         setControls(Object.fromEntries(body.entry.controls.map((control) => [control.name, control.initial])));
         if (!body.entry.rights.modulePassword) { setLocked(false); return; }
         for (;;) {
@@ -231,7 +261,10 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const state = useCallback(() => ({ firstCombo: first, controls }), [first, controls]);
   /** The columns as the operator lays them out: order, hidden ones, widths, frozen ones (features/grid/useColumnLayout). */
   const setupColumns = useMemo(() => grid?.columns.filter((column) => column.visible) ?? [], [grid]);
-  const frozen = Math.min(grid?.frozen ?? 0, setupColumns.length);
+  /** Freeze / Unfreeze on the right-click menu: how many columns are frozen until a new grid is shown (else the setup's). */
+  const [frozenChosen, setFrozenChosen] = useState<number | null>(null);
+  useEffect(() => { setFrozenChosen(null); }, [grid]);
+  const frozen = Math.min(frozenChosen ?? grid?.frozen ?? 0, setupColumns.length);
   const layout = useColumnLayout(setupColumns, frozen, (column) => Math.max(40, column.width));
   const { columns, widthOf } = layout;
   const licence = def?.licence ?? 0;
@@ -249,7 +282,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       const body = await call<{ grid: EntryGrid & { warnings: string[] } }>("grid", { state: { firstCombo: firstChoice, controls } });
       setWarnings([...def.unsupported, ...body.grid.warnings]);
       if (body.grid.rows.length === 0) {
-        await ask(`Entry Not Found For The Selection ${firstChoice?.text ?? ""}`, "Entry Not Found");
+        await messageBox.ask(`Entry : ${title}\nSelection : ${def.firstCombo?.label ?? ""}\nName : ${firstChoice?.text ?? ""}`, "Entry Not Found", ["OK"], { kind: "info", titleIcon: true, enterHint: true });
+        keepGridFocus(gridFocus);
         return;
       }
       setGrid(body.grid);
@@ -267,14 +301,16 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       scroller.current?.scrollTo({ top: 0 });
       const firstEditable = body.grid.columns.filter((column) => column.visible).findIndex((column) => column.editable);
       setCursor({ row: 0, col: Math.max(0, firstEditable) });
-      findMode.current = true;
+      // The grid shown, the cursor is on its first editable column of the first row and editing starts there.
+      findMode.current = firstEditable < 0;
+      editOnArrive.current = firstEditable >= 0;
       Promise.resolve().then(() => gridFocus.current?.focus({ preventScroll: true }));
     } catch (error) {
       await ask(error instanceof Error ? error.message : String(error), "Entry");
     } finally {
       setBusy("");
     }
-  }, [def, locked, controls, call, ask, clearFilters]);
+  }, [def, locked, controls, call, ask, clearFilters, title]);
 
   // ---- Row rules: what Func_GetPermission reads, and the cells STATUS_AGAINST_FLD or a paired field close
   const permissionSource = useCallback((record: Readonly<Record<string, string>>): PermissionSource => ({
@@ -437,6 +473,11 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     const record = records[index];
     const entered = typedText ?? editText;
     const current = record[column.key] ?? "";
+    // Payment Manual Allot: once a party is chosen on the row, its Amount is compulsory and must be more than 0 (also when the cell is only passed through).
+    if (def?.entryId === 46 && column.key.toLowerCase() === "allot_amount" && ((Number(record.name__key) || Number(valueIn(record, "code"))) > 0) && !(toDecimal(entered) > 0)) {
+      await ask("Amount is compulsory, enter an amount greater than 0", "Entry Validation");
+      return false;
+    }
     // Passing through a field without changing it leaves it exactly as it was (no case change, no "changed" mark).
     if (entered === current || (entered === "" && zeroAsBlank(column.setup, Boolean(column.options), current) === "")) {
       setEditing(false);
@@ -492,12 +533,71 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       const series = columns.find((candidate) => candidate.key.toLowerCase() === "doc_series" && candidate.options !== undefined && columns.some((other) => other.options?.some((item) => item.series !== undefined)));
       if (series && (next[series.key] ?? "") !== "" && !(listFor(series, next, columns) ?? []).some((item) => item.text === next[series.key])) next = { ...next, [series.key]: "", [`${series.key}__key`]: "" };
     }
+    // Payment Allotment (entry 38): the Set Off cannot be more than the bill's Amount; the cell stays open to change it.
+    if (def?.entryId === 38 && column.key.toLowerCase() === "form_amt" && toDecimal(value) > toDecimal(valueIn(next, "amount") ?? "")) {
+      await ask("Set Off Amount can not be greater than Amount", "Entry Validation");
+      return false;
+    }
+    // Payment Manual Allot (entry 46): choosing the account shows its closing balance, and Dr when it is positive, Cr when negative (read-only columns).
+    if (def?.entryId === 46 && column.key.toLowerCase() === "name" && selection && columns.some((candidate) => candidate.key.toLowerCase() === "closing_bal")) {
+      const code = Number(option?.value ?? 0) || 0;
+      const closing = code > 0 ? (await call<{ closing: number }>("closing", { code })).closing : 0;
+      // One row for a party: the same party in another row is refused, naming that row.
+      const twin = code > 0 ? records.findIndex((other, at) => at !== index && !deleted.has(at) && (Number(other.name__key) || Number(valueIn(other, "code"))) === code) : -1;
+      if (twin >= 0) {
+        await ask(`Duplicate party, already enter at row ${shownRows.indexOf(twin) + 1 || twin + 1}`, "Duplicate Entry");
+        return false;
+      }
+      // A payment is allotted only to a party we owe: a Dr (or nil) balance is an advance to the supplier, so another name must be chosen.
+      if (code > 0 && closing >= 0) {
+        await ask("No pending balance for selected party", "Entry Validation");
+        return false;
+      }
+      next = { ...next, [valueKeyOf(next, "closing_bal")]: code > 0 ? Math.abs(closing).toFixed(2) : "", [valueKeyOf(next, "dr_cr")]: code > 0 ? (closing >= 0 ? "Dr" : "Cr") : "" };
+    }
+    // Payment Manual Allot: the Amount cannot be more than the account's closing balance (as shown, without Dr / Cr); the cell stays open to change it.
+    if (def?.entryId === 46 && column.key.toLowerCase() === "allot_amount" && toDecimal(value) > toDecimal(valueIn(next, "closing_bal") ?? "")) {
+      // As on the desktop, the closing balance is put into the Amount, which stays open to be changed.
+      setEditText(valueIn(next, "closing_bal") ?? "");
+      await ask("Amount can not be greater than Closing Balance", "Entry Validation");
+      setTimeout(() => activeScope().querySelector<HTMLInputElement>(".mp-editor")?.select(), 0);
+      return false;
+    }
+    // Order Allotment (Small_Entry AfterEdit, entry 39): Cartoon is only a helper, the saved figure is Allot Qty = Packing x Cartoon + Loose, and the balance stock follows it.
+    let allotMessage = "";
+    if (def?.entryId === 39 && ["bundle", "allot_qty"].includes(column.key.toLowerCase())) {
+      const figure = (name: string) => Number((valueIn(next, name) ?? "").replace(/,/g, "")) || 0;
+      const put = (name: string, amount: number | string) => { next = { ...next, [valueKeyOf(next, name)]: String(amount) }; };
+      // The fill is held to the smaller of the pending quantity and the balance stock, with no message; the operator may still change it.
+      if (column.key.toLowerCase() === "bundle" && figure("bundle") > 0) {
+        const wanted = Math.round(figure("pack_qty") * figure("bundle")) + figure("loose_qty");
+        const stock = (valueIn(next, "bal_stock") ?? "").trim() === "" ? figure("clsg_pcs") : figure("bal_stock");
+        put("allot_qty", Math.max(0, Math.min(wanted, figure("pend_qty"), stock)));
+      }
+      // Entering Cartoon only fills Allot Qty, which the operator may still change. The checks run when Allot Qty itself is entered (the desktop's AfterEdit): not below zero, not above the pending quantity, not above the balance stock; the figure is put back to the limit.
+      const allot = column.key.toLowerCase() === "allot_qty" ? figure("allot_qty") : 0;
+      if (allot < 0) { allotMessage = "Pl. Enter Quantity Greater than Zero..."; put("allot_qty", 0); }
+      else if (allot > figure("pend_qty")) {
+        allotMessage = "Pl. Enter Quantity Less than Pending Qty...";
+        if (figure("clsg_pcs") >= 0) { put("allot_qty", figure("pend_qty")); put("bal_stock", figure("clsg_pcs") - figure("pend_qty")); } else put("allot_qty", 0);
+      } else if (allot > 0 && allot > figure("clsg_pcs")) {
+        if (figure("bal_stock") < 0) { allotMessage = "Balance Stock is Lessthen Zero... So entry not valid..."; put("allot_qty", ""); }
+        else if (allot > figure("bal_stock")) { allotMessage = "Pl. Enter Quantity Less than Balance Stock Qty..."; put("allot_qty", figure("bal_stock")); }
+      }
+    }
     setRecords((rows) => rows.map((row, at) => (at === index ? next : row)));
     settleEdited(index, next);
+    // A refused Allot Qty stays open for editing in that same cell, showing the figure it was put back to.
+    if (allotMessage !== "") {
+      setEditText(valueIn(next, column.key) ?? "");
+      await ask(allotMessage, "Entry Validation");
+      setTimeout(() => activeScope().querySelector<HTMLInputElement>(".mp-editor")?.select(), 0);
+      return false;
+    }
     setEditing(false);
     gridFocus.current?.focus({ preventScroll: true });
     return true;
-  }, [columns, cursor, shownRows, editText, ask, records, tools, settleEdited, licence, captionOf, def?.entryId, first?.text]);
+  }, [columns, cursor, shownRows, editText, ask, records, tools, settleEdited, licence, captionOf, def?.entryId, first?.text, call, selection]);
 
   const nextEditable = useCallback((from: number, step: 1 | -1) => {
     for (let col = from + step; col >= 0 && col < columns.length; col += step) if (editableAt(cursor.row, columns[col])) return col;
@@ -523,7 +623,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
 
   const editorKeys = async (event: ReactKeyboardEvent<HTMLInputElement>) => {
     const column = columns[cursor.col];
-    if (column && tools.keys(event, editorKindOf(column.fieldType), editText, setEditText, numberRules(column.setup))) return;
+    if (column && tools.keys(event, editorKindOf(column.fieldType), editText, setEditText, numberRules(column.setup), false, undefined, true)) return;
     // Esc undoes what was typed: the cell keeps the value it had before editing began.
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
     if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
@@ -572,6 +672,23 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     const positions: number[] = [];
     for (let position = from; position <= to && position < shownRows.length; position += 1) positions.push(position);
     return positions;
+  };
+
+  /** Right-click Copy Column: every row shown of the cursor's column to the clipboard (with its heading or not), for Excel, Word or Notepad. */
+  const copyColumn = async (withHeader: boolean) => {
+    const column = columns[cursor.col];
+    if (!column) return;
+    const values = shownRows.map((_, position) => shownAt(position, column));
+    await navigator.clipboard?.writeText(columnText(column.caption.replace(/^\* /, ""), values, withHeader)).catch(() => undefined);
+    setMessage(`${values.length} rows of ${column.caption.replace(/^\* /, "")} copied`);
+  };
+  /** Right-click Copy Selection: the selected rows of the cursor's column only (not the whole column). */
+  const copySelection = async () => {
+    const column = columns[cursor.col];
+    if (!column) return;
+    const values = selectedPositions().map((position) => shownAt(position, column));
+    await navigator.clipboard?.writeText(values.join("\n")).catch(() => undefined);
+    setMessage(`${values.length} selected row${values.length === 1 ? "" : "s"} of ${column.caption.replace(/^\* /, "")} copied`);
   };
 
   // ---- MnuCopy / MnuPaste (features/grid/clipboard)
@@ -648,6 +765,19 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   useEffect(() => { openComboNow.current = openCombo; });
   const [arrowOpen, setArrowOpen] = useState(0);
   useEffect(() => { if (arrowOpen > 0) openComboNow.current(); }, [arrowOpen]);
+
+  /** F5 on the grid (also in a cell being edited): the cell is closed, the grid is left and the cursor goes to the Save button. */
+  const saveKey = async (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "F5" || !grid) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (editing) {
+      const column = columns[cursor.col];
+      if (column && !column.options) { if (!(await commit())) return; } else { setComboStart(""); }
+      setEditing(false);
+    }
+    activeById("mp-save")?.focus();
+  };
 
   const gridKeys = async (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (editing || shownRows.length === 0) return;
@@ -873,7 +1003,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const lastLine = headLines.length + 1;
   const headLocked = Boolean(grid) || Boolean(busy);
   return (
-    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title}>
+    <div ref={screenRef} className={`mp-screen ${locked && def ? "mp-locked" : ""}`} role="region" aria-label={def?.caption || title} onKeyDownCapture={(event) => void saveKey(event)}>
       {/*
         The header in three lines that line up like a grid: the lists, then the dates and text boxes,
         then the first combo with Show / Quit. Every label and every field starts at the same place in
@@ -924,7 +1054,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                 value={first}
                 reselect
                 disabled={headLocked}
-                onChoose={(option) => { setFirst(option); void loadGrid(option); }}
+                onChoose={(option) => { setFirst(option); rememberFirst(selection, entryName, option); void loadGrid(option); }}
               />
             </span>
           </>
@@ -936,6 +1066,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
           {grid?.balance && <span className="mp-balance">{grid.balance}</span>}
           {grid?.finalAmount && <span className="mp-balance">{grid.finalAmount}</span>}
         </span>
+        {/* As the account help's "F8 Ledger": the key and what it does, at the right end of the first combo's line. */}
+        {grid && <kbd className="mp-help-f1 se-f5-hint" style={{ gridRow: lastLine, gridColumn: 7 }} title="F5 leaves the grid and goes to the Save button"><b>F5</b> to Save</kbd>}
         <span className="mp-heading se-title" style={{ gridRow: 1, gridColumn: 7 }}>{def?.caption || title}{def && def.rights.restricted && !def.rights.edit ? " · Rights: view only" : ""}</span>
       </div>
 
@@ -1018,6 +1150,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                             <GridCombo
                               options={listFor(column, record, columns) ?? column.options}
                               current={editText}
+                              pointAt={def?.entryId === 46 && column.key.toLowerCase() === "name" ? lastNameEntered(records, deleted, shownRows[position]) : ""}
                               startWith={comboStart}
                               place={comboAt}
                               onPick={(text, step) => void finishCombo(text, step)}
@@ -1034,7 +1167,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                                 onChange={(event) => { if (mayType(column, editText, event.target.value)) setEditText(event.target.value); }}
                                 onKeyDown={(event) => void editorKeys(event)}
                               />
-                              {tools.buttons(editorKindOf(column.fieldType), editText, setEditText, numberRules(column.setup))}
+                              {tools.buttons(editorKindOf(column.fieldType), editText, setEditText, numberRules(column.setup), false, undefined, plainNumber(column))}
                             </span>
                           ) : (
                             <>
@@ -1059,6 +1192,10 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
             <GridMenu at={menu} onClose={() => { setMenu(null); keepGridFocus(gridFocus); }} items={[
               { label: "Copy (Ctrl+C)", onClick: () => void copyCell() },
               { label: "Paste (Ctrl+V)", disabled: !copied, onClick: () => void pasteCell() },
+              ...(selectionEnd !== null ? [{ label: `Copy Selection "${cursorColumn.caption.replace(/^\* /, "")}" (${selectedPositions().length} rows)`, title: "Copy only the selected rows of this column", onClick: () => void copySelection() }] : []),
+              { label: `Copy Column "${cursorColumn.caption.replace(/^\* /, "")}"`, title: "Copy the entire column with its heading, to paste in Excel, Word or Notepad", onClick: () => void copyColumn(true) },
+              { label: `Copy Column "${cursorColumn.caption.replace(/^\* /, "")}" (Values Only)`, title: "Copy the column values without the heading", onClick: () => void copyColumn(false) },
+              ...freezeMenuItems(setupColumns, cursorColumn.key, frozen, setFrozenChosen),
               ...columnMenuItems(layout, cursorColumn.key, () => setColumnChooser(true)),
               { label: "Restore Cell Value (Ctrl+Z)", onClick: () => restoreCell(cursor.row, cursorColumn) },
               { label: "Delete Row", disabled: !def?.canDelete, title: def?.canDelete ? undefined : "This entry does not delete rows", onClick: () => void deleteSelected("row") },
@@ -1099,8 +1236,9 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
 
       <div className="mp-status" role="status">
         <span>{def?.statusHead}</span>
-        {current && cursorColumn && <span>Row {cursor.row + 1} · {cursorColumn.caption}</span>}
-        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message || (current && cursorColumn ? tooltipText(cursorColumn.setup.field_tooltips || cursorColumn.tooltip) : "")}</span>
+        {current && cursorColumn && <span>Row {cursor.row + 1}/{shownRows.length} · {cursorColumn.caption}</span>}
+        {def?.canDelete && edited.size > 0 && <span className="mp-del-hint" style={{ flex: "none", fontWeight: 700 }} title="Delete the row under the cursor (Del)">Press Del to delete row</span>}
+        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message || (current && cursorColumn ? [tooltipText(cursorColumn.setup.field_tooltips || cursorColumn.tooltip), cursorColumn.compulsory ? "Compulsory" : "", cursorColumn.status.replace(/\s*\/\s*$/, "")].filter(Boolean).join("   ·   ") : "")}</span>
         {totals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{totals}</span>}
         {editing && cursorColumn && <span>{tools.hint(editorKindOf(cursorColumn.fieldType))}</span>}
         {warnings.map((warning) => <span key={warning} className="mp-warning" title={warning}>⚠ {warning}</span>)}

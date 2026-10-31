@@ -9,6 +9,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { loadEntry, loadEntryGrid } from "@/lib/small-entry/load";
 import { saveEntry } from "@/lib/small-entry/save";
 import type { EditedRow, EntryDefinition, EntryOption, EntryState } from "@/lib/small-entry/types";
+import { logError } from "@/lib/log";
 
 /**
  * The generic small-entry screen's server, as /api/master-program is the master screen's.
@@ -81,13 +82,18 @@ export async function POST(request: Request) {
           const detail = Array.isArray(body.detail) ? (body.detail as unknown[]).map((row) => Object.fromEntries(Object.entries((row ?? {}) as Record<string, unknown>).map(([name, value]) => [String(name), String(value ?? "")]))) : undefined;
           return saveEntry(loader, { entryName: body.entryName, menuShortName: moduleName, state, choices, rows, detail, dryRun: body.dryRun === true, editPassword: typeof body.editPassword === "string" ? body.editPassword : undefined });
         }
+        // Payment Manual Allot: the closing balance (Dr positive, Cr negative) of the account just chosen in a row.
+        case "closing": {
+          const rows = (await client.query(`SELECT closing FROM ${session.companySchema}.ac_balance WHERE code = $1 AND year_id = $2`, [Number(body.code) || 0, session.yearId])).rows as { closing: string | number | null }[];
+          return { closing: Number(rows[0]?.closing ?? 0) };
+        }
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);
       }
     }, { readOnlyWork: !writes, timeoutMs: 60000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Small entry error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The small entry request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/small-entry", action: "Small entry", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The small entry request failed", requestId }, { status: 500, headers });
   }
 }

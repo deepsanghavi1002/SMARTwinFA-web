@@ -53,7 +53,9 @@ function Marked({ text, needle }: { text: string; needle: string }) {
   return <>{parts}</>;
 }
 
-export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, onTicks, focusKey, hidden, disabledText, freezeMain = false, onTabOut, findSlot, groupName, onStatus }: {
+export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, onTicks, focusKey, hidden, disabledText, freezeMain = false, onTabOut, findSlot, groupName, onStatus, noBulk = false }: {
+  /** No Select All / Invert Selection (F4, F6): the screen takes one row only. */
+  noBulk?: boolean;
   help: HelpGridData;
   enabled: boolean;
   /** Keys of the ticked rows. */
@@ -256,6 +258,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
       case "F4":
       case "F6": {
         event.preventDefault();
+        if (noBulk) return;
         if (!enabled) { await messageBox.alert(event.key === "F4" ? "Select All Failed..\nPlease Check / Select Appropriate Group Field" : "Invert Selection Failed..\nPlease Check / Select Appropriate Group Field", "Operation Failed!"); return; }
         const next = new Set(ticked);
         const firstTicked = ticked.has(rowKey(rows[0]));
@@ -384,7 +387,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
                 </button>
                 <FilterButton caption={caption(column)} onOpen={() => columnFilters.open(column.key, valuesOf(column))} skipTab />
                 {layout.resizeHandle(column)}
-                <FilterPopup state={columnFilters} columnKey={column.key} caption={caption(column)} kind={kindOf(column)} values={columnFilters.openFilter === column.key ? valuesOf(column) : []} area={box} />
+                <FilterPopup state={columnFilters} columnKey={column.key} caption={caption(column)} kind={kindOf(column)} values={columnFilters.openFilter === column.key ? valuesOf(column) : []} area={box} floating />
               </div>
             ))}
           </div>

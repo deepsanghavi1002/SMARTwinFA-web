@@ -24,6 +24,7 @@ import { deleteDocuments, documentFile, listDocuments, saveDocuments } from "@/l
 import type { DocumentInput } from "@/lib/entry/documents";
 import { partyProductKeys, productChoice, productHelp, restoreEntry, zoomRegister } from "@/lib/entry/products";
 import type { EntryOption, InvoiceDefinition } from "@/lib/entry/types";
+import { logError } from "@/lib/log";
 
 /**
  * The entry screen's server (the desktop's Comman_Entry: Transaction > Invoice), as
@@ -85,8 +86,8 @@ async function saveEntry(body: Body, key: SessionKey, moduleName: string) {
     return Response.json({ report, committed: true }, { headers });
   } catch (error) {
     if (error instanceof DryRun) return Response.json({ report: error.report, committed: false, commitDisabled: wantsCommit && !allowed }, { headers });
-    console.error("Entry save error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The entry could not be saved" }, { status: 500, headers });
+    const requestId = logError({ route: "/api/entry", action: "Entry save", companyKey: `${key.companyId}/${key.yearKey}`, error, userId: key.loginName });
+    return Response.json({ error: error instanceof Error ? error.message : "The entry could not be saved", requestId }, { status: 500, headers });
   }
 }
 
@@ -111,8 +112,8 @@ async function saveDocumentsAction(body: Body, key: SessionKey, moduleName: stri
     return Response.json({ saved: result, committed: true }, { headers });
   } catch (error) {
     if (error instanceof DocumentDryRun) return Response.json({ saved: error.counts, committed: false }, { headers });
-    console.error("Entry documents error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The documents could not be saved" }, { status: 500, headers });
+    const requestId = logError({ route: "/api/entry", action: "Entry documents", companyKey: `${key.companyId}/${key.yearKey}`, error, userId: key.loginName });
+    return Response.json({ error: error instanceof Error ? error.message : "The documents could not be saved", requestId }, { status: 500, headers });
   }
 }
 
@@ -147,8 +148,8 @@ async function deleteEntry(body: Body, key: SessionKey, moduleName: string) {
     return Response.json({ report, committed: true }, { headers });
   } catch (error) {
     if (error instanceof DryRun) return Response.json({ report: error.report, committed: false, commitDisabled: wantsCommit && !allowed }, { headers });
-    console.error("Entry delete error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The entry could not be deleted" }, { status: 500, headers });
+    const requestId = logError({ route: "/api/entry", action: "Entry delete", companyKey: `${key.companyId}/${key.yearKey}`, error, userId: key.loginName });
+    return Response.json({ error: error instanceof Error ? error.message : "The entry could not be deleted", requestId }, { status: 500, headers });
   }
 }
 
@@ -303,7 +304,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: true, timeoutMs: 60000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Entry error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The entry request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/entry", action: "Entry", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The entry request failed", requestId }, { status: 500, headers });
   }
 }

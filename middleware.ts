@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { crossSiteWrite } from "@/lib/auth/cookies";
 import { isPublicApi } from "@/lib/auth/paths";
 import { currentUser, signInRequired } from "@/lib/auth/request";
+import { logError } from "@/lib/log";
 
 /**
  * Every /api call needs a live session unless lib/auth/paths.ts lists it as public, and no call
@@ -15,8 +16,8 @@ export async function middleware(request: Request) {
   try {
     if (await currentUser(request)) return NextResponse.next();
   } catch (error) {
-    console.error("Session check error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: "The session could not be checked" }, { status: 503, headers });
+    const requestId = logError({ request, route: new URL(request.url).pathname, action: "Session check", error });
+    return Response.json({ error: "The session could not be checked", requestId }, { status: 503, headers });
   }
   return signInRequired(headers);
 }

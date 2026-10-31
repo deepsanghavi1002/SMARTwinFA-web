@@ -743,6 +743,11 @@ export async function planReport(loader: Loader, reportName: string, selection: 
     call.slabsKey = input ? input.value : "-1";
     call.slabText = input ? input.text : "Rate";
     if (input && input.extra[0] !== "") addHidden(hidden, input.extra[0]);
+    // Stock report, Summary: Input Columns Opening or Closing shows the product with only that quantity (and its UOM, value, rate and factor), not what came in and went out.
+    if (reportKey === 17 && firstText.toUpperCase() === "SUMMARY" && input && (input.text === "Opening" || input.text === "Closing")) {
+      addHidden(hidden, "ADD_QTY,LESS_QTY,ADD_FACT,LESS_FACT,PURCH_AMOUNT,PURCH_RATE,SALE_AMOUNT,SALE_RATE");
+      addHidden(hidden, input.text === "Opening" ? "CLSG_QTY,BAL_FACT,CLSG_VALUE,CLSG_RATE,CLOSING_VALUE,CLOSING_RATE" : "OPENING,OPEN_QTY,OPEN_FACT,OPEN_VALUE,OPEN_RATE");
+    }
   }
   if (controlRow("lbchk_Col_Select")) {
     const picked = (await listItems("lbchk_Col_Select")).filter((item) => selection.columns.includes(item.value) || item.extra[1] === "Y");
@@ -808,6 +813,8 @@ export async function planReport(loader: Loader, reportName: string, selection: 
       grouping.push("NAME");
     }
   }
+  // Trial balance with a format (not Month): an account's lines are one group (SMART_NAME, which the format's query gives every line), so its closing starts again at each account.
+  if (reportKey === 6 && formatted && call.formating !== "MONTHLY" && !grouping.includes("SMART_NAME")) grouping.push("SMART_NAME");
   if (text(properties, "report_style").toUpperCase() === "ACCOUNT") for (const column of grouping) removeHidden(hidden, column);
 
   return {

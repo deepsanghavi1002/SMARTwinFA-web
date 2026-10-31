@@ -12,6 +12,7 @@ import { pushToCloud } from "@/lib/master-program/replicate";
 import type { CloudPush } from "@/lib/master-program/replicate";
 import { readSession } from "@/lib/master-program/session";
 import type { GroupState, SessionKey } from "@/lib/master-program/types";
+import { logError } from "@/lib/log";
 
 /**
  * The generic master screen's server: one endpoint, one action per request.
@@ -89,7 +90,7 @@ export async function POST(request: Request) {
     }, { readOnlyWork: !writes, timeoutMs: 60000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Master program error:", error);
-    return Response.json({ error: error instanceof Error ? error.message : "The master request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/master-program", action: "Master program", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The master request failed", requestId }, { status: 500, headers });
   }
 }

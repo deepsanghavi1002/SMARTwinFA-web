@@ -42,12 +42,17 @@ loki.source.docker "containers" {
 
 // A "level" label (error / warn / info) so Grafana can count errors per client.
 loki.process "level" {
+  // The web app writes one JSON line per event with its own "level": use it when the line is JSON.
+  // Other lines (Postgres, the API, Node) keep the word match on error / fatal / panic / warn.
+  stage.json {
+    expressions = { json_level = "level" }
+  }
   stage.regex {
-    expression = "(?i)(?P<level>error|fatal|panic|warn(?:ing)?)"
+    expression = "(?i)(?P<word_level>error|fatal|panic|warn(?:ing)?)"
   }
   stage.template {
     source   = "level"
-    template = "{{ if .Value }}{{ ToLower .Value }}{{ else }}info{{ end }}"
+    template = "{{ if .json_level }}{{ ToLower .json_level }}{{ else if .word_level }}{{ ToLower .word_level }}{{ else }}info{{ end }}"
   }
   stage.replace {
     source     = "level"

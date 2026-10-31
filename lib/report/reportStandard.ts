@@ -3911,7 +3911,8 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
   const check = (name: string) => call.checkQuery.includes(`${name},`);
   const notPorted = (what: string) => new ReportRefusal(`${what} of the Stock Summary is not available in the web version yet.`, "Not ported yet");
   const withDate = check("CHK_WITHDATE");
-  if (check("CHK_FACTOR")) throw notPorted("The Factor columns");
+  const factor = check("CHK_FACTOR");
+  if (factor && withDate) throw notPorted("The Factor columns with Only Within Date Transaction");
   if ([6, 15, 22, 38].includes(call.licence)) throw notPorted(`The licence ${call.licence} columns`);
   if (call.addon.some((text) => text.toUpperCase().includes("GODOWN"))) throw notPorted("The Godown selection");
   const fromText = desktopDate(call.from);
@@ -3933,7 +3934,7 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
   const plain: Way = (column) => `prodled.${column}`;
   /** The job work in lines count whole. */
   const jobIn: Way = (column) => `(case when prodled.trn_module='JOB-IN' then prodled.${column} else prodled.${column}-prodled.ag_qty end)`;
-  const pick = (way: Way, other: string) => `case ${units.map(([uom, column]) => `when PRODUCT.REP1_UOM=PRODUCT.${uom} then ${way(column)}`).join(" ")} else ${other} end`;
+  const pick = (way: Way, other: string, rep = "REP1_UOM") => `case ${units.map(([uom, column]) => `when PRODUCT.${rep}=PRODUCT.${uom} then ${way(column)}`).join(" ")} else ${other} end`;
   const sum = (condition: string, expression: string, alias: string) => `coalesce(sum(case when ${condition} then ${expression} else 0.00 end),0.00) AS "${alias}"`;
   const inv = "prodled.inventory='Y'";
   const rpl = call.licence === 21 || call.licence === 71;
@@ -3941,39 +3942,52 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
   const production = "stock_nat='A' and (trn_module='PROD-FG' or trn_module='PROD-SFG' or trn_module='PROD-MULTI')";
   const consumption = "stock_nat='L' and (trn_module='PROD-FG' or trn_module='PROD-SFG' or trn_module='PROD-MULTI')";
   /** The columns of one pass: the period (SUMMARY1 of the procedure) or what came before From (SUMMARY2); the two pick their lines a little differently. */
-  const passColumns = (period: boolean) => [
-    sum(`(book=13 or book=14) and stock_nat='A' and ${inv} and led_id is not null`, period ? pick(minus, "prodled.TRN_PCS") : pick(share, "prodled.QUANTITY"), "purch_qty"),
-    sum(call.licence === 7 ? `${inv} and prodled.trn_module='ORD-IN'` : `(book=16 or book=8) and stock_nat='A' and ${inv} and led_id is not null and ${typed}<>${damageKey}`, pick(minus, "0.00"), "cr_qty"),
-    sum(`stock_nat='A' and (trn_module='CHLN-IN' or trn_module='JOB-IN' or trn_module='JOB-OUT') and ${inv} and process_id is not null`, pick(jobIn, "0.00"), "chlnin_qty"),
-    ...(rpl ? [sum(`${production} and ${inv} and process_id is not null`, pick(minus, "prodled.TRN_PCS-prodled.ag_qty"), "production")] : []),
-    sum(rpl || !period ? `stock_nat='A' and trn_module='SVOU-ADD' and ${inv} and process_id is not null` : `stock_nat='A' and (trn_module='SVOU-ADD' or trn_module='PROD-FG' or trn_module='PROD-SFG') and ${inv} and process_id is not null`, pick(minus, rpl || !period ? "prodled.trn_pcs" : "0.00"), "stock_add"),
-    sum(`stock_nat='A' and ${inv} and (trn_module='STK-JV' or trn_module='RG-AC')`, pick(plain, "prodled.TRN_PCS"), "stock_jv_add"),
-    sum(`(book=8 or book=9) and stock_nat='L' and ${inv} and led_id is not null`, pick(minus, "0.00"), "sale_qty"),
-    sum(`(book=11 or book=13) and stock_nat='L' and ${inv} and led_id is not null and ${typed}<>${damageKey}`, pick(minus, "0.00"), "dr_qty"),
-    sum(`stock_nat='L' and (trn_module='CHLN-OUT' or trn_module='IND-OUT' or trn_module='JOB-OUT'${period ? "" : " or trn_module='JOB-IN'"}) and ${inv} and process_id is not null`, `case when prodled.trn_module='JOB-OUT' then prodled.quantity else ${pick(minus, "0.00")} end`, "chlnout_qty"),
-    ...(rpl ? [sum(`${consumption} and ${inv} and process_id is not null`, pick(minus, "0.00"), "consumption")] : []),
-    sum(`stock_nat='L' and trn_module='SVOU-LESS' and ${inv} and process_id is not null`, pick(minus, rpl || !period ? "prodled.trn_pcs" : "0.00"), "stock_less"),
-    sum(`stock_nat='L' and ${inv} and (trn_module='STK-JV' or trn_module='RG-AC')`, pick(plain, "prodled.TRN_PCS"), "stock_jv_less"),
-    sum(`book=16 and ${typed}=${damageKey} and led_id is not null`, pick(minus, "0.00"), "damagein_qty"),
-    sum(`book=11 and ${typed}=${damageKey} and led_id is not null`, pick(minus, "0.00"), "damageout_qty"),
+  const passColumns = (period: boolean, rep = "REP1_UOM") => [
+    sum(`(book=13 or book=14) and stock_nat='A' and ${inv} and led_id is not null`, period ? pick(minus, "prodled.TRN_PCS", rep) : pick(share, "prodled.QUANTITY", rep), "purch_qty"),
+    sum(call.licence === 7 ? `${inv} and prodled.trn_module='ORD-IN'` : `(book=16 or book=8) and stock_nat='A' and ${inv} and led_id is not null and ${typed}<>${damageKey}`, pick(minus, "0.00", rep), "cr_qty"),
+    sum(`stock_nat='A' and (trn_module='CHLN-IN' or trn_module='JOB-IN' or trn_module='JOB-OUT') and ${inv} and process_id is not null`, pick(jobIn, "0.00", rep), "chlnin_qty"),
+    ...(rpl ? [sum(`${production} and ${inv} and process_id is not null`, pick(minus, "prodled.TRN_PCS-prodled.ag_qty", rep), "production")] : []),
+    sum(rpl || !period ? `stock_nat='A' and trn_module='SVOU-ADD' and ${inv} and process_id is not null` : `stock_nat='A' and (trn_module='SVOU-ADD' or trn_module='PROD-FG' or trn_module='PROD-SFG') and ${inv} and process_id is not null`, pick(minus, rpl || !period ? "prodled.trn_pcs" : "0.00", rep), "stock_add"),
+    sum(`stock_nat='A' and ${inv} and (trn_module='STK-JV' or trn_module='RG-AC')`, pick(plain, "prodled.TRN_PCS", rep), "stock_jv_add"),
+    sum(`(book=8 or book=9) and stock_nat='L' and ${inv} and led_id is not null`, pick(minus, "0.00", rep), "sale_qty"),
+    sum(`(book=11 or book=13) and stock_nat='L' and ${inv} and led_id is not null and ${typed}<>${damageKey}`, pick(minus, "0.00", rep), "dr_qty"),
+    sum(`stock_nat='L' and (trn_module='CHLN-OUT' or trn_module='IND-OUT' or trn_module='JOB-OUT'${period ? "" : " or trn_module='JOB-IN'"}) and ${inv} and process_id is not null`, `case when prodled.trn_module='JOB-OUT' then prodled.quantity else ${pick(minus, "0.00", rep)} end`, "chlnout_qty"),
+    ...(rpl ? [sum(`${consumption} and ${inv} and process_id is not null`, pick(minus, "0.00", rep), "consumption")] : []),
+    sum(`stock_nat='L' and trn_module='SVOU-LESS' and ${inv} and process_id is not null`, pick(minus, rpl || !period ? "prodled.trn_pcs" : "0.00", rep), "stock_less"),
+    sum(`stock_nat='L' and ${inv} and (trn_module='STK-JV' or trn_module='RG-AC')`, pick(plain, "prodled.TRN_PCS", rep), "stock_jv_less"),
+    sum(`book=16 and ${typed}=${damageKey} and led_id is not null`, pick(minus, "0.00", rep), "damagein_qty"),
+    sum(`book=11 and ${typed}=${damageKey} and led_id is not null`, pick(minus, "0.00", rep), "damageout_qty"),
   ];
-  const movements = async (from: string, upto: string, period: boolean) => new Map((await runReportSql(loader, frag(`SELECT prodled.prod_id AS "prod_id", ${passColumns(period).join(", ")} FROM ${db}PROD_LEDGER prodled join ${db}PRODUCT_MASTER PRODUCT on PRODUCT.PROD_KEY = prodled.PROD_ID`
-    + ` WHERE prodled.il_pos='A' AND prodled.IL_DATE BETWEEN '${from}' AND '${upto}' AND prodled.quantity>0 AND ${typed} <> ${typeKey} GROUP BY prodled.prod_id`))).rows.map((row) => [num(row.prod_id), row] as const));
-  const period = withDate ? new Map<number, ResultRow>() : await movements(fromText, uptoText, true);
-  const before = !withDate && between ? await movements(yearStart, dayBeforeFrom, false) : new Map<number, ResultRow>();
+  // The ticked addon groups: their value (SMART_SELECTED_ADDONn) and their heading column.
+  const addonAlias = (text: string) => /as\s+"([^"]+)"/i.exec(text)?.[1] ?? "";
+  const addonLevels = [0, 1, 2, 3].filter((at) => call.addon[at].trim() !== "" && call.headingAddon[at].trim() !== "");
+  // An entry addon (ADDON_AENTRY, joined on the stock line's entry) is not a product's: it splits the product's lines, and only the lines of the ticked values count.
+  const entryLevels = addonLevels.filter((at) => /aentry\./i.test(call.addon[at]));
+  if (withDate && entryLevels.length > 0) throw notPorted("The entry level addon with Only Within Date Transaction");
+  const entryKey = (row: ResultRow) => entryLevels.map((_, index) => `${toText(row[`e${index}`])}`).join("");
+  const entrySelect = entryLevels.map((at, index) => `, ${call.addon[at].trim()} AS "e${index}"`).join("");
+  const entryJoin = entryLevels.length > 0 ? ` left join ${db}ADDON_IENTRY aentry on aentry.AONI_IL_ID = prodled.IL_KEY` : "";
+  const entryWhere = entryLevels.map((at) => ` AND ${call.addon[at].trim().replace("txt_", "key_")} in ${call.selectKey[at]}`).join("");
+  const entryGroup = entryLevels.map((at) => `, ${call.addon[at].trim()}`).join("");
+  const movements = async (from: string, upto: string, period: boolean, rep = "REP1_UOM") => new Map((await runReportSql(loader, frag(`SELECT prodled.prod_id AS "prod_id"${entrySelect}, ${passColumns(period, rep).join(", ")} FROM ${db}PROD_LEDGER prodled join ${db}PRODUCT_MASTER PRODUCT on PRODUCT.PROD_KEY = prodled.PROD_ID${entryJoin}`
+    + ` WHERE prodled.il_pos='A' AND prodled.IL_DATE BETWEEN '${from}' AND '${upto}' AND prodled.quantity>0 AND ${typed} <> ${typeKey}${entryWhere} GROUP BY prodled.prod_id${entryGroup}`))).rows.map((row) => [`${num(row.prod_id)}${entryKey(row)}`, row] as const));
+  const period = withDate ? new Map<string, ResultRow>() : await movements(fromText, uptoText, true);
+  const before = !withDate && between ? await movements(yearStart, dayBeforeFrom, false) : new Map<string, ResultRow>();
+  // Factor columns: the same lines in the product's second report unit.
+  const periodFact = factor ? await movements(fromText, uptoText, true, "REP2_UOM") : new Map<string, ResultRow>();
+  const beforeFact = factor && between ? await movements(yearStart, dayBeforeFrom, false, "REP2_UOM") : new Map<string, ResultRow>();
 
   const names = ["purch_qty", "cr_qty", "chlnin_qty", ...(rpl ? ["production"] : []), "stock_add", "stock_jv_add", "sale_qty", "dr_qty", "chlnout_qty", ...(rpl ? ["consumption"] : []), "stock_less", "stock_jv_less", "damagein_qty", "damageout_qty"];
   const net = (row: ResultRow | undefined) => (row === undefined ? 0 : num(row.purch_qty) + num(row.cr_qty) + num(row.chlnin_qty) + num(row.production) + num(row.stock_add) + num(row.stock_jv_add) + (rpl ? num(row.damagein_qty) : 0) - num(row.sale_qty) - num(row.dr_qty) - num(row.chlnout_qty) - num(row.consumption) - num(row.stock_less) - num(row.stock_jv_less) - (rpl ? num(row.damageout_qty) : 0));
 
   // The products: the ticked ones (and addon keys) of the setup's where.
-  const addonFilter = call.addon.map((text, index) => (text.trim() !== "" && call.selectKey[index] !== "" ? ` and ${text.replace(" adata.txt_", " adata.key_")} in ${call.selectKey[index]}` : "")).join("");
+  const addonFilter = call.addon.map((text, index) => (text.trim() !== "" && call.selectKey[index] !== "" && !/aentry\./i.test(text) ? ` and ${text.replace(" adata.txt_", " adata.key_")} in ${call.selectKey[index]}` : "")).join("");
   const open = (column: string) => `product.rep1_uom=product.${column}_uom`;
-  // The ticked addon groups: their value (SMART_SELECTED_ADDONn) and their heading column.
-  const addonAlias = (text: string) => /as\s+"([^"]+)"/i.exec(text)?.[1] ?? "";
-  const addonLevels = [0, 1, 2, 3].filter((at) => call.addon[at].trim() !== "" && call.headingAddon[at].trim() !== "");
-  const addonSelect = addonLevels.map((at) => `, ${call.selectedAddon[at].trim() !== "" ? call.selectedAddon[at].trim() : `${call.addon[at].trim()} as "SMART_SELECTED_ADDON${at + 1}"`}, ${call.headingAddon[at].trim()}`).join("");
+  const addonSelect = addonLevels.map((at) => (entryLevels.includes(at)
+    ? `, '' as "SMART_SELECTED_ADDON${at + 1}", '' as "${addonAlias(call.headingAddon[at])}"`
+    : `, ${call.selectedAddon[at].trim() !== "" ? call.selectedAddon[at].trim() : `${call.addon[at].trim()} as "SMART_SELECTED_ADDON${at + 1}"`}, ${call.headingAddon[at].trim()}`)).join("");
   const products = (await runReportSql(loader, frag(`SELECT product.PROD_KEY AS "prod_key", product.PROD_SHORT AS "prod_short", product.PROD_DESC AS "prod_desc", product.BAR_CODE AS "bar_code", coalesce(prodbal.excise_rate,0) AS "act_rate"${addonSelect},`
-    + ` prodbal.OPEN_PCS::numeric AS "open_pcs", product.BASE_PACK::numeric AS "base_pack", (case when ${open("pcs")} then prodbal.OPEN_PCS when ${open("qty1")} then prodbal.open_qty1 when ${open("qty2")} then prodbal.open_qty2 when ${open("qty3")} then prodbal.open_qty3 when ${open("pack")} then prodbal.open_pack when ${open("weight")} then prodbal.open_weight else prodbal.OPEN_PCS end) AS "opening"`
+    + ` prodbal.OPEN_PCS::numeric AS "open_pcs", product.BASE_PACK::numeric AS "base_pack", (case when ${open("pcs")} then prodbal.OPEN_PCS when ${open("qty1")} then prodbal.open_qty1 when ${open("qty2")} then prodbal.open_qty2 when ${open("qty3")} then prodbal.open_qty3 when ${open("pack")} then prodbal.open_pack when ${open("weight")} then prodbal.open_weight else prodbal.OPEN_PCS end) AS "opening", (case when ${open("pcs").replace("rep1","rep2")} then prodbal.OPEN_PCS when ${open("qty1").replace("rep1","rep2")} then prodbal.open_qty1 when ${open("qty2").replace("rep1","rep2")} then prodbal.open_qty2 when ${open("qty3").replace("rep1","rep2")} then prodbal.open_qty3 when ${open("pack").replace("rep1","rep2")} then prodbal.open_pack when ${open("weight").replace("rep1","rep2")} then prodbal.open_weight else prodbal.OPEN_PCS end) AS "open_fact"`
     + ` FROM ${db}product_master product left join ${db}prod_balance prodbal on product.prod_key=prodbal.prod_id inner join ${db}IDOPT_MASTER idopt on product.prod_group = idopt.idopt_key left join ${db}ADDON_DATA adata on adata.PROD_ID = product.PROD_KEY`
     + ` where product.prod_pos<>'D' and product.inventory='Y' and prodbal.prec_flag='RP' and prodbal.YEAR_ID='${call.yearId}'${call.selectKey[4] !== "" ? ` and product.prod_key in ${call.selectKey[4]}` : ""}${addonFilter}`))).rows;
   /**
@@ -4004,7 +4018,7 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
       + ` WHERE prodled.il_pos='A' AND prodled.IL_DATE BETWEEN '${yearStart}' AND '${dayBeforeFrom}' AND prodled.quantity>0 AND ${typed} <> ${typeKey} GROUP BY prodled.prod_id`))).rows.map((row) => [num(row.prod_id), row] as const)) : new Map<number, ResultRow>();
     const table = new ResultTable();
     const lic21 = call.licence === 21;
-    for (const column of ["SMART_SELECTED_PRODUCT", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "ROW_DATA_TYPE", "PROD_SHORT", "PROD_DESC", "OPEN_QTY", "ADD_QTY", "LESS_QTY", "CLSG_QTY", ...(lic21 ? ["STD_PACK", "CARTONS", "LOOSE_QTY"] : [])]) table.addColumn(column);
+    for (const column of ["SMART_SELECTED_PRODUCT", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "ROW_DATA_TYPE", "PROD_DESC", "OPEN_QTY", "ADD_QTY", "LESS_QTY", "CLSG_QTY", ...(lic21 ? ["STD_PACK", "CARTONS", "LOOSE_QTY"] : [])]) table.addColumn(column);
     for (const column of ["OPEN_QTY", "ADD_QTY", "LESS_QTY", "CLSG_QTY", ...(lic21 ? ["STD_PACK", "CARTONS", "LOOSE_QTY"] : [])]) table.setKind(column, "decimal");
     const aliases = addonLevels.map((at) => addonAlias(call.headingAddon[at])).filter((alias) => alias !== "");
     for (const alias of aliases) table.addColumn(alias);
@@ -4032,6 +4046,20 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
     return table;
   }
 
+  // Entry addon: a product's line for each value of it found in the period or before (the year's opening has none, and the setup's where leaves it out).
+  if (entryLevels.length > 0) {
+    const suffixes = new Map<number, Set<string>>();
+    for (const map of [period, before, periodFact, beforeFact]) {
+      for (const mapKey of map.keys()) { const [id, ...rest] = mapKey.split(""); suffixes.set(Number(id), (suffixes.get(Number(id)) ?? new Set<string>()).add(rest.map((value) => `${value}`).join(""))); }
+    }
+    const lines = products.flatMap((product) => [...(suffixes.get(num(product.prod_key)) ?? [])].map((suffix) => {
+      const values = suffix.split("").slice(1);
+      const line: ResultRow = { ...product, __entry: suffix };
+      entryLevels.forEach((at, index) => { line[`SMART_SELECTED_ADDON${at + 1}`] = values[index]; line[addonAlias(call.headingAddon[at])] = values[index]; });
+      return line;
+    }));
+    products.splice(0, products.length, ...lines);
+  }
   // By the ticked addon groups, then the product (the procedure's last select).
   const selectedAddon = (row: ResultRow, at: number) => toText(row[`SMART_SELECTED_ADDON${at + 1}`]);
   products.sort((a, b) => { for (const at of addonLevels) { const compare = sqlServerCompare(selectedAddon(a, at), selectedAddon(b, at)); if (compare !== 0) return compare; } return sqlServerCompare(toText(a.prod_short), toText(b.prod_short)); });
@@ -4039,9 +4067,11 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
   if (withDate) return stockSummaryWithDate();
 
   const table = new ResultTable();
-  for (const column of ["SMART_SELECTED_PRODUCT", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "ROW_DATA_TYPE", "PROD_SHORT", "PROD_DESC", ...(check("BARCODE") ? ["BAR_CODE"] : [])]) table.addColumn(column);
+  for (const column of ["SMART_SELECTED_PRODUCT", "SMART_SELECTED_ADDON1", "SMART_SELECTED_ADDON2", "SMART_SELECTED_ADDON3", "SMART_SELECTED_ADDON4", "ROW_DATA_TYPE", "PROD_SHORT", "PROD_DESC", ...(check("BARCODE") ? ["BARCODE"] : [])]) table.addColumn(column);
   const quantity = ["OPEN_QTY", "PURCH_QTY", "CR_QTY", "CHLNIN_QTY", ...(rpl ? ["PRODUCTION"] : []), "STOCK_ADD", "STOCK_JV_ADD", "SALE_QTY", "DR_QTY", "CHLNOUT_QTY", ...(rpl ? ["CONSUMPTION"] : []), "STOCK_LESS", "STOCK_JV_LESS", "DAMAGEIN_QTY", "DAMAGEOUT_QTY", "CLSG_QTY"];
+  const factorNames = quantity.map((column) => column.replace(/_QTY$/, "") + "_FACT");
   for (const column of quantity) table.setKind(column, "decimal");
+  if (factor) for (const column of factorNames) { table.addColumn(column); table.setKind(column, "decimal"); }
   if (call.licence === 21) table.setKind("ACT_RATE", "decimal");
   const headingAliases = addonLevels.map((at) => addonAlias(call.headingAddon[at]));
   for (const alias of headingAliases) if (alias !== "") table.addColumn(alias);
@@ -4052,13 +4082,22 @@ export async function stockSummary(loader: Loader, plan: ReportPlan): Promise<Re
     const lineKey = `${key}|${addonLevels.map((at) => selectedAddon(product, at)).join("|")}`;
     if (seenLines.has(lineKey)) continue;
     seenLines.add(lineKey);
-    const moved = period.get(key);
-    const opening = Math.round((num(product.opening) + net(before.get(key))) * 10000) / 10000;
+    const mapKey = `${key}${toText(product.__entry)}`;
+    const moved = period.get(mapKey);
+    const opening = Math.round(((entryLevels.length > 0 ? 0 : num(product.opening)) + net(before.get(mapKey))) * 10000) / 10000;
     const values: Record<string, number> = { OPEN_QTY: opening };
     names.forEach((name) => { values[name.toUpperCase()] = Math.round(num(moved?.[name]) * 10000) / 10000; });
     if (quantity.slice(0, -1).every((column) => values[column] === 0)) continue;
     values.CLSG_QTY = Math.round((values.OPEN_QTY + values.PURCH_QTY + values.CR_QTY + values.CHLNIN_QTY + (values.PRODUCTION ?? 0) + values.STOCK_ADD + values.STOCK_JV_ADD + (rpl ? values.DAMAGEIN_QTY : 0) - values.SALE_QTY - values.DR_QTY - values.CHLNOUT_QTY - (values.CONSUMPTION ?? 0) - values.STOCK_LESS - values.STOCK_JV_LESS - (rpl ? values.DAMAGEOUT_QTY : 0)) * 10000) / 10000;
-    table.insert({ SMART_SELECTED_PRODUCT: toText(product.prod_short), SMART_SELECTED_ADDON1: selectedAddon(product, 0), SMART_SELECTED_ADDON2: selectedAddon(product, 1), SMART_SELECTED_ADDON3: selectedAddon(product, 2), SMART_SELECTED_ADDON4: selectedAddon(product, 3), ROW_DATA_TYPE: "LED", PROD_SHORT: product.prod_short, PROD_DESC: product.prod_desc, ...(check("BARCODE") ? { BAR_CODE: product.bar_code } : {}), ...Object.fromEntries(headingAliases.filter((alias) => alias !== "").map((alias) => [alias, product[alias]])), ...values, ...(call.licence === 21 ? { ACT_RATE: num(product.act_rate) } : {}) });
+    const fact: Record<string, number> = {};
+    if (factor) {
+      const movedFact = periodFact.get(mapKey);
+      const factValues: Record<string, number> = { OPEN_QTY: Math.round(((entryLevels.length > 0 ? 0 : num(product.open_fact)) + net(beforeFact.get(mapKey))) * 10000) / 10000 };
+      names.forEach((name) => { factValues[name.toUpperCase()] = Math.round(num(movedFact?.[name]) * 10000) / 10000; });
+      factValues.CLSG_QTY = Math.round((factValues.OPEN_QTY + factValues.PURCH_QTY + factValues.CR_QTY + factValues.CHLNIN_QTY + (factValues.PRODUCTION ?? 0) + factValues.STOCK_ADD + factValues.STOCK_JV_ADD + (rpl ? factValues.DAMAGEIN_QTY : 0) - factValues.SALE_QTY - factValues.DR_QTY - factValues.CHLNOUT_QTY - (factValues.CONSUMPTION ?? 0) - factValues.STOCK_LESS - factValues.STOCK_JV_LESS - (rpl ? factValues.DAMAGEOUT_QTY : 0)) * 10000) / 10000;
+      quantity.forEach((column, at) => { fact[factorNames[at]] = factValues[column]; });
+    }
+    table.insert({ SMART_SELECTED_PRODUCT: toText(product.prod_short), SMART_SELECTED_ADDON1: selectedAddon(product, 0), SMART_SELECTED_ADDON2: selectedAddon(product, 1), SMART_SELECTED_ADDON3: selectedAddon(product, 2), SMART_SELECTED_ADDON4: selectedAddon(product, 3), ROW_DATA_TYPE: "LED", PROD_SHORT: product.prod_short, PROD_DESC: product.prod_desc, ...(check("BARCODE") ? { BARCODE: product.bar_code } : {}), ...Object.fromEntries(headingAliases.filter((alias) => alias !== "").map((alias) => [alias, product[alias]])), ...values, ...fact, ...(call.licence === 21 ? { ACT_RATE: num(product.act_rate) } : {}) });
   }
   return table;
 }
@@ -7643,11 +7682,11 @@ export async function invalidGst(loader: Loader, plan: ReportPlan): Promise<Resu
   let sql: string;
   if (!call.checkQuery.includes("CHK_ONLYMAST,")) {
     sql = `select a.full_docno as "DOC_NO",${gstrDate6("a.doc_date")} as "SELECTED_DATE",a.amount::numeric as "amount",b.name as "name",'GSTIN has not been specified.' as "GST_NO",d.opt_desc as "STATE_NAME",d.opt_short as "STATE_CODE"`
-      + ` from ${db}ledger a, ${db}account b, ${db}Address c, ${db}idopt_master d where a.code=b.code and b.code=c.code and c.state_id=d.idopt_key and a.doc_pos='A' and c.address_id=1 and coalesce(c.GST_NO,'')=''`
+      + ` from ${db}ledger a, ${db}account b, ${db}Address c, ${db}idopt_master d where a.code=b.code and b.code=c.code and c.state_id=d.idopt_key and a.doc_pos='A' and c.address_id=1 and btrim(coalesce(c.GST_NO,''))=''`
       + ` and b.a_pos<>'D' and d.idopt_flag='ST' and a.DOC_DATE between ${day(call.from)} AND ${day(call.upto)} and ${purchase ? "b.book=3 and a.book = 13" : "b.book=2 and a.book = 8"} order by a.doc_date,b.name`;
   } else {
-    sql = `select a.name as "name",case when coalesce(b.GST_NO,'')='' then 'GSTIN has not been specified.' else b.GST_NO end as "GST_NO",c.opt_desc as "STATE_NAME",c.opt_short as "STATE_CODE"`
-      + ` from ${db}account a, ${db}Address b, ${db}idopt_master c where a.code=b.code and b.state_id=c.idopt_key and b.address_id=1 and (coalesce(b.GST_NO,'')='' or left(b.gst_no::text, 2)<>c.opt_short)`
+    sql = `select a.name as "name",case when btrim(coalesce(b.GST_NO,''))='' then 'GSTIN has not been specified.' else b.GST_NO end as "GST_NO",c.opt_desc as "STATE_NAME",c.opt_short as "STATE_CODE"`
+      + ` from ${db}account a, ${db}Address b, ${db}idopt_master c where a.code=b.code and b.state_id=c.idopt_key and b.address_id=1 and (btrim(coalesce(b.GST_NO,''))='' or left(b.gst_no::text, 2)<>c.opt_short)`
       + ` and a.a_pos<>'D' and c.idopt_flag='ST' and a.book=${purchase ? 3 : 2} order by a.name`;
   }
   const table = tableFromResult(await runReportSql(loader, pgFragment(sql, plan, loader.session.companySchema)));

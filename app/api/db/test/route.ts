@@ -1,4 +1,5 @@
 import { query } from "@/lib/db";
+import { logError } from "@/lib/log";
 
 export async function GET() {
   try {
@@ -16,12 +17,13 @@ export async function GET() {
       schemas: result.rows,
     });
   } catch (error) {
-    console.error("Database test error:", error);
+    const requestId = logError({ route: "/api/db/test", action: "Database test", error });
     return Response.json(
       {
         success: false,
         message: "Database connection failed",
         error: error instanceof Error ? error.message : String(error),
+        requestId,
       },
       { status: 500 }
     );

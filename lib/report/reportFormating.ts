@@ -8,6 +8,7 @@ import { pgFragment, ReportRefusal } from "./generate";
 import { cashBookColumns, dayBefore, ddMmYyyy, dropColumn, tableFromFields, formatPeriod, maxOf, pushAll, groupOrderTail, insertFirst, MONTH_NAMES, requireWhere, sortRows, tableFromResult, textKey, unknownFormat, withEntryAddon } from "./library";
 import { registerSlabBook, registerSlabs, challanFrom, orderPendingFrom, orderPendingWhere, pendingChallanFrom, stockVoucher, invalidGst, gstrTaxMismatch, documentUpload, gstFormSummary, gstr3b, gstr1, gstr2, bookwise, checklistDaybook, checklistInvoice, dailyTransaction, fundFlow, interestCalculation, target, taxSummary, tdsReport, topReports, dropAnalysis, salesAnalysis, partySummary, nonFunction, partyBillPdf, physicalStock, cashBookFrom, cashBookOpening, monthlyClosingStock, partyStock, stockMovement, stockSummary } from "./reportStandard";
 import { money, num, runReportSql, runReportSqlHashed } from "./run";
+import { trialBalanceFormats } from "./trialBalanceFormats";
 import { salesExpenseTable } from "./salesExpense";
 import type { SalesExpenseAmount } from "./salesExpense";
 import { multiYearAccounts } from "./multiYear";
@@ -73,6 +74,7 @@ export async function formattedReport(loader: Loader, plan: ReportPlan): Promise
     case 2: return journalFormats(loader, plan);
     case 3: return registerFormats(loader, plan);
     case 4: return ledgerFormats(loader, plan);
+    case 6: return trialBalanceFormats(loader, plan);
     case 14: return formSummaryFormats(loader, plan);
     case 16: return partyStock(loader, plan);
     case 211: return topReports(loader, plan);
@@ -3719,6 +3721,15 @@ async function finishProductStock(loader: Loader, plan: ReportPlan): Promise<Res
       Hold_Ctn: r2(product.holdCtn), Hold_Qty: r2(product.hold), After_Hold_Stock: r2(closing - product.hold), Hold_Remark: product.remark,
     });
     rows.push(row);
+  }
+  // Net Value Require (CHK_NETVAL): the amounts at 75% (68% for the Export items' Amount; the procedure takes their opening at 75% too), rounded to whole rupees.
+  if (call.checkQuery.includes("CHK_NETVAL,")) {
+    const whole = (value: number) => Math.round(value + Math.sign(value) * 1e-9);
+    for (const row of rows) {
+      const exported = toText(row.ITEM).slice(0, 6) === "Export";
+      row.Amount = whole(num(row.Amount) * (exported ? 68 : 75) / 100);
+      row.OPEN_AMT = whole(num(row.OPEN_AMT) * 75 / 100);
+    }
   }
   table.rows = sortRows(rows);
   return table;

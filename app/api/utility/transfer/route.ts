@@ -5,6 +5,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { transferData, transferInfo } from "@/lib/utility/transfer";
 import type { TransferOptions } from "@/lib/utility/transfer";
+import { logError } from "@/lib/log";
 
 /**
  * Utility > Transfer Balance: SP_TRANSFER_DATA for the open company and year. It writes this year's balances, bills and stock from last year's company, so it
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
     }, { timeoutMs: 3_600_000 });
     return Response.json(result, { headers });
   } catch (error) {
-    console.error("Transfer Balance error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/utility/transfer", action: "Transfer Balance", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

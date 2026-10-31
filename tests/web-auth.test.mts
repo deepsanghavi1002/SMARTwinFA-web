@@ -63,12 +63,14 @@ test("a write naming another origin is cross-site; reads and same-site writes ar
   assert.equal(crossSiteWrite(at("GET", "https://evil.example")), false);
 });
 
-test("only the sign-in calls and health are public", () => {
+test("only the sign-in calls, health and the browser error report are public", () => {
   assert.equal(isPublicApi("/api/health", "GET"), true);
   assert.equal(isPublicApi("/api/auth/login", "POST"), true);
   assert.equal(isPublicApi("/api/auth/login/", "POST"), true);
   assert.equal(isPublicApi("/api/auth/login", "GET"), false);
   assert.equal(isPublicApi("/api/auth/set-password", "GET"), true);
+  assert.equal(isPublicApi("/api/client-log", "POST"), true);
+  assert.equal(isPublicApi("/api/client-log", "GET"), false);
   for (const path of ["/api/auth/me", "/api/auth/users", "/api/auth/operator", "/api/operators", "/api/companies", "/api/master-program", "/api/legacy/startup", "/api/db/test"]) {
     assert.equal(isPublicApi(path, "GET"), false, path);
     assert.equal(isPublicApi(path, "POST"), false, path);

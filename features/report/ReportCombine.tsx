@@ -75,6 +75,13 @@ const PARTY_RATE_BOOK: Readonly<Record<string, number>> = { 0: 2, 1: 3 };
 /** Reports whose first combo's value is the account book itself (Budget: DEBTORS 2, CREDITORS 3), whatever book column its rows carry. */
 const ACCOUNT_BOOK_COMBO: ReadonlySet<number> = new Set([42]);
 
+/** Entry Account Transfer (59) and Entry Product Transfer (60): a merge action, not a report. */
+const isTransfer = (key: number) => key === 59 || key === 60;
+/** Both groups (From and Upto) start ticked, so the operator goes straight to choosing the masters. */
+const startGroups = (report: ReportDefinition) => report.controls.find((control) => control.name === "lbchk_Group")?.items.map(itemKey) ?? [];
+/** The help tab a screen opens on: Report Options when it has them (never for the transfers), else the first help. */
+const startTab = (report: ReportDefinition) => !isTransfer(report.key) && report.checkboxes.some((check) => check.visible) ? OPTIONS_GRID : report.helps.find((help) => report.helpTabs.includes(help.grid.replace("C1Help", "Tab_")))?.grid ?? report.helps[0]?.grid ?? "";
+
 function accountScopeOf(def: ReportDefinition | null, first: string): { help: HelpGridData; keep: (row: Readonly<Record<string, string>>) => boolean; defaultTicked: boolean } | null {
   if (!def) return null;
   const option = def.firstCombo.options.find((candidate) => candidate.value === first);
@@ -148,21 +155,25 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     if (!selection) throw new Error("No company is open");
     return reportCall<T>(selection, reportName, menuShortName, action, payload);
   }, [selection, reportName, menuShortName]);
-  const refuse = (refusal: Refusal) => messageBox.ask(refusal.message, refusal.caption, ["OK"], { kind: "warning" });
+  // The latest call / onClose, read by the load and refill effects below: a new identity of either (a re-render of the parent, Refresh) must not run the form load again and reset the selection.
+  const callRef = useRef(call);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { callRef.current = call; onCloseRef.current = onClose; });
+  const refuse = (refusal: Refusal) => messageBox.ask(refusal.message, refusal.caption, ["OK"], { kind: refusal.caption === "SUCCESS" ? "info" : "warning" });
 
   // Report_Combine_Load.
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const reply = await call<{ report: ReportDefinition; runtimeDefaults?: Record<string, string>; warnings: string[]; version?: string }>("report");
+        const reply = await callRef.current<{ report: ReportDefinition; runtimeDefaults?: Record<string, string>; warnings: string[]; version?: string }>("report");
         if (!live) return;
         const report = reply.report;
         if (report.rights.modulePassword) {
           const typed = await messageBox.prompt("Enter Module Password", "Module Password", { password: true });
-          if (typed === null) { onClose(); return; }
-          const check = await call<{ ok: boolean; message: string }>("module-password", { password: typed });
-          if (!check.ok) { await messageBox.alert(check.message || "Invalid Password", "Module Password"); onClose(); return; }
+          if (typed === null) { onCloseRef.current(); return; }
+          const check = await callRef.current<{ ok: boolean; message: string }>("module-password", { password: typed });
+          if (!check.ok) { await messageBox.alert(check.message || "Invalid Password", "Module Password"); onCloseRef.current(); return; }
         }
         setDef(report);
         // The amounts the report's own queries give (Profit / Loss: Opening Amount from LAST_YEAR, Closing Amount from OS_BILLDIFF) fill their boxes as it opens.
@@ -177,7 +188,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
         setColumnsTicked(report.controls.find((control) => control.name === "lbchk_Col_Select")?.initiallyTicked.slice() ?? []);
         setChecks(Object.fromEntries(report.checkboxes.map((check) => [check.name, check.value])));
         setTicks(Object.fromEntries(report.helps.map((help) => [help.grid, new Set<string>()])));
-        setHelpTab(report.checkboxes.some((check) => check.visible) ? OPTIONS_GRID : report.helps.find((help) => report.helpTabs.includes(help.grid.replace("C1Help", "Tab_")))?.grid ?? report.helps[0]?.grid ?? "");
+        setHelpTab(startTab(report));
+        if (isTransfer(report.key)) { setGroups(startGroups(report)); setTimeout(() => setFocusHelp((count) => count + 1), 50); }
         if (reply.warnings.length > 0) setMessage(`Setup warnings: ${reply.warnings.length}`);
       } catch (error) {
         if (live) setFatal(error instanceof Error ? error.message : String(error));
@@ -186,14 +198,14 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       }
     })();
     return () => { live = false; };
-  }, [call, onClose]);
+  }, [reportName, menuShortName]);
 
   // Cmb_FirstCombo_Leave: the chosen entry refills its combo (the series of the account's book), first item chosen.
   useEffect(() => {
     if (!def || def.lostFocusControl === "") return;
     let live = true;
     const name = def.lostFocusControl;
-    call<{ control: string; items: ControlItem[]; warnings?: string[] }>("lostfocus", { selection: { firstCombo: first } })
+    callRef.current<{ control: string; items: ControlItem[]; warnings?: string[] }>("lostfocus", { selection: { firstCombo: first } })
       .then((reply) => {
         if (!live) return;
         setLostItems(reply.items);
@@ -208,13 +220,13 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
-  }, [def, first, call]);
+  }, [def, first]);
 
   // The Against Book combo (cmb_AgainstBook) follows the register: a credit note is against the sale, a debit note against the purchase.
   useEffect(() => {
     if (!def || def.lostFocusControl === "cmb_AgainstBook" || !def.controls.some((candidate) => candidate.type === "C" && candidate.name === "cmb_AgainstBook")) return;
     let live = true;
-    call<{ control: string; items: ControlItem[] }>("against", { selection: { firstCombo: first } })
+    callRef.current<{ control: string; items: ControlItem[] }>("against", { selection: { firstCombo: first } })
       .then((reply) => {
         if (!live) return;
         setAgainstItems(reply.items);
@@ -222,7 +234,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
-  }, [def, first, call]);
+  }, [def, first]);
 
   // The keyboard starts in the first combo (or the groups when the report has none).
   useEffect(() => {
@@ -249,7 +261,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     let live = true;
     const switched = filterListOf.current !== filterList;
     filterListOf.current = filterList;
-    call<{ control: string; items: ControlItem[] }>(filterList === "lbchk_Forms" ? "forms" : "slabs", { selection: { firstCombo: first, choices: { cmb_AgainstBook: againstChoice } } })
+    callRef.current<{ control: string; items: ControlItem[] }>(filterList === "lbchk_Forms" ? "forms" : "slabs", { selection: { firstCombo: first, choices: { cmb_AgainstBook: againstChoice } } })
       .then((reply) => {
         if (!live) return;
         setSlabItems(reply.items);
@@ -257,7 +269,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
-  }, [slabListShown, filterList, first, againstChoice, call]);
+  }, [slabListShown, filterList, first, againstChoice]);
   const groupOfGrid = (grid: string) => groupControl?.items.filter((item) => item.showControls === grid && groups.includes(itemKey(item))) ?? [];
 
   /** Ticking a group shows its help tab (MoveFocus); an addon group shows its own subs in the addon grid. */
@@ -362,6 +374,11 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       const yes = await messageBox.confirm(`It Seems You Have Selected From And Upto Date\nSame As ${from}\nIt Will Generate Report Only For ${from}\n\nAre You Sure You Want To Continue?`, "Same Date Selection");
       if (!yes) return false;
     }
+    // Entry Account Transfer moves entries for good (the desktop asks nothing; the web asks once).
+    const transferKind = reportName === "REPORT_ENTRY_ACCOUNT_TRANSFER" ? "Account" : reportName === "REPORT_ENTRY_PRODUCT_TRANSFER" ? "Product" : "";
+    if (transferKind && !(await messageBox.confirm(`All entries of the ${transferKind} From, dated ${from} to ${upto}, will be moved to the ${transferKind} Upto.\nWhen the dates are the whole year the first ${transferKind.toLowerCase()} is also merged into the second and deleted.\n\nThis cannot be undone. Are you sure you want to continue?`, `Entry ${transferKind} Transfer`))) return false;
+    // Voucher Renumber changes the numbers of posted vouchers for good.
+    if (reportName === "UTILITY_VOUCHER_RENUMBER" && !(await messageBox.confirm(`The vouchers of the chosen book and series, dated ${from} to ${upto}, will be numbered again one after the other.\n\nThis cannot be undone. Are you sure you want to continue?`, "Voucher Renumber"))) return false;
     saveLastDates({ from, upto });
     setBusy("Generating report");
     say("Reading database and collecting data for inputs...");
@@ -370,7 +387,22 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       const reply = await call<{ output: ReportOutput }>("generate", { selection: chosen });
       generatedWith.current = chosen;
       setGeneratedPeriod({ from: chosen.from, upto: chosen.upto });
-      if (reply.refusal) { say("Report generation failed...", "", true); if (!quiet) await refuse(reply.refusal); return false; }
+      if (reply.refusal) {
+        const moved = reply.refusal.caption === "SUCCESS" && transferKind !== "";
+        say(moved ? "" : "Report generation failed...", "", !moved);
+        if (!quiet) await refuse(reply.refusal);
+        // Account / Product Transfer has no cancel: once done, both helps are read again (a merged account is gone from them) and the old selection is dropped.
+        if (moved) {
+          const fresh = await call<{ report: ReportDefinition }>("report");
+          setDef(fresh.report);
+          setGroups(startGroups(fresh.report));
+          setTicks(Object.fromEntries(fresh.report.helps.map((help) => [help.grid, new Set<string>()])));
+          setFirstEdited(null);
+          setHelpTab(startTab(fresh.report));
+          setTimeout(() => setFocusHelp((count) => count + 1), 50);
+        }
+        return false;
+      }
       setOutput(reply.output);
       setOutputRun((count) => count + 1);
       setTab("output");
@@ -492,7 +524,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     const lastDates = readLastDates();
     setFrom(def.dates.fromLast && lastDates ? lastDates.from : def.dates.from);
     setUpto(def.dates.uptoLast && lastDates ? lastDates.upto : def.dates.upto);
-    setGroups([]);
+    setGroups(isTransfer(def.key) ? startGroups(def) : []);
     setChoices(Object.fromEntries(def.controls.filter((candidate) => candidate.type === "L" || candidate.type === "C").map((candidate) => [candidate.name, candidate.items[0] ? itemKey(candidate.items[0]) : ""])));
     setColumnsTicked(def.controls.find((candidate) => candidate.name === "lbchk_Col_Select")?.initiallyTicked.slice() ?? []);
     setTexts({ ...textDefaults.current });
@@ -500,7 +532,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     setTicks(Object.fromEntries(def.helps.map((help) => [help.grid, new Set<string>()])));
     setFirstEdited(null);
     setAddonField("");
-    setHelpTab(def.checkboxes.some((check) => check.visible) ? OPTIONS_GRID : def.helps.find((help) => def.helpTabs.includes(help.grid.replace("C1Help", "Tab_")))?.grid ?? def.helps[0]?.grid ?? "");
+    setHelpTab(startTab(def));
     setStartGroupBy([]);
     groupByNow.current = [];
     generatedWith.current = null;
@@ -577,7 +609,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   /** C1_CHECKBOX, the Report Options: the first tab of the help grids, ticked like them. */
   const optionsHelp = useMemo<HelpGridData | null>(() => {
     const shown = def?.checkboxes.filter((check) => check.visible) ?? [];
-    if (shown.length === 0) return null;
+    if (shown.length === 0 || (def && isTransfer(def.key))) return null;
     return {
       grid: OPTIONS_GRID, helpId: "", keyColumn: "name", frozen: 0,
       columns: [{ key: "caption", caption: "SELECTION FOR", width: 460, visible: true, type: "T", decimals: 0, align: "L" }],
@@ -590,7 +622,22 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
 
   const helpShown = def?.helps.filter((help) => def.helpTabs.includes(help.grid.replace("C1Help", "Tab_")) || def.helpTabs.length === 0) ?? [];
   const helpEnabled = (grid: string) => def?.helps.some((help) => help.grid === grid && help.first) === true || groupOfGrid(grid).length > 0 || (grid === "C1HelpAddon" && groups.some((key) => Number(key.split("|")[1]) > 0));
-  const helpFilter = (help: HelpGridData): ((row: Readonly<Record<string, string>>) => boolean) | undefined => (help.grid === "C1HelpAddon" ? addonFilter : accountScopeOf(def, first)?.help.grid === help.grid ? accountScopeOf(def, first)?.keep : undefined);
+  // Account / Product Transfer (59, 60): two tabs, From (the Account / Product help) and Upto (the Book help); the Upto list leaves out what is ticked in From.
+  const transferWhat = def?.key === 59 ? "Account" : def?.key === 60 ? "Product" : "";
+  const transferFrom = transferWhat ? def?.helps.find((help) => help.grid === `C1Help${transferWhat}`) : undefined;
+  const tabCaption = (help: HelpGridData) => transferWhat && transferFrom ? `${transferWhat} ${help.grid === "C1HelpBook" ? "Upto" : "From"}` : help.grid.replace("C1Help", "");
+  const helpFilter = (help: HelpGridData): ((row: Readonly<Record<string, string>>) => boolean) | undefined => {
+    if (transferFrom && help.grid === "C1HelpBook") {
+      const taken = ticksOf(transferFrom.grid);
+      // Account Transfer: the Upto account is of the same book as the From account chosen.
+      const bookKey = (rows: readonly Readonly<Record<string, string>>[]) => Object.keys(rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
+      const fromBook = transferWhat === "Account" ? bookKey(transferFrom.rows) : undefined;
+      const books = new Set(fromBook ? transferFrom.rows.filter((row) => taken.has(row[transferFrom.keyColumn] ?? "")).map((row) => row[fromBook] ?? "") : []);
+      const uptoBook = bookKey(help.rows);
+      return (row) => !taken.has(row[help.keyColumn] ?? "") && (books.size === 0 || !uptoBook || books.has(row[uptoBook] ?? ""));
+    }
+    return help.grid === "C1HelpAddon" ? addonFilter : accountScopeOf(def, first)?.help.grid === help.grid ? accountScopeOf(def, first)?.keep : undefined;
+  };
   const addonGroups = groupControl?.items.filter((item) => Number(item.value) > 0) ?? [];
   const addonItem = addonGroups.find((item) => item.value === addonField);
   const addonEnabled = addonItem ? groups.includes(itemKey(addonItem)) : helpEnabled("C1HelpAddon");
@@ -601,7 +648,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     return check.enabled;
   };
   const optionTicks = new Set(Object.entries(checks).filter(([, on]) => on).map(([name]) => name));
-  const pickLists = def?.controls.filter((candidate) => candidate.name !== "lbchk_Group" && candidate.type === "L") ?? [];
+  // The transfers have nothing to pick in the Format list (its only entry is None), so it is not shown.
+  const pickLists = def?.controls.filter((candidate) => candidate.name !== "lbchk_Group" && candidate.type === "L" && !isTransfer(def.key)) ?? [];
   const tickLists = def?.controls.filter((candidate) => candidate.name !== "lbchk_Group" && candidate.type === "K") ?? [];
   /** Tab out of a help grid: on to the list after the groups (Shift+Tab: back to the groups). */
   const tabOutOfHelp = (back: boolean) => {
@@ -700,14 +748,19 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
 
           <div className="rp-right">
             {(helpShown.length > 0 || optionsHelp) && (
-              <div className="rp-helps">
+              <div className="rp-helps" onKeyDown={(event) => {
+                // The transfers: F5 in the From / Upto list goes on to the dates.
+                if (event.key !== "F5" || !def || !isTransfer(def.key)) return;
+                event.preventDefault();
+                screen.current?.querySelector<HTMLInputElement>('.rp-date input')?.focus();
+              }}>
                 <div className="rp-help-tabs" role="tablist">
                   {optionsHelp && (
                     <button type="button" role="tab" tabIndex={-1} aria-selected={helpTab === OPTIONS_GRID} className={helpTab === OPTIONS_GRID ? "rp-tab-on" : ""} onClick={() => setHelpTab(OPTIONS_GRID)}>Report Options</button>
                   )}
                   {helpShown.map((help) => (
                     <button key={help.grid} type="button" role="tab" tabIndex={-1} aria-selected={helpTab === help.grid} className={`${helpTab === help.grid ? "rp-tab-on" : ""} ${helpEnabled(help.grid) ? "rp-help-tab-live" : ""}`} onClick={() => setHelpTab(help.grid)}>
-                      {help.grid.replace("C1Help", "")} {ticksOf(help.grid).size ? `(${ticksOf(help.grid).size})` : ""}
+                      {tabCaption(help)} {ticksOf(help.grid).size ? `(${ticksOf(help.grid).size})` : ""}
                     </button>
                   ))}
                   <span className="rp-help-tools">
@@ -745,7 +798,15 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
                     ticked={ticksOf(help.grid)}
                     rowKey={help.grid === "C1HelpAddon" ? addonKey : (row) => row[help.keyColumn] ?? ""}
                     filter={helpFilter(help)}
-                    onTicks={(next) => { if (help.first) setFirstEdited(first); setTicks((current) => ({ ...current, [help.grid]: next })); }}
+                    noBulk={isTransfer(def.key)}
+                    onTicks={(next) => {
+                      // The transfers are one to one: a second tick in either list is refused with a message.
+                      if (transferFrom && next.size > 1) { void messageBox.alert(`Only one ${transferWhat.toLowerCase()} can be selected in ${help.grid === "C1HelpBook" ? "Upto" : "From"}.\nThis merge is one to one.`, `${transferWhat} Selection`); return; }
+                      if (help.first) setFirstEdited(first);
+                      setTicks((current) => ({ ...current, [help.grid]: next }));
+                      // The transfers: choosing the From goes straight on to the Upto list.
+                      if (transferFrom && help.grid === transferFrom.grid && next.size > 0) { setHelpTab("C1HelpBook"); setTimeout(() => setFocusHelp((count) => count + 1), 50); }
+                    }}
                     focusKey={helpTab === help.grid ? focusHelp : 0}
                     freezeMain
                     onTabOut={tabOutOfHelp}
@@ -758,12 +819,19 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
             )}
           </div>
 
-          <div className="rp-actions">
+          <div className="rp-actions" onKeyDown={(event) => {
+            // The transfers: Enter on a date goes on like Tab, From to Upto to the OK button.
+            const target = event.target as HTMLElement;
+            if (event.key !== "Enter" || !isTransfer(def.key) || !target.closest(".rp-date")) return;
+            event.preventDefault();
+            const dates = [...event.currentTarget.querySelectorAll<HTMLInputElement>(".rp-date input")];
+            (dates[dates.indexOf(target as HTMLInputElement) + 1] ?? event.currentTarget.querySelector<HTMLButtonElement>(".rp-ok"))?.focus();
+          }}>
             {def.dates.fromVisible && <div className="rp-date" onFocus={() => say("Report is generated from this date", "Alt+↓ : Calendar")}><span>Report Generation From</span><DateField ariaLabel="Report Generation From" value={from} tools={tools} onChange={setFrom} required /></div>}
             {def.dates.uptoVisible && <div className="rp-date" onFocus={() => say("Report is generated upto this date", "Alt+↓ : Calendar")}><span>{def.dates.uptoLabel}</span><DateField ariaLabel={def.dates.uptoLabel} value={upto} tools={tools} onChange={setUpto} required /></div>}
             {!def.ported && <span className="rp-warning">Output of this report is not ported yet.</span>}
             <span className="rp-spacer" />
-            <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className={`mp-btn mp-btn-plain ${viewsOpen ? "rp-btn-on" : ""}`} onClick={() => setViewsOpen((open) => !open)} title="Save this selection under a name, or apply a saved one"><Icon name="views" /><HotkeyLabel text="Views" hotkey="v" /></button>
+            {!isTransfer(def.key) && <button type="button" data-hotkey="v" aria-keyshortcuts="Alt+V" className={`mp-btn mp-btn-plain ${viewsOpen ? "rp-btn-on" : ""}`} onClick={() => setViewsOpen((open) => !open)} title="Save this selection under a name, or apply a saved one"><Icon name="views" /><HotkeyLabel text="Views" hotkey="v" /></button>}
             <button type="button" data-hotkey="k" aria-keyshortcuts="Alt+K" className="mp-btn mp-btn-green rp-ok" onClick={() => void generate()} disabled={Boolean(busy)}><Icon name="ok" /><HotkeyLabel text="OK" hotkey="k" /></button>
             <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red rp-quit" onClick={() => void leave()}><Icon name="close" /><HotkeyLabel text="Quit" hotkey="q" /></button>
           </div>

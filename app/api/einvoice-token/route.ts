@@ -5,6 +5,7 @@ import { readMenuCatalog } from "@/lib/menu-catalog";
 import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { keepToken, planToken, requestToken } from "@/lib/einvoice-token";
+import { logError } from "@/lib/log";
 
 /**
  * Utility > Get E Invoice Token: asks the gateway for a new e-invoice token when the stored one has run out. The login, token and keys stay
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
     const expiry = await transaction(async (client) => await keepToken(client, session, plan, got.token), { timeoutMs: 30000 });
     return Response.json({ kind: "created", message: `EINVOICE GST Token generated. Expiry Time : ${expiry}` }, { headers });
   } catch (error) {
-    console.error("E-invoice token error:", error instanceof Error ? error.message : error);
-    return Response.json({ error: error instanceof Error ? error.message : "The request failed" }, { status: 500, headers });
+    const requestId = logError({ request, route: "/api/einvoice-token", action: "E-invoice token", error, userId: operator });
+    return Response.json({ error: error instanceof Error ? error.message : "The request failed", requestId }, { status: 500, headers });
   }
 }

@@ -20,6 +20,15 @@ export type Bill = Readonly<{
   totals: readonly Readonly<{ label: string; amount: string; strong?: boolean }>[];
   finalAmount: string;
   inWords: string;
+  /** A voucher (Voucher_Plain): the account rows and the header addons; the invoice parts above are then left empty. */
+  voucher?: Readonly<{
+    daybook: string;
+    side: string;
+    rows: readonly Readonly<{ serial: string; account: string; debit: string; credit: string; chqNo: string; chqDate: string }>[];
+    debitTotal: string;
+    creditTotal: string;
+    showChq: boolean;
+  }>;
 }>;
 
 const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
@@ -64,6 +73,7 @@ function party(heading: string, who: BillParty): string {
 }
 
 export function standardBillHtml(bill: Bill): string {
+  if (bill.voucher) return voucherBillHtml(bill);
   const rows = bill.lines.map((line) => `<tr><td class="c">${escape(line.serial)}</td><td>${escape(line.description)}</td><td class="c">${escape(line.hsn)}</td>`
     + `<td class="r">${escape(line.qty)}</td><td class="r">${money(line.rate)}</td><td class="c">${escape(line.uom)}${line.rateUom && line.rateUom !== line.uom ? ` / ${escape(line.rateUom)}` : ""}</td><td class="r">${money(line.amount)}</td>`
     + `<td class="r">${Number(line.discount) !== 0 ? money(line.discount) : ""}</td><td class="r">${money(line.taxable)}</td><td class="r">${line.taxRate ? `${escape(line.taxRate)}%` : ""}</td><td class="r">${Number(line.tax) !== 0 ? money(line.tax) : ""}</td><td class="r">${money(line.total)}</td></tr>`).join("");
@@ -124,4 +134,43 @@ export function combineBills(htmls: readonly string[]): string {
   });
   const sheets = bodies.map((body, index) => `<div class="bill-sheet"${index < bodies.length - 1 ? ' style="break-after:page;page-break-after:always"' : ""}>${body}</div>`).join("\n");
   return `${head.replace("</style>", "@media screen{.bill-sheet{min-height:297mm;box-sizing:border-box}}</style>")}<body>${sheets}</body></html>`;
+}
+
+/** The voucher's standard print (Voucher_Plain): the day book, the account rows with their debit and credit, the narration, the amount in words and the signature places. */
+export function voucherBillHtml(bill: Bill): string {
+  const voucher = bill.voucher!;
+  const rows = voucher.rows.map((row) => `<tr><td class="c">${escape(row.serial)}</td><td>${escape(row.account)}</td>${voucher.showChq ? `<td>${escape(row.chqNo)}</td><td class="c">${escape(row.chqDate)}</td>` : ""}<td class="r">${row.debit ? money(row.debit) : ""}</td><td class="r">${row.credit ? money(row.credit) : ""}</td></tr>`).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escape(bill.title)} ${escape(bill.header.docNo)}</title><style>
+@page{size:A4 portrait;margin:10mm}
+*{box-sizing:border-box}
+body{margin:0;padding:0;font:12px/1.4 "Segoe UI",Arial,sans-serif;color:#111;background:#fff}
+.page{width:190mm;margin:0 auto;padding:4mm 0}
+.top{text-align:center;border:1px solid #222;padding:6px}
+.top h1{margin:0;font-size:20px;letter-spacing:.5px}
+.title{margin:6px 0 4px;text-align:center;font-size:14px;font-weight:700;letter-spacing:2px}
+.grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #222;border-bottom:0}
+.grid .box{padding:5px 7px;border-right:1px solid #222}
+.grid .box:last-child{border-right:0}
+.kv{display:grid;grid-template-columns:32mm 3mm 1fr}
+.cap{font-size:9px;font-weight:700;text-transform:uppercase;color:#555;margin-bottom:2px}
+table{width:100%;border-collapse:collapse}
+table.items{border:1px solid #222}
+.items th,.items td{border:1px solid #777;padding:4px 5px;vertical-align:top}
+.items thead th{background:#e9eef6;font-size:11px}
+.items td.c{text-align:center}.items td.r,.items th.r{text-align:right}
+.items tfoot td{font-weight:700;border-top:2px solid #222}
+.words{border:1px solid #222;border-top:0;padding:5px 7px}
+.note{margin-top:4px;color:#555}
+.sign{display:flex;justify-content:space-between;align-items:flex-end;height:28mm;border:1px solid #222;border-top:0;padding:5px 7px}
+@media print{.page{width:auto}}
+</style></head><body><div class="page">
+<div class="top"><h1>${escape(bill.company.name)}</h1>${bill.company.lines.filter(Boolean).map((line) => `<div>${escape(line)}</div>`).join("")}${bill.company.contact ? `<div>${escape(bill.company.contact)}</div>` : ""}</div>
+<div class="title">${escape(bill.title)}</div>
+<div class="grid"><div class="box">${detail("Voucher No.", bill.header.docNo, true)}${detail("Date", bill.header.date, true)}${detail("Day Book", voucher.daybook)}${detail("Book Side", voucher.side)}</div>
+<div class="box">${bill.addons.map((item) => detail(item.label, item.value)).join("")}</div></div>
+<table class="items"><thead><tr><th>Sr</th><th style="width:46%">Account Head</th>${voucher.showChq ? "<th>Chq. No.</th><th>Chq. Date</th>" : ""}<th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>${rows}</tbody>
+<tfoot><tr><td></td><td>Total</td>${voucher.showChq ? "<td></td><td></td>" : ""}<td class="r">${money(voucher.debitTotal)}</td><td class="r">${money(voucher.creditTotal)}</td></tr></tfoot></table>
+<div class="words"><div class="cap">Amount in words</div><b>${escape(bill.inWords)}</b>${bill.header.narration ? `<div class="note">Narration: ${escape(bill.header.narration)}</div>` : ""}</div>
+<div class="sign"><div>Prepared by</div><div>Checked by</div><div>Approved by</div><div style="text-align:right">Receiver's Signature</div></div>
+</div></body></html>`;
 }

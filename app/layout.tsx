@@ -4,7 +4,11 @@ import "./globals.css";
 // The Modern view's Light and Dark colours (generated from the rules above by `npm run theme`), then the Modern design layer on top.
 import "./modern-theme.generated.css";
 import "./modern-ui.css";
+// Phones and tablets: the menu drawer, the bottom bar, touch sizes. Last, so it wins over the desktop layers above.
+import "./responsive.css";
 import { MessageBoxHost } from "../features/ui/MessageBox";
+import { NoBrowserMenu } from "../features/ui/NoBrowserMenu";
+import { ClientErrorReporter } from "../features/ui/ClientErrorReporter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,14 +35,19 @@ export const metadata: Metadata = {
   title: "SMARTwinFA Web",
   description: "Cross-platform migration of SMART financial accounting.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: [{ url: "/favicon.ico", sizes: "any" }, { url: "/pranav-icon.png", type: "image/png", sizes: "256x256" }],
+    shortcut: "/favicon.ico",
+    apple: "/pranav-icon.png",
   },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Under the notch and home bar (the layout pads itself with env(safe-area-inset-*)), and the on-screen keyboard shrinks the page
+  // instead of covering its lower half. Zoom stays on: pinching a report is how a phone reads a wide table.
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({
@@ -56,8 +65,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${figtree.variable} ${sora.variable} antialiased`}
       >
         {children}
+        <ClientErrorReporter />
         {/* The one message box every screen uses (features/ui/MessageBox). */}
         <MessageBoxHost />
+        <NoBrowserMenu />
       </body>
     </html>
   );

@@ -1,5 +1,6 @@
 import { readAccountingYears } from "@/lib/company-menu";
 import { requireOperator } from "@/lib/auth/request";
+import { logError } from "@/lib/log";
 
 /** The years the session's operator may open. A `login` query parameter is ignored. */
 export async function GET(request: Request) {
@@ -9,8 +10,8 @@ export async function GET(request: Request) {
   try {
     return Response.json({ years: await readAccountingYears(operator) }, { headers });
   } catch (error) {
-    console.error("Accounting year list error:", error);
+    const requestId = logError({ request, route: "/api/accounting-years", action: "Accounting year list", error, userId: operator });
     const message = error instanceof Error ? error.message : "Accounting years could not be loaded";
-    return Response.json({ error: message }, { status: 503, headers });
+    return Response.json({ error: message, requestId }, { status: 503, headers });
   }
 }

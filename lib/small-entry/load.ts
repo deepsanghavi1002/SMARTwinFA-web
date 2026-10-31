@@ -1,4 +1,4 @@
-import { displayValue, Loader } from "../master-program/load";
+import { displayValue, Loader, statusDisplay } from "../master-program/load";
 import { formatDesktopDate, formatDesktopTime, parseDesktopDate, toInt, toText } from "../master-program/legacy";
 import { readRights, SETUP_SCHEMA } from "../master-program/session";
 import type { MasterSession } from "../master-program/session";
@@ -43,7 +43,7 @@ export const PORTED_ENTRIES: ReadonlySet<number> = new Set([
 ]);
 
 /** Small_Entry KeyUp: the Delete key removes selected rows in these entries (103 only for an AD user). */
-const DELETE_ENTRIES = new Set([7, 36, 75, 100, 111]);
+const DELETE_ENTRIES = new Set([7, 36, 46, 75, 100, 111]);
 
 /** Entries whose queries name |sys.stk_module| (Small_Entry.Func_ReplaceSysVal_CtrlValue). */
 const STK_MODULE_ENTRIES = new Set([32, 57, 60, 65, 68]);
@@ -529,6 +529,20 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
 // ---------------------------------------------------------------------------------------
 // Setting_GridCol: the columns as the grid shows them
 
+/** Each account option's closing balance for the year as a signed figure (+1,234.00 Dr, -1,234.00 Cr), as its list note. */
+async function withClosing(loader: Loader, options: readonly EntryOption[]): Promise<EntryOption[]> {
+  const codes = options.map((option) => toInt(option.value)).filter((code) => code > 0);
+  const rows = codes.length === 0 ? [] : (await loader.readTable(`select code, closing::numeric as closing from ${loader.session.companySchema}.ac_balance where year_id = $1 and code = any($2::int[])`, [loader.session.yearId, codes])) ?? [];
+  const closing = new Map(rows.map((row) => [toInt(field(row, "code")), Number(field(row, "closing") ?? 0)]));
+  const shown = (value: number) => `${value > 0 ? "+" : value < 0 ? "-" : ""}${Math.abs(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return options.map((option) => ({ ...option, note: shown(closing.get(toInt(option.value)) ?? 0) }));
+}
+
+/** The status text plus the field's length (field_length) when the text does not already say it (Length-n, Max.-n). */
+function withLength(status: string, length: number): string {
+  return length > 0 && !/Length-|Max\.-/.test(status) ? `${status}Length-${length} / ` : status;
+}
+
 function columnFor(key: string, plan: GridPlan): EntryColumn {
   const lower = key.toLowerCase();
   const match = [...plan.body].reverse().find((item) => item.column.toLowerCase() === lower);
@@ -549,6 +563,7 @@ function columnFor(key: string, plan: GridPlan): EntryColumn {
     compulsory,
     addon: match?.addon ?? false,
     tooltip: text(row, "field_tooltips"),
+    status: row ? withLength(statusDisplay(toSetup(row)), toInt(field(row, "field_length"))) : "",
     setup: publicSetup(toSetup(row ?? {})),
   };
 }
@@ -596,6 +611,8 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
     const options = await controlOptions(loader, row, plan.context);
     // Last Year Account Outstanding: the Series list of a Book entry (Small_Entry's LYOUT_BOOK_SERIES with the Book's account as |SYS.GRID_VALUE|).
     if (plan.entryId === LY_OUTSTANDING && key.toLowerCase() === "book") return { ...column, options: await withSeries(loader, plan.context, options) };
+    // Payment Manual Allot: each party in the Account Name list shows its closing balance, + for Dr and - for Cr (kept out of the stored name).
+    if (plan.entryId === 46 && key.toLowerCase() === "name") return { ...column, options: await withClosing(loader, options) };
     return { ...column, options };
   })());
   const rows = plan.blank

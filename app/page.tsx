@@ -22,6 +22,7 @@ import { RepostData } from "../features/utility/RepostData";
 import { TransferBalance } from "../features/utility/TransferBalance";
 import { AskAi } from "../features/ask/AskAi";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
+import { PanBar } from "../features/ui/PanBar";
 import { WindowActiveProvider } from "../features/ui/activeWindow";
 import { WindowLinkProvider } from "../features/ui/windowLink";
 import { IdleGuard } from "../features/startup/IdleGuard";
@@ -49,6 +50,9 @@ type MenuNode = {
 };
 
 /** A menu row's letter: the one MenuText marks with "&", else the label's first letter or digit (as Windows menus do). */
+/** A screen shows its busy symbol (Loading, Generating report ...): the menu takes no click or key meanwhile. */
+const screenBusy = () => typeof document !== "undefined" && document.querySelector(".rp-working") !== null;
+
 function menuKey(node: MenuNode): string {
   if (node.accessKey) return node.accessKey.toUpperCase();
   return (node.label.match(/[A-Za-z0-9]/)?.[0] ?? "").toUpperCase();
@@ -290,7 +294,10 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     logoutNow();
   };
 
-  const closeMenus = () => { setOpenMenu(null); setOpenSub(null); setKeyboardMenus(false); };
+  /** Phones and small tablets: the menu is an off-canvas drawer opened from the title bar's ☰ (the sidebar on wider screens). */
+  const [navOpen, setNavOpen] = useState(false);
+  const navToggle = useRef<HTMLButtonElement>(null);
+  const closeMenus = () => { setOpenMenu(null); setOpenSub(null); setKeyboardMenus(false); setNavOpen(false); };
   const bringToFront = (id: number | null) => {
     setActiveId(id);
     if (id !== null) setMinimized((set) => { if (!set.has(id)) return set; const next = new Set(set); next.delete(id); return next; });
@@ -448,7 +455,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   useEffect(() => { bringToFrontNow.current = bringToFront; });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.key !== "F6" && event.key !== "Tab") || !event.ctrlKey || event.altKey || event.metaKey || isMessageBoxOpen()) return;
+      if ((event.key !== "F6" && event.key !== "Tab") || !event.ctrlKey || event.altKey || event.metaKey || isMessageBoxOpen() || screenBusy()) return;
       const list = windowsNow.current;
       if (list.length === 0) return;
       event.preventDefault();
@@ -512,8 +519,8 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   useEffect(() => {
     const close = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement;
-      if (!target?.closest(".window-list")) setWindowListOpen(false);
-      if (!menuBar.current?.contains(target ?? null) && !target?.closest(".mobile-dropdown")) {
+      if (!target?.closest(".window-list, .bottom-nav-windows")) setWindowListOpen(false);
+      if (!menuBar.current?.contains(target ?? null) && !target?.closest(".nav-toggle, .bottom-nav-menu")) {
         closeMenus();
         setSuspendHoverMenu(false);
       }
@@ -521,6 +528,26 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
+
+  // The drawer: Escape closes it and hands the focus back to its ☰; it is a drawer only on small screens, so widening the window closes it;
+  // opening it moves the focus to its first row (the rest of the window is inert meanwhile).
+  useEffect(() => {
+    if (!navOpen) return;
+    const wide = window.matchMedia("(min-width: 781px)");
+    const onWide = () => { if (wide.matches) setNavOpen(false); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || isMessageBoxOpen()) return;
+      event.preventDefault();
+      setNavOpen(false);
+      setOpenMenu(null);
+      setOpenSub(null);
+      navToggle.current?.focus();
+    };
+    const frame = requestAnimationFrame(() => menuBar.current?.querySelector<HTMLButtonElement>("[data-menu-root]")?.focus({ preventScroll: true }));
+    wide.addEventListener("change", onWide);
+    document.addEventListener("keydown", onKey);
+    return () => { cancelAnimationFrame(frame); wide.removeEventListener("change", onWide); document.removeEventListener("keydown", onKey); };
+  }, [navOpen]);
 
   // An open submenu stays inside the window: a long one (REPORT › Extra Report) is moved up until its last row shows, one taller
   // than the window scrolls, and one that would run off the right opens to the left of its row.
@@ -593,6 +620,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   };
 
   const menuKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (screenBusy()) { event.preventDefault(); return; }
     const button = (event.target as HTMLElement).closest?.("button");
     if (!button || !menuBar.current?.contains(button)) return;
     const index = menus.findIndex((menu) => menu.id === (button.dataset.menuRoot ? Number(button.dataset.menuRoot) : openMenu));
@@ -667,7 +695,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     const down = (event: KeyboardEvent) => {
       if (event.key === "Alt") { lone = !event.repeat || lone; return; }
       lone = false;
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || isMessageBoxOpen()) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || isMessageBoxOpen() || screenBusy()) return;
       const match = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
       if (!match) return;
       const letter = match[1] ?? match[2];
@@ -682,7 +710,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       if (event.key !== "Alt" || !lone) return;
       lone = false;
       const bar = menuBar.current;
-      if (!bar || isMessageBoxOpen()) return;
+      if (!bar || isMessageBoxOpen() || screenBusy()) return;
       event.preventDefault();
       if (bar.contains(document.activeElement)) {
         setOpenMenu(null);
@@ -706,8 +734,6 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
       window.removeEventListener("mousedown", reset);
     };
   }, []);
-
-  const openRoot = menus.find((menu) => menu.id === openMenu);
 
   const screen = screenOf(running);
 
@@ -759,8 +785,9 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     <main className={`winfa-window ${activeItem !== "Home" ? "content-active" : ""} ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "master-open" : ""}`}>
       {askOpen && <AskAi minimized={askMin} onMinimize={() => setAskMin(true)} onRestore={() => setAskMin(false)} onClose={() => { setAskOpen(false); setAskMin(false); }} onOpenLedger={(acCode, from, to) => { openZoom({ reportName: "REPORT_LEDGER", acCode, from, to }); setAskMin(true); }} onOpenReport={(name, from, to, pivot, pick, party, sumif, setup) => { openZoom({ reportName: name, run: true, from, to, pivot, pick, party, sumif, setup }); setAskMin(true); }} />}
       {selection && <IdleGuard companyGroup={selection.companyGroup} loginName={selection.loginName} locked={locked} onLock={lock} onUnlock={unlock} onLogoff={logoutNow} />}
-      <header className="title-bar">
-        <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><span className="app-mark">S</span><strong>SMARTwinFA</strong></button>
+      <header className="title-bar" inert={navOpen}>
+        <button ref={navToggle} className="nav-toggle" type="button" aria-label="Open menu" aria-haspopup="true" aria-expanded={navOpen} aria-controls="app-nav" onClick={() => setNavOpen((open) => !open)}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg></button>
+        <button className="title-home" type="button" onClick={goHome} aria-label="Go to homepage"><img src="/pranav-icon.png" alt="" aria-hidden="true" draggable={false} style={{ width: 20, height: 20, marginRight: 6, objectFit: "contain" }} /><strong>SMARTwinFA</strong></button>
         {windows.length > 0 && (
           <>
             <div
@@ -807,9 +834,13 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         <div className="window-controls"><button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button></div>
       </header>
 
-      <div className={`menu-bar ${openMenu !== null ? "menu-open" : ""} ${suspendHoverMenu ? "suspend-hover" : ""} ${keyboardMenus ? "menu-keys" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)} onKeyDown={menuKeys}>
-        {/* Sidebar heading; the classic view hides it. */}
-        <span className="menu-bar-title" aria-hidden="true">☰ Menu</span>
+      <div id="app-nav" className={`menu-bar ${navOpen ? "nav-open" : ""} ${openMenu !== null ? "menu-open" : ""} ${suspendHoverMenu ? "suspend-hover" : ""} ${keyboardMenus ? "menu-keys" : ""}`} ref={menuBar} role="menubar" tabIndex={0} aria-label="SMARTwinFA application menu" onMouseLeave={() => setSuspendHoverMenu(false)} onKeyDown={menuKeys}>
+        {/* Sidebar heading (the classic view hides it); in the phone drawer it carries the close button. */}
+        <div className="menu-bar-head" role="presentation">
+          <span className="menu-bar-title" aria-hidden="true">☰ Menu</span>
+          <button type="button" className="nav-close" aria-label="Close menu" onClick={() => { closeMenus(); navToggle.current?.focus(); }}>×</button>
+        </div>
+        {menuError && <p className="menu-bar-error" role="alert">{menuError}</p>}
         {menus.map((menu) => (
           <div className="menu-root" key={menu.id}>
             <button className={openMenu === menu.id ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenSub(null); setOpenMenu(openMenu === menu.id ? null : menu.id); }} role="menuitem" data-menu-root={menu.id} aria-expanded={openMenu === menu.id} aria-keyshortcuts={menuKey(menu) ? `Alt+${menuKey(menu)}` : undefined}><MenuLabel node={menu} /></button>
@@ -818,17 +849,10 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         ))}
       </div>
 
-      {openRoot && <>
-        <button className="mobile-menu-backdrop" aria-label="Close menu" onClick={closeMenus} />
-        <div className="mobile-dropdown" role="menu" aria-label={`${openRoot.label} menu`}>
-          <strong>{openRoot.label}</strong>
-          {openRoot.children.map((child) => (
-            <button key={child.id} role="menuitem" onClick={() => choose(child)}>{child.label}<b>{child.children.length ? "›" : child.shortcut ?? ""}</b></button>
-          ))}
-        </div>
-      </>}
 
-      <section className="context-strip">
+      {navOpen && <button type="button" className="nav-scrim" aria-label="Close menu" tabIndex={-1} onClick={() => { closeMenus(); navToggle.current?.focus(); }} />}
+
+      <section className="context-strip" inert={navOpen}>
         <strong>▤ {selection?.companyName ?? "…"}</strong>
         <span>▦ Year: {selection?.yearLabel ?? "…"}</span>
         <span>♙ User: {selection?.loginName ?? "…"}</span>
@@ -841,7 +865,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         </div>
       </section>
 
-      <section className={`work-area ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
+      <section inert={navOpen} className={`work-area ${screen === "security" || screen === "transport" || screen === "notepad" || screen === "master" || screen === "small-entry" || screen === "entry" || screen === "report" || screen === "pie-chart" || screen === "year-chart" || screen === "dashboard" ? "workflow-open" : ""}`}>
         <div className="window-stack">
           {windows.map((node) => {
             const on = node.id === activeId;
@@ -859,6 +883,15 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
           {activeId === null && !view?.modernView && <div className="home-splash" role="img" aria-label="SMART WINFA — Modern Technology. Simple Accounting. Smart Business. Developed by Pranav Computers." />}
         </div>
       </section>
+
+      {/* Phones: the most used controls under the thumb. Wider screens do not show it. */}
+      <nav className="bottom-nav" aria-label="Quick navigation" inert={navOpen}>
+        <PanBar />
+        <button type="button" className="bottom-nav-home" aria-current={activeId === null ? "page" : undefined} onClick={goHome}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" /></svg><span>Home</span></button>
+        <button type="button" className="bottom-nav-menu" aria-haspopup="true" aria-expanded={navOpen} aria-controls="app-nav" onClick={() => setNavOpen(true)}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg><span>Menu</span></button>
+        <button type="button" className="bottom-nav-windows" aria-haspopup="menu" aria-expanded={windowListOpen} disabled={windows.length === 0} onClick={() => setWindowListOpen((open) => !open)}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="14" height="12" rx="2" /><path d="M7 21h14V9" /></svg><span>Windows{windows.length > 0 ? ` (${windows.length})` : ""}</span></button>
+        <button type="button" className="bottom-nav-ask" aria-pressed={askOpen} onClick={() => { if (!askOpen) { setAskOpen(true); setAskMin(false); } else setAskMin((min) => !min); }}><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" /></svg><span>Ask AI</span></button>
+      </nav>
 
       <footer className="status-strip"><span>{menuError || (running === null ? "Select menu to start" : screen === "pending" ? `${running.label} - screen not built yet (${running.programName ?? "no program"})` : `Running: ${running.label}`)}</span><span>Caps</span><span>Num</span><span>1 / 0</span><span>2026.07</span></footer>
     </main>

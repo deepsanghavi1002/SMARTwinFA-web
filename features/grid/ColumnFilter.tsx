@@ -74,7 +74,7 @@ export function FilterButton({ caption, onOpen, skipTab = false }: { caption: st
  * A column's filter list, opened under its heading from the heading's left edge; where the
  * grid has no room for it on the right (the last columns), it moves left until it shows whole.
  */
-export function FilterPopup({ state, columnKey, caption, kind, values, area, floating = false }: {
+export function FilterPopup({ state, columnKey, caption, kind, values, area, floating = true }: {
   state: ColumnFilters; columnKey: string; caption: string; kind: FilterKind; values: readonly string[]; area: RefObject<HTMLElement | null>;
   /** Over the page under the heading (a help list, whose scroll area would cut the list off). */
   floating?: boolean;
@@ -95,6 +95,9 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
       element.style.top = `${Math.round(heading.bottom)}px`;
       const width = element.getBoundingClientRect().width;
       element.style.left = `${Math.round(Math.max(4, Math.min(heading.left, window.innerWidth - width - 4)))}px`;
+      // Its buttons (Apply, Clear) must stay on screen: a tall popup under a heading low on the page is lifted.
+      const height = element.getBoundingClientRect().height;
+      if (heading.bottom + height > window.innerHeight - 4) element.style.top = `${Math.round(Math.max(4, window.innerHeight - height - 4))}px`;
       return;
     }
     element.style.left = "0px";

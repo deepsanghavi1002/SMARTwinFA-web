@@ -21,11 +21,20 @@ const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
 const orNull = (value: number) => (value === 0 ? "Null" : String(value));
 
 export async function rowSystemValues(loader: Loader, entryId: number, rows: readonly EditedRow[], state: EntryState): Promise<(RowValues | null)[]> {
-  if (entryId !== 7 && entryId !== 9) return rows.map(() => null);
+  if (entryId !== 7 && entryId !== 9 && entryId !== 46) return rows.map(() => null);
   const schema = loader.session.companySchema;
   const option = (state.controls.cmb_smallentry1 ?? "").trim().slice(0, 1).toUpperCase();
   const first = toInt(state.firstCombo?.value);
   const account = async (where: string, value: unknown) => (await loader.readTable(`select book, code from ${schema}.account where ${where}`, [value]))?.[0];
+
+  // 46 Payment Manual Allot: each row's party (the name combo's key, else the saved row's code) and the bank book chosen in the first combo.
+  if (entryId === 46) {
+    const bookCode = toInt((await account("code = $1 and a_pos = 'A'", first))?.code);
+    return rows.map(({ values }) => ({
+      "sys.ac_code": orNull(toInt(cellOf(values, "name__key")) || toInt(cellOf(values, "code"))),
+      "sys.book_code": orNull(bookCode),
+    }));
+  }
 
   if (entryId === 7) {
     // The bank chosen in the first combo; Deposit is a credit to the account, Withdrawal a debit.

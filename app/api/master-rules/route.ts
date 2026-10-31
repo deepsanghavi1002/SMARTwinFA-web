@@ -1,4 +1,5 @@
 import { publicSetup, readMasterRules } from "@/lib/master-rules";
+import { logError } from "@/lib/log";
 
 /**
  * The per-column setup of one master, as smart_setup.program_body holds it.
@@ -25,8 +26,8 @@ export async function GET(request: Request) {
     const fields = (await readMasterRules(program)).map((field) => ({ ...field, setup: publicSetup(field.setup) }));
     return Response.json({ fields }, { headers });
   } catch (error) {
-    console.error("Master rules error:", error);
+    const requestId = logError({ request, route: "/api/master-rules", action: "Master rules", error });
     const message = error instanceof Error ? error.message : "The master setup could not be loaded";
-    return Response.json({ error: message }, { status: 503, headers });
+    return Response.json({ error: message, requestId }, { status: 503, headers });
   }
 }
