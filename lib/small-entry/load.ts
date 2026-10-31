@@ -32,7 +32,7 @@ const flag = (row: Row | undefined, name: string) => field(row, name) === true;
  * Entries whose Add opens an empty grid to type new records into when their fill style builds
  * the columns itself (Col+): last year's bank reco and outstanding, journal, conference order...
  */
-const BLANK_ADD_ENTRIES = new Set([9, 7, 15, 16, 34, 36, 46, 53, 61, 62, 71, 72, 73, 74, 77, 78, 80, 82, 83, 84, 85, 94, 95, 96, 99, 100, 104, 105, 106, 115]);
+const BLANK_ADD_ENTRIES = new Set([9, 7, 15, 16, 34, 36, 46, 53, 61, 62, 71, 72, 73, 74, 77, 78, 80, 82, 83, 84, 85, 94, 95, 96, 99, 100, 104, 105, 106, 115, 119]);
 
 /** Rows an empty entry grid offers (the desktop's c1dg_SmallEntryGrid.Rows.Count = 500). */
 export const BLANK_ROWS = 500;

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { emptyCondition, FILTER_OPS, FILTER_TITLE, filterFromDraft, NO_VALUE_OPS } from "./filter";
+import { emptyCondition, FILTER_OPS, FILTER_TITLE, filterFromDraft, NO_VALUE_OPS, STATS_OPS } from "./filter";
 import type { ColumnFilter, Condition, FilterDraft, FilterKind } from "./filter";
 
 /**
@@ -12,6 +12,8 @@ import type { ColumnFilter, Condition, FilterDraft, FilterKind } from "./filter"
  */
 
 export type ColumnFilters = ReturnType<typeof useColumnFilters>;
+/** The values a filter list draws at most. */
+const LIST_LIMIT = 400;
 
 export function useColumnFilters() {
   const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
@@ -21,19 +23,19 @@ export function useColumnFilters() {
   const anchor = useRef<string | null>(null);
 
   /** Opens a column's filter list with its current settings as an editable draft (a second click closes it). */
-  const open = useCallback((key: string, allValues: readonly string[]) => {
+  const open = useCallback((key: string, allValues: readonly string[], allColours?: readonly string[]) => {
     if (openFilter === key) { setOpenFilter(null); return; }
     anchor.current = null;
     const current = filters[key];
     setSearch("");
-    setDraft({ key, chosen: current?.values ?? [...allValues], first: current?.first ?? emptyCondition(), join: current?.join ?? "and", second: current?.second ?? emptyCondition() });
+    setDraft({ key, chosen: current?.values ?? [...allValues], first: current?.first ?? emptyCondition(), join: current?.join ?? "and", second: current?.second ?? emptyCondition(), colours: allColours && allColours.length > 0 ? (current?.colours ?? [...allColours]) : null });
     setOpenFilter(key);
   }, [openFilter, filters]);
 
   /** Apply: the draft becomes the column's filter. */
-  const apply = useCallback((key: string, allValues: readonly string[]) => {
+  const apply = useCallback((key: string, allValues: readonly string[], allColours: readonly string[] = []) => {
     if (!draft) return;
-    const next = filterFromDraft(draft, allValues);
+    const next = filterFromDraft(draft, allValues, allColours);
     setFilters((current) => {
       const copy = { ...current };
       if (next) copy[key] = next; else delete copy[key];
@@ -74,8 +76,12 @@ export function FilterButton({ caption, onOpen, skipTab = false }: { caption: st
  * A column's filter list, opened under its heading from the heading's left edge; where the
  * grid has no room for it on the right (the last columns), it moves left until it shows whole.
  */
-export function FilterPopup({ state, columnKey, caption, kind, values, area, floating = true }: {
+export function FilterPopup({ state, columnKey, caption, kind, values, area, floating = true, colours, withStats = false }: {
   state: ColumnFilters; columnKey: string; caption: string; kind: FilterKind; values: readonly string[]; area: RefObject<HTMLElement | null>;
+  /** The cell colours the column has (CSS colours; "" a cell with none): Excel's Filter by Colour. Left out where the grid has no cell colours. */
+  colours?: readonly string[];
+  /** The grid can work out the column's average and ranks: Above / Below Average and Top / Bottom N Items are offered for a figure column. */
+  withStats?: boolean;
   /** Over the page under the heading (a help list, whose scroll area would cut the list off). */
   floating?: boolean;
 }) {
@@ -112,6 +118,8 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
   const needle = search.trim().toLowerCase();
   const label = (value: string) => (value === "" ? "(blank)" : value);
   const listed = needle ? values.filter((value) => label(value).toLowerCase().includes(needle)) : values;
+  // A long list draws its first values only (tens of thousands of rows took seconds to draw); the search box narrows it, and Select All still takes every value.
+  const drawn = listed.length > LIST_LIMIT ? listed.slice(0, LIST_LIMIT) : listed;
   const change = (update: Partial<FilterDraft>) => setDraft((current) => (current ? { ...current, ...update } : current));
   const conditionRow = (which: "first" | "second") => {
     const condition = draft[which];
@@ -120,13 +128,13 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
     return (
       <div className="mp-filter-condition">
         <select aria-label={`${FILTER_TITLE[kind]} ${which === "first" ? "condition" : "second condition"}`} value={condition.op} onChange={(event) => set({ op: event.target.value })}>
-          {FILTER_OPS[kind].map(([op, text]) => <option key={op} value={op}>{text}</option>)}
+          {[...FILTER_OPS[kind], ...(kind === "number" && withStats ? STATS_OPS : [])].map(([op, text]) => <option key={op} value={op}>{text}</option>)}
         </select>
         {!NO_VALUE_OPS.includes(condition.op) && (
-          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="Value" placeholder="Value" value={condition.a} onChange={(event) => set({ a: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values); }} />
+          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="Value" placeholder="Value" value={condition.a} onChange={(event) => set({ a: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values, colours); }} />
         )}
         {condition.op === "between" && (
-          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="And value" placeholder="and" value={condition.b} onChange={(event) => set({ b: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values); }} />
+          <input type={inputType} inputMode={kind === "number" ? "decimal" : undefined} aria-label="And value" placeholder="and" value={condition.b} onChange={(event) => set({ b: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values, colours); }} />
         )}
       </div>
     );
@@ -137,7 +145,7 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
       // The heading the list sits in takes a mouse press to select its column and keeps the press from reaching the page (so a drag does not start text selection);
       // that also kept the condition list (a native select) from opening. A press inside the list stays in the list.
       onMouseDown={(event) => event.stopPropagation()}>
-      <input type="search" placeholder="Search values…" aria-label={`Search ${caption} values`} value={search} ref={searchBox} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
+      <input type="search" placeholder="Search values…" aria-label={`Search ${caption} values`} value={search} ref={searchBox} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values, colours); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
       <label className="mp-filter-all">
         <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => change({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
         <b>{needle ? "(Select all found)" : "(Select All)"}</b>
@@ -145,7 +153,7 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
         <span className="mp-filter-count">{listed.filter((value) => draft.chosen.includes(value)).length}/{listed.length}</span>
       </label>
       <ul>
-        {listed.map((value) => (
+        {drawn.map((value) => (
           <li key={value || "(blank)"}>
             <button
               type="button"
@@ -166,8 +174,25 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
             </button>
           </li>
         ))}
+        {listed.length > drawn.length && <li className="mp-filter-none">{listed.length - drawn.length} more values: type in the search box to find them.</li>}
         {listed.length === 0 && <li className="mp-filter-none">No value matches.</li>}
       </ul>
+      {colours && colours.length > 1 && draft.colours && (
+        <div className="mp-filter-colours">
+          <b className="mp-filter-kind">🎨 Filter by Colour</b>
+          <div className="mp-filter-swatches">
+            {colours.map((colour) => {
+              const on = draft.colours?.includes(colour) ?? false;
+              return (
+                <button key={colour || "none"} type="button" role="checkbox" aria-checked={on} className={`mp-filter-swatch ${on ? "mp-on" : ""}`} title={colour === "" ? "No fill" : colour}
+                  onClick={() => change({ colours: on ? (draft.colours ?? []).filter((item) => item !== colour) : [...(draft.colours ?? []), colour] })}>
+                  <span className="mp-filter-chip" style={colour === "" ? undefined : { background: colour }} aria-hidden="true" />{colour === "" ? "No Fill" : ""}{on ? <i aria-hidden="true">✓</i> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="mp-filter-conditions">
         <b className="mp-filter-kind">{kind === "number" ? "Σ " : kind === "date" ? "📅 " : "T "}{FILTER_TITLE[kind]}</b>
         {conditionRow("first")}
@@ -182,7 +207,7 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
         )}
       </div>
       <div className="mp-filter-actions">
-        <button type="button" className="mp-filter-apply" onClick={() => apply(columnKey, values)}>✔ Apply</button>
+        <button type="button" className="mp-filter-apply" onClick={() => apply(columnKey, values, colours)}>✔ Apply</button>
         <button type="button" onClick={() => clear(columnKey)}>✖ Clear</button>
         <button type="button" onClick={() => setOpenFilter(null)}>Cancel</button>
       </div>

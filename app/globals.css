@@ -3969,3 +3969,68 @@ body:has(.rp-working) .menu-bar,body:has(.rp-working) .bottom-nav,body:has(.rp-w
 
 .mp-grid-combo-note{flex:none;margin-left:12px;font-variant-numeric:tabular-nums;color:#1f64b8;text-align:right}
 .mp-grid-combo-note.mp-grid-combo-neg{color:#c42636}
+
+/* Add Column dialog: blue header and footer stay in place, only the body scrolls */
+.dash-modal .dash-drill.fc-dialog{width:min(1100px,94vw);max-height:90vh;border-radius:22px;background:#fff;border:2px solid #dbe6ff}
+.dash-modal .fc-dialog::before{display:none}
+.dash-modal .fc-dialog>header{flex:none;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#0b3d91,#1556c4);border-bottom:0}
+.dash-modal .fc-dialog>header h3{flex:1;color:#fff;font-size:20px;font-weight:800;overflow:visible}
+.fc-badge{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#ffffff2e;color:#fff}
+.fc-badge svg,.fc-dialog .pc-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.fc-dialog .pc-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.dash-modal .fc-dialog .fc-min{height:36px;padding:0 18px;border-radius:999px;border:0;background:#fff;color:#1556c4;font:700 14px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.dash-modal .fc-dialog .fc-close{height:36px;padding:0 18px;border-radius:999px;border:0;background:#ef4a4a;color:#fff;font:700 14px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.dash-modal .fc-dialog .fc-body{flex:1 1 auto;min-height:0;overflow-y:auto;gap:14px;padding:18px 22px;background:#fff}
+.fc-cap{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;color:#1f2a4d}
+.fc-cap svg{width:20px;height:20px;fill:none;stroke:#1556c4;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.dash-modal .fc-body label{font-size:13px}
+.dash-modal .fc-body input,.dash-modal .fc-body select{height:44px;padding:0 14px;border:1px solid #d5dcec;border-radius:10px;font-size:15px;background:#fff}
+.dash-modal .fc-body input:focus,.dash-modal .fc-body select:focus{outline:0;border:2px solid #1556c4;box-shadow:0 0 0 3px #1556c426}
+.dash-modal .fc-lookup>.pc-btn-outline{width:100%;height:46px;border-radius:12px;border:1px solid #cddcfa;background:#e8f0fe;color:#1556c4;font:700 15px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.fc-info{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:12px;background:#eaf1fe}
+.fc-info svg{flex:none;width:24px;height:24px;fill:none;stroke:#1556c4;stroke-width:2;stroke-linecap:round}
+.fc-info p{margin:0;font-size:14px;line-height:1.5;color:#2a3558}
+.dash-modal .fc-columns{min-height:0;max-height:none;border:0;background:transparent;padding:0;overflow:visible;gap:10px}
+.dash-modal .fc-columns button{height:40px;padding:0 16px;border-radius:999px;font-size:14px;border:1px solid #cfd8ee}
+.dash-modal .fc-columns b{font-size:16px}
+.fc-foot{flex:none;padding:14px 22px;background:linear-gradient(180deg,#fafbfe,#f3f5fc);border-top:1px solid #edf0f7}
+.dash-modal .fc-dialog .fc-foot .pc-btn-primary{height:46px;padding:0 24px;border-radius:999px;font-size:15px;background:#1556c4;border-color:#1556c4;color:#fff}
+/* Add Column: the "Pick a formula" list */
+.fc-help{display:flex;flex-direction:column;gap:10px;margin-top:10px;padding:12px;border:1px solid #cddcfa;border-radius:12px;background:#f5f8ff}
+.dash-modal .fc-body .fc-help-find{height:42px}
+.fc-help-groups{display:flex;flex-wrap:wrap;gap:8px}
+.fc-help-groups button{height:32px;padding:0 14px;border:1px solid #cfd8ee;border-radius:999px;background:#fff;color:#28324a;font:600 13px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.fc-help-groups button.fc-on{background:#1556c4;border-color:#1556c4;color:#fff}
+.fc-help-list{list-style:none;margin:0;padding:0;max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.fc-help-list li{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px;background:#fff;border:1px solid #e1e8f7}
+.fc-help-list li>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:13px;color:#2a3558}
+.fc-help-list li b{color:#1556c4;font-size:14px;margin-right:6px}
+.fc-help-list code{font:12px Consolas,monospace;color:#59646f;overflow-wrap:anywhere}
+.fc-help-list .pc-btn-primary{flex:none;height:32px;padding:0 16px;border-radius:999px;border:0;background:#1556c4;color:#fff;font:700 13px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.fc-help-none{justify-content:center;color:#59646f}
+.fc-guide-card{flex-wrap:wrap}
+.fc-guide-card>div:first-child span{color:#59646f;font-size:12.5px;line-height:1.4}
+.fc-guide-card>div:first-child b{font-size:14px;color:#1f2a4d;margin:0}
+.fc-guide-form{flex:0 0 100%;display:flex;flex-direction:column;gap:10px;padding:10px 12px;border-radius:10px;background:#eef3ff}
+.fc-guide-form label{display:flex;flex-direction:column;gap:4px;font:600 13px "Segoe UI",Arial,sans-serif;color:#28324a}
+.fc-guide-form .pc-btn-primary{align-self:flex-start;height:38px;padding:0 20px}
+/* Column filter: Filter by Colour */
+.mp-filter-colours{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid #e1e6f0}
+.mp-filter-swatches{display:flex;flex-wrap:wrap;gap:6px}
+.mp-filter-swatch{position:relative;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:1px solid #cfd6e0;border-radius:6px;background:#fff;color:inherit;font:12px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.mp-filter-swatch.mp-on{border-color:#1556c4;box-shadow:0 0 0 1px #1556c4}
+.mp-filter-chip{width:18px;height:18px;border-radius:4px;border:1px solid #b9c2d0;background:linear-gradient(135deg,#fff 45%,#e8ecf3 45% 55%,#fff 55%)}
+.mp-filter-swatch i{font-style:normal;font-weight:700;color:#1556c4;font-size:12px}
+.title-bar.window-list-open{position:relative;z-index:1250}
+/* Side panels (Growth, Budget, Compare, Chart, Group By, Pivot): a Maximize button, and the panel over the whole grid area */
+.rp-panel-host.rp-panel-on{position:relative}
+.rp-panel-maxbtn{position:absolute;top:12px;right:64px;z-index:5;height:26px;padding:0 12px;border:1px solid #cddcfa;border-radius:999px;background:#fff;color:#1556c4;font:700 12px "Segoe UI",Arial,sans-serif;cursor:pointer;box-shadow:0 2px 8px #1556c422}
+.rp-panel-maxbtn:hover{background:#e8f0fe}
+.rp-out-body:has(.rp-panel-max)>:not(.rp-panel-host){display:none!important}
+.rp-panel-host.rp-panel-max{flex:1 1 100%;min-width:0;width:100%}
+.rp-panel-max>:not(.rp-panel-toggle):not(.rp-panel-maxbtn){flex:1 1 auto;width:auto!important;min-width:0;max-width:none!important}
+.rp-panel-max .rp-panel-toggle{display:none}
+/* The panel's heading (title, close) stays in sight while its body scrolls */
+.rp-panel-on .rp-chart-head{position:sticky;top:-14px;z-index:4;margin:-14px -16px 0;padding:14px 64px 8px 16px;background:linear-gradient(180deg,#f3f6fd,#f3f6fd)}
+.rp-panel-on .rp-chart-head .rp-chart-close{position:absolute;right:14px;top:14px}
+html[data-mtheme="dark"] .rp-panel-on .rp-chart-head{background:#171712}

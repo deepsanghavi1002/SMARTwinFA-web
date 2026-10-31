@@ -7,7 +7,8 @@ import type { ExportRowStyle } from "../../lib/export/table";
 import type { OutputColumn, OutputRow, ReportOutput } from "../../lib/report/types";
 import { ArrangeColumns } from "../grid/ArrangeColumns";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
-import { filterHolds, sortedDistinct } from "../grid/filter";
+import { filterHolds, sortedDistinct, statsOf } from "../grid/filter";
+import type { ColumnStats } from "../grid/filter";
 import { exportTableFrom } from "../grid/exportTable";
 import { FoundText } from "../grid/FoundText";
 import { useZoom } from "./zoom";
@@ -107,6 +108,8 @@ export function columnLetters(index: number): string {
   return letters;
 }
 
+const NO_ROWS: ReadonlySet<number> = new Set();
+
 export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy, initialPivot, initialSumif }: {
   output: ReportOutput;
   fallbackTitle: string;
@@ -193,8 +196,10 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [panel, setPanel] = useState<"chart" | "compare" | "budget" | "groupby" | "growth" | "pivot" | null>(null);
   /** The side panel (Growth, Budget, Compare, Chart ...) shrunk to a strip so the grid has the room; opening another panel shows it again. */
   const [panelMin, setPanelMin] = useState(false);
+  /** The side panel over the whole grid area (Growth, Budget, Compare, Chart, Group By, Pivot), as a maximized window. */
+  const [panelMax, setPanelMax] = useState(false);
   const [panelShown, setPanelShown] = useState(panel);
-  if (panelShown !== panel) { setPanelShown(panel); setPanelMin(false); }
+  if (panelShown !== panel) { setPanelShown(panel); setPanelMin(false); setPanelMax(false); }
   const charting = panel === "chart";
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
@@ -252,21 +257,46 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const clearAllFilters = columnFilters.clearAll;
   useEffect(() => { clearAllFilters(); }, [output, clearAllFilters]);
   const activeFilters = filterable ? Object.keys(filters).length : 0;
+  /** Rows hidden with Delete (their index in output.rows), and the sets before each Delete, which Ctrl+Z brings back one step at a time. */
+  const [hiding, setHiding] = useState<{ forOutput: ReportOutput; rows: ReadonlySet<number> }>({ forOutput: output, rows: new Set() });
+  // A new output (a refresh, another run) brings every hidden row back.
+  const deleted = hiding.forOutput === output ? hiding.rows : NO_ROWS;
+  const setDeleted = (rows: ReadonlySet<number>) => setHiding({ forOutput: output, rows });
   const needle = search.trim().toUpperCase();
   /** The rows a filter or the search can leave out: the entries, not the total or the day book's "Total Entries" line. */
   const filteredKind = (row: OutputRow) => row.kind === "data" && row.rowType !== "COUNT" && row.rowType !== "FT";
   /** Whether a row passes the search and every column filter but `except` (the one whose list is being opened). */
+  const rowIndex = useMemo(() => new Map(output.rows.map((row, index) => [row, index])), [output]);
+  /** A cell's colour as the grid draws it: its border colour when one was drawn on it, else the report's own cell colour ("" none). */
+  const colourOf = (row: OutputRow, key: string) => (borders.has(`${rowIndex.get(row) ?? -1}|${key}`) ? borderColour : (row.cellColours?.[key] ?? ""));
+  /** The average and ranks of a figure column's entries (for Above / Below Average and Top / Bottom N), worked out once for each output. */
+  const statsByColumn = useMemo(() => {
+    const map = new Map<string, ColumnStats>();
+    const needed = Object.entries(filters).filter(([, filter]) => ["aboveAvg", "belowAvg", "top", "bottom"].some((op) => filter.first?.op === op || filter.second?.op === op)).map(([key]) => key);
+    for (const key of needed) {
+      map.set(key, statsOf(output.rows.filter((row) => row.kind === "data" && row.rowType !== "COUNT" && row.rowType !== "FT").flatMap((row) => { const text = (row.values[key] ?? "").replace(/,/g, "").trim(); const figure = Number(text); return text !== "" && Number.isFinite(figure) ? [figure] : []; })));
+    }
+    return map;
+  }, [output, filters]);
+  const statsFor = (column: OutputColumn): ColumnStats | undefined => statsByColumn.get(column.key);
   const passes = (row: OutputRow, except?: string) => {
     if (!filteredKind(row)) return true;
     if (groupGate !== null && !groupGate.has(row)) return false;
+    if (deleted.size > 0 && deleted.has(rowIndex.get(row) ?? -1)) return false;
     if (needle !== "" && !Object.values(row.values).some((value) => value.toUpperCase().includes(needle))) return false;
     if (activeFilters === 0) return true;
     return Object.entries(filters).every(([key, columnFilter]) => {
       if (key === except) return true;
       const column = output.columns.find((candidate) => candidate.key === key);
       const value = row.values[key] ?? "";
-      return !column || filterHolds(column.kind, columnFilter, value.replace(/,/g, ""), value);
+      return !column || filterHolds(column.kind, columnFilter, value.replace(/,/g, ""), value, { colour: columnFilter.colours ? colourOf(row, key) : undefined, stats: statsFor(column) });
     });
+  };
+  /** The colours the column's cells have, among the rows the other filters let through (nothing when the column has just one). */
+  const coloursOf = (column: OutputColumn): string[] => {
+    const seen = new Set<string>();
+    for (const row of output.rows) if (filteredKind(row) && passes(row, column.key)) seen.add(colourOf(row, column.key));
+    return seen.size > 1 || (seen.size === 1 && !seen.has("")) ? [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b))) : [];
   };
   const valuesOf = (column: OutputColumn) => sortedDistinct(output.rows.filter((row) => filteredKind(row) && passes(row, column.key)).map((row) => row.values[column.key] ?? ""));
 
@@ -278,7 +308,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const shown = useMemo(() => {
     const hidden = new Set<number>();
     if (tree) for (const node of closed) { const start = groupStart.get(node) ?? node; for (let at = start; at < node; at += 1) hidden.add(at); }
-    const narrowed = needle !== "" || activeFilters > 0;
+    const narrowed = needle !== "" || activeFilters > 0 || deleted.size > 0;
     const list: { row: OutputRow; index: number }[] = [];
     const sums = new Map<string, number>();
     /** Per subtotal level, the shown entries' sums and count since that level's last subtotal. */
@@ -293,6 +323,20 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         values[column.key] = (totals.get(column.key) ?? 0).toLocaleString("en-IN", { minimumFractionDigits: column.decimals, maximumFractionDigits: column.decimals });
       }
       return { ...row, values };
+    };
+    // A report with subtotals: the final total's caption goes in the column the subtotals' captions are in (the one most of them start in).
+    const captionAt = new Map<string, number>();
+    for (const row of output.rows) {
+      if (row.kind !== "subtotal") continue;
+      const column = output.columns.find((candidate) => candidate.kind !== "number" && (row.values[candidate.key] ?? "") !== "");
+      if (column) captionAt.set(column.key, (captionAt.get(column.key) ?? 0) + 1);
+    }
+    const captionKey = [...captionAt.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const toCaptionColumn = (row: OutputRow): OutputRow => {
+      if (captionKey === undefined || !(row.kind === "total" || (row.kind === "data" && row.rowType === "FT")) || (row.values[captionKey] ?? "") !== "") return row;
+      const from = output.columns.find((candidate) => candidate.kind !== "number" && (row.values[candidate.key] ?? "") !== "");
+      if (!from) return row;
+      return { ...row, values: { ...row.values, [captionKey]: row.values[from.key] ?? "", [from.key]: "" } };
     };
     let entries = 0;
     output.rows.forEach((row, index) => {
@@ -320,21 +364,22 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         drawn = { ...row, values: Object.fromEntries(Object.entries(row.values).map(([key, value]) => [key, value.startsWith("Total Entries") ? `Total Entries : ${entries}` : value])) };
       }
       if (!tree && collapsed && row.kind === "data") return;
-      list.push({ row: drawn, index });
+      list.push({ row: toCaptionColumn(drawn), index });
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-  }, [output, tree, closed, groupStart, collapsed, needle, filters, activeFilters, groupGate]);
+  }, [output, tree, closed, groupStart, collapsed, needle, filters, activeFilters, groupGate, deleted, borders]);
   /** The column the chart filtered the grid on (its picked slice), which the chart itself does not apply. */
+  const [openList, setOpenList] = useState<{ key: string; values: string[]; colours: string[] } | null>(null);
   const [chartFilter, setChartFilter] = useState<string | null>(null);
   /** The rows the filters and the search let through, whatever the tree or F6 hides (what the chart counts). */
   const passingIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row) ? [index] : []))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-    [output, needle, filters, activeFilters, groupGate]);
+    [output, needle, filters, activeFilters, groupGate, deleted]);
   /** The same without the chart's own pick, so its donut stays whole and another slice can be picked. */
   const donutIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row, chartFilter ?? undefined) ? [index] : []))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-    [output, needle, filters, activeFilters, chartFilter, groupGate]);
+    [output, needle, filters, activeFilters, chartFilter, groupGate, deleted]);
   /** A slice picked in the chart: the grid's column filtered to its value (null clears it). */
   const filterTo = (columnKey: string, value: string | null) => {
     setChartFilter(value === null ? null : columnKey);
@@ -739,6 +784,22 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       selectAll();
       return;
     }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (deleted.size > 0) { setDeleted(new Set()); onStatus({ hotKeys: GRID_KEYS, message: "All hidden rows brought back" }); }
+      return;
+    }
+    if (event.key === "Delete" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      // Hide the selected rows (the entries, not the headings, subtotals or total); the totals and the output follow the rows left.
+      event.preventDefault();
+      const hide = new Set<number>();
+      for (const key of selectedKeys()) { const index = Number(key.slice(0, key.indexOf("|"))); const row = output.rows[index]; if (row && filteredKind(row)) hide.add(index); }
+      if (hide.size === 0) return;
+      setDeleted(new Set([...deleted, ...hide]));
+      setSelEnd(null); setPicked(new Set());
+      onStatus({ hotKeys: GRID_KEYS, message: `${hide.size} row${hide.size === 1 ? "" : "s"} hidden (Ctrl+Z brings them back)` });
+      return;
+    }
     if (event.key in moves) { event.preventDefault(); go(moves[event.key], event.shiftKey); setTyped(""); setHeaderSelected(false); return; }
     switch (event.key) {
       case "Home": event.preventDefault(); go(event.ctrlKey ? { row: 0, col: 0 } : { row: from.row, col: 0 }, event.shiftKey); setTyped(""); setHeaderSelected(false); return;
@@ -1077,9 +1138,15 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                   }}
                 >
                   <span className="mp-head-label">{column.caption}</span>
-                  {filterable && <FilterButton caption={column.caption} onOpen={() => columnFilters.open(column.key, valuesOf(column))} skipTab />}
+                  {filterable && <FilterButton caption={column.caption} onOpen={() => {
+                    if (columnFilters.openFilter === column.key) { columnFilters.setOpenFilter(null); return; }
+                    // The list is worked out once, when the filter opens (each draw of the grid used to work it out again).
+                    const list = { key: column.key, values: valuesOf(column), colours: coloursOf(column) };
+                    setOpenList(list);
+                    columnFilters.open(column.key, list.values, list.colours);
+                  }} skipTab />}
                   {layout.resizeHandle(column)}
-                  {filterable && <FilterPopup state={columnFilters} columnKey={column.key} caption={column.caption} kind={column.kind} values={columnFilters.openFilter === column.key ? valuesOf(column) : []} area={scroller} />}
+                  {filterable && <FilterPopup state={columnFilters} columnKey={column.key} caption={column.caption} kind={column.kind} values={columnFilters.openFilter === column.key && openList?.key === column.key ? openList.values : []} colours={columnFilters.openFilter === column.key && openList?.key === column.key ? openList.colours : undefined} withStats area={scroller} />}
                 </div>
               ))}
             </div>
@@ -1110,7 +1177,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                         key={column.key}
                         data-col={col}
                         className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
-                        style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: label && look.captionRight && output.reportKey !== 163 ? "right" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
+                        style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: label && (row.kind !== "data" || look.captionRight) ? "left" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
                         data-tip={text}
                       >
                         {label && kindOf(row) === "heading" && output.subtotals && (
@@ -1142,12 +1209,13 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           })()}
         </div>
       </div>
-      <div className={`rp-panel-host${(charting || panel !== null) ? " rp-panel-on" : ""}${panelMin ? " rp-panel-min" : ""}`}>
+      <div className={`rp-panel-host${(charting || panel !== null) ? " rp-panel-on" : ""}${panelMin ? " rp-panel-min" : ""}${panelMax && !panelMin ? " rp-panel-max" : ""}`}>
+      {(charting || panel !== null) && !panelMin && <button type="button" className="rp-panel-maxbtn" aria-label={panelMax ? "Restore the panel size" : "Maximize the panel"} title={panelMax ? "Restore: the grid is shown beside the panel again" : "Maximize: the panel takes the whole grid area"} onClick={() => setPanelMax((value) => !value)}>{panelMax ? "❐ Restore" : "⤢ Maximize"}</button>}
       {(charting || panel !== null) && <button type="button" className="rp-panel-toggle" aria-label={panelMin ? "Show the side panel" : "Minimize the side panel"} title={panelMin ? "Show the side panel" : "Minimize the side panel (the grid gets the room)"} onClick={() => setPanelMin((value) => !value)}>{panelMin ? "◀" : "▶"}</button>}
-      {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={filterTo} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={withAdded} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => filterToMany(columnKey, [party]) : undefined} onPickMany={filterable ? filterToMany : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setGroupGate(null); setPanel(null); scroller.current?.focus(); }} />}
+      {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={(columnKey, value) => { filterTo(columnKey, value); if (value !== null) setPanelMax(false); }} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); setPanelMax(false); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={withAdded} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); setPanelMax(false); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => { filterToMany(columnKey, [party]); setPanelMax(false); } : undefined} onPickMany={filterable ? (columnKey, values) => { filterToMany(columnKey, values); if (values !== null) setPanelMax(false); } : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setGroupGate(null); setPanel(null); scroller.current?.focus(); }} />}
       {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto, lastYear) => { const result = await loadCompare(from, upto, lastYear); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       </div>
