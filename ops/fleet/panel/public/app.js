@@ -1,8 +1,8 @@
 // The control panel's page: #/ shows a card per client, #/client/<id> one client's page.
 const view = document.getElementById("view");
 const signout = document.getElementById("signout");
-const PARTS = ["web", "api", "db", "backup"];
-const PART_NAMES = { web: "Web app", api: "API", db: "Database", backup: "Backup" };
+const PARTS = ["web", "db"];
+const PART_NAMES = { web: "Web app", db: "Database" };
 let timer = 0;
 
 const escapeHtml = (text) => String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);

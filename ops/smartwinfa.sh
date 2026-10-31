@@ -5,7 +5,7 @@
 #   ops/smartwinfa.sh fleet tunnel                  also start cloudflared (needs TUNNEL_TOKEN in ops/fleet/.env)
 #   ops/smartwinfa.sh client new <id>               create ops/clients/<id>.env from the Rishabh example
 #   ops/smartwinfa.sh client up|down|status|logs <id>
-#   ops/smartwinfa.sh client backup <id>            dump the client's database now
+#   ops/smartwinfa.sh client backup <id>            dump the client's database now (the fleet's one backup job; it also runs nightly for every client)
 #   ops/smartwinfa.sh client restore <id> <dump>    load a PostgreSQL custom dump into the client's database
 #   ops/smartwinfa.sh client update <id> <version>  switch the client to another image version and restart it
 #   ops/smartwinfa.sh fleet enroll <id>             register an on-prem client in Portainer; writes its agent keys into ops/clients/<id>.env
@@ -104,21 +104,21 @@ case "${1:-}" in
         chmod 600 "$f"
         echo "created $f (web port $port). Set CLIENT_NAME, COMPANY_SCHEMA and SEED_FILE, then: ops/smartwinfa.sh client up $id" ;;
       up) docker network inspect smartwinfa-fleet >/dev/null 2>&1 || docker network create smartwinfa-fleet >/dev/null
-          client_compose "$id" up -d
+          client_compose "$id" up -d --remove-orphans
           echo "$id: http://localhost:$(grep -E '^WEB_PORT=' "$(env_of "$id")" | cut -d= -f2)" ;;
       down) client_compose "$id" down ;;
       status) client_compose "$id" ps ;;
       logs) client_compose "$id" logs --tail=200 -f ;;
-      backup) client_compose "$id" exec -T backup sh -c 'f=/backups/manual-$(date +%F-%H%M).dump; pg_dump --format=custom --file="$f" && echo "backup: done $f"' ;;
+      backup) docker exec smartwinfa-backup /bin/sh /backup/backup.sh now "$id" ;;
       restore)
         dump="${4:-}"; [ -r "$dump" ] || die "client restore $id <path to .dump>"
         client_compose "$id" exec -T db sh -c 'pg_restore --clean --if-exists --no-owner --no-privileges -U smartwinfa_web -d smartwin_data_intake' < "$dump"
-        client_compose "$id" restart api web ;;
+        client_compose "$id" restart web ;;
       update)
         version="${4:-}"; [ -n "$version" ] || die "client update $id <version>"
         f="$(env_of "$id")"; previous="$(grep -E '^SMARTWINFA_VERSION=' "$f" | cut -d= -f2)"
         sed -i "s/^SMARTWINFA_VERSION=.*/SMARTWINFA_VERSION=$version/" "$f"
-        client_compose "$id" up -d web api
+        client_compose "$id" up -d web
         echo "$id: $previous -> $version (roll back with: ops/smartwinfa.sh client update $id $previous)" ;;
       *) die "client new|up|down|status|logs|backup|restore|update <id>" ;;
     esac ;;
@@ -148,7 +148,6 @@ case "${1:-}" in
       printf "%-14s %-10s %-24s http://localhost:%s\n" "$id" "$state" "$(grep -E '^SMARTWINFA_VERSION=' "$f" | cut -d= -f2)" "$(grep -E '^WEB_PORT=' "$f" | cut -d= -f2)"
     done ;;
   build-local)
-    docker build -t smartwinfa-web:local -f "$ROOT/Dockerfile" "$ROOT"
-    docker build -t smartwinfa-legacy-api:local -f "$ROOT/Dockerfile.legacy-api" "$ROOT" ;;
+    docker build -t smartwinfa-web:local -f "$ROOT/Dockerfile" "$ROOT" ;;
   *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
