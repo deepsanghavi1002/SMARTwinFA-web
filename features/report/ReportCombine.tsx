@@ -40,8 +40,15 @@ import { SearchCombo } from "../ui/SearchCombo";
 
 /** Dates last used by a report this session (Lib_GlobalVariables rep_from_date / rep_upto_date), kept in sessionStorage. */
 const LAST_DATES = "smartwinfa.report.lastDates";
-function readLastDates(): { from: string; upto: string } | null {
-  try { const text = sessionStorage.getItem(LAST_DATES); return text ? JSON.parse(text) as { from: string; upto: string } : null; } catch { return null; }
+/** The dates last used, when they fall in the open year (after changing to the last year they do not, and the report's own default dates are used). */
+function readLastDates(year?: { yearStart: string; yearEnd: string }): { from: string; upto: string } | null {
+  try {
+    const text = sessionStorage.getItem(LAST_DATES);
+    const dates = text ? JSON.parse(text) as { from: string; upto: string } : null;
+    if (!dates || !year) return dates;
+    const [from, upto, start, end] = [parseDesktopDate(dates.from), parseDesktopDate(dates.upto), parseDesktopDate(year.yearStart), parseDesktopDate(year.yearEnd)];
+    return from && upto && start && end && from >= start && upto <= end ? dates : null;
+  } catch { return null; }
 }
 function saveLastDates(dates: { from: string; upto: string }) {
   try { sessionStorage.setItem(LAST_DATES, JSON.stringify(dates)); } catch { /* private window: the dates are not remembered */ }
@@ -69,6 +76,8 @@ const addonKey = (row: Readonly<Record<string, string>>) => `${row.fiel_key ?? r
 /** The outstanding reports (ageing 5 and 20, clearance 21, interest 32, party wise bill pdf 255) and the register reports (14, 18, 127): the combo's value is the book number when the combo gives no book column. */
 /** Reports whose first combo (REGISTER) has its own Account help: Form Summary, Yearly Tax Summary and GST Form Summary. */
 const FORM_SUMMARY_LIKE: ReadonlySet<number> = new Set([14, 18, 127]);
+/** The Expense schedule (BS_ID) whose accounts the Account tab lists when EXPENSE is chosen. */
+const EXPENSE_SCHEDULE = 30;
 const OUTSTANDING: ReadonlySet<number> = new Set([5, 20, 21, 32, 255]);
 /** Party Wise Rate's side (first combo): LESS (0) is the sale side, the debtors (book 2); ADD (1) the purchase side, the creditors (book 3). */
 const PARTY_RATE_BOOK: Readonly<Record<string, number>> = { 0: 2, 1: 3 };
@@ -91,7 +100,9 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   const books = accountHelpBooks(def.key, book, help?.first === true);
   const bookKey = Object.keys(help?.rows[0] ?? {}).find((key) => key.toLowerCase() === "book");
   if (!help || !books || !bookKey) return null;
-  const keep = (row: Readonly<Record<string, string>>) => books.includes(Number(row[bookKey]));
+  // EXPENSE: the Account tab lists only the accounts of the Expense schedule (BS_ID 30), in every report that has the Expense choice.
+  const bsKey = option?.text.trim().toUpperCase().includes("EXPENSE") || option?.text.trim().toUpperCase().includes("DEBIT NOT AGAINST") ? Object.keys(help?.rows[0] ?? {}).find((key) => key.toLowerCase() === "bs_id") : undefined;
+  const keep = (row: Readonly<Record<string, string>>) => books.includes(Number(row[bookKey])) && (bsKey === undefined || Number(row[bsKey]) === EXPENSE_SCHEDULE);
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
@@ -181,7 +192,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
         setTexts({ ...textDefaults.current });
         setVersion(reply.version ?? "");
         setFirst(report.firstCombo.options[0]?.value ?? "");
-        const lastDates = readLastDates();
+        const lastDates = readLastDates(report.dates);
         setFrom(report.dates.fromLast && lastDates ? lastDates.from : report.dates.from);
         setUpto(report.dates.uptoLast && lastDates ? lastDates.upto : report.dates.upto);
         setChoices(Object.fromEntries(report.controls.filter((control) => control.type === "L" || control.type === "C").map((control) => [control.name, control.items[0] ? itemKey(control.items[0]) : ""])));
@@ -521,7 +532,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   const clearSelection = () => {
     if (!def) return;
     setFirst(def.firstCombo.options[0]?.value ?? "");
-    const lastDates = readLastDates();
+    const lastDates = readLastDates(def.dates);
     setFrom(def.dates.fromLast && lastDates ? lastDates.from : def.dates.from);
     setUpto(def.dates.uptoLast && lastDates ? lastDates.upto : def.dates.upto);
     setGroups(isTransfer(def.key) ? startGroups(def) : []);

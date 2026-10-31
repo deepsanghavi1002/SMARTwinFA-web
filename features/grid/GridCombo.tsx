@@ -89,6 +89,7 @@ export function GridCombo({ options, current, pointAt = "", startWith = "", plac
             case "Enter": event.preventDefault(); event.stopPropagation(); pick(1); return;
             case "Tab": event.preventDefault(); event.stopPropagation(); pick(event.shiftKey ? -1 : 1); return;
             case "Escape": event.preventDefault(); event.stopPropagation(); onCancel(); return;
+            case "ArrowLeft": case "ArrowRight": if (query === "") { event.preventDefault(); event.stopPropagation(); pick(event.key === "ArrowLeft" ? -1 : 1); } return;
           }
           if ((event.key === "Home" || event.key === "End") && query === "") { event.preventDefault(); move(event.key === "Home" ? 0 : matches.length - 1); }
         }}

@@ -34,6 +34,8 @@ import { orderClearance } from "./orderClearance";
 import { stockStatus } from "./stockStatus";
 import { distributorsDispatch } from "./distributorsDispatch";
 import { jobOutIndex } from "./jobOutIndex";
+import { itemLabourCost } from "./itemLabourCost";
+import { locationStock } from "./locationStock";
 import { trpRegister } from "./trpRegister";
 import { bankSlip } from "./bankSlip";
 import { purchasePrice } from "./purchasePrice";
@@ -142,6 +144,8 @@ export async function standardReport(loader: Loader, plan: ReportPlan): Promise<
     case 248: return distributorsDispatch(loader, plan);
     case 254: return jobOutIndex(loader, plan);
     case 299: return trpRegister(loader, plan);
+    case 301: return locationStock(loader, plan);
+    case 316: return itemLabourCost(loader, plan);
     case 51: return bankSlip(loader, plan);
     case 189: return planVsProduction(loader, plan);
     case 198: return purchasePrice(loader, plan);
@@ -654,8 +658,9 @@ async function ageing(loader: Loader, plan: ReportPlan, company?: { short: strin
         copy[col("ROW_DATA_TYPE")] = "LED"; copy[col("SMART_NAME")] = party.name; copy[col("SMART_AC_CODE")] = code; copy[col("SORTING_DATE")] = toText(bill._SORTDATE);
         copy[col("MONTH_TOTAL")] = current; copy._MD = toText(bill._SORTDATE);
         setAddon(copy, code);
-        // The setup's sort key starts with the addon's text; the groups are ordered on their own columns now, so the key is the party's, like the rows added below.
-        if (addonColumns.length > 0) copy[col("SORTING_COL")] = sortingCol(party.name, code, `${toText(bill._SORTDATE)}   P`);
+        // The key is the party's name (trimmed: an account named "Royal Sales Corporation - Expense " has a trailing blank that would put its bills above its own heading), code and date,
+        // like the heading and the other rows. The setup's own key starts with the addon's text, and the groups are ordered on their own columns now.
+        copy[col("SORTING_COL")] = sortingCol(party.name, code, `${toText(bill._SORTDATE)}   P`);
         if (checks("CHK_OVERDUE")) {
           if (entryDays < days) overdueSeen = true;
           else if (!withAllEntries) { open = money(open - current); continue; }

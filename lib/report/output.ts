@@ -185,7 +185,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const hidden = [...plan.hidden];
   // Stock report's Summary: a row a product (product, opening, added, less, closing, unit); the entry columns of the ledger format stay out.
   const stockSummaryFormat = reportKey === 29 || (reportKey === 17 && (call.fcText.toUpperCase() === "SUMMARY" || call.fcValue === 2));
-  if (reportKey === 17 && stockSummaryFormat) hidden.push("SELECTED_DATE", "FULL_DOCNO", "NAME", "TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2", "DAYS", "PROD_KEY", "FORM_CODE", "DOC_NO1", "BUNDLE", "PACKING");
+  if (reportKey === 17 && stockSummaryFormat) hidden.push("SELECTED_DATE", "FULL_DOCNO", "NAME", "TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2", ...(call.checkQuery.includes("CHK_AGECOL,") ? [] : ["DAYS"]), "PROD_KEY", "FORM_CODE", "DOC_NO1", "BUNDLE", "PACKING");
   if (reportKey === 17 && stockSummaryFormat === false) hidden.push("PROD_KEY");
   // The Ledger drops the factor columns (second unit) unless Factor is ticked.
   if (reportKey === 17 && stockSummaryFormat === false && !call.checkQuery.includes("CHK_FACTOR,")) hidden.push("TRN2", "BAL_FACT", "ADD_FACT", "LESS_FACT", "UOM2");

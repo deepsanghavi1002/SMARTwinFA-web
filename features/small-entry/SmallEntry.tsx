@@ -655,6 +655,20 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     if (column && rowPicker.keys(event, column)) return;
     // Esc undoes what was typed: the cell keeps the value it had before editing began.
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(false); gridFocus.current?.focus({ preventScroll: true }); return; }
+    // ← / → at the edge of the text (or with all of it selected) go on to the previous / next open column of the row.
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      const input = event.currentTarget;
+      const left = event.key === "ArrowLeft";
+      const all = input.selectionStart === 0 && input.selectionEnd === input.value.length;
+      const edge = input.selectionStart === input.selectionEnd && input.selectionStart === (left ? 0 : input.value.length);
+      if (all || edge) {
+        event.preventDefault();
+        if (!(await commit())) return;
+        const col = nextEditable(cursor.col, left ? -1 : 1);
+        if (col >= 0) { editOnArrive.current = true; moveTo(cursor.row, col); }
+        return;
+      }
+    }
     if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
       event.preventDefault();
       if (!(await commit())) return;

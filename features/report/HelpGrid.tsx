@@ -164,6 +164,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads filters, the search and shownColumns
   }, [baseRows, filters, sort, shownColumns, needle, mainKey]);
+  const [openList, setOpenList] = useState<{ key: string; values: string[] } | null>(null);
   const valuesOf = (column: HelpColumn) => sortedDistinct(baseRows.filter((row) => passes(row, column.key)).map((row) => shown(column, row[column.key] ?? "")));
 
   const at = Math.min(cursor, Math.max(0, rows.length - 1));
@@ -385,9 +386,15 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
                 <button type="button" tabIndex={-1} className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                   {caption(column)}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                 </button>
-                <FilterButton caption={caption(column)} onOpen={() => columnFilters.open(column.key, valuesOf(column))} skipTab />
+                <FilterButton caption={caption(column)} onOpen={() => {
+                  if (columnFilters.openFilter === column.key) { columnFilters.setOpenFilter(null); return; }
+                  // Worked out once, when the filter opens (not again at every key typed in its search box).
+                  const list = { key: column.key, values: valuesOf(column) };
+                  setOpenList(list);
+                  columnFilters.open(column.key, list.values);
+                }} skipTab />
                 {layout.resizeHandle(column)}
-                <FilterPopup state={columnFilters} columnKey={column.key} caption={caption(column)} kind={kindOf(column)} values={columnFilters.openFilter === column.key ? valuesOf(column) : []} area={box} floating />
+                <FilterPopup state={columnFilters} columnKey={column.key} caption={caption(column)} kind={kindOf(column)} values={columnFilters.openFilter === column.key && openList?.key === column.key ? openList.values : []} area={box} floating />
               </div>
             ))}
           </div>
