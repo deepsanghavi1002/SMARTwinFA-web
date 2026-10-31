@@ -1,7 +1,7 @@
 // The control panel's own logic, kept free of I/O so tests can run it (tests/fleet-panel.test.mjs).
 
 /** The parts of a client stack, in the order the panel shows them. */
-export const PARTS = ["web", "api", "db", "backup"];
+export const PARTS = ["web", "db"];
 
 /** A nightly backup older than this marks the client amber. */
 export const BACKUP_STALE_HOURS = 36;

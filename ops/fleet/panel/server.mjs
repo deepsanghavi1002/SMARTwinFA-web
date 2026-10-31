@@ -1,5 +1,5 @@
 // SMARTwinFA control panel: one card per client on this Docker host, and a page per client with its
-// logs, errors, containers and two actions (restart the app, back up now). No dependencies: Node's own
+// logs, errors, containers and two actions (restart the web app, back up now). No dependencies: Node's own
 // http, the Docker Engine API on its socket, and Loki's HTTP API.
 //
 //   PANEL_PASSWORD  the one sign-in (ops/fleet/.env, made by ops/smartwinfa.sh fleet up)
@@ -108,12 +108,19 @@ async function errorsPerHour(id) {
 
 const backupCache = new Map();
 
+/** The fleet's one backup job (ops/fleet/backup), which keeps /backups/<client>/ for every client. */
+async function backupJob() {
+  const filters = encodeURIComponent(JSON.stringify({ name: ["smartwinfa-backup"], status: ["running"] }));
+  const found = (await dockerJson("GET", `/containers/json?filters=${filters}`)).find((container) => container.Names?.includes("/smartwinfa-backup"));
+  return found ?? null;
+}
+
 async function backupsOf(client, fresh = false) {
-  const part = client.parts.backup;
-  if (!part || part.state !== "running") return [];
   const cached = backupCache.get(client.id);
   if (!fresh && cached && Date.now() - cached.at < 300_000) return cached.list;
-  const listing = await exec(part.id, ["sh", "-c", 'cd /backups 2>/dev/null && for f in *.dump; do [ -e "$f" ] && stat -c "%Y %s %n" "$f"; done; true']);
+  const job = await backupJob();
+  if (!job) return [];
+  const listing = await exec(job.Id, ["sh", "-c", `cd /backups/${client.id} 2>/dev/null && for f in *.dump; do [ -e "$f" ] && stat -c "%Y %s %n" "$f"; done; true`]);
   const list = parseBackups(listing.stdout);
   backupCache.set(client.id, { at: Date.now(), list });
   return list;
@@ -204,21 +211,20 @@ function startJob(id, kind, work) {
 }
 
 async function restartApp(client) {
-  for (const name of ["api", "web"]) {
-    const part = client.parts[name];
-    if (!part) continue;
-    await dockerJson("POST", `/containers/${part.id}/restart?t=20`);
-  }
-  return "the app (api and web) was restarted";
+  const part = client.parts.web;
+  if (!part) throw new Error("the web app is not part of this stack");
+  await dockerJson("POST", `/containers/${part.id}/restart?t=20`);
+  return "the web app was restarted";
 }
 
 async function backupNow(client) {
-  const part = client.parts.backup;
-  if (!part || part.state !== "running") throw new Error("the backup part is not running");
-  const result = await exec(part.id, ["sh", "-c", 'f=/backups/manual-$(date +%F-%H%M).dump; pg_dump --format=custom --file="$f" && echo "$f $(du -h "$f" | cut -f1)"'], 30 * 60_000);
+  if (!client.parts.db || client.parts.db.state !== "running") throw new Error("the database is not running");
+  const job = await backupJob();
+  if (!job) throw new Error("the backup job (smartwinfa-backup) is not running");
+  const result = await exec(job.Id, ["/bin/sh", "/backup/backup.sh", "now", client.id], 30 * 60_000);
   if (result.exitCode !== 0) throw new Error(`pg_dump failed: ${(result.stderr || result.stdout).trim().slice(0, 300)}`);
   await backupsOf(client, true).catch(() => []);
-  return `backup written: ${result.stdout.trim()}`;
+  return `backup written: ${result.stdout.trim().split("\n").pop()}`;
 }
 
 // ---- Sign-in: one password, a cookie, failed attempts slowed down ----

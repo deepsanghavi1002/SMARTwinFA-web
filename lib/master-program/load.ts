@@ -1038,6 +1038,12 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
           if (rows) {
             if (row.combo_value.toUpperCase() !== "N") options = optionsFrom(rows);
             fieldInput = displayValue(Object.values(rows[0])[0]);
+            // The default's text and its key go together: Schedule's list gave TRADING (key 1) first, and the book's own default (Sundry Debtors, key 11) kept that key, so a save stored TRADING.
+            if ((kind === "X" || kind === "Q") && options && options.length > 0 && toInt(options[0].value) > 0) {
+              fieldComboValue = options[0].value;
+              defaultText = fieldInput;
+              defaultValue = fieldComboValue;
+            }
           }
         }
       } else if (toText(row.enable_by_firstcmbval) !== "") {

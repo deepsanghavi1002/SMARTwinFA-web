@@ -2282,6 +2282,8 @@
 .rp-screen{position:relative}
 
 .rp-working,.rp-working *{cursor:wait!important}
+/* While a screen shows its busy symbol, the menu cannot be clicked. */
+body:has(.rp-working) .menu-bar,body:has(.rp-working) .bottom-nav,body:has(.rp-working) .window-tabs,body:has(.rp-working) .window-list{pointer-events:none;opacity:.55}
 
 .rp-busy{position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:12px;background:rgba(255,255,255,.55);color:#16365f;font-weight:600;font-size:14px;pointer-events:all}
 

@@ -195,6 +195,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // The multi company ledger: the running balance and each company's closing line run on Debit and Credit.
   if (reportKey === 118 && plan.subtotalColumns.length < 2 && table.has("DEBIT") && table.has("CREDIT")) plan.subtotalColumns.splice(0, plan.subtotalColumns.length, "DEBIT", "CREDIT");
   const subtotalColumns = [...plan.subtotalColumns];
+  // GSTR tax columns: the Integrated tax joins the final total wherever the Central tax is totalled (the setup can leave its subtotal flag off).
+  if (table.has("Integrated_Tax_Amount") && !subtotalColumns.some((name) => name.trim().toUpperCase() === "INTEGRATED_TAX_AMOUNT")) subtotalColumns.push(table.name("Integrated_Tax_Amount")!);
   const grouping = [...plan.grouping];
   // Query (111): a subtotal of the amounts (or the quantity) under each book name.
   if (reportKey === 111 && table.has("BOOK_NAME")) {
@@ -241,7 +243,8 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   // Closing balance (any report whose table has closing_bal), then the ledger drops openings that came to nothing.
   if (table.has("closing_bal")) {
     updateClosingBalance(plan, table);
-    if (reportKey === 4 || reportKey === 38) {
+    // The trial balance's formats (Daily ... Half Year) list an account's opening line only when it has an amount.
+    if (reportKey === 4 || reportKey === 38 || (reportKey === 6 && formatted)) {
       table.rows = table.rows.filter((row) => !(toText(table.get(row, "ROW_DATA_TYPE")).includes("OPENINGS") && num(table.get(row, "Debit")) === 0 && num(table.get(row, "Credit")) === 0));
     }
   }
@@ -378,6 +381,17 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   const accountOnly = (reportKey === 6 || reportKey === 7) && plan.tickedGroups.length === 1 && plan.tickedGroups[0].text.toUpperCase() === "ACCOUNT";
   const allowSubtotal = reportKey !== 210 && !dateWiseList && !accountOnly;
   const out: { kind: OutputRow["kind"]; level: number; rowType: string; values: Record<string, unknown>; caption?: string; treeOnly?: string[] }[] = [];
+  // Trial Balance (6): no minus sign in the Opening / Debit / Credit / Closing columns (the DR / CR beside a balance tells its side); a subtotal / final total of a balance is its net, its DR / CR set to the net's side.
+  const unsigned = reportKey === 6 ? new Set(["OPENING_BAL", "DEBIT", "CREDIT", "CLOSING_BAL"]) : reportKey === 24 ? new Set(["INNER_AMT"]) : new Set<string>();
+  const drCrWise = (values: Record<string, unknown>) => {
+    if (reportKey !== 6) return;
+    for (const [balance, side] of [["OPENING_BAL", "DR_CR1"], ["CLOSING_BAL", "DR_CR"]]) {
+      const balanceName = table.name(balance), sideName = table.name(side);
+      if (!balanceName || !sideName || values[balanceName] === undefined) continue;
+      const net = num(values[balanceName]);
+      values[sideName] = net === 0 ? "" : net > 0 ? "DR" : "CR";
+    }
+  };
   const subtotalsWanted = (flag(properties, "subtotal_req") || scheduleSubtotals || [193, 194, 195, 196, 197].includes(reportKey)) && allowSubtotal;
   // The ageing's Summary and Monthly, are a row a party already: no subtotal under each, only the final total.
   const oneRowAParty = (reportKey === 5 && ["SUMMARY", "MONTHLY"].includes(plan.call.filterText.toUpperCase()));
@@ -423,6 +437,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
         if (/^(ADDON_[0-9]|BOOK|SCHEDULE)$/.test(toText(table.get(row, "ROW_DATA_TYPE")).toUpperCase()) && cellString(row[groupColumns[level]]) === "") continue;
         const values: Record<string, unknown> = {};
         for (const column of [...sumColumns, ...oldest]) values[column] = sums[level].get(column) ?? 0;
+        drCrWise(values);
         const treeOnly = [...oldest, ...averageRate(values)];
         out.push({ kind: "subtotal", level, rowType: "", values, caption: `${"*".repeat(level + 1)} Subtotal For : ${cellString(row[groupColumns[level]])} `, ...(treeOnly.length > 0 ? { treeOnly } : {}) });
         reset(level);
@@ -440,11 +455,27 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
   if (finalTotal && totalWanted && !(reportKey === 4 && call.formating === "MONTHLY")) {
     const values: Record<string, unknown> = {};
     for (const column of sumColumns) values[column] = money(table.rows.reduce((sum, row) => sum + num(row[column]), 0));
+    drCrWise(values);
     // Partywise Stock (16): the final line's RATE is the average too, shown with the tree or F6.
     const rateName = reportKey === 16 ? table.name("RATE") : undefined, saleName = table.name("SALE_VALUE"), lessName = table.name("LESS_QTY") ?? table.name("LESS");
     const averaged = rateName && saleName && lessName && num(values[lessName]) !== 0;
     if (averaged) values[rateName] = Math.round(num(values[saleName]) / num(values[lessName]) * 100) / 100;
     out.push({ kind: "total", level: -1, rowType: "", values, caption: `${"*".repeat(groupColumns.length)}* Final Total : `, ...(averaged ? { treeOnly: [rateName] } : {}) });
+  }
+  // Finish Product Costing (163), detail: the final total of the FINISH GOODS rows only (the materials under each are not added in).
+  if (reportKey === 163 && table.has("Prod_type") && !call.checkQuery.includes("CHK_SUMMARY,")) {
+    const finish = table.rows.filter((row) => cellString(row[table.name("Prod_type")!]).trim().toUpperCase() === "FINISH GOODS");
+    if (finish.length > 0) {
+      const totals = (rows: typeof finish) => {
+        const values: Record<string, unknown> = {};
+        for (const name of ["DP_RATE", "NP_RATE", "COST_RATE", "DIFF_RATE", "PRODUCTION", "PROD_VAL", "SALE", "DIFF_VAL"]) {
+          const column = table.name(name);
+          if (column) values[column] = money(rows.reduce((sum, row) => sum + num(row[column]), 0));
+        }
+        return values;
+      };
+      out.push({ kind: "total", level: -1, rowType: "", values: totals(finish), caption: "*** Final Total : " });
+    }
   }
   void formattedReport;
   // Day book and register (no format): a last line "Total Entries : n" in the date column.
@@ -490,7 +521,7 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       const raw = column.name === "HEADING_COLUMN_BY_SYSTEM" ? (reportKey === 17 && stockSummaryFormat && !node ? entry.values[table.name("SELECTED_PRODUCT") ?? "SELECTED_PRODUCT"] : null) : entry.values[column.name];
       if (column.kind !== "number") { values[column.name] = column.kind === "date" || /date/i.test(column.name) ? dateCell(raw) : cellString(raw); continue; }
       if (raw === null || raw === undefined || raw === "") { values[column.name] = ""; continue; }
-      const value = num(raw);
+      const value = unsigned.has(column.name.toUpperCase()) ? Math.abs(num(raw)) : num(raw);
       let shownText = formatNumber(value, column.decimals);
       if ((!node || reportKey === 15) && value === 0) {
         if (ledgerDrawing) {

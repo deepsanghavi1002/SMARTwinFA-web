@@ -1787,7 +1787,7 @@ html[data-mtheme="light"] .msgbox-buttons button:focus::after {
     background: #1f64b8;
     color: #fff
 }
-html[data-mtheme="light"] .msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after {
+html[data-mtheme="light"] .msgbox-enterhint .msgbox-buttons button.msgbox-default::after, html[data-mtheme="light"] .msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after {
     background: #1f64b8;
     color: #fff
 }
@@ -2220,7 +2220,7 @@ html[data-mtheme="light"] .mp-cell mark.mp-found {
     color: #1b1b1b
 }
 html[data-mtheme="light"] .se-head .se-label {
-    color: #fff
+    color: #000000
 }
 html[data-mtheme="light"] .se-head .se-date .mp-editor {
     border: 1px solid #bfc6d4
@@ -4917,6 +4917,16 @@ html[data-mtheme="light"] .user-admin select, html[data-mtheme="light"] .user-ad
     border: 1px solid #c0c8d5;
     background: #ffffff
 }
+html[data-mtheme="light"] .msgbox-title-icon {
+    fill: none;
+    stroke: #fff
+}
+html[data-mtheme="light"] .mp-grid-combo-note {
+    color: #1f64b8
+}
+html[data-mtheme="light"] .mp-grid-combo-note.mp-grid-combo-neg {
+    color: #c42636
+}
 html[data-mtheme="light"] .modern-view {
     --modern-bg: #fafbfd;
     --modern-surface: #ffffff;
@@ -7195,7 +7205,7 @@ html[data-mtheme="dark"] .msgbox-buttons button:focus::after {
     background: #1f64b8;
     color: #fff
 }
-html[data-mtheme="dark"] .msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after {
+html[data-mtheme="dark"] .msgbox-enterhint .msgbox-buttons button.msgbox-default::after, html[data-mtheme="dark"] .msgbox:has(.msgbox-text input:focus) .msgbox-buttons button.msgbox-default::after {
     background: #1f64b8;
     color: #fff
 }
@@ -7628,7 +7638,7 @@ html[data-mtheme="dark"] .mp-cell mark.mp-found {
     color: #d7dce4
 }
 html[data-mtheme="dark"] .se-head .se-label {
-    color: #fff
+    color: #edeff3
 }
 html[data-mtheme="dark"] .se-head .se-date .mp-editor {
     border: 1px solid #3d485c
@@ -10324,6 +10334,16 @@ html[data-mtheme="dark"] .user-admin button {
 html[data-mtheme="dark"] .user-admin select, html[data-mtheme="dark"] .user-admin input {
     border: 1px solid #272f3d;
     background: #0e1218
+}
+html[data-mtheme="dark"] .msgbox-title-icon {
+    fill: none;
+    stroke: #fff
+}
+html[data-mtheme="dark"] .mp-grid-combo-note {
+    color: #629de5
+}
+html[data-mtheme="dark"] .mp-grid-combo-note.mp-grid-combo-neg {
+    color: #e16572
 }
 html[data-mtheme="dark"] .modern-view {
     --modern-bg: #10151c;

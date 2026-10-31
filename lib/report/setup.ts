@@ -78,10 +78,13 @@ export async function fillControl(loader: Loader, reportKey: number, controlKey:
         const sql = literal(literal(query, "|sys.tarikh1|", desktopDate(session.tarikh1)), "|sys.tarikh2|", desktopDate(session.tarikh2))
           .split("|sys.control_val_key|").join(String(key))
           .split("|sys.afterctestmnts|").join("");
+        const first = items.length;
         for (const row of await loader.readTable(setupSelect(sql)) ?? []) {
           const cells = Object.values(row).map((cell) => toText(cell));
           items.push({ controlValKey: key, text: cells[1] ?? "", value: cells[2] ?? "", extra: [cells[3] ?? "", cells[4] ?? "", cells[5] ?? "", cells[6] ?? "", cells[7] ?? ""], showControls: text(value, "visible_controls_lst") });
         }
+        // Rows of one list that all carry a blank value (Stock Reports' Input Columns: All / Opening / Closing) take their position, so each can be told apart and chosen.
+        if (items.length - first > 1 && items.slice(first).every((item) => item.value === "")) for (let at = first; at < items.length; at += 1) items[at] = { ...items[at], value: String(at - first + 1) };
       }
     }
     const helpId = flag(value, "display_help") ? text(value, "display_help_query") : "";

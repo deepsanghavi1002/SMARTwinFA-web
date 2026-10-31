@@ -155,6 +155,10 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     if (!selection) throw new Error("No company is open");
     return reportCall<T>(selection, reportName, menuShortName, action, payload);
   }, [selection, reportName, menuShortName]);
+  // The latest call / onClose, read by the load and refill effects below: a new identity of either (a re-render of the parent, Refresh) must not run the form load again and reset the selection.
+  const callRef = useRef(call);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { callRef.current = call; onCloseRef.current = onClose; });
   const refuse = (refusal: Refusal) => messageBox.ask(refusal.message, refusal.caption, ["OK"], { kind: refusal.caption === "SUCCESS" ? "info" : "warning" });
 
   // Report_Combine_Load.
@@ -162,14 +166,14 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     let live = true;
     (async () => {
       try {
-        const reply = await call<{ report: ReportDefinition; runtimeDefaults?: Record<string, string>; warnings: string[]; version?: string }>("report");
+        const reply = await callRef.current<{ report: ReportDefinition; runtimeDefaults?: Record<string, string>; warnings: string[]; version?: string }>("report");
         if (!live) return;
         const report = reply.report;
         if (report.rights.modulePassword) {
           const typed = await messageBox.prompt("Enter Module Password", "Module Password", { password: true });
-          if (typed === null) { onClose(); return; }
-          const check = await call<{ ok: boolean; message: string }>("module-password", { password: typed });
-          if (!check.ok) { await messageBox.alert(check.message || "Invalid Password", "Module Password"); onClose(); return; }
+          if (typed === null) { onCloseRef.current(); return; }
+          const check = await callRef.current<{ ok: boolean; message: string }>("module-password", { password: typed });
+          if (!check.ok) { await messageBox.alert(check.message || "Invalid Password", "Module Password"); onCloseRef.current(); return; }
         }
         setDef(report);
         // The amounts the report's own queries give (Profit / Loss: Opening Amount from LAST_YEAR, Closing Amount from OS_BILLDIFF) fill their boxes as it opens.
@@ -194,14 +198,14 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       }
     })();
     return () => { live = false; };
-  }, [call, onClose]);
+  }, [reportName, menuShortName]);
 
   // Cmb_FirstCombo_Leave: the chosen entry refills its combo (the series of the account's book), first item chosen.
   useEffect(() => {
     if (!def || def.lostFocusControl === "") return;
     let live = true;
     const name = def.lostFocusControl;
-    call<{ control: string; items: ControlItem[]; warnings?: string[] }>("lostfocus", { selection: { firstCombo: first } })
+    callRef.current<{ control: string; items: ControlItem[]; warnings?: string[] }>("lostfocus", { selection: { firstCombo: first } })
       .then((reply) => {
         if (!live) return;
         setLostItems(reply.items);
@@ -216,13 +220,13 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
-  }, [def, first, call]);
+  }, [def, first]);
 
   // The Against Book combo (cmb_AgainstBook) follows the register: a credit note is against the sale, a debit note against the purchase.
   useEffect(() => {
     if (!def || def.lostFocusControl === "cmb_AgainstBook" || !def.controls.some((candidate) => candidate.type === "C" && candidate.name === "cmb_AgainstBook")) return;
     let live = true;
-    call<{ control: string; items: ControlItem[] }>("against", { selection: { firstCombo: first } })
+    callRef.current<{ control: string; items: ControlItem[] }>("against", { selection: { firstCombo: first } })
       .then((reply) => {
         if (!live) return;
         setAgainstItems(reply.items);
@@ -230,7 +234,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
-  }, [def, first, call]);
+  }, [def, first]);
 
   // The keyboard starts in the first combo (or the groups when the report has none).
   useEffect(() => {
@@ -257,7 +261,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     let live = true;
     const switched = filterListOf.current !== filterList;
     filterListOf.current = filterList;
-    call<{ control: string; items: ControlItem[] }>(filterList === "lbchk_Forms" ? "forms" : "slabs", { selection: { firstCombo: first, choices: { cmb_AgainstBook: againstChoice } } })
+    callRef.current<{ control: string; items: ControlItem[] }>(filterList === "lbchk_Forms" ? "forms" : "slabs", { selection: { firstCombo: first, choices: { cmb_AgainstBook: againstChoice } } })
       .then((reply) => {
         if (!live) return;
         setSlabItems(reply.items);
@@ -265,7 +269,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
       })
       .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { live = false; };
-  }, [slabListShown, filterList, first, againstChoice, call]);
+  }, [slabListShown, filterList, first, againstChoice]);
   const groupOfGrid = (grid: string) => groupControl?.items.filter((item) => item.showControls === grid && groups.includes(itemKey(item))) ?? [];
 
   /** Ticking a group shows its help tab (MoveFocus); an addon group shows its own subs in the addon grid. */

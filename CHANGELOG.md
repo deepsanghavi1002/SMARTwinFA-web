@@ -3,6 +3,12 @@
 Date-wise remarks of every change made by Claude. Newest entries first.
 Format: `## YYYY-MM-DD` → bullet list of what changed and which files.
 
+## 2026-10-31 (Leaner client stacks: no legacy API, memory caps, one backup job)
+- Change: `ops/client/compose.yaml`, `ops/clients/rishabh.env.example`, `ops/smartwinfa.sh`. A client stack is now web + its own PostgreSQL (two containers, was four). The legacy API container is gone (nothing in the running app calls it; only the unused `features/demo-workflows` prototypes did). web and db have memory limits (`WEB_MEM_LIMIT`, `DB_MEM_LIMIT`, default 512m), Node's heap is capped (`WEB_HEAP_MB`), and PostgreSQL is tuned small (`PG_SHARED_BUFFERS_MB`, 40 connections). Each client keeps its own database.
+- New: `ops/fleet/backup/backup.sh` and a `backup` service in `ops/fleet/compose.yaml`: one job dumps every client's `<client>-db` at `BACKUP_HOUR` into `/backups/<client>/` (14 days kept); `client backup <id>` and the panel's Backup now use it. A failed dump for one client does not stop the others.
+- Change: `ops/fleet/panel/*`, `ops/site/compose.yaml`, `tests/fleet-panel.test.mjs`. The panel reads backups from the fleet job and shows two parts (web, db); a client's own machine (site kit) keeps its own backup part.
+- Not changed yet: `services/legacy-api/`, `app/api/legacy/`, `features/demo-workflows/`, `platform/legacy-db/`, `Dockerfile.legacy-api` (dead code to delete in a separate step). Existing clients: `ops/smartwinfa.sh client up <id>` now removes the old `<id>-api` and `<id>-backup` containers (their old dumps stay in the stack's `backups` volume).
+
 ## 2026-10-27 (Modern view: Midnight × Emerald, Light and Dark)
 - New: `app/modern-ui.css`, `app/modern-theme.generated.css` (built by `npm run theme` from `scripts/generate-modern-theme.mjs`; `tests/modern-theme.test.mjs` fails when it is stale), `features/home/ModernHome.tsx`, `features/ui/modernTheme.ts`. The Modern view now has a Light/Dark choice (sun/moon button and More menu; remembered, follows the system the first time). Legacy is untouched. Modern gets a navy sidebar, new home (greeting, balances, sales vs purchase, shortcuts), Excel-style report grid with column letters and a cell bar.
 - Change: `app/layout.tsx`, `app/page.tsx`, `features/startup/StartupGate.tsx`, `features/report/OutputGrid.tsx`, `features/grid/levelStyle.ts`. Login and company screens, report level colours follow the theme.
