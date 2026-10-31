@@ -1,4 +1,5 @@
-# One SMARTwinFA client = one stack: web + api + its own PostgreSQL + nightly backup.
+# One SMARTwinFA client = one stack: web + its own PostgreSQL. Nightly backups of every client's database are taken by the one
+# fleet backup job (ops/fleet/backup); a client on its own machine (ops/site) gets its own backup part from the site kit.
 # Every setting comes from ops/clients/<client>.env; nothing here is client-specific.
 # Use through ops/smartwinfa.sh (client up/down/status/logs/backup <client>), which sets the project name to smartwinfa-<client>.
 x-client-labels: &client-labels
@@ -10,9 +11,11 @@ services:
     container_name: ${CLIENT_ID}-web
     restart: unless-stopped
     labels: *client-labels
+    mem_limit: ${WEB_MEM_LIMIT:-512m}
     environment:
       SMARTWINFA_RELEASE: ${SMARTWINFA_VERSION}
-      LEGACY_API_URL: http://api:8080
+      # Heap cap a little under the container limit, so Node collects garbage before Docker would kill it.
+      NODE_OPTIONS: --max-old-space-size=${WEB_HEAP_MB:-384}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: smartwin_data_intake
@@ -29,39 +32,30 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
-      api:
-        condition: service_healthy
-    networks: [client, fleet]
-
-  api:
-    image: ${SMARTWINFA_API_IMAGE:-ghcr.io/deepsanghavi1002/smartwinfa-legacy-api}:${SMARTWINFA_VERSION}
-    container_name: ${CLIENT_ID}-api
-    restart: unless-stopped
-    labels: *client-labels
-    environment:
-      LEGACY_DATABASE_URL: postgresql://smartwinfa_web:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/smartwin_data_intake
-      LEGACY_COMPANY_SCHEMA: ${COMPANY_SCHEMA:?Set COMPANY_SCHEMA}
-      SMARTWINFA_MASTER_WRITES: ${SMARTWINFA_MASTER_WRITES:-false}
-      SMARTWINFA_ENTRY_WRITES: ${SMARTWINFA_ENTRY_WRITES:-false}
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    depends_on:
       db:
         condition: service_healthy
-    networks: [client]
+    networks: [client, fleet]
 
   db:
     image: postgres:18-alpine
     container_name: ${CLIENT_ID}-db
     restart: unless-stopped
     labels: *client-labels
+    mem_limit: ${DB_MEM_LIMIT:-512m}
+    # Sized for one small company (the image's defaults assume a large server). Raise PG_SHARED_BUFFERS_MB with DB_MEM_LIMIT for a big client.
     # Statements slower than 2 s are logged, with who ran them (user, database, application) so a slow or failing query can be traced.
     command:
       - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS_MB:-128}MB
+      - -c
+      - effective_cache_size=${PG_CACHE_MB:-384}MB
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-40}
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
       - -c
       - log_min_duration_statement=2000
       - -c
@@ -84,39 +78,6 @@ services:
       start_period: 30s
     networks: [client]
 
-  backup:
-    # Nightly compressed dump at BACKUP_HOUR (24h clock), kept BACKUP_KEEP_DAYS days in the backups volume.
-    # Ship that folder to cloud storage (R2 / B2) with rclone or the provider's sync tool.
-    image: postgres:18-alpine
-    container_name: ${CLIENT_ID}-backup
-    restart: unless-stopped
-    labels: *client-labels
-    environment:
-      PGHOST: db
-      PGUSER: smartwinfa_web
-      PGPASSWORD: ${DB_PASSWORD}
-      PGDATABASE: smartwin_data_intake
-      CLIENT_ID: ${CLIENT_ID}
-      BACKUP_HOUR: ${BACKUP_HOUR:-2}
-      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo "backup: nightly dump at $${BACKUP_HOUR}:00 for client $${CLIENT_ID}"
-        while true; do
-          if [ "$$(date +%H)" -eq "$${BACKUP_HOUR}" ] && [ ! -f "/backups/$$(date +%F).dump" ]; then
-            if pg_dump --format=custom --file="/backups/$$(date +%F).dump"; then echo "backup: done $$(date +%F) $$(du -h /backups/$$(date +%F).dump | cut -f1)"; else echo "backup: ERROR pg_dump failed"; fi
-            find /backups -name '*.dump' -mtime +$${BACKUP_KEEP_DAYS} -delete
-          fi
-          sleep 300
-        done
-    volumes:
-      - backups:/backups
-    depends_on:
-      db:
-        condition: service_healthy
-    networks: [client]
-
 networks:
   client: {}
   fleet:
@@ -125,4 +86,3 @@ networks:
 
 volumes:
   db_data:
-  backups:

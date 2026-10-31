@@ -14,7 +14,7 @@ ops/
     loki-config.yaml       log store, 30 days
     grafana/               Loki data source + the "SMARTwinFA Clients" dashboard
   client/                  the template every client stack is made from
-    compose.yaml           web + api + postgres + nightly backup, all labelled smartwinfa.client=<id>
+    compose.yaml           web + its own postgres, both labelled smartwinfa.client=<id> and memory-capped (WEB_MEM_LIMIT, DB_MEM_LIMIT in the client's env file)
     postgres-init/         restores the client's dump on the first start (or starts empty)
   clients/
     rishabh.env.example    settings of one client (copy to <id>.env; *.env files are not committed)
@@ -70,10 +70,10 @@ is empty; sign-ins last 12 hours and end when the panel restarts).
 
 - **Clients:** one card per client stack on this host, found by the `smartwinfa.client` label, so a new client appears
   by itself. Green: everything runs. Amber: errors in the last hour, a part still starting, or the last backup is more
-  than 36 hours old (or there is none). Red: the app's `/api/health` does not answer, or a part (web, api, db, backup)
+  than 36 hours old (or there is none). Red: the app's `/api/health` does not answer, or a part (web, db)
   is stopped or unhealthy. Each card shows the parts, errors in the last hour, the last backup and the app version.
 - **A client's page:** its parts (state, uptime, memory, image), errors per hour for 24 hours, its backups, and its logs
-  with filters (part, errors / warnings, period, text). **Restart app** restarts the api and web containers (users stay
+  with filters (part, errors / warnings, period, text). **Restart app** restarts the web container (users stay
   signed in). **Backup now** writes `manual-<date>-<time>.dump` next to the nightly ones. **Open in Grafana** opens the
   same client in the logs dashboard for longer searches.
 - It uses the Docker socket (to read the containers and for those two actions) and Loki, about 20 MB of memory.
@@ -99,7 +99,7 @@ Windows needs one or two restarts (after WSL and after Docker Desktop); run the 
 | New client | `ops/smartwinfa.sh client new <id>`, edit `ops/clients/<id>.env`, `client up <id>` |
 | Update one client | `ops/smartwinfa.sh client update <id> <version>` (prints the rollback command) |
 | Roll back | `ops/smartwinfa.sh client update <id> <previous version>` |
-| Backup now | `ops/smartwinfa.sh client backup <id>` (nightly backups run on their own at `BACKUP_HOUR`) |
+| Backup now | `ops/smartwinfa.sh client backup <id>` (the one fleet backup job, `smartwinfa-backup`, dumps every client's own database nightly at `BACKUP_HOUR` set in `ops/fleet/.env`, into `/backups/<client>/`) |
 | Logs | Grafana > SMARTwinFA Clients, pick the client; or `ops/smartwinfa.sh client logs <id>` |
 | Stop / start | `ops/smartwinfa.sh client down <id>` / `client up <id>`, or the buttons in Portainer |
 

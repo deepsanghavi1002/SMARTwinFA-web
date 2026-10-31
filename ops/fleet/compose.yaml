@@ -7,6 +7,7 @@ name: smartwinfa-fleet
 #   Admin site   http://localhost:9090  - everything on one address (e.g. https://admin.smartwinfa.com, behind Cloudflare Access):
 #                / is the control panel (a card per client), /grafana/, /portainer/, and Uptime Kuma on the rest;
 #                publish it as http://smartwinfa-admin:80
+# backup: one job that dumps every client's database (see ops/fleet/backup/backup.sh).
 # Memory is capped per tool (mem_limit) so the dashboard cannot crowd out the clients on a small server.
 # Loki stores the logs; Alloy reads every container's log and labels it with its client.
 # cloudflared (profile "tunnel") publishes the client addresses through Cloudflare when TUNNEL_TOKEN is set.
@@ -104,6 +105,25 @@ services:
     depends_on: [loki]
     networks: [fleet]
 
+  # The one backup job for every client: dumps each <client>-db container (every client keeps its own PostgreSQL) into
+  # /backups/<client>/ at BACKUP_HOUR. It reads the Docker socket to find the clients and to run pg_dump in their database.
+  # Copy the backups volume to cloud storage with rclone / the provider's sync tool.
+  backup:
+    image: docker:28-cli
+    container_name: smartwinfa-backup
+    restart: unless-stopped
+    mem_limit: 48m
+    entrypoint: ["/bin/sh", "/backup/backup.sh"]
+    command: ["loop"]
+    environment:
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./backup:/backup:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - backups:/backups
+    networks: [fleet]
+
   admin:
     image: caddy:2.10.2-alpine
     container_name: smartwinfa-admin
@@ -133,6 +153,7 @@ networks:
     external: true
 
 volumes:
+  backups:
   portainer_data:
   loki_data:
   alloy_data:

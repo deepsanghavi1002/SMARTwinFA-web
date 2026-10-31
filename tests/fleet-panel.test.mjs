@@ -6,7 +6,7 @@ const container = (client, service, state = "running", status = "Up 2 hours (hea
   Id: `${client}-${service}-id`, Names: [`/${client}-${service}`], State: state, Status: status, Image: `smartwinfa-${service}:local`, ImageID: "sha256:1", Created: 1,
   Labels: { "smartwinfa.client": client, "com.docker.compose.service": service },
 });
-const parts = (overrides = {}) => Object.fromEntries(["web", "api", "db", "backup"].map((name) => [name, { state: "running", health: "", ...overrides[name] }]));
+const parts = (overrides = {}) => Object.fromEntries(["web", "db"].map((name) => [name, { state: "running", health: "", ...overrides[name] }]));
 const now = Date.UTC(2026, 9, 27, 12);
 
 test("the panel groups containers into clients by their smartwinfa.client label", () => {
@@ -33,9 +33,9 @@ test("a client is red when its app does not answer or a part is down", () => {
   const downDb = clientStatus({ parts: parts({ db: { state: "exited" } }), healthOk: true, errorsLastHour: 0, lastBackupAt: now, now });
   assert.equal(downDb.level, "red");
   assert.deepEqual(downDb.reasons, ["db down"]);
-  const missingBackup = clientStatus({ parts: { ...parts(), backup: undefined }, healthOk: true, errorsLastHour: 0, lastBackupAt: now, now });
-  assert.deepEqual(missingBackup.reasons, ["backup down"]);
-  assert.equal(clientStatus({ parts: parts({ api: { health: "unhealthy" } }), healthOk: true, errorsLastHour: 0, lastBackupAt: now, now }).level, "red");
+  const missingWeb = clientStatus({ parts: { ...parts(), web: undefined }, healthOk: true, errorsLastHour: 0, lastBackupAt: now, now });
+  assert.deepEqual(missingWeb.reasons, ["web down"]);
+  assert.equal(clientStatus({ parts: parts({ db: { health: "unhealthy" } }), healthOk: true, errorsLastHour: 0, lastBackupAt: now, now }).level, "red");
 });
 
 test("a client is amber for errors, a part starting, or an old or missing backup", () => {
