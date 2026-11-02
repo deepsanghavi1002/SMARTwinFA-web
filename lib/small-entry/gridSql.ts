@@ -59,6 +59,8 @@ export function entryGridSql(source: string, input: GridSqlInput): GridSqlResult
         const group = " group by c.LED_KEY,c.doc_date,c.full_docno,c.AMOUNT,c.book,c.AC_DBCODE";
         sql += group;
         bills += group;
+        // The pending bills in date and bill number order.
+        bills += " order by c.doc_date,c.full_docno";
         detail = bills;
       }
       break;

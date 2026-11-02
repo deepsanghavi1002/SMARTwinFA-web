@@ -37,6 +37,8 @@ export type EntryDefinition = Readonly<{
   caption: string;
   statusHead: string;
   firstCombo: Readonly<{ label: string; options: readonly EntryOption[] }> | null;
+  /** Outstanding Allocation: the first combo's accounts for each Select Option (Sale: debtors, Purchase: creditors, Expense: general). */
+  firstComboSets?: Readonly<Record<string, readonly EntryOption[]>>;
   controls: readonly EntryControl[];
   rights: Readonly<{ restricted: boolean; edit: boolean; editPassword: boolean; modulePassword: boolean }>;
   /** The company licence (smart_lic), which some typing rules read. */

@@ -13,7 +13,9 @@ import type { CellCommit } from "./cells";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { editorKindOf, useEditorTools } from "../grid/EditorTools";
 import { filterHolds, kindOfFieldType, sortedDistinct } from "../grid/filter";
-import { findTyped, selectionTotals as totalsOf } from "../grid/totals";
+import { selectionTotals as totalsOf } from "../grid/totals";
+import { findKindOfType, useTypeFind } from "../grid/typeFind";
+import type { FindKind } from "../grid/typeFind";
 import { messageBox } from "../ui/MessageBox";
 import { HotkeyLabel, useAltHotkeys } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
@@ -159,6 +161,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const [copied, setCopied] = useState<CopiedCell | null>(null);
   /** Type to find: the letters typed so far in the current column (not while editing). */
   const [typed, setTyped] = useState("");
+  /** The find landed on a cell holding the typed text somewhere inside it, not at its start. */
+  const [typedAnywhere, setTypedAnywhere] = useState(false);
   /** The other end of a row selection (a position in the rows shown), for Excel's Sum / Count / Average. */
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const dragSelect = useRef(false);
@@ -269,6 +273,14 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     return () => observer.disconnect();
   }, [grid]);
 
+  /** The first combo's accounts: for Outstanding Allocation they follow the Select Option (Sale: debtors, Purchase: creditors, Expense: general). */
+  const firstOptions = useMemo(() => def?.firstComboSets?.[controls.cmb_smallentry1 ?? ""] ?? def?.firstCombo?.options ?? [], [def, controls.cmb_smallentry1]);
+  useEffect(() => {
+    if (!def?.firstComboSets || first === null || firstOptions.some((option) => option.value === first.value && option.text === first.text)) return;
+    // The Select Option changed: the account of the other kind is dropped, and the grid with it.
+    setFirst(firstOptions[0] ?? null);
+    setGrid(null);
+  }, [def, first, firstOptions]);
   const state = useCallback(() => ({ firstCombo: first, controls }), [first, controls]);
   /** The columns as the operator lays them out: order, hidden ones, widths, frozen ones (features/grid/useColumnLayout). */
   const setupColumns = useMemo(() => grid?.columns.filter((column) => column.visible) ?? [], [grid]);
@@ -339,18 +351,21 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
    * Filters, search and sort read the values as loaded, as the master's Update grid does, so a
    * row does not jump or vanish while it is being edited.
    */
+  const cursorIndex = useRef(-1);
+  const sortOrder = useRef<{ sort: { key: string; dir: "asc" | "desc" }; position: Map<number, number> } | null>(null);
   const stored = useCallback((index: number) => grid?.rows[index] ?? records[index] ?? {}, [grid, records]);
   /** Whether a row passes every column filter but `except` (the one whose list is being opened). */
   const passesFilters = useCallback((index: number, except?: string) => rowFilterHolds(rowFilter, edited.has(index)) && Object.entries(filters).every(([key, filter]) => {
     if (key === except) return true;
     const column = grid?.columns.find((candidate) => candidate.key === key);
-    const raw = stored(index)[key] ?? "";
-    return !column || filterHolds(kindOf(column), filter, raw, shownValue(column, raw));
-  }), [filters, grid, stored, kindOf, rowFilter, edited]);
+    // A filter reads what the cell holds now (an entered value is found); the row under the cursor stays while it is edited.
+    const raw = records[index]?.[key] ?? "";
+    return !column || index === cursorIndex.current || filterHolds(kindOf(column), filter, raw, shownValue(column, raw));
+  }), [filters, grid, records, kindOf, rowFilter, edited]);
   const searchHolds = useCallback((index: number) => {
     const needle = find.trim().toLowerCase();
-    return needle === "" || columns.some((column) => shownValue(column, stored(index)[column.key] ?? "").toLowerCase().includes(needle));
-  }, [find, columns, stored]);
+    return needle === "" || columns.some((column) => shownValue(column, records[index]?.[column.key] ?? "").toLowerCase().includes(needle));
+  }, [find, columns, records]);
 
   /** Rows not deleted, in the loaded order. */
   const liveRows = useMemo(() => records.map((_, index) => index).filter((index) => !deleted.has(index)), [records, deleted]);
@@ -358,21 +373,28 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const shownRows = useMemo(() => {
     let indexes = liveRows.filter((index) => passesFilters(index) && searchHolds(index));
     if (sort) {
-      const column = columns.find((candidate) => candidate.key === sort.key);
-      const kind = column ? kindOf(column) : "text";
-      const value = (index: number) => stored(index)[sort.key] ?? "";
-      indexes = [...indexes].sort((a, b) => {
-        const order = kind === "number" ? (Number(value(a).replace(/,/g, "") || 0) - Number(value(b).replace(/,/g, "") || 0))
-          : kind === "date" ? (parseDesktopDate(value(a))?.getTime() ?? 0) - (parseDesktopDate(value(b))?.getTime() ?? 0)
-          : value(a).localeCompare(value(b), undefined, { numeric: true, sensitivity: "base" });
-        return sort.dir === "asc" ? order : -order;
-      });
+      // The order is worked out when the heading is clicked and kept while values are edited; a click on the heading sorts again.
+      if (sortOrder.current?.sort !== sort) {
+        const column = columns.find((candidate) => candidate.key === sort.key);
+        const kind = column ? kindOf(column) : "text";
+        const value = (index: number) => records[index]?.[sort.key] ?? "";
+        const order = [...liveRows].sort((a, b) => {
+          const diff = kind === "number" ? (Number(value(a).replace(/,/g, "") || 0) - Number(value(b).replace(/,/g, "") || 0))
+            : kind === "date" ? (parseDesktopDate(value(a))?.getTime() ?? 0) - (parseDesktopDate(value(b))?.getTime() ?? 0)
+            : value(a).localeCompare(value(b), undefined, { numeric: true, sensitivity: "base" });
+          return sort.dir === "asc" ? diff : -diff;
+        });
+        sortOrder.current = { sort, position: new Map(order.map((index, at) => [index, at])) };
+      }
+      const position = sortOrder.current.position;
+      indexes = [...indexes].sort((a, b) => (position.get(a) ?? Number.MAX_SAFE_INTEGER) - (position.get(b) ?? Number.MAX_SAFE_INTEGER));
     }
     return indexes;
-  }, [liveRows, columns, sort, passesFilters, searchHolds, kindOf, stored]);
+  }, [liveRows, columns, sort, passesFilters, searchHolds, kindOf, records]);
+  cursorIndex.current = shownRows[cursor.row] ?? -1;
 
   /** A column's distinct values as shown, for its filter list (after the other filters and the search). */
-  const valuesOf = (column: EntryColumn) => sortedDistinct(liveRows.filter((index) => passesFilters(index, column.key) && searchHolds(index)).map((index) => shownValue(column, stored(index)[column.key] ?? "")));
+  const valuesOf = (column: EntryColumn) => sortedDistinct(liveRows.filter((index) => passesFilters(index, column.key) && searchHolds(index)).map((index) => shownValue(column, records[index]?.[column.key] ?? "")));
   const filtering = Object.keys(filters).length > 0 || find.trim() !== "" || sort !== null || rowFilter !== "all";
 
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);
@@ -635,7 +657,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   /** F6 (the row's values of the cell's kind) and F8 (the previous column's value): features/grid/RowPick, with this screen's own checks. */
   const rowPicker = useRowPick<EntryColumn>({
     columns,
-    kindOf: (column) => pickKindOf(column.fieldType),
+    // A type I column holding a name (the Item column) is text to the pick, so its name can be copied to a text cell.
+    kindOf: (column) => (column.fieldType === "I" && !/^[-+]?[\d,.]*$/.test((records[shownRows[cursor.row]]?.[column.key] ?? "").trim()) ? "text" : pickKindOf(column.fieldType)),
     valueOf: (column) => shownValue(column, records[shownRows[cursor.row]]?.[column.key] ?? ""),
     cellOf: (column) => activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`),
     pickable: (column) => !column.options && !column.boolean,
@@ -707,6 +730,10 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
 
   /** A cell's text as the grid shows it, by its position in the rows shown. */
   const shownAt = (position: number, column: EntryColumn) => shownValue(column, records[shownRows[position]]?.[column.key] ?? "");
+  /** Type to find (features/grid/typeFind) in a column of the rows as shown, from the cursor's row. */
+  const typeFind = useTypeFind();
+  const findKindOf = (column: EntryColumn): FindKind => findKindOfType(column.fieldType);
+  const findIn = (search: string, column: EntryColumn) => typeFind(column.key, findKindOf(column), shownRows, records, shownRows.length, (position) => shownAt(position, column), search, cursor.row);
 
   /** The selected positions (cursor row to selectionEnd) in the order the grid shows them. */
   const selectedPositions = () => {
@@ -865,8 +892,9 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       const search = event.key === "Escape" ? "" : typed.slice(0, -1);
       setTyped(search);
       if (search !== "" && column) {
-        const found = findTyped(shownRows.map((_, position) => position), search, (position) => shownAt(position, column));
-        if (found >= 0) moveTo(found, cursor.col);
+        const found = findIn(search, column);
+        setTypedAnywhere(found.anywhere);
+        if (found.at >= 0) moveTo(found.at, cursor.col);
       }
       return;
     }
@@ -903,8 +931,9 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         return;
       }
       const search = typed + event.key;
-      const found = findTyped(shownRows.map((_, position) => position), search, (position) => shownAt(position, column));
-      if (found >= 0) { setTyped(search.toUpperCase()); setSelectionEnd(null); moveTo(found, cursor.col); }
+      const found = findIn(search, column);
+      // A typed text of separators only ("/") waits for the next character; otherwise a character that finds nothing is dropped.
+      if (found.at >= 0 || found.empty) { setTyped(search.toUpperCase()); setTypedAnywhere(found.anywhere); setSelectionEnd(null); if (found.at >= 0) moveTo(found.at, cursor.col); }
       return;
     }
     setTyped("");
@@ -1128,7 +1157,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
             <span className="se-field se-first" style={{ gridRow: lastLine, gridColumn: "2 / 4" }}>
               <SearchCombo
                 ariaLabel={def.firstCombo.label}
-                options={def.firstCombo.options}
+                options={firstOptions}
                 value={first}
                 reselect
                 disabled={headLocked}
@@ -1249,7 +1278,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                             </span>
                           ) : (
                             <>
-                              {column.boolean ? <span className={`se-tick${(record[column.key] ?? "").trim().toLowerCase() === "true" ? " se-ticked" : ""}`} role="checkbox" aria-checked={(record[column.key] ?? "").trim().toLowerCase() === "true"} aria-label={column.caption} /> : <FoundText text={shownValue(column, record[column.key] ?? "")} typed={here ? typed : ""} />}
+                              {column.boolean ? <span className={`se-tick${(record[column.key] ?? "").trim().toLowerCase() === "true" ? " se-ticked" : ""}`} role="checkbox" aria-checked={(record[column.key] ?? "").trim().toLowerCase() === "true"} aria-label={column.caption} /> : <FoundText text={shownValue(column, record[column.key] ?? "")} typed={here ? typed : ""} kind={findKindOf(column)} />}
                               {open && column.options ? (
                                 <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
                                   onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); if (editing) return; setSelectionEnd(null); setCursor({ row: position, col }); setArrowOpen((count) => count + 1); }}>
@@ -1292,7 +1321,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
           receiptAmount={Number((current?.AMOUNT ?? "").replace(/,/g, "")) || 0}
           receiptLabel={current?.full_docno ?? ""}
           onChange={(key, value) => setSetoffs((now) => ({ ...now, [key]: value }))}
-          onRefused={(text) => void ask(text, "Entry Validation")}
+          onRefused={(text) => ask(text, "Entry Validation")}
+          onDone={() => activeById("mp-save")?.focus()}
         />
       )}
 
@@ -1317,7 +1347,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         <span>{def?.statusHead}</span>
         {current && cursorColumn && <span>Row {cursor.row + 1}/{shownRows.length} · {cursorColumn.caption}</span>}
         {def?.canDelete && edited.size > 0 && <span className="mp-del-hint" style={{ flex: "none", fontWeight: 700 }} title="Delete the row under the cursor (Del)">Press Del to delete row</span>}
-        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message || (current && cursorColumn ? [tooltipText(cursorColumn.setup.field_tooltips || cursorColumn.tooltip), cursorColumn.compulsory ? "Compulsory" : "", cursorColumn.status.replace(/\s*\/\s*$/, "")].filter(Boolean).join("   ·   ") : "")}</span>
+        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}${typedAnywhere ? " (inside the text)" : ""}  (Enter to edit · Backspace · Esc)` : message || (current && cursorColumn ? [tooltipText(cursorColumn.setup.field_tooltips || cursorColumn.tooltip), cursorColumn.compulsory ? "Compulsory" : "", cursorColumn.status.replace(/\s*\/\s*$/, "")].filter(Boolean).join("   ·   ") : "")}</span>
         {totals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{totals}</span>}
         {editing && cursorColumn && <span>{tools.hint(editorKindOf(cursorColumn.fieldType))}{!cursorColumn.options && !cursorColumn.boolean ? ROW_PICK_HINT : ""}</span>}
         {warnings.map((warning) => <span key={warning} className="mp-warning" title={warning}>⚠ {warning}</span>)}

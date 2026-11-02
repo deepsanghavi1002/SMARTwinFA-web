@@ -8,6 +8,7 @@ import type { HelpColumn, HelpGrid as HelpGridData } from "../../lib/report/type
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { filterHolds, kindOfFieldType, sortedDistinct } from "../grid/filter";
 import { FoundText } from "../grid/FoundText";
+import { findKindOfType, useTypeFind } from "../grid/typeFind";
 import { selectionTotals } from "../grid/totals";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { messageBox } from "../ui/MessageBox";
@@ -98,6 +99,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
   const [height, setHeight] = useState(400);
   /** Type to find: the letters typed so far, in the current column. */
   const [typed, setTyped] = useState("");
+  const typeFind = useTypeFind();
   /** The search box: rows whose main column contains it. */
   const [find, setFind] = useState("");
   const box = useRef<HTMLDivElement>(null);
@@ -280,10 +282,9 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
       const text = (typed + event.key).toUpperCase();
       const column = columns[atCol];
       if (!column) return;
-      const cellText = (row: Row) => shown(column, row[column.key] ?? "").trimStart().toUpperCase();
-      const start = typed === "" ? at : searchAt.current;
-      const found = rows.findIndex((row, index) => index >= start && cellText(row).startsWith(text));
-      const index = found >= 0 ? found : rows.findIndex((row) => cellText(row).startsWith(text));
+      const hit = typeFind(column.key, findKindOfType(column.type), rows, shown, rows.length, (index) => shown(column, rows[index]?.[column.key] ?? ""), text, typed === "" ? at : searchAt.current);
+      const index = hit.at;
+      if (hit.empty) { setTyped(text); return; }
       if (index >= 0) { searchAt.current = index; move(index); setTyped(text); }
     }
   };
@@ -430,7 +431,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
                   const here = index === at && columnIndex === atCol;
                   return (
                     <div key={column.key} data-col={columnIndex} className={`mp-cell ${columnIndex < frozenCount ? "mp-frozen" : ""} ${here ? "rp-cell-on" : ""}`} style={{ width: layout.widthOf(column), textAlign: cellAlign(column), ...frozenStyle(columnIndex) }}>
-                      {here && typed ? <FoundText text={text} typed={typed} /> : column.key === mainKey ? <Marked text={text} needle={needle} /> : text}
+                      {here && typed ? <FoundText text={text} typed={typed} kind={findKindOfType(column.type)} /> : column.key === mainKey ? <Marked text={text} needle={needle} /> : text}
                     </div>
                   );
                 })}

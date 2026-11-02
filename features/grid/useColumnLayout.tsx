@@ -11,14 +11,17 @@ import type { MouseEvent as ReactMouseEvent } from "react";
  */
 
 export const MIN_COLUMN_WIDTH = 30;
+/** The narrowest a column is made when the columns are fitted to the screen. */
+const MIN_FIT_WIDTH = 44;
 
 type LayoutColumn = { key: string; width: number };
 
 /**
  * `shown`: the columns the setup shows, in its order. `frozen`: how many of them, from the left,
- * are frozen. `defaultWidth`: a column's width before the operator changes it.
+ * are frozen. `defaultWidth`: a column's width before the operator changes it. `fitWidth`: the room the columns have (0: no limit);
+ * when the columns the operator has not resized are wider than it, they are all narrowed in proportion so every column shows without a sideways scroll.
  */
-export function useColumnLayout<C extends LayoutColumn>(shown: readonly C[], frozen: number, defaultWidth: (column: C) => number = (column) => Math.max(40, column.width || 90)) {
+export function useColumnLayout<C extends LayoutColumn>(shown: readonly C[], frozen: number, defaultWidth: (column: C) => number = (column) => Math.max(40, column.width || 90), fitWidth = 0) {
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   /** The operator's own column order (keys); empty is the setup's order. */
@@ -36,7 +39,15 @@ export function useColumnLayout<C extends LayoutColumn>(shown: readonly C[], fro
   /** The columns on screen: the ordered ones less the hidden ones. */
   const columns = useMemo(() => orderedColumns.filter((column) => fixedKeys.includes(column.key) || !hiddenColumns.includes(column.key)), [orderedColumns, hiddenColumns, fixedKeys]);
 
-  const widthOf = (column: C) => widths[column.key] ?? defaultWidth(column);
+  const fitScale = useMemo(() => {
+    if (fitWidth <= 0) return 1;
+    let own = 0;
+    let wanted = 0;
+    for (const column of columns) { if (widths[column.key] !== undefined) own += widths[column.key]; else wanted += defaultWidth(column); }
+    return wanted > 0 && own + wanted > fitWidth ? Math.max(0.3, (fitWidth - own) / wanted) : 1;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns, widths, fitWidth]);
+  const widthOf = (column: C) => widths[column.key] ?? (fitScale < 1 ? Math.max(MIN_FIT_WIDTH, Math.floor(defaultWidth(column) * fitScale)) : defaultWidth(column));
 
   /** Hides a column, unless it is frozen. */
   const hideColumn = (key: string) => { if (key && !fixedKeys.includes(key)) setHiddenColumns((current) => (current.includes(key) ? current : [...current, key])); };

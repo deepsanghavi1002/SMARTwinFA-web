@@ -6,6 +6,7 @@ import type { EntryLog as EntryLogData } from "../../lib/entry/log";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { filterHolds, sortedDistinct } from "../grid/filter";
 import { FoundText } from "../grid/FoundText";
+import { findPosition, typedBuffer } from "../grid/typeFind";
 import { HelpIcon } from "../grid/HelpIcon";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { useDraggable } from "../grid/useDraggable";
@@ -40,7 +41,6 @@ function tones(cells: readonly string[]): Tone[] {
 
 const csvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
 /** Typing pauses longer than this start a new search. */
-const TYPE_PAUSE_MS = 1200;
 
 export function EntryLog({ log, title, docNo = "", onClose }: { log: EntryLogData; title: string; /** The invoice number, added at the end of the exported file's name. */ docNo?: string; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -107,11 +107,12 @@ export function EntryLog({ log, title, docNo = "", onClose }: { log: EntryLogDat
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
     const now = event.timeStamp;
-    const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
+    const text = typedBuffer(typed.current, now, event.key);
     typed.current = { text, at: now };
     const key = columns[currentColumn].key;
-    const hit = shown.findIndex(({ row }) => row.kind === "field" && valueOf(row, key).trim().toUpperCase().startsWith(text));
-    if (hit >= 0) { setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
+    const match = findPosition(shown.length, (index) => (shown[index].row.kind === "field" ? valueOf(shown[index].row, key) : ""), text, "text", current.row);
+    const hit = match.at;
+    if (hit >= 0 || match.empty) { if (hit >= 0) setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
 
@@ -169,7 +170,7 @@ export function EntryLog({ log, title, docNo = "", onClose }: { log: EntryLogDat
                       const now = index === currentRow && at === currentColumn;
                       return (
                         <td key={column.key} className={[toneClass, now ? "ent-log-cell" : ""].filter(Boolean).join(" ") || undefined} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: index, column: at }); }}>
-                          {now && found ? <FoundText text={text} typed={found} /> : text}
+                          {now && found ? <FoundText text={text} typed={found}  kind="text" /> : text}
                         </td>
                       );
                     })}
