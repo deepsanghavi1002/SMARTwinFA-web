@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { FoundText, MarkedText } from "./FoundText";
+import { findPosition, typedBuffer } from "./typeFind";
 import { HelpIcon, helpIconFor } from "./HelpIcon";
 
 /**
@@ -21,7 +22,6 @@ const SHOWN = 15;
 const OVERSCAN = 10;
 const MIN_WIDTH = 24;
 /** Typing pauses longer than this start a new search. */
-const TYPE_PAUSE_MS = 1200;
 
 export function HelpList({
   help, focusRow, onFocusRow, onChoose, searchKey, note, onClose, onEscape, style, dragHandle, onResetPosition, formatCell, shown = SHOWN, title, highlight = "", freezeSearch = false,
@@ -183,11 +183,12 @@ export function HelpList({
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
     const now = Date.now();
-    const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
+    const text = typedBuffer(typed.current, now, event.key);
     typed.current = { text, at: now };
     const start = focusPlace < 0 ? 0 : text.length > 1 ? focusPlace : focusPlace + 1;
-    const hit = Array.from({ length: count }, (_unused, step) => (start + step) % Math.max(1, count)).find((place) => (rowAt(place)?.[searchColumn] ?? "").trim().toUpperCase().startsWith(text)) ?? -1;
-    if (hit >= 0) { move(hit); setFound(text); }
+    const match = findPosition(count, (place) => rowAt(place)?.[searchColumn] ?? "", text, "text", start);
+    const hit = match.at;
+    if (hit >= 0 || match.empty) { if (hit >= 0) move(hit); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
 
@@ -263,7 +264,7 @@ export function HelpList({
                     const text = formatCell(row[column.key] ?? "", column.format);
                     const cursor = column.key === searchColumn;
                     const frozen = freezeSearch && column.key === mainColumn;
-                    return <td key={column.key} title={text} onMouseDown={() => { if (!freezeSearch) setCol(column.key); }} className={[frozen ? "mp-help-frozen" : "", cursor ? "mp-help-cursor" : "", cursor && index === focusPlace ? "mp-help-cursor-now" : ""].filter(Boolean).join(" ") || undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(frozen ? { left: frozenLeft } : {}) }}>{cursor && index === focusPlace && found ? <FoundText text={text} typed={found} /> : query.trim() !== "" ? <MarkedText text={text} query={query} /> : column.key === mainColumn && highlight ? <FoundText text={text} typed={highlight} /> : text}</td>;
+                    return <td key={column.key} title={text} onMouseDown={() => { if (!freezeSearch) setCol(column.key); }} className={[frozen ? "mp-help-frozen" : "", cursor ? "mp-help-cursor" : "", cursor && index === focusPlace ? "mp-help-cursor-now" : ""].filter(Boolean).join(" ") || undefined} style={{ textAlign: column.align === "R" ? "right" : "left", ...(frozen ? { left: frozenLeft } : {}) }}>{cursor && index === focusPlace && found ? <FoundText text={text} typed={found} kind="text" /> : query.trim() !== "" ? <MarkedText text={text} query={query} /> : column.key === mainColumn && highlight ? <FoundText text={text} typed={highlight} kind="text" /> : text}</td>;
                   })}
                 </tr>
               );

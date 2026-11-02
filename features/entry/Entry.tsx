@@ -1485,9 +1485,12 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     zoomStarted.current = true;
     void (async () => {
       try {
-        const reply = await call<{ zoom: { option: EntryOption; uniqueKey: number } }>("zoom", { ledKey: zoom });
+        const reply = await call<{ zoom: { option: EntryOption; uniqueKey: number; against?: { code: number; nature: number; accountName: string; natureText: string } } }>("zoom", { ledKey: zoom });
         zoomPending.current = reply.zoom.uniqueKey;
-        await chooseRegister(reply.zoom.option);
+        // A debit / credit note: what it is against comes from the entry itself, so the Returns panel does not ask.
+        const saved = reply.zoom.against;
+        await chooseRegister(saved ? { ...reply.zoom.option, against: { code: saved.code, nature: saved.nature } } : reply.zoom.option);
+        if (saved) setAgainst({ book: `Ag: ${saved.accountName}`, nature: saved.natureText });
       } catch (error) {
         await failed(error);
       }

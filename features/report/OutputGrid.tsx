@@ -11,6 +11,7 @@ import { filterHolds, sortedDistinct, statsOf } from "../grid/filter";
 import type { ColumnStats } from "../grid/filter";
 import { exportTableFrom } from "../grid/exportTable";
 import { FoundText } from "../grid/FoundText";
+import { useTypeFind } from "../grid/typeFind";
 import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
@@ -183,6 +184,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** Single cells added with Ctrl+click ("rowIndex|columnKey", rowIndex in output.rows). */
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [typed, setTyped] = useState("");
+  const typeFind = useTypeFind();
   const [search, setSearch] = useState("");
   const [borders, setBorders] = useState<ReadonlySet<string>>(new Set());
   const [borderColour] = useState("#ff0000");
@@ -839,15 +841,14 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
-      // Type to find: the next row whose cell in the current column starts with what was typed.
+      // Type to find (features/grid/typeFind): from this row down, then round from the top.
       event.preventDefault();
       const text = (typed + event.key).toUpperCase();
       const column = columns[at.col];
       if (!column) return;
-      const cell = (row: number) => (shown[row]?.row.values[column.key] ?? "").trimStart().toUpperCase();
-      let found = -1;
-      for (let step = 0; step < shown.length && found < 0; step += 1) { const row = (at.row + (typed === "" ? 1 : 0) + step) % shown.length; if (cell(row).startsWith(text)) found = row; }
-      if (found >= 0) { go({ row: found, col: at.col }, false); setTyped(text); }
+      const hit = typeFind(column.key, column.kind, shown, output, shown.length, (row) => shown[row]?.row.values[column.key] ?? "", text, at.row);
+      const found = hit.at;
+      if (found >= 0 || hit.empty) { if (found >= 0) go({ row: found, col: at.col }, false); setTyped(text); }
       else onStatus({ hotKeys: "", message: `Not found in ${column.caption} : ${text}`, red: true });
     }
   };
@@ -1185,7 +1186,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                             ? <button type="button" tabIndex={-1} className="rp-fold" aria-label={tree && closed.has(node) ? "Open group" : "Close group"} data-tip={tree && closed.has(node) ? "Open group" : "Close group"} onClick={() => toggleHeading(node)}>{tree && closed.has(node) ? "▸" : "▾"}</button>
                             : <span className="rp-fold rp-fold-none" aria-hidden="true" />
                         )}
-                        {here && typed ? <FoundText text={text} typed={typed} /> : text}
+                        {here && typed ? <FoundText text={text} typed={typed} kind={column.kind} /> : text}
                       </div>
                     );
                   })}

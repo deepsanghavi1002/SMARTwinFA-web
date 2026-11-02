@@ -38,6 +38,9 @@ export async function allocationStatements(loader: Loader, entryId: number, rows
   const total = setOff.reduce((sum, bill) => sum + amountOf(cellOf(bill, "setoff")), 0);
   if (Number(total.toFixed(4)) > Number(receiptAmount.toFixed(4))) return { statements, savedRows: new Set(), messages: [`Setoff Amount greater than equal ${receiptAmount} Not Allowed`] };
 
+  const over = setOff.find((bill) => Number(amountOf(cellOf(bill, "setoff")).toFixed(4)) > Number(amountOf(cellOf(bill, "AMOUNT")).toFixed(4)));
+  if (over) return { statements, savedRows: new Set(), messages: [`Setoff Amount of Bill ${cellOf(over, "Bill_No") ?? ""} is greater than its Amount ${cellOf(over, "AMOUNT") ?? ""} Not Allowed`] };
+
   const receiptLed = toInt(cellOf(receipt, "led_key"));
   const receiptOut = toInt((await loader.readTable(`select out_key from ${schema}.outclear where out_ledid=$1 and (out_ag_outid is null or out_ag_outid=0) order by out_key limit 1`, [receiptLed]))?.[0]?.out_key);
   if (receiptOut === 0) return { statements, savedRows: new Set(), messages: ["The receipt has nothing left to allocate"] };

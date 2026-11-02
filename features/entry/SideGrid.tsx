@@ -6,6 +6,7 @@ import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilte
 import { filterHolds, sortedDistinct } from "../grid/filter";
 import type { FilterKind } from "../grid/filter";
 import { FoundText } from "../grid/FoundText";
+import { findPosition, typedBuffer } from "../grid/typeFind";
 import type { GridColumn } from "../../lib/entry/types";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
@@ -24,7 +25,6 @@ import { amountText } from "./format";
  * `sortable`: a heading's text sorts the rows (ascending, descending, as they came). `filterable`: each heading has the column filter (▾).
  * The row numbers handed to `cell`, `cellClass` and `totals` are always the row's place in `rows`, whatever the sort and filters show.
  */
-const TYPE_PAUSE_MS = 1200;
 
 export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, fill = false, searchKey, anyColumn = false, sortable = false, filterable = false, totals, below, onF5 }: {
   columns: readonly GridColumn[];
@@ -112,17 +112,13 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
     const now = Date.now();
-    const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
+    const text = typedBuffer(typed.current, now, event.key);
     typed.current = { text, at: now };
     const column = columns.find((candidate) => candidate.key === findKey);
     // The search starts at the row the cursor is on and goes on down (round to the top), not from the first row each time.
-    const starts = (position: number) => (column ? shownOf(column, rows[shown[position]]) : rows[shown[position]][findKey] ?? "").trim().toUpperCase().startsWith(text);
-    let hit = -1;
-    for (let step = 0; step < shown.length && hit < 0; step += 1) {
-      const position = (at + step) % shown.length;
-      if (starts(position)) hit = position;
-    }
-    if (hit >= 0) { setCurrent(hit); setFound(text); } else typed.current.text = text.slice(0, -1);
+    const match = findPosition(shown.length, (position) => (column ? shownOf(column, rows[shown[position]]) : rows[shown[position]][findKey] ?? ""), text, column ? kindOf(column) : "text", at);
+    const hit = match.at;
+    if (hit >= 0 || match.empty) { if (hit >= 0) setCurrent(hit); setFound(text); } else typed.current.text = text.slice(0, -1);
   };
 
   // The current row (found by typing, or reached with the arrow keys) is always brought into view.
@@ -155,7 +151,7 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
               <tr key={index} className={[place % 2 ? "ent-alt" : "", place === Math.min(current, shown.length - 1) ? "ent-grid-current" : ""].filter(Boolean).join(" ")} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent(place); }}>
                 {columns.map((column, at) => (
                   <td key={column.key} className={[cellClass?.(index, column) || (column.editable ? "ent-open" : ""), place === current && at === col ? "ent-grid-cell" : ""].filter(Boolean).join(" ")} style={{ textAlign: align(column) }} onMouseDown={() => setCol(at)}>
-                    {found && place === current && column.key === findKey ? <FoundText text={shownOf(column, row)} typed={found} /> : cell ? cell(index, column) : shownOf(column, row)}
+                    {found && place === current && column.key === findKey ? <FoundText text={shownOf(column, row)} typed={found} kind={kindOf(column)} /> : cell ? cell(index, column) : shownOf(column, row)}
                   </td>
                 ))}
               </tr>

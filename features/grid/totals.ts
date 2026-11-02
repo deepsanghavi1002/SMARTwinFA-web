@@ -20,13 +20,3 @@ export function selectionTotals(values: Iterable<string>, places: number): strin
   const show = (value: number) => value.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   return `Sum: ${show(sum)}   Count: ${count}   Average: ${show(sum / count)}`;
 }
-
-/**
- * Type to find: the first row, in the order shown, whose cell in the current column starts with
- * the letters typed so far (any case). -1 when none does, so the key can be dropped.
- */
-export function findTyped(rows: readonly number[], search: string, shownOf: (row: number) => string): number {
-  const needle = search.toUpperCase();
-  const at = rows.findIndex((row) => shownOf(row).toUpperCase().startsWith(needle));
-  return at;
-}

@@ -13,12 +13,12 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { FilterButton, FilterPopup, useColumnFilters } from "./ColumnFilter";
 import { filterHolds, sortedDistinct } from "./filter";
 import { FoundText } from "./FoundText";
+import { findPosition, typedBuffer } from "./typeFind";
 import { HelpIcon } from "./HelpIcon";
 import { useColumnLayout } from "./useColumnLayout";
 import { useDraggable } from "./useDraggable";
 
 /** Typing pauses longer than this start a new search. */
-const TYPE_PAUSE_MS = 1200;
 
 export type LogTable = Readonly<{ columns: readonly string[]; rows: readonly (readonly string[])[]; message: string }>;
 
@@ -106,11 +106,12 @@ export function LogViewer({ table, title, onClose }: { table: LogTable; title: s
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
     const now = event.timeStamp;
-    const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
+    const text = typedBuffer(typed.current, now, event.key);
     typed.current = { text, at: now };
     const key = columns[currentColumn].key;
-    const hit = shown.findIndex(({ row }) => valueOf(row, key).trim().toUpperCase().startsWith(text));
-    if (hit >= 0) { setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
+    const match = findPosition(shown.length, (index) => valueOf(shown[index].row, key), text, "text", current.row);
+    const hit = match.at;
+    if (hit >= 0 || match.empty) { if (hit >= 0) setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
 
@@ -148,7 +149,7 @@ export function LogViewer({ table, title, onClose }: { table: LogTable; title: s
                   {row.map((value, cell) => {
                     const tone = colours[index][cell] ? colours[index][cell].replace("mp-log-", "ent-log-") : "";
                     const now = at === currentRow && cell === currentColumn;
-                    return <td key={cell} className={[tone, now ? "ent-log-cell" : ""].filter(Boolean).join(" ") || undefined} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: at, column: cell }); }}>{now && found ? <FoundText text={value} typed={found} /> : value}</td>;
+                    return <td key={cell} className={[tone, now ? "ent-log-cell" : ""].filter(Boolean).join(" ") || undefined} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: at, column: cell }); }}>{now && found ? <FoundText text={value} typed={found}  kind="text" /> : value}</td>;
                   })}
                 </tr>
               ))}

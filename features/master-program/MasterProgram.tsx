@@ -20,6 +20,7 @@ import type { CopiedCell } from "../grid/clipboard";
 import { cellAt, columnMenuItems, freezeMenuItems, GridMenu } from "../grid/GridMenu";
 import { LogViewer } from "../grid/LogViewer";
 import { FoundText } from "../grid/FoundText";
+import { findKindOfType, useTypeFind } from "../grid/typeFind";
 import { printVertical } from "../grid/printVertical";
 import type { LogTable } from "../grid/LogViewer";
 import { HelpList } from "../grid/HelpList";
@@ -236,6 +237,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const [find, setFind] = useState("");
   // Sorting, per-column filters and column widths the operator sets on the Update grid
   const [sort, setSort] = useState<SortState>(null);
+  const sortOrder = useRef<{ sort: NonNullable<SortState>; position: Map<number, number> } | null>(null);
   const columnFilters = useColumnFilters();
   const { filters, setFilters, openFilter, setOpenFilter } = columnFilters;
   const [columnChooser, setColumnChooser] = useState(false);
@@ -252,6 +254,9 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   /** The date and number editors' calendar, calculator and short date typing (features/grid). */
   const tools = useEditorTools(meta ? parseDesktopDate(meta.yearStart) ?? new Date(meta.yearStart) : null);
   const [typed, setTyped] = useState("");
+  /** The find landed on a cell holding the typed text somewhere inside it, not at its start. */
+  const [typedAnywhere, setTypedAnywhere] = useState(false);
+  const typeFind = useTypeFind();
   const [help, setHelp] = useState<HelpState>(null);
   const [helpRow, setHelpRow] = useState<number | null>(null);
   /** An entry picked in the New Add grid's help list with the keys or mouse, over the one found from the typing. */
@@ -508,12 +513,13 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
    */
   const shownRows = useMemo(() => {
     const needle = find.trim().toLowerCase();
-    const stored = (row: number) => backup[row] ?? records[row];
+    const stored = (row: number) => records[row];
     let rows = liveRows.filter((row) => {
       if (!rowFilterHolds(rowFilter, edited.has(row))) return false;
       for (const [key, filter] of Object.entries(filters)) {
         const column = columnByKey.get(key);
-        if (column && !columnFilterHolds(column, filter, stored(row))) return false;
+        // A filter reads what the cell holds now (an entered value is found, not only the stored one); the row under the cursor stays while it is edited.
+        if (column && row !== cursor.row && !columnFilterHolds(column, filter, records[row])) return false;
       }
       return needle === "" || columns.some((column) => shownText(stored(row), column).toLowerCase().includes(needle));
     });
@@ -527,21 +533,29 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         if (kind === "N" || kind === "C" || kind === "I") return toDecimal(left) - toDecimal(right);
         return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
       };
-      rows = [...rows].sort((a, b) => (sort.dir === "asc" ? compare(a, b) : compare(b, a)));
+      // The order is worked out when the heading is clicked and kept while values are edited; a click on the heading sorts again.
+      if (sortOrder.current?.sort !== sort) {
+        const order = [...liveRows].sort((a, b) => (sort.dir === "asc" ? compare(a, b) : compare(b, a)));
+        sortOrder.current = { sort, position: new Map(order.map((row, at) => [row, at])) };
+      }
+      const position = sortOrder.current.position;
+      rows = [...rows].sort((a, b) => (position.get(a) ?? Number.MAX_SAFE_INTEGER) - (position.get(b) ?? Number.MAX_SAFE_INTEGER));
     }
     return rows;
   }, [liveRows, records, backup, filters, find, sort, columns, columnByKey, rowFilter, edited]);
 
+  /** Type to find (features/grid/typeFind) in a column of the rows as shown, from the cursor's row; at is a place in shownRows. */
+  const findIn = (search: string, column: UpdateColumn) => typeFind(column.key, findKindOfType(column.setup.field_type), shownRows, records, shownRows.length, (position) => shownText(records[shownRows[position]], column), search, Math.max(0, shownRows.indexOf(cursor.row)));
   /** Distinct stored values of a column, for its filter list. */
   const valuesOf = (column: UpdateColumn) => {
     const seen = new Set<string>();
     const needle = find.trim().toLowerCase();
     const others = Object.entries(filters).filter(([key]) => key !== column.key);
     for (const row of liveRows) {
-      const stored = backup[row] ?? records[row];
-      const kept = others.every(([key, filter]) => { const other = columnByKey.get(key); return !other || columnFilterHolds(other, filter, stored); });
+      const stored = records[row];
+      const kept = others.every(([key, filter]) => { const other = columnByKey.get(key); return !other || columnFilterHolds(other, filter, records[row]); });
       if (!kept || (needle !== "" && !columns.some((shown) => shownText(stored, shown).toLowerCase().includes(needle)))) continue;
-      seen.add(shownText(stored, column));
+      seen.add(shownText(records[row], column));
     }
     return [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   };
@@ -1456,8 +1470,9 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       const search = event.key === "Escape" ? "" : typed.slice(0, -1);
       setTyped(search);
       if (search !== "" && column) {
-        const found = shownRows.find((row) => shownText(records[row], column).toUpperCase().startsWith(search));
-        if (found !== undefined) await moveTo(found, cursor.key);
+        const found = findIn(search, column);
+        setTypedAnywhere(found.anywhere);
+        if (found.at >= 0) await moveTo(shownRows[found.at], cursor.key);
       }
       return;
     }
@@ -1466,8 +1481,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
       if (findMode.current && column) {
         // Search the current column in the order shown; a key that finds nothing is dropped.
         const search = typed + event.key.toUpperCase();
-        const found = shownRows.find((row) => shownText(records[row], column).toUpperCase().startsWith(search));
-        if (found !== undefined) { setTyped(search); if (found !== cursor.row) await moveTo(found, cursor.key); }
+        const found = findIn(search, column);
+        if (found.at >= 0 || found.empty) { setTyped(search); setTypedAnywhere(found.anywhere); if (found.at >= 0 && shownRows[found.at] !== cursor.row) await moveTo(shownRows[found.at], cursor.key); }
         return;
       }
       if (column && isComboCell(cursor.row, column)) {
@@ -1490,11 +1505,11 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         return;
       }
       // C1dg_UpdateGrid_KeyPress: type to find in the current column.
-      let search = typed;
-      if (search !== "" && !cellOf(records[cursor.row], cursor.key).startsWith(search)) search = "";
-      search += event.key.toUpperCase();
-      const found = records.findIndex((record, index) => !deleted.has(index) && cellOf(record, cursor.key).toUpperCase().startsWith(search));
-      if (found >= 0) { setTyped(search); await moveTo(found, cursor.key); } else setTyped(search.slice(0, -1));
+      if (column) {
+        const search = typed + event.key.toUpperCase();
+        const found = findIn(search, column);
+        if (found.at >= 0 || found.empty) { setTyped(search); setTypedAnywhere(found.anywhere); if (found.at >= 0) await moveTo(shownRows[found.at], cursor.key); }
+      }
     }
   };
 
@@ -1508,7 +1523,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
   /** F6 (the row's values of the cell's kind) and F8 (the previous column's value): features/grid/RowPick, with this screen's own checks. */
   const rowPicker = useRowPick<UpdateColumn>({
     columns,
-    kindOf: (column) => pickKindOf(column.setup.field_type),
+    kindOf: (column) => (editorKindOf(column.setup.field_type) === "text" && column.setup.number_positiveonly ? "number" : pickKindOf(column.setup.field_type)),
     valueOf: (column) => shownText(records[cursor.row], column),
     cellOf: (column) => activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`),
     pickable: (column) => !column.options,
@@ -2339,7 +2354,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
                             )
                           ) : (
                             <>
-                              <FoundText text={column.comboKind === "M" ? shownText(record, column) : current && column.setup.force_inputtype === "P" && cellOf(record, column.key) === "*********" && cellOf(backup[row], column.key) !== "" && cellOf(backup[row], column.key) !== "*********" ? cellOf(backup[row], column.key) : current && column.setup.force_inputtype === "P" && cellOf(record, column.key) === "*********" && cellOf(record, `__reveal_${column.key}`) !== "" ? cellOf(record, `__reveal_${column.key}`) : formatCell(cellOf(record, column.key), column.format)} typed={current ? typed : ""} />
+                              <FoundText text={column.comboKind === "M" ? shownText(record, column) : current && column.setup.force_inputtype === "P" && cellOf(record, column.key) === "*********" && cellOf(backup[row], column.key) !== "" && cellOf(backup[row], column.key) !== "*********" ? cellOf(backup[row], column.key) : current && column.setup.force_inputtype === "P" && cellOf(record, column.key) === "*********" && cellOf(record, `__reveal_${column.key}`) !== "" ? cellOf(record, `__reveal_${column.key}`) : formatCell(cellOf(record, column.key), column.format)} typed={current ? typed : ""} kind={findKindOfType(column.setup.field_type)} />
                               {editable && column.options?.length ? (
                                 <span className="mp-combo-arrow" role="presentation" title="Show the list (Alt+↓ or F4)"
                                   onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); void openCombo(row, column.key); }}>
@@ -2455,7 +2470,7 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
 
       <div className="mp-status">
         <span>{rowStatus}</span>
-        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}  (Enter to edit · Backspace · Esc)` : message}</span>
+        <span className="mp-message">{typed ? `Find in ${cursorColumn?.caption ?? ""}: ${typed}${typedAnywhere ? " (inside the text)" : ""}  (Enter to edit · Backspace · Esc)` : message}</span>
         {selectionTotals && <span className="mp-sel-totals" title={`Selected rows of ${cursorColumn?.caption ?? ""}`}>{selectionTotals}</span>}
         <span>{(() => {
           const setup = editing ? cursorColumn?.setup : addEditing ? addRows[addCursor]?.setup : undefined;
