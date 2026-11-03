@@ -242,7 +242,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/auth/me", { signal: controller.signal, cache: "no-store" })
+    // LOCAL TEST ONLY: SMARTWINFA_SKIP_LOGIN in .env.local signs this PC in as a test admin (app/api/dev-login answers 404 otherwise).
+    fetch("/api/dev-login", { method: "POST", signal: controller.signal, cache: "no-store" }).catch(() => undefined)
+      .then(() => fetch("/api/auth/me", { signal: controller.signal, cache: "no-store" }))
       .then(async (response) => {
         if (response.status === 401) return;
         const body = await response.json() as Me & { error?: string };

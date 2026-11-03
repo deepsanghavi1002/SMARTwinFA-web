@@ -110,7 +110,7 @@ export function columnLetters(index: number): string {
 
 const NO_ROWS: ReadonlySet<number> = new Set();
 
-export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy, initialPivot, initialSumif }: {
+export function OutputGrid({ output: base, fallbackTitle, companyName, userName, rights, busy, onRefresh, onQuit, loadLog, loadZoom, generateEinvoice, loadGroup, loadCompare, comparePeriod, yearStart, yearEnd, onStatus, onInfo, initialGroupBy, onGroupBy, initialPivot, initialSumif }: {
   output: ReportOutput;
   fallbackTitle: string;
   companyName: string;
@@ -122,6 +122,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   loadLog: (ledKey: number, processKey: number, master?: { id: number; code: number; first: string; small?: boolean }) => Promise<LogTable>;
   /** Enter on a voucher row: the entry program that opens it (or why it cannot). */
   loadZoom: (request: { ledKey: number; processKey: number; acCode: number; name: string }) => Promise<{ entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string }>;
+  /** Eway Bill Generate (147), Ctrl+I: the e-invoices of these vouchers are generated at the gateway. */
+  generateEinvoice?: (vouchers: { ledKey: number; code: number; distanceKm: string }[]) => Promise<{ ok: boolean; message: string }>;
   /** Create Group: the report's entries grouped on these fields (none: the final total only). */
   loadGroup: (fields: readonly string[]) => Promise<ReportOutput | null>;
   /** Compare periods: the report for other dates of the year, and the dates this one is for. */
@@ -771,6 +773,24 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       event.preventDefault();
       const column = columns[at.col];
       if (column) { layout.shiftColumn(column.key, event.key === "ArrowLeft" ? -1 : 1); setCursor({ row: at.row, col: at.col + (event.key === "ArrowLeft" ? -1 : 1) }); }
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "i" && output.reportKey === 147 && generateEinvoice) {
+      event.preventDefault();
+      void (async () => {
+        const vouchers = shown.filter((entry) => entry.row.kind === "data").map((entry) => ({ ledKey: Number(entry.row.values.led_key?.replace(/,/g, "")) || 0, code: Number(entry.row.values.code?.replace(/,/g, "")) || 0, distanceKm: entry.row.values.distance_km ?? "" })).filter((voucher) => voucher.ledKey > 0);
+        if (vouchers.length === 0) return;
+        if (!(await messageBox.confirm("Are you sure Want to Genrate E Invoice?", "Confirmation"))) return;
+        onStatus({ hotKeys: GRID_KEYS, message: "Generating E Invoice..." });
+        try {
+          const result = await generateEinvoice(vouchers);
+          await messageBox.alert(result.message, result.ok ? "Upload EINVOICE" : "EINVOICE Error", result.ok ? "info" : "error");
+          if (result.ok) onRefresh();
+        } catch (reason) {
+          await messageBox.alert(reason instanceof Error ? reason.message : "The request failed", "EINVOICE Error", "error");
+        }
+        onStatus({ hotKeys: GRID_KEYS, message: "" });
+      })();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "c") { event.preventDefault(); void copySelection(); return; }

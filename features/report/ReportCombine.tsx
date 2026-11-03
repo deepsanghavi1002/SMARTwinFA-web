@@ -388,6 +388,14 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     // Entry Account Transfer moves entries for good (the desktop asks nothing; the web asks once).
     const transferKind = reportName === "REPORT_ENTRY_ACCOUNT_TRANSFER" ? "Account" : reportName === "REPORT_ENTRY_PRODUCT_TRANSFER" ? "Product" : "";
     if (transferKind && !(await messageBox.confirm(`All entries of the ${transferKind} From, dated ${from} to ${upto}, will be moved to the ${transferKind} Upto.\nWhen the dates are the whole year the first ${transferKind.toLowerCase()} is also merged into the second and deleted.\n\nThis cannot be undone. Are you sure you want to continue?`, `Entry ${transferKind} Transfer`))) return false;
+    // Auto Order Transfer makes purchase orders in the chosen company for good.
+    if (reportName === "REPORT_RPI_ORDER_TRANSFER" && !(await messageBox.confirm(`The sale invoices dated ${from} to ${upto} made to the chosen company will be made there as purchase orders.\n\nThis cannot be undone. Are you sure you want to continue?`, "Auto Order Transfer"))) return false;
+    // Auto Billing Generate writes sale invoices for good: one press makes them all.
+    if (reportName === "REPORT_TJ_AUTO_BILL" && !(await messageBox.confirm(`The allotted party orders will be billed as sale invoices dated ${upto}.
+
+This cannot be undone. Are you sure you want to continue?`, "Auto Billing Generate"))) return false;
+    // Year Ending Generate passes the year-closing journal entries for good.
+    if (reportName === "REPORT_YEAR_END" && !(await messageBox.confirm("The year-closing JV entries (trading, profit and loss and capital) will be passed for this year.\n\nThis cannot be undone. Are you sure you want to continue?", "Year Ending Generate"))) return false;
     // Voucher Renumber changes the numbers of posted vouchers for good.
     if (reportName === "UTILITY_VOUCHER_RENUMBER" && !(await messageBox.confirm(`The vouchers of the chosen book and series, dated ${from} to ${upto}, will be numbered again one after the other.\n\nThis cannot be undone. Are you sure you want to continue?`, "Voucher Renumber"))) return false;
     saveLastDates({ from, upto });
@@ -615,6 +623,16 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     }
   }, [call]);
   const loadLog = useCallback(async (ledKey: number, processKey: number, master?: { id: number; code: number; first: string; small?: boolean }) => (await call<{ log: LogTable }>("log", { ledKey, processKey, ...(master ? { masterId: master.id, masterCode: master.code, masterFirst: master.first, masterSmall: master.small === true } : {}) })).log, [call]);
+  const generateEinvoice = useCallback(async (vouchers: { ledKey: number; code: number; distanceKm: string }[]) => {
+    if (!selection) throw new Error("No company is open");
+    const response = await fetch("/api/report/einvoice", {
+      method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
+      body: JSON.stringify({ reportName, menuShortName, session: { companyId: Number(selection.companyId), yearKey: selection.yearKey, loginName: selection.loginName }, vouchers }),
+    });
+    const body = await response.json() as { ok?: boolean; message?: string; error?: string };
+    if (!response.ok || body.error) throw new Error(body.error || "The request failed");
+    return { ok: Boolean(body.ok), message: body.message ?? "" };
+  }, [selection, reportName, menuShortName]);
   const loadZoom = useCallback(async (request: { ledKey: number; processKey: number; acCode: number; name: string }) => (await call<{ zoom: { entryName?: string; ledKey?: number; reportName?: string; acCode?: number; message?: string } }>("zoom", request)).zoom, [call]);
 
   /** C1_CHECKBOX, the Report Options: the first tab of the help grids, ticked like them. */
@@ -864,6 +882,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
           onQuit={() => void leave()}
           loadLog={loadLog}
           loadZoom={loadZoom}
+          generateEinvoice={generateEinvoice}
           loadGroup={loadGroup}
           loadCompare={loadCompare}
           comparePeriod={generatedPeriod}

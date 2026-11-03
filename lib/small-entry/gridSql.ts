@@ -63,6 +63,9 @@ export function entryGridSql(source: string, input: GridSqlInput): GridSqlResult
       }
       break;
     }
+    case 41: // Collection Planing: its columns come from ADDON_DATA (adata1), which the stored query never joins.
+      if (!/adata1/i.test(sql.split(/\bwhere\b/i)[0].split(/\bfrom\b/i).slice(1).join(" "))) swap("left join |sys.db|SMAN_SALE_EXP adata on", "left join |sys.db|ADDON_DATA adata1 on adata1.CODE=ac.code left join |sys.db|SMAN_SALE_EXP adata on");
+      break;
     case 4: // Sales Tax Form: Add lists bills without a form number, Update those with one.
       if (option(2) === "Add") swap("  order by a.DOC_DATE,a.FULL_DOCNO", " and (a.FORM_NUMBER is null or a.FORM_NUMBER = '') order by a.DOC_DATE,a.FULL_DOCNO");
       else if (option(2) === "Update") swap("  order by a.DOC_DATE,a.FULL_DOCNO", " and a.FORM_NUMBER is not null and a.FORM_NUMBER <> '' order by a.DOC_DATE,a.FULL_DOCNO");

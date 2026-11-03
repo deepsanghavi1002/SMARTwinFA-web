@@ -9,6 +9,7 @@ const PUBLIC_API: Readonly<Record<string, readonly string[]>> = {
   "/api/auth/set-password": ["GET", "POST"],
   // Browser error reports, also from the sign-in screen (the route caps size and rate itself).
   "/api/client-log": ["POST"],
+  "/api/dev-login": ["POST"], // LOCAL TEST ONLY: the route answers 404 unless SMARTWINFA_SKIP_LOGIN is set on localhost
 };
 
 export function isPublicApi(pathname: string, method: string): boolean {

@@ -597,6 +597,12 @@ export async function loadEntryGrid(loader: Loader, entryName: string, state: En
   if (plan.sql === "" && !plan.blank) return { columns: [], rows: [], frozen, balance, warnings: [...warnings, ...loader.warnings] };
   const result = plan.blank ? { fields: [] as { name: string; dataTypeID: number }[], rows: [] as Row[] } : await loader.client.query(plan.sql);
   const keys = plan.blank ? blankKeys(plan) : result.fields.map((item) => item.name);
+  // Collection Planing shows Customer Type and Salesman ahead of the Name (the stored order puts them between the name and the weeks).
+  if (plan.entryId === 41) {
+    const first = ["txt_custtype", "txt_salesman"];
+    const rank = (key: string) => { const at = first.indexOf(key.toLowerCase()); return at < 0 ? first.length : at; };
+    keys.sort((a, b) => rank(a) - rank(b));
+  }
   // A combo column the operator can edit gets its list, as Setting_GridCol gives it one (combo_value F, L, Q, X).
   // One column at a time: the lists share this connection, and readTable's savepoints must not interleave.
   const columns: EntryColumn[] = [];

@@ -101,7 +101,7 @@ export async function loadBills(client: Client, session: MasterSession, transpor
             CASE WHEN COALESCE(proce.full_docno,'') = '' THEN to_char(led.doc_date,'DD-Mon-YY') ELSE to_char(proce.p_date,'DD-Mon-YY') END AS doc_date,
             CASE WHEN COALESCE(proce.full_docno,'') = '' THEN COALESCE(led.amount::numeric,0) ELSE COALESCE(proce.p_amount::numeric,0) END AS amount
        FROM ${schema}.addon_aentry aent
-       LEFT JOIN ${schema}.ledger led ON led.led_key = aent.aona_ledid AND led.doc_pos = 'A' AND (led.book IN (8,13,15) OR (led.book = 11 AND led.ag_book = 13)) AND led.doc_date::date BETWEEN $2::date AND $3::date
+       LEFT JOIN ${schema}.ledger led ON led.led_key = aent.aona_ledid AND led.doc_pos = 'A' AND led.book IN (8,11,13,15,16) AND led.doc_date::date BETWEEN $2::date AND $3::date
        LEFT JOIN ${schema}.process proce ON proce.process_key = aent.aona_processid AND proce.stk_module IN ('JOB-OUT','JOB-IN','CHLN-IN','CHLN-OUT','AMD-OUT') AND proce.il_pos = 'A' AND proce.p_date::date BETWEEN $2::date AND $3::date
        LEFT JOIN ${schema}.account ac ON ac.code = aent.aona_accode
       WHERE aent.key_trans = $1
