@@ -420,10 +420,16 @@ async function restoreVoucher(loader: Loader, entryName: string, firstCombo: Ent
  * Zoom from a report row (Comman_Entry with Zoom_Ledid): the register the voucher was entered in (its BOOK_CODE: the account of the book or of the link register
  * it was entered under) and the unique key that Restore_Entry opens it by.
  */
-export async function zoomRegister(loader: Loader, options: readonly EntryOption[], ledKey: number): Promise<{ option: EntryOption; uniqueKey: number }> {
-  const row = (await loader.readTable("SELECT unique_key, book_code FROM |sys.db|ledger WHERE led_key = $1 AND doc_pos <> 'D'", [ledKey]))?.[0];
+export async function zoomRegister(loader: Loader, options: readonly EntryOption[], ledKey: number): Promise<{ option: EntryOption; uniqueKey: number; against?: { code: number; nature: number; accountName: string; natureText: string } }> {
+  const row = (await loader.readTable(`SELECT unique_key, book_code, ag_bkcode, "TYPE" AS nature FROM |sys.db|ledger WHERE led_key = $1 AND doc_pos <> 'D'`, [ledKey]))?.[0];
   if (!row) throw new Error("The voucher is not found (deleted, or not posted)");
   const option = options.find((entry) => Number(entry.value) === toInt(Loader.field(row, "book_code")));
   if (!option) throw new Error("The register of this voucher is not in this program's list");
-  return { option, uniqueKey: toInt(Loader.field(row, "unique_key")) };
+  const uniqueKey = toInt(Loader.field(row, "unique_key"));
+  // A debit / credit note carries what it is against (the sale or purchase account and its nature): taken from the entry itself, so the Returns panel is not asked.
+  const code = toInt(Loader.field(row, "ag_bkcode"));
+  if (code <= 0) return { option, uniqueKey };
+  const nature = toInt(Loader.field(row, "nature"));
+  const names = await againstNames(loader, [code], [nature]);
+  return { option, uniqueKey, against: { code, nature, accountName: names.accounts.get(code) ?? "", natureText: names.kinds.get(nature) ?? "" } };
 }

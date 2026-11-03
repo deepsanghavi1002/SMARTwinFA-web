@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { activeScope } from "../ui/activeWindow";
+import { messageBox } from "../ui/MessageBox";
 
 /**
  * F6 in an open editor: the other values of the same row that suit the cell (a number cell is offered the row's number
@@ -134,9 +135,29 @@ export function useRowPick<C extends { key: string; caption: string }>(options: 
       const candidate = options.columns[at];
       if (options.kindOf(candidate) !== kind) continue;
       const shown = options.valueOf(candidate).trim();
+      // A number cell takes only a real figure: a column holding letters is passed over for the one before it.
+      if (kind === "number" && shown !== "" && !/^[-+]?\d[\d,]*(\.\d+)?$|^[-+]?\.\d+$/.test(shown)) continue;
       if (shown !== "" && !(kind === "number" && Number(shown.replace(/,/g, "")) === 0)) value = shown;
     }
-    if (value === "") { options.setMessage("Nothing to copy from the columns on the left"); return; }
+    if (value === "") { options.setMessage("No equivalent data to copy"); void messageBox.ask("No equivalent data to copy from the previous fields.", "Copy Previous", ["OK"]); return; }
+    // The cell already holds something (not blank, not a zero figure) that differs from the copy: ask before it is lost.
+    const editor = options.editing ? activeScope().querySelector<HTMLInputElement>(".mp-grid .mp-editor") : null;
+    const held = (editor && "value" in editor ? editor.value : options.valueOf(column)).trim();
+    const empty = held === "" || (kind === "number" && Number(held.replace(/,/g, "")) === 0);
+    const same = kind === "number" ? Number(held.replace(/,/g, "")) === Number(value.replace(/,/g, "")) : held === value;
+    if (!empty && !same) {
+      const answer = await messageBox.ask(`The data entered in this column will be lost if copied from the previous field.\n\nCopy "${value}" over "${held}"?`, "Copy Previous", ["Yes", "No"], { defaultButton: "No" });
+      if (answer !== "Yes") {
+        // No: stay in this cell, editing, with the value it had.
+        if (!options.editing) await options.startEdit();
+        setTimeout(() => {
+          const input = activeScope().querySelector<HTMLInputElement | HTMLSelectElement>(".mp-editor");
+          input?.focus();
+          if (input instanceof HTMLInputElement) input.select();
+        }, 0);
+        return;
+      }
+    }
     await fill(value);
   };
   /** F6 and F8 in an open editor: true when the key was theirs. */

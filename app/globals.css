@@ -664,6 +664,26 @@
 
 .mp-screen>.mp-status{grid-row:4}
 
+/* Outstanding Allocation: the pending bills grid sits under the receipts grid, and the buttons and status line come after both. */
+.mp-screen:has(>.se-bills){grid-template-rows:auto minmax(0,1fr) auto auto auto}
+
+.mp-screen:has(>.se-bills)>.se-bills{grid-row:3}
+
+.mp-screen:has(>.se-bills)>.mp-buttons{grid-row:4}
+
+.mp-screen:has(>.se-bills)>.mp-status{grid-row:5}
+
+/* The bills grid is the standard grid (.ent-grid) in its own box, not placed on the entry screen. */
+.se-bills .ent-grid.se-bills-scroll{position:relative;flex:1;min-height:0;border:0}
+
+.se-bills .ent-grid table{width:100%;table-layout:fixed}
+
+.se-bills .ent-grid td.se-sel{background:#b9d6f7;box-shadow:inset 0 0 0 1px #4a86c8}
+
+.se-bills-foot{display:flex;align-items:center;gap:14px;height:22px;padding:0 8px;background:#1a4fa5;color:#fff;font-size:11px;white-space:nowrap;overflow:hidden}
+
+.se-bills-foot .mp-sel-totals{margin-left:auto}
+
 .mp-combos{gap:6px;padding:4px 8px;border-bottom:0;background:#8fc0f2}
 
 .mp-combo span{color:#fff;font-weight:700;text-shadow:0 1px 0 #3d6fa8}

@@ -10,6 +10,7 @@ import { filterHolds, sortedDistinct } from "../grid/filter";
 import type { FilterKind } from "../grid/filter";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { FoundText, MarkedText } from "../grid/FoundText";
+import { findPosition, typedBuffer } from "../grid/typeFind";
 import { GridMenu } from "../grid/GridMenu";
 import type { GridMenuItem, GridMenuPlace } from "../grid/GridMenu";
 import { helpCell } from "./format";
@@ -27,7 +28,6 @@ const HEAD_HEIGHT = 20;
 const OVERSCAN = 12;
 
 /** Typing pauses longer than this start a new search. */
-const TYPE_PAUSE_MS = 1200;
 
 /**
  * The Find / Edit tab (c1Help_EntryPreview): the register's entries in the series. Each heading
@@ -240,12 +240,13 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, outstandin
     if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
     const now = event.timeStamp;
-    const text = (now - typed.current.at > TYPE_PAUSE_MS ? "" : typed.current.text) + event.key.toUpperCase();
+    const text = typedBuffer(typed.current, now, event.key);
     typed.current = { text, at: now };
     const column = columns[current.column];
     if (!column) return;
-    const hit = rows.findIndex((row) => shownOf(column, row).trim().toUpperCase().startsWith(text));
-    if (hit >= 0) { setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
+    const match = findPosition(rows.length, (index) => shownOf(column, rows[index]), text, "text", current.row);
+    const hit = match.at;
+    if (hit >= 0 || match.empty) { if (hit >= 0) setCurrent((at) => ({ ...at, row: hit })); setFound(text); }
     else typed.current.text = text.slice(0, -1);
   };
 
@@ -277,7 +278,7 @@ export function FindList({ preview, style, onOpen, mode = "", onMode, outstandin
               <tr key={`${row.unique_key ?? ""}-${index}`} data-row={index} className={index === currentRow ? "ent-find-current" : index % 2 ? "ent-alt" : ""} onMouseDown={() => setCurrent((at) => ({ ...at, row: index }))} onDoubleClick={() => onOpen(row)}>
                 {tickWidth > 0 && <td className="ent-tick-cell" onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}><input type="checkbox" tabIndex={-1} aria-label="Tick for range print" checked={ticked!.includes(Number(row.unique_key))} onChange={() => onTick!(Number(row.unique_key))} /></td>}
                 {columns.map((column, at) => (
-                  <td key={column.key} data-col={at} title={tipOf(column, row)} className={index === currentRow && at === current.column ? "ent-find-cell" : ""} style={{ textAlign: column.align === "R" ? "right" : "left" }} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: index, column: at }); }}>{index === currentRow && at === current.column && found ? <FoundText text={shownOf(column, row)} typed={found} /> : <MarkedText text={shownOf(column, row)} query={search} />}</td>
+                  <td key={column.key} data-col={at} title={tipOf(column, row)} className={index === currentRow && at === current.column ? "ent-find-cell" : ""} style={{ textAlign: column.align === "R" ? "right" : "left" }} onMouseDown={() => { typed.current.text = ""; setFound(""); setCurrent({ row: index, column: at }); }}>{index === currentRow && at === current.column && found ? <FoundText text={shownOf(column, row)} typed={found}  kind="text" /> : <MarkedText text={shownOf(column, row)} query={search} />}</td>
                 ))}
               </tr>
             ); })}

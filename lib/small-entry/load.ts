@@ -49,6 +49,8 @@ const DELETE_ENTRIES = new Set([7, 36, 46, 75, 100, 111]);
 const STK_MODULE_ENTRIES = new Set([32, 57, 60, 65, 68]);
 
 /** "Select distinct" instead of "Select" for these entries' grid query. */
+/** Small entry 19: Outstanding Allocation. */
+const OUTSTANDING_ALLOCATION_ENTRY = 19;
 const DISTINCT_ENTRIES = new Set([20, 22, 27, 29, 33, 39, 70]);
 
 // ---------------------------------------------------------------------------------------
@@ -257,6 +259,7 @@ export async function loadEntry(loader: Loader, entryName: string, menuShortName
 
   // The first combo: first_combo_query + where + order by, or nothing when it is hidden.
   let firstCombo: EntryDefinition["firstCombo"] = null;
+  let firstComboSets: EntryDefinition["firstComboSets"];
   const emptyState: EntryState = { firstCombo: null, controls: {} };
   const baseContext: SysContext = { session, entryId, state: emptyState, choices: {}, entryNat: "A", addonType: "", addonColumn: null };
   if (flag(properties, "first_combo_visible")) {
@@ -268,6 +271,14 @@ export async function loadEntry(loader: Loader, entryName: string, menuShortName
       let options = await queryOptions(loader, replaceEntryValues(sql, baseContext));
       if (flag(properties, "first_combo_all")) options = [{ text: "ALL", value: "-1" }, ...options];
       firstCombo = { label: text(properties, "first_label_caption"), options };
+      // Outstanding Allocation: Sale lists the debtors (account book 2), Purchase the creditors (3), Expense the general accounts (1).
+      if (entryId === OUTSTANDING_ALLOCATION_ENTRY && /ac\.BOOK\s+in\s*\(1,2,3\)/i.test(where)) {
+        const sets: Record<string, readonly EntryOption[]> = {};
+        for (const [name, book] of [["Sale", 2], ["Purchase", 3], ["Expense", 1]] as const) {
+          sets[name] = await queryOptions(loader, replaceEntryValues(sql.replace(where, where.replace(/ac\.BOOK\s+in\s*\(1,2,3\)/i, `ac.BOOK=${book}`)), baseContext));
+        }
+        firstComboSets = sets;
+      }
     }
   }
 
@@ -290,6 +301,7 @@ export async function loadEntry(loader: Loader, entryName: string, menuShortName
     caption: text(properties, "entry_caption"),
     statusHead: text(properties, "entry_status_head"),
     firstCombo,
+    firstComboSets,
     controls,
     rights: { restricted: rights.restricted, edit: rights.edit, editPassword: rights.editPassword !== "", modulePassword: rights.modulePassword !== "" },
     licence: session.licence,
