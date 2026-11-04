@@ -4089,3 +4089,120 @@ html .se-grid .mp-cell{-webkit-font-smoothing:auto;text-rendering:optimizeLegibi
 /* Master grids (update and all masters): the read-only cells were a pale grey-blue that looked blurred; they read in the same dark text as the editable cells. */
 html .mp-screen .mp-row:not(.mp-current-row) .mp-cell.mp-readonly{color:#14243a}
 html .mp-screen .mp-cell{-webkit-font-smoothing:auto;text-rendering:optimizeLegibility}
+
+/* Company selection (legacy view): blue header band with the logos, a rounded dialog with icon rows and the Ok / Exit pills. */
+html .startup-desktop.co-page{display:block;padding:0;background:radial-gradient(circle at 80% 10%,#ffffffb0 0,transparent 35%),linear-gradient(160deg,#dbe9fb 0%,#c7dcf7 55%,#8fb8ee 100%)}
+html .startup-desktop.co-page::before{display:none}
+.co-header{display:flex;align-items:center;gap:14px;height:70px;padding:0 24px;background:linear-gradient(90deg,#0b2f6b,#12448f);color:#fff;box-shadow:0 2px 8px #0b2f6b55}
+.co-company-logo{height:46px;width:auto;max-width:150px;object-fit:contain}.co-brand-icon{height:46px;width:auto}
+.co-brand-name{font-size:16px;font-weight:700;letter-spacing:.2px}.co-brand-sep{width:1px;height:34px;background:#ffffff66}.co-product{font-size:27px;font-weight:700}
+.co-tagline{margin-left:auto;font-size:14px;font-style:italic}
+.co-dialog{width:min(1006px,calc(100% - 32px));margin:78px auto 40px;border-radius:26px;background:#fff;box-shadow:0 22px 60px #1d4f9a40;overflow:hidden;font-family:"Segoe UI",Tahoma,Arial,sans-serif}
+.co-title{display:flex;align-items:center;gap:14px;height:70px;padding:0 20px 0 38px;background:linear-gradient(100deg,#0b3a8c,#1560c4 70%,#2e8ae6);color:#fff;font-size:29px;font-weight:700}
+.co-title svg{width:46px;height:46px}.co-title span{flex:1}.co-title button{width:44px;height:44px;border:0;background:transparent;color:#fff;font-size:34px;line-height:1;cursor:pointer}
+.co-body{padding:22px 36px 20px}
+.co-menu{position:relative;display:flex;justify-content:center;margin-bottom:26px}.co-menu::before{content:"";position:absolute;left:0;right:0;top:50%;border-top:1px solid #c9d9ee}
+.co-menu span{position:relative;display:flex;align-items:center;gap:12px;padding:10px 40px;border-radius:30px;background:#e5eefb;color:#0e3a85;font-size:21px;font-weight:700}.co-menu svg{width:28px;height:28px}
+.co-row{display:grid;grid-template-columns:330px 1fr;gap:18px;align-items:start;margin-bottom:22px}
+.co-label{display:flex;align-items:center;gap:20px;color:#0e3a85;font-size:20px;font-weight:700;padding-top:14px}.co-label b{color:#e0262a}
+.co-label i{display:grid;place-items:center;flex:0 0 58px;height:58px;border-radius:50%;background:#e3ecfa;color:#1560c4}.co-label svg{width:30px;height:30px}
+.co-list{width:100%;padding:0;border:1px solid #9db8e0;border-radius:8px;background:#fff;color:#0e3a85;font:inherit;font-size:18px;overflow:auto;box-shadow:0 1px 4px #1d4f9a22}
+.co-list-year{height:104px}.co-list-company{height:100px}.co-list:focus{outline:0;border-color:#1560c4;box-shadow:0 0 0 3px #1560c433}
+.co-list option{padding:3px 12px;border-radius:0}.co-list option:checked{background:linear-gradient(#0f5cd4,#0f5cd4);color:#fff}.co-list option:disabled{color:#9aa8bd}
+.co-actions{display:flex;justify-content:center;gap:22px;margin:4px 0 6px}
+.co-actions button{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-width:146px;height:54px;border-radius:30px;font-size:22px;font-weight:700;cursor:pointer}.co-actions svg{width:26px;height:26px}
+.co-ok{border:0;color:#fff;background:linear-gradient(#1a6fe0,#0a47a8);box-shadow:0 6px 14px #0a47a866}.co-ok:disabled{opacity:.55;cursor:not-allowed}
+.co-exit{border:2px solid #1560c4;color:#0e3a85;background:#fff}.co-actions button:hover:not(:disabled){filter:brightness(1.08)}
+.co-links{display:flex;justify-content:center;margin:14px 0 0;color:#1560c4;font-size:16px}.co-links button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+@media(max-width:760px){.co-tagline,.co-brand-name,.co-brand-sep{display:none}.co-dialog{margin-top:24px}.co-title{font-size:21px;padding-left:18px;height:56px}.co-body{padding:16px}.co-row{grid-template-columns:1fr;gap:8px}.co-label{padding-top:0;font-size:17px}.co-menu span{font-size:16px;padding:8px 20px}}
+
+/* Company selection: full-width header and a compact dialog that fits a laptop window without scrolling. */
+html body .startup-desktop.co-page{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;place-items:initial;padding:0;min-height:100vh;min-height:100dvh}
+html body .startup-desktop.co-page>.co-header{width:100%;max-width:none;box-sizing:border-box;flex:0 0 auto;height:58px;padding:0 22px;gap:12px}
+html body .startup-desktop.co-page .co-company-logo,html body .startup-desktop.co-page .co-brand-icon{height:38px}
+html body .startup-desktop.co-page .co-brand-name{font-size:14px}html body .startup-desktop.co-page .co-product{font-size:23px}html body .startup-desktop.co-page .co-tagline{font-size:13px}
+html body .startup-desktop.co-page>.co-dialog{flex:0 0 auto;width:min(900px,calc(100% - 32px));margin:clamp(16px,6vh,60px) auto 20px;border-radius:22px}
+.co-page .co-title{height:58px;padding:0 16px 0 30px;font-size:24px;gap:12px}.co-page .co-title svg{width:36px;height:36px}.co-page .co-title button{font-size:28px}
+.co-page .co-body{padding:16px 32px 16px}
+.co-page .co-menu{margin-bottom:16px}.co-page .co-menu span{padding:7px 32px;font-size:18px}.co-page .co-menu svg{width:24px;height:24px}
+.co-page .co-row{grid-template-columns:300px 1fr;gap:16px;margin-bottom:14px}
+.co-page .co-label{font-size:17px;gap:16px;padding-top:12px}.co-page .co-label i{flex:0 0 48px;height:48px}.co-page .co-label svg{width:24px;height:24px}
+.co-page .co-list{font-size:16px}.co-page .co-list-year{height:84px}.co-page .co-list-company{height:80px}
+.co-page .co-actions{margin:4px 0 0;gap:18px}.co-page .co-actions button{min-width:126px;height:46px;font-size:19px}.co-page .co-actions svg{width:22px;height:22px}
+
+/* Company selection background: soft light-blue sky, dotted grids on both sides and the blue waves along the bottom. */
+html body .startup-desktop.co-page{position:relative;overflow:hidden;background:radial-gradient(ellipse at 78% 18%,#f4f9ff 0,transparent 46%),radial-gradient(ellipse at 20% 40%,#eef5fe 0,transparent 50%),linear-gradient(165deg,#cfe0fa 0%,#dfeafb 40%,#c4d9f6 100%)}
+html body .startup-desktop.co-page::before{display:block;content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:
+ radial-gradient(circle,#9cb9e6 2.2px,transparent 2.6px) 24px 140px/26px 26px no-repeat,
+ linear-gradient(115deg,transparent 0 38%,#ffffff55 38% 52%,transparent 52% 100%),
+ linear-gradient(60deg,transparent 0 60%,#ffffff40 60% 74%,transparent 74% 100%)}
+html body .startup-desktop.co-page::after{content:"";position:absolute;left:0;right:0;bottom:0;height:34vh;min-height:160px;z-index:0;pointer-events:none;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320' preserveAspectRatio='none'><path d='M0 150 C260 60 520 250 820 190 C1080 140 1260 40 1440 90 L1440 320 L0 320Z' fill='%236fa3ea' fill-opacity='.45'/><path d='M0 215 C300 120 560 300 880 235 C1120 190 1300 120 1440 160 L1440 320 L0 320Z' fill='%232b6fd6' fill-opacity='.75'/><path d='M0 275 C320 215 620 320 960 285 C1180 262 1320 232 1440 252 L1440 320 L0 320Z' fill='%230b3f9e'/></svg>") center bottom/100% 100% no-repeat}
+html body .startup-desktop.co-page>*{position:relative;z-index:1}
+html body .startup-desktop.co-page .co-dots{position:absolute;z-index:0;width:140px;height:150px;pointer-events:none;background:radial-gradient(circle,#9cb9e6 2.4px,transparent 3px) 0 0/28px 28px}
+html body .startup-desktop.co-page .co-dots-l{left:24px;top:150px}html body .startup-desktop.co-page .co-dots-r{right:28px;bottom:26vh;opacity:.9}
+.co-page .co-dialog{box-shadow:0 26px 70px #1d4f9a55,0 0 0 1px #ffffffaa}
+
+/* Company list: at least six rows show at a time. */
+.co-page .co-list-company{height:164px;min-height:164px}
+.co-page .co-list option{min-height:24px;line-height:24px;padding-top:0;padding-bottom:0}
+html body .startup-desktop.co-page>.co-dialog{margin-top:clamp(10px,3vh,30px);margin-bottom:12px}
+.co-page .co-row{margin-bottom:10px}.co-page .co-menu{margin-bottom:12px}
+
+/* Company list: six rows at a time (forced over the earlier compact sizes). */
+html body .co-page .co-dialog select.co-list-company{height:170px!important;min-height:170px!important}
+html body .co-page .co-dialog select.co-list-year{height:84px!important}
+html body .startup-desktop.co-page>.co-dialog{margin-top:12px!important}
+
+/* Company / year lists: the focus shows on the one selected row, not around the whole list box. */
+html body .co-page .co-dialog select.co-list:focus{outline:0;border-color:#9db8e0;box-shadow:0 1px 4px #1d4f9a22}
+html body .co-page .co-dialog select.co-list option:checked{background:linear-gradient(#b9cdee,#b9cdee);color:#0e3a85}
+html body .co-page .co-dialog select.co-list:focus option:checked{background:linear-gradient(#0f5cd4,#0f5cd4);color:#fff;box-shadow:inset 0 0 0 2px #ffb400}
+
+/* Header growth icon sits right before the tagline (the tagline's auto margin moves to the icon). */
+.co-header .co-growth{margin-left:auto;height:40px;width:auto;flex:0 0 auto}.co-header .co-growth+.co-tagline{margin-left:-4px}
+
+/* Login screen (legacy view): logo top-left, a rounded card with the blue brand panel on the left and the form on the right. */
+html body .startup-desktop.lg-page{padding:0}
+.lg-brand{display:flex;align-items:center;gap:14px;padding:22px 0 0 clamp(20px,5vw,90px)}
+.lg-brand img{height:62px;width:auto}.lg-brand strong{display:block;font-size:36px;line-height:1;color:#0b2f6b;font-weight:800}.lg-brand strong span{color:#1a73e8}
+.lg-brand em{display:block;margin-top:4px;color:#2b3f5c;font-size:16px}
+html body .startup-desktop.lg-page>.lg-card{flex:0 0 auto;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);width:min(900px,calc(100% - 32px));margin:clamp(18px,7vh,70px) auto 40px;border-radius:30px;overflow:hidden;background:#f3f8ff;box-shadow:0 24px 60px #1d4f9a55,0 0 0 1px #ffffffaa;font-family:"Segoe UI",Tahoma,Arial,sans-serif}
+.lg-side{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:430px;padding:30px 20px 110px;color:#fff;background:linear-gradient(160deg,#16a0f5 0%,#0b57d0 45%,#0a3fa6 100%);clip-path:none;border-radius:0 90px 90px 0 / 0 60% 60% 0}
+.lg-side-logo{width:150px;height:auto;margin-bottom:22px;filter:drop-shadow(0 10px 18px #00000040)}
+.lg-dev{font-size:16px;letter-spacing:.18em;color:#d6e8ff}.lg-dev-name{font-size:22px;letter-spacing:.02em;font-weight:800}
+.lg-growth{position:absolute;left:50%;bottom:34px;width:130px;transform:translateX(-50%)}
+.lg-form{display:flex;flex-direction:column;justify-content:center;gap:18px;padding:30px 40px 30px 34px;background:linear-gradient(180deg,#fbfdff,#eaf2fd)}
+.lg-title{display:flex;align-items:center;gap:16px;padding-bottom:16px;border-bottom:1px solid #d3deef}
+.lg-title i{display:grid;place-items:center;width:66px;height:66px;border-radius:50%;background:#dfe9f9;color:#1560c4}.lg-title svg{width:38px;height:38px}
+.lg-title h1{margin:0;color:#0b2f6b;font-size:34px;font-weight:800}
+.lg-form label{display:grid;grid-template-columns:30px 130px 1fr;align-items:center;gap:8px;color:#0b2f6b;font-size:19px;font-weight:700}
+.lg-ico{color:#1560c4}.lg-ico svg{width:26px;height:26px}
+.lg-field{position:relative;display:block}.lg-field input{width:100%;height:50px;padding:0 16px;border:1px solid #a9bfe2;border-radius:16px;background:#fff;color:#0b2f6b;font:inherit;font-size:18px;font-weight:600;box-shadow:inset 0 1px 2px #1d4f9a14}
+.lg-field input::placeholder{color:#7b8aa6;font-weight:400}.lg-field input:focus{outline:0;border-color:#1560c4;box-shadow:0 0 0 3px #1560c433}
+.lg-date input{background:#e6eefb;padding-right:46px}.lg-date svg{position:absolute;right:14px;top:50%;width:24px;height:24px;transform:translateY(-50%);color:#1560c4;pointer-events:none}
+.lg-error{min-height:18px;margin:0;color:#c62828;font-size:14px}
+.lg-button{display:inline-flex;align-items:center;justify-content:center;gap:12px;align-self:flex-end;width:78%;height:60px;border:0;border-radius:32px;color:#fff;font-size:26px;font-weight:700;cursor:pointer;background:linear-gradient(#1aa0f7,#0a47a8);box-shadow:0 8px 18px #0a47a870}
+.lg-button svg{width:30px;height:30px}.lg-button:hover:not(:disabled){filter:brightness(1.08)}.lg-button:disabled{opacity:.6;cursor:progress}
+@media(max-width:760px){.lg-card{grid-template-columns:1fr}.lg-side{min-height:0;padding:24px 20px 90px;border-radius:0 0 40px 40px}.lg-side-logo{width:96px;margin-bottom:10px}.lg-form{padding:22px}.lg-form label{grid-template-columns:26px 1fr;font-size:16px}.lg-form label .lg-field{grid-column:1/-1}.lg-button{width:100%}.lg-brand strong{font-size:28px}}
+
+/* Login: compact so the whole card fits a laptop window, and the light band along the blue panel's curve. */
+.lg-page .lg-brand{padding-top:14px}.lg-page .lg-brand img{height:52px}.lg-page .lg-brand strong{font-size:32px}.lg-page .lg-brand em{font-size:14px}
+html body .startup-desktop.lg-page>.lg-card{margin-top:clamp(8px,3vh,28px);margin-bottom:16px;border-radius:26px}
+.lg-page .lg-side{min-height:350px;padding:20px 16px 96px;box-shadow:14px 0 0 #cfe2fa,16px 0 26px #ffffffcc}
+.lg-page .lg-side-logo{width:116px;margin-bottom:14px}.lg-page .lg-dev{font-size:14px}.lg-page .lg-dev-name{font-size:19px}.lg-page .lg-growth{bottom:22px;width:110px}
+.lg-page .lg-form{gap:12px;padding:20px 34px 20px 38px}
+.lg-page .lg-title{padding-bottom:12px}.lg-page .lg-title i{width:56px;height:56px}.lg-page .lg-title svg{width:32px;height:32px}.lg-page .lg-title h1{font-size:30px}
+.lg-page .lg-form label{font-size:17px;grid-template-columns:28px 124px 1fr}.lg-page .lg-field input{height:46px;font-size:16px}
+.lg-page .lg-error{min-height:14px}.lg-page .lg-button{height:54px;font-size:23px}
+
+/* Login: the eye at the end of the password box shows the typed password; off, it shows dots. */
+.lg-field:has(.lg-eye) input{padding-right:48px}
+.lg-eye{position:absolute;right:10px;top:50%;display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:50%;background:transparent;color:#1560c4;cursor:pointer;transform:translateY(-50%)}
+.lg-eye:hover{background:#e3ecfa}.lg-eye svg{width:24px;height:24px}
+
+/* Eye button: forced over any generic button rule so it always shows at the end of the password box. */
+html body .lg-field{position:relative!important}
+html body .lg-field .lg-eye{position:absolute!important;right:10px!important;top:50%!important;z-index:5!important;display:flex!important;align-items:center!important;justify-content:center!important;width:34px!important;height:34px!important;min-width:34px!important;padding:0!important;margin:0!important;border:0!important;border-radius:50%!important;background:transparent!important;color:#1560c4!important;cursor:pointer!important;transform:translateY(-50%)!important;visibility:visible!important;opacity:1!important}
+html body .lg-field .lg-eye:hover{background:#e3ecfa!important;color:#0b3a8c!important}
+html body .lg-field .lg-eye svg{display:block!important;width:24px!important;height:24px!important;flex:0 0 24px}
+html body .lg-field:has(.lg-eye) input{padding-right:50px!important}

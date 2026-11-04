@@ -718,26 +718,57 @@ export function StartupGate({ children }: { children: ReactNode }) {
   return (
     <ViewModeContext.Provider value={viewModeValue}>
       <div className={`view-mode ${modernView ? "modern-view" : "legacy-view"}`} data-mtheme={modernView ? modernTheme : undefined}>
-        <main className="startup-desktop">
-          {stage === "login" ? <section className="login-window" aria-label="User login screen">
-            <div className="startup-title">Smart-WinFA <button aria-label="Close">×</button></div>
-            <div className="login-panel"><h1>User Login Screen</h1><div className="login-content"><div className="login-brand"><div className="login-logo" role="img" aria-label="SMARTwinFA logo"/><div className="developer-credit"><span>Developed By</span><strong>PRANAV COMPUTERS</strong></div></div><form onSubmit={(event) => { event.preventDefault(); login(); }}>
-              <label>Today&apos;s Date:<input value={new Date().toLocaleDateString("en-GB")} readOnly /></label>
-              <label>User Name:<input value={username} autoComplete="username" placeholder="user name or email" onChange={(event) => setUsername(event.target.value)} /></label>
-              <label>Password:<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-              <p className="login-error" role="alert">{checking ? "Checking your session…" : error} {manageUsers}</p>
-              <button className="login-button" type="submit" disabled={signingIn || checking}><span>➜</span> Login</button>
-            </form></div></div>
-          </section> : <section className="company-window" aria-label="Company selection menu">
-            <div className="startup-title">Select Company <button aria-label="Close" onClick={leaveCompany}>×</button></div>
-            <div className="company-panel"><h1>Company Selection Menu</h1>
-              <label><strong>Select Accounting Year</strong><select size={3} value={year} onChange={(event) => chooseYear(event.target.value)}>{accountingYears.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-              <label><strong>Select Company</strong><select size={4} value={company} onChange={(event) => setCompany(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></label>
-              {dataError && <p className="login-error" role="alert">{dataError}</p>}
-              <div className="company-actions"><button disabled={!canContinue} onClick={confirmCompany}>✓ Ok</button><button onClick={leaveCompany}>↩ Exit</button></div>
-              {(manageUsers || canChangeOperator) && <p className="company-admin-links">{canChangeOperator && !fromMenu && <button type="button" onClick={changeOperator}>Change operator ({operator?.loginName})</button>} {manageUsers}</p>}
-            </div>
-          </section>}
+        <main className={`startup-desktop co-page${stage === "login" ? " lg-page" : ""}`}>
+          {stage === "login" ? <>
+            <header className="lg-brand">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/pranav-icon.png" alt="" />
+              <div><strong>SMART<span>winFA</span></strong><em>Smart Solution... Better Tomorrow...</em></div>
+            </header>
+            <span className="co-dots co-dots-l" aria-hidden="true" /><span className="co-dots co-dots-r" aria-hidden="true" />
+            <section className="lg-card" aria-label="User login screen">
+              <div className="lg-side">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img className="lg-side-logo" src="/pranav-icon.png" alt="SMARTwinFA logo" />
+                <span className="lg-dev">DEVELOPED BY</span><strong className="lg-dev-name">PRANAV COMPUTERS</strong>
+                <svg className="lg-growth" viewBox="0 0 120 70" aria-hidden="true"><path d="M2 52 L30 34 L48 42 L76 12" fill="none" stroke="#fff" strokeOpacity=".85" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /><path d="M66 10 H77 V21" fill="none" stroke="#fff" strokeOpacity=".85" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /><g fill="none" stroke="#fff" strokeOpacity=".9" strokeWidth="2.2"><rect x="34" y="46" width="12" height="20" /><rect x="52" y="32" width="12" height="34" /><rect x="70" y="22" width="12" height="44" /></g></svg>
+              </div>
+              <form className="lg-form" onSubmit={(event) => { event.preventDefault(); login(); }}>
+                <div className="lg-title"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.6 4.6 0 1 0 0-9.2 4.6 4.6 0 0 0 0 9.2zm0 2.3c-4.2 0-8 2.1-8 5.2V21h16v-1.5c0-3.1-3.8-5.2-8-5.2z" fill="currentColor" /></svg></i><h1>User Login</h1></div>
+                <label><span className="lg-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zM5 10h14v10H5zm2 2v2h2v-2zm4 0v2h2v-2zm4 0v2h2v-2zm-8 4v2h2v-2zm4 0v2h2v-2z" fill="currentColor" /></svg></span><b>Today&apos;s Date:</b><span className="lg-field lg-date"><input value={new Date().toLocaleDateString("en-GB")} readOnly /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zM5 10h14v10H5zm2 2v2h2v-2zm4 0v2h2v-2zm4 0v2h2v-2zm-8 4v2h2v-2zm4 0v2h2v-2z" fill="currentColor" /></svg></span></label>
+                <label><span className="lg-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.6 4.6 0 1 0 0-9.2 4.6 4.6 0 0 0 0 9.2zm0 2.3c-4.2 0-8 2.1-8 5.2V21h16v-1.5c0-3.1-3.8-5.2-8-5.2z" fill="currentColor" /></svg></span><b>User Name:</b><span className="lg-field"><input value={username} autoComplete="username" placeholder="user name or email" onChange={(event) => setUsername(event.target.value)} /></span></label>
+                <label><span className="lg-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 9V7a5 5 0 0 0-10 0v2H5v12h14V9zM9 7a3 3 0 0 1 6 0v2H9zm3 6a1.6 1.6 0 0 1 .9 2.9V18h-1.8v-2.1A1.6 1.6 0 0 1 12 13z" fill="currentColor" /></svg></span><b>Password:</b><span className="lg-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" className="lg-eye" aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"} onMouseDown={(event) => event.preventDefault()} onClick={() => setShowPassword((on) => !on)}>{showPassword ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" /><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="2" /></svg> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7c2 0 3.7.7 5.2 1.6M22 12s-3.6 7-10 7c-2 0-3.7-.7-5.2-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}</button></span></label>
+                <p className="login-error lg-error" role="alert">{checking ? "Checking your session…" : error} {manageUsers}</p>
+                <button className="lg-button" type="submit" disabled={signingIn || checking}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7l5 5-5 5M15 12H3M13 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>Login</button>
+              </form>
+            </section>
+          </> : <>
+            <span className="co-dots co-dots-l" aria-hidden="true" /><span className="co-dots co-dots-r" aria-hidden="true" />
+            <header className="co-header">
+              {/* The company's own logo (public/company-logo.png) leads the header; it is left out when the file is not there. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="co-company-logo" src="/company-logo.png" alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="co-brand-icon" src="/pranav-icon.png" alt="" />
+              <span className="co-brand-name">PRANAV COMPUTERS</span><span className="co-brand-sep" />
+              <span className="co-product">SMARTwinFA</span>
+              <svg className="co-growth" viewBox="0 0 48 44" aria-hidden="true"><rect x="3" y="26" width="9" height="16" rx="1.5" fill="#35b8ff" /><rect x="16" y="18" width="9" height="24" rx="1.5" fill="#1f8fe8" /><rect x="29" y="9" width="9" height="33" rx="1.5" fill="#35b8ff" /><path d="M4 18 L18 8 L26 13 L42 2" fill="none" stroke="#7fd8ff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M33 2 H42 V11" fill="none" stroke="#7fd8ff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span className="co-tagline">Smart Solution... Better Tomorrow...</span>
+            </header>
+            <section className="co-dialog" aria-label="Company selection menu">
+              <div className="co-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4l9-2v6h7v13h-5v-4h-3v4zM7 7h2V5H7zm0 4h2V9H7zm0 4h2v-2H7zm4-8h2V5h-2zm0 4h2V9h-2zm0 4h2v-2h-2zm5-2v2h2v-2zm0 4v2h2v-2z" fill="currentColor" /></svg><span>Select Company</span></div>
+              <div className="co-body">
+                <div className="co-menu"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h4a2 2 0 0 1 2 2v1h4a2 2 0 0 1 2 2v3H2V9a2 2 0 0 1 2-2h4V6a2 2 0 0 1 2-2zm0 2v1h4V6zM2 14h8v1h4v-1h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="currentColor" /></svg>Company Selection Menu</span></div>
+                <div className="co-row"><div className="co-label"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zM5 10h14v10H5zm2 2v2h2v-2zm4 0v2h2v-2zm4 0v2h2v-2zm-8 4v2h2v-2zm4 0v2h2v-2z" fill="currentColor" /></svg></i><strong>Select Accounting Year <b>*</b></strong></div>
+                  <select className="co-list co-list-year" size={3} autoFocus value={year} onChange={(event) => chooseYear(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.closest(".co-body")?.querySelector<HTMLElement>(".co-list-company")?.focus(); } }}>{accountingYears.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
+                <div className="co-row"><div className="co-label"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4l9-2v6h7v13h-5v-4h-3v4zM7 7h2V5H7zm0 4h2V9H7zm0 4h2v-2H7zm4-8h2V5h-2zm0 4h2V9h-2zm0 4h2v-2h-2zm5-2v2h2v-2zm0 4v2h2v-2z" fill="currentColor" /></svg></i><strong>Select Company <b>*</b></strong></div>
+                  <select className="co-list co-list-company" size={6} value={company} onChange={(event) => setCompany(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.closest(".co-body")?.querySelector<HTMLElement>(".co-ok")?.focus(); } }}>{companies.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.name} {item.code}</option>)}</select></div>
+                {dataError && <p className="login-error" role="alert">{dataError}</p>}
+                <div className="co-actions"><button className="co-ok" disabled={!canContinue} onClick={confirmCompany}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>Ok</button><button className="co-exit" onClick={leaveCompany}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>Exit</button></div>
+                {canChangeOperator && !fromMenu && <p className="co-links"><button type="button" onClick={changeOperator}>Change operator ({operator?.loginName})</button></p>}
+              </div>
+            </section>
+          </>}
         </main>
       </div>
     </ViewModeContext.Provider>
