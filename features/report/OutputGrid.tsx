@@ -76,6 +76,8 @@ import type { CompareResult } from "./ReportCompare";
 
 const NO_GROUPS: readonly GroupSpec[] = [];
 const ROW = 22;
+/** The final total line is drawn taller than a data row (app/globals.css .rp-total); the grid keeps this much room under it. */
+const TOTAL_EXTRA = 4;
 const MARK = 16;
 const TREE = 20;
 const BORDER_OUT = 3;
@@ -1144,7 +1146,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
           onFocus={() => onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: drawing ? "Drawing borders · Esc stops" : "Click header or Ctrl+Space: select column · Ctrl+C: copy for Excel/Word/Notepad · Shift+Click / drag: a block · right-click: options" })}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         >
-          <div className="mp-grid" style={{ height: (shown.length + 1) * ROW, minWidth: totalWidth + 20 }}>
+          <div className="mp-grid" style={{ height: (shown.length + 1) * ROW + TOTAL_EXTRA, minWidth: totalWidth + 20 }}>
             <div className="mp-row mp-head" style={{ top: 0 }}>
               <div className="mp-cell mp-rownum rp-count" aria-hidden="true" />
               {tree && <div className={`mp-cell rp-tree ${frozenCount > 0 ? "mp-frozen" : ""}`} style={frozenCount > 0 ? { left: MARK } : undefined} aria-hidden="true" />}
@@ -1203,7 +1205,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                       <div
                         key={column.key}
                         data-col={col}
-                        className={`mp-cell ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
+                        className={`mp-cell ${column.kind === "number" ? "rp-num" : ""} ${here ? "rp-cell-on" : ""} ${selected ? "rp-cell-sel" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
                         style={{ width, ...(col < frozenCount ? { left: lefts[col] } : {}), textAlign: label && (row.kind !== "data" || look.captionRight) ? "left" : align(column), ...(label && look.indent > 0 ? { paddingLeft: look.indent + 6 } : {}), ...(current || selected ? {} : style), ...(here || selected || !row.cellColours?.[column.key] ? {} : { background: row.cellColours[column.key] }), ...borderStyle(position, col) }}
                         data-tip={text}
                       >

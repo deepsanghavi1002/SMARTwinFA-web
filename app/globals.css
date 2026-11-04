@@ -4210,3 +4210,22 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .mp-head .mp-cell.mp-head-current,.mp-head .mp-cell.mp-head-current.mp-head-readonly:not(.mp-filtered),.ent-grid th.mp-head-current,.ent-grid th.ent-head-readonly.mp-head-current{background:#f4a6c3;color:#4b1528}
 /* An addon column is told apart only while it is the current one: its heading is purple, a standard column's pink. */
 .mp-head .mp-cell.mp-head-current.mp-head-addon:not(.mp-filtered):not(.mp-head-readonly),.mp-head .mp-cell.mp-head-current.mp-head-addon.mp-head-readonly:not(.mp-filtered),.ent-grid th.ent-head-addon.mp-head-current{background:#c3a6ec;color:#2b1650}
+
+.rp-progress{display:grid;gap:6px;min-width:240px}
+.rp-progress-bar{position:relative;height:8px;overflow:hidden;border-radius:4px;background:#c9d8ea}
+.rp-progress-fill{position:absolute;inset:0 auto 0 0;border-radius:4px;background:#1f64b8;transition:width .25s linear}
+.rp-progress-slide{position:absolute;top:0;bottom:0;width:38%;border-radius:4px;background:#1f64b8;animation:rp-slide 1.2s ease-in-out infinite}
+@keyframes rp-slide{0%{left:-38%}100%{left:100%}}
+
+/* The final total line of every report: a little taller than a data row, bold, its text centred in the line. */
+.mp-row.rp-total,.mp-row.rp-total .mp-cell{height:26px;font-weight:700;box-sizing:border-box}
+/* the cell's own borders (the total's top and bottom lines) and 2px padding used up the height, so the text sat on the bottom edge and was cut: no vertical padding, and a line that fits what is left */
+.mp-row.rp-total .mp-cell{padding-top:0;padding-bottom:0;line-height:20px;display:block}
+.mp-row.rp-total.mp-current-row .mp-cell{color:#fff!important;background:#1f64c8!important}
+/* Bold digits at this size ran together (2,38,75,457.00): a lighter bold, a little spacing, equal-width digits. */
+.mp-row.rp-total .mp-cell{font-weight:700;letter-spacing:0;font-variant-numeric:normal}
+/* same size as the data figures: the columns are sized for them, and a bigger bold total ran past the column and was cut with "..." */
+.mp-row.rp-total .mp-cell.rp-num{font-family:"Segoe UI",Tahoma,Arial,sans-serif;font-size:11px;font-weight:600;padding-left:2px;padding-right:4px;text-overflow:clip;text-rendering:optimizeLegibility}
+
+/* Figures in every report column: Segoe UI with equal-width digits (Figtree's digits are wide and uneven), so columns of amounts line up and read clearly. */
+.rp-out-scroll .mp-cell.rp-num{font-family:"Segoe UI",Tahoma,Arial,sans-serif;font-variant-numeric:tabular-nums}

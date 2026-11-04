@@ -240,6 +240,22 @@ function MainMenu() {
     requestAnimationFrame(() => { if (element.isConnected) element.focus({ preventScroll: true }); });
   }, [activeId]);
   const running = windows.find((node) => node.id === activeId) ?? null;
+  // With a window open, the browser's own refresh (F5, Ctrl+R) is blocked: F5 stays the program's key (Entry's End, Save...), which still gets it.
+  // The browser's Refresh button and Alt+F4 cannot be blocked from a page, so they ask first.
+  const windowsOpen = windows.length > 0;
+  useEffect(() => {
+    if (!windowsOpen) return;
+    const block = (event: KeyboardEvent) => {
+      // Ctrl+F5 and Ctrl+Shift+R are a deliberate hard refresh (after an update): they get through, and the browser asks "Leave site?" first.
+      const hard = event.ctrlKey && (event.key === "F5" || (event.shiftKey && event.key.toLowerCase() === "r"));
+      const refresh = !hard && (event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r"));
+      if (refresh) event.preventDefault();
+    };
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("keydown", block, true);
+    window.addEventListener("beforeunload", warn);
+    return () => { window.removeEventListener("keydown", block, true); window.removeEventListener("beforeunload", warn); };
+  }, [windowsOpen]);
   const activeItem = running?.label ?? "Home";
   const tabsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

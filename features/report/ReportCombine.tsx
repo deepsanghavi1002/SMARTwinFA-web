@@ -106,6 +106,33 @@ function accountScopeOf(def: ReportDefinition | null, first: string): { help: He
   return help.rows.some(keep) ? { help, keep, defaultTicked: FORM_SUMMARY_LIKE.has(def.key) } : null;
 }
 
+/** How long this report took the last time it ran here (the progress bar's guide; 0 when it has not run yet). */
+const runKey = (name: string) => `smartwinfa.reportMs.${name}`;
+const lastRunMs = (name: string) => { try { return Number(localStorage.getItem(runKey(name))) || 0; } catch { return 0; } };
+const rememberRunMs = (name: string, ms: number) => { try { localStorage.setItem(runKey(name), String(Math.round(ms))); } catch { /* the bar simply has no guide next time */ } };
+
+/** The busy text with a progress bar and the seconds gone: the server gives no percentage, so the bar follows the last run's time (it waits near the end when this run is longer), or just slides when there is none. */
+function BusyProgress({ label, expectedMs }: { label: string; expectedMs: number }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const timer = setInterval(() => setElapsed(Date.now() - start), 250);
+    return () => clearInterval(timer);
+  }, []);
+  // The guide is the last run's time (10 s when there is none). Up to the guide the bar climbs to 90%; a run that goes past it keeps creeping toward 99% (never 100% until it is done),
+  // so a slower run than last time does not stand still at one figure.
+  const guide = Math.max(expectedMs > 0 ? expectedMs : 10000, 3000);
+  const percent = !label.startsWith("Generating") ? null : elapsed <= guide ? Math.round((elapsed / guide) * 90) : Math.min(99, Math.round(90 + 9 * (1 - Math.exp(-(elapsed - guide) / (guide * 2)))));
+  return (
+    <span className="rp-progress">
+      <span>{label}… {Math.floor(elapsed / 1000)}s{percent !== null ? ` (${percent}%)` : ""}</span>
+      <span className="rp-progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
+        <span className={percent === null ? "rp-progress-slide" : "rp-progress-fill"} style={percent === null ? undefined : { width: `${percent}%` }} />
+      </span>
+    </span>
+  );
+}
+
 export function ReportCombine({ reportName, menuShortName, title, onClose, zoomAccount, autoRun, autoFrom, autoTo, autoPivot, autoPick, autoParty, autoSumif, autoSetup }: { autoRun?: boolean; /** Choices (control name to item text) and options to tick as an Ask AI report opens. */ autoSetup?: { choices: Readonly<Record<string, string>>; checks: readonly string[] }; /** A SUMIF Ask AI asked for: worked out on the output when the report has run. */ autoSumif?: SumifHint; /** One account Ask AI named: the Account group is ticked and only this account is picked in its list. */ autoParty?: { code: number; name: string }; /** The question Ask AI was asked: the first combo (SALE, PURCHASE ...) is chosen from the words in it. */ autoPick?: string; /** A pivot Ask AI asked for, set up when the report has run. */ autoPivot?: PivotHint; /** The dates (YYYY-MM-DD) an Ask AI report is run for. */ autoFrom?: string; autoTo?: string; reportName: string; menuShortName: string; title: string; onClose: () => void; /** Zoom from a report row: the account whose Ledger opens (ticked in the Account help, the report run). */ zoomAccount?: number }) {
   const selection = useStartupSelection();
   const [def, setDef] = useState<ReportDefinition | null>(null);
@@ -399,6 +426,7 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
     // Voucher Renumber changes the numbers of posted vouchers for good.
     if (reportName === "UTILITY_VOUCHER_RENUMBER" && !(await messageBox.confirm(`The vouchers of the chosen book and series, dated ${from} to ${upto}, will be numbered again one after the other.\n\nThis cannot be undone. Are you sure you want to continue?`, "Voucher Renumber"))) return false;
     saveLastDates({ from, upto });
+    const startedAt = Date.now();
     setBusy("Generating report");
     say("Reading database and collecting data for inputs...");
     try {
@@ -422,6 +450,7 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
         }
         return false;
       }
+      rememberRunMs(reportName, Date.now() - startedAt);
       setOutput(reply.output);
       setOutputRun((count) => count + 1);
       setTab("output");
@@ -903,7 +932,7 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
       </div>
       </div>
       <ScreenStatus hotKeys={hotKeys} message={tip || message} error={!tip && messageRed} version={version} rows="" totals={tab === "output" ? gridInfo.totals : ""} />
-      {busy && <div className="rp-busy" role="status" aria-live="polite"><span className="rp-spinner" aria-hidden="true" /><span>{busy}…</span></div>}
+      {busy && <div className="rp-busy" role="status" aria-live="polite"><span className="rp-spinner" aria-hidden="true" /><BusyProgress label={busy} expectedMs={busy === "Generating report" ? lastRunMs(reportName) : 0} /></div>}
     </div>
   );
 }
