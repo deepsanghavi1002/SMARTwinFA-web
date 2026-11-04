@@ -8,6 +8,7 @@ import type { FilterKind } from "../grid/filter";
 import { FoundText } from "../grid/FoundText";
 import { findPosition, typedBuffer } from "../grid/typeFind";
 import type { GridColumn } from "../../lib/entry/types";
+import { headCurrent } from "../grid/headCursor";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
 import { toNumber } from "../../lib/entry/calc";
@@ -134,7 +135,7 @@ export function SideGrid({ columns, rows, cell, cellClass, label, style, empty, 
         <colgroup>{columns.map((column) => <col key={column.key} style={{ width: layout.widthOf(column) }} />)}</colgroup>
         <thead>
           <tr>{columns.map((column, at) => (
-            <th key={column.key} style={{ textAlign: align(column) }} title={column.caption} className={[filters.filters[column.key] ? "ent-filtered" : "", filterable ? "ent-th-filterable" : ""].filter(Boolean).join(" ")}>
+            <th key={column.key} style={{ textAlign: align(column) }} title={column.caption} className={[filters.filters[column.key] ? "ent-filtered" : "", headCurrent(at === col), filterable ? "ent-th-filterable" : ""].filter(Boolean).join(" ")}>
               {sortable
                 ? <button type="button" tabIndex={-1} className="ent-th-text ent-sortable" title={`${column.caption} · click to sort (ascending, descending, none)`} onClick={() => { setCol(at); setSort((now) => (now?.key !== column.key ? { key: column.key, down: false } : now.down ? null : { key: column.key, down: true })); }}>{column.caption}{sort?.key === column.key ? <span className="ent-sort-mark">{sort.down ? " ▼" : " ▲"}</span> : null}</button>
                 : column.caption}

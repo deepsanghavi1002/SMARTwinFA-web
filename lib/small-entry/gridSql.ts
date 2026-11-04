@@ -39,6 +39,18 @@ export function entryGridSql(source: string, input: GridSqlInput): GridSqlResult
   const between = (column: string) => ` ${column} between ${from} and ${upto}`;
   const swap = (token: string, value: string) => { sql = sql.split(token).join(value); };
 
+  // SQL Server compares names without case, PostgreSQL with it: SUB_NAME ='FINISH GOODS' must also find 'Finish Goods'.
+  sql = sql.replace(/\bsub_name\s*=\s*'([^']*)'/gi, (_, name: string) => `upper(sub_name)='${name.toUpperCase()}'`);
+
+  // A grid ordered by date and document number lists 1, 2, 3 ... 10, not 1, 10, 2: the text before the number first, then the number as a number.
+  sql = sql.replace(/order\s+by\s+(\w+)\.p_date\s*,\s*\1\.full_docno\s*$/i, (_, alias: string) => `order by ${alias}.p_date, regexp_replace(${alias}.full_docno, '[0-9]+\\s*$', ''), nullif(substring(${alias}.full_docno from '([0-9]+)\\s*$'), '')::bigint, ${alias}.full_docno`);
+
+  // Image column of the entries that keep a document with the row: the hint shows where a file is stored (F7 views it).
+  if ([43, 57, 60, 64].includes(entryId) && /a\.process_key/i.test(sql)) {
+    const hint = `(case when exists (select 1 from ${session.companySchema}_image.document_upload du where du.entry_mode = 'P' and du.entry_id = a.process_key) then 'Press F7 Key For View' else '' end) as DOCUMENT_IMAGE`;
+    sql = sql.replace(/''(::text)?\s+as\s+"?DOCUMENT_IMAGE"?/gi, () => hint);
+  }
+
   if (REBUILT_IN_CODE[entryId]) warnings.push(`${REBUILT_IN_CODE[entryId]}; not ported to the web yet`);
 
   switch (entryId) {

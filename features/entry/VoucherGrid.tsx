@@ -4,6 +4,7 @@ import { useRef } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { AddonItem, EntryColumn } from "../../lib/entry/types";
 import type { useEditorTools } from "../grid/EditorTools";
+import { useFocusedHead } from "../grid/headCursor";
 import { numberRules } from "../grid/rules";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { EntryCell, focusEntryCell } from "./EntryCell";
@@ -70,6 +71,7 @@ export function VoucherGrid({
 }) {
   const layout = useColumnLayout(columns, 0, (column) => Math.max(30, column.width || 80));
   const grid = useRef<HTMLDivElement>(null);
+  useFocusedHead(grid);
   const rowCount = Math.max(SHOWN_ROWS, lines.length + 1);
   /** The width entry_grid_body gives the row addon column (the `_addon_` rows of the account grid's event). */
   const addonWidth = (item: AddonItem) => item.width ?? (item.options ? 200 : 140);
@@ -192,7 +194,7 @@ export function VoucherGrid({
           <thead>
             <tr>
               {columns.map((column) => <th key={column.key} className={column.editable ? "" : "ent-head-readonly"} style={{ textAlign: align(column) }} title={column.tooltip || column.caption}>{column.caption}{layout.resizeHandle(column)}</th>)}
-              {addonItems.map((item) => <th key={addonCell(item)} style={{ textAlign: "left" }} title={item.label}>{item.label}</th>)}
+              {addonItems.map((item) => <th key={addonCell(item)} className="ent-head-addon" style={{ textAlign: "left" }} title={item.label}>{item.label}</th>)}
             </tr>
           </thead>
           <tbody>

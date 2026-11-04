@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { EntryColumn, EntryOption } from "../../lib/entry/types";
 import type { useEditorTools } from "../grid/EditorTools";
+import { useFocusedHead } from "../grid/headCursor";
 import { numberRules } from "../grid/rules";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { EntryCell, focusEntryCell } from "./EntryCell";
@@ -69,6 +70,7 @@ export function ProductGrid({
 }) {
   const layout = useColumnLayout(columns, frozen, (column) => Math.max(30, column.width || 80));
   const grid = useRef<HTMLDivElement>(null);
+  useFocusedHead(grid);
   const totalsBox = useRef<HTMLDivElement>(null);
   const lefts = useMemo(() => {
     const out: number[] = [];

@@ -37,6 +37,8 @@ import type { GridComboPlace } from "../grid/GridCombo";
 import { useColumnLayout } from "../grid/useColumnLayout";
 import { useGridOutput } from "../grid/useGridOutput";
 import { useLookupSource } from "../grid/useLookupSource";
+import { headCurrent } from "../grid/headCursor";
+import { isTimeCaption, normalizeTime, TIME_MESSAGE, timeTyping } from "../grid/timeInput";
 import { closedByRow, dropPadding, duplicateInGrid, fitCase, keyPress, numberRules, pairedMessage, rowRuled, styleCase, typingAllowed as setupAllows, validate } from "../grid/rules";
 import { tooltipText, zeroAsBlank } from "../grid/cellText";
 import { remainingAfterKey, typeAtCaret } from "../grid/caret";
@@ -79,6 +81,9 @@ type Cursor = { row: number; col: number };
 /** A record's value by field name, whatever case the query gave the column. */
 /** The record's own spelling of a column's key (the query's case), else the name as given. */
 const valueKeyOf = (record: Readonly<Record<string, string>>, name: string): string => Object.keys(record).find((candidate) => candidate.toLowerCase() === name.toLowerCase()) ?? name;
+
+/** Entries whose rows keep a PDF or JPEG in <company>_IMAGE.DOCUMENT_UPLOAD (F7 views it). */
+const DOCUMENT_ENTRIES: ReadonlySet<number> = new Set([43, 57, 60, 64]);
 
 function valueIn(record: Readonly<Record<string, string>> | undefined, name: string): string | undefined {
   if (!record) return undefined;
@@ -315,6 +320,34 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     for (const control of def.controls) {
       if (control.compulsory && (controls[control.name] ?? "").trim() === "") { await ask(`${control.label} is required`, "Entry Validation"); return; }
     }
+    // Location Transfer: the Upto Location may not be the From Location.
+    if (def.entryId === 115 && firstChoice && (controls.cmb_smallentry1 ?? "").trim() !== "" && (controls.cmb_smallentry1 ?? "").trim() === firstChoice.text.trim()) {
+      await ask("From And Upto Both Location Same Not Allowed....", "Same Location");
+      return;
+    }
+    // A From / Upto date pair: Upto may not be before From.
+    const dates = def.controls.filter((control) => control.type === "DT");
+    const fromControl = dates.find((control) => /\bfrom\b/i.test(control.label));
+    const uptoControl = dates.find((control) => /\b(upto|up to|to)\b/i.test(control.label));
+    const fromDate = fromControl ? parseDesktopDate(controls[fromControl.name] ?? "") : null;
+    const uptoDate = uptoControl ? parseDesktopDate(controls[uptoControl.name] ?? "") : null;
+    // Neither date may be after the account year's end.
+    if (yearEnd) {
+      const over = [[fromControl, fromDate], [uptoControl, uptoDate]].find(([control, date]) => control && date && (date as Date).getTime() > yearEnd.getTime());
+      if (over) {
+        const wrong = over[0] as { name: string; label: string };
+        await ask(`${wrong.label} can not be more than the account year end ${formatDesktopDate(yearEnd)}`, "Entry Validation");
+        // Back from the message, the date that was over is set to the year end.
+        setControls((currentControls) => ({ ...currentControls, [wrong.name]: formatDesktopDate(yearEnd) }));
+        return;
+      }
+    }
+    if (fromControl && uptoControl && fromDate && uptoDate && uptoDate.getTime() < fromDate.getTime()) {
+      await ask(`${uptoControl.label} should be equal or greater than ${fromControl.label}`, "Entry Validation");
+      // Back from the message, Upto is set to From.
+      setControls((currentControls) => ({ ...currentControls, [uptoControl.name]: currentControls[fromControl.name] ?? "" }));
+      return;
+    }
     setBusy("Data generation");
     setMessage("");
     try {
@@ -349,7 +382,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     } finally {
       setBusy("");
     }
-  }, [def, locked, controls, call, ask, clearFilters, title]);
+  }, [def, locked, controls, call, ask, clearFilters, title, yearEnd]);
 
   // ---- Row rules: what Func_GetPermission reads, and the cells STATUS_AGAINST_FLD or a paired field close
   const permissionSource = useCallback((record: Readonly<Record<string, string>>): PermissionSource => ({
@@ -505,6 +538,12 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     // A combo cell (a list column) opens its list under the cell, as the master's do.
     setComboAt(column.options ? comboPlace(activeScope().querySelector(`.mp-grid [data-cell="${cursor.row}:${CSS.escape(column.key)}"]`), (listFor(column, record, columns) ?? column.options).map((option) => option.text)) : null);
     if (column.options) setEditText(value);
+    // A time cell opens with the whole time selected, so typing starts again from the hours (A or P alone changes only AM / PM);
+    // a first key typed on the cell goes through the time mask.
+    if (column.addon && column.key.toLowerCase().startsWith("input_") && isTimeCaption(column.caption)) {
+      if (initial !== undefined) setEditText(timeTyping("", initial) ?? "");
+      else setTimeout(() => activeScope().querySelector<HTMLInputElement>(".mp-editor")?.select(), 0);
+    }
     setEditing(true);
   }, [columns, cursor, records, shownRows, isEditable, controls, toggleTick]);
 
@@ -556,6 +595,12 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         if (problem !== "") { await ask(problem, "Bank Reconcilation Message"); return false; }
       }
     }
+    // An addon input captioned Time (End Time) takes a time of day, kept as HH:mm.
+    if (column.addon && column.key.toLowerCase().startsWith("input_") && isTimeCaption(column.caption)) {
+      const time = normalizeTime(text);
+      if (time === null) { await ask(TIME_MESSAGE, "Entry Validation"); return false; }
+      text = time;
+    }
     // ValidateEdit's setup checks: must contain, allowed characters, contact numbers, compulsory, lengths, range.
     const checked = validate({
       setup: column.setup, masterGrid: false, programId: 0, licence, coGstReq: false, label: column.caption,
@@ -586,6 +631,20 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     if (def?.entryId === 38 && column.key.toLowerCase() === "form_amt" && toDecimal(value) > toDecimal(valueIn(next, "amount") ?? "")) {
       await ask("Set Off Amount can not be greater than Amount", "Entry Validation");
       return false;
+    }
+    // Challan/Order Close (entry 31): the Setoff is 0 or exactly what completes the order (Bill Qty + Setoff = Order); no other figure.
+    if (def?.entryId === 31 && column.key.toLowerCase() === "setof_qty") {
+      const figure = (name: string) => Math.round((toDecimal(valueIn(next, name) ?? "") || 0) * 1e4) / 1e4;
+      const setoff = Math.round((toDecimal(value) || 0) * 1e4) / 1e4;
+      const balance = Math.round((figure("quantity") - figure("ag_qty")) * 1e4) / 1e4;
+      if (setoff !== 0 && setoff !== balance) {
+        // The cell reopens with the figure the row was loaded with, or the allowed quantity when it had none.
+        const loaded = toDecimal(grid?.rows[index]?.[column.key] ?? "") || 0;
+        setEditText(String(loaded !== 0 ? loaded : balance));
+        await ask(`Setoff must be 0 or ${balance} (Bill Qty + Setoff = Order)`, "Entry Validation");
+        setTimeout(() => activeScope().querySelector<HTMLInputElement>(".mp-editor")?.select(), 0);
+        return false;
+      }
     }
     // Payment Manual Allot (entry 46): choosing the account shows its closing balance, and Dr when it is positive, Cr when negative (read-only columns).
     if (def?.entryId === 46 && column.key.toLowerCase() === "name" && selection && columns.some((candidate) => candidate.key.toLowerCase() === "closing_bal")) {
@@ -655,6 +714,25 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       } else if (allot > 0 && allot > figure("clsg_pcs")) {
         if (figure("bal_stock") < 0) { allotMessage = "Balance Stock is Lessthen Zero... So entry not valid..."; put("allot_qty", ""); }
         else if (allot > figure("bal_stock")) { allotMessage = "Pl. Enter Quantity Less than Balance Stock Qty..."; put("allot_qty", figure("bal_stock")); }
+      }
+    }
+    // Location Transfer (entry 115, Small_Entry AfterEdit): Cartoon fills Quantity with the product's packing x Cartoon, and Loose adds to the Quantity.
+    if (def?.entryId === 115 && ["bundle", "loose_qty"].includes(column.key.toLowerCase())) {
+      const figure = (name: string) => Number((valueIn(next, name) ?? "").replace(/,/g, "")) || 0;
+      if (figure("bundle") > 0 || figure("loose_qty") > 0) {
+        if (column.key.toLowerCase() === "bundle" && figure("bundle") > 0) {
+          const found = await call<{ pack: { key: number; basePack: number } | null }>("pack", { description: valueIn(next, "prod_desc") ?? "" });
+          if (found.pack) next = { ...next, [valueKeyOf(next, "Quantity")]: String(Math.round(found.pack.basePack * figure("bundle"))) };
+        }
+        if (column.key.toLowerCase() === "loose_qty" && figure("loose_qty") > 0) next = { ...next, [valueKeyOf(next, "Quantity")]: String(figure("Quantity") + figure("loose_qty")) };
+      }
+    }
+    // Stock Hold (entry 116, Small_Entry AfterEdit): Cartoon fills Hold Qty with the packing x Cartoon, and Loose adds to the Hold Qty.
+    if (def?.entryId === 116 && ["bundle", "loose_qty"].includes(column.key.toLowerCase())) {
+      const figure = (name: string) => Number((valueIn(next, name) ?? "").replace(/,/g, "")) || 0;
+      if (figure("bundle") > 0 || figure("loose_qty") > 0) {
+        if (column.key.toLowerCase() === "bundle" && figure("bundle") > 0) next = { ...next, [valueKeyOf(next, "Hold_Qty")]: String(Math.round(figure("base_pack") * figure("bundle"))) };
+        if (column.key.toLowerCase() === "loose_qty" && figure("loose_qty") > 0) next = { ...next, [valueKeyOf(next, "Hold_Qty")]: String(figure("Hold_Qty") + figure("loose_qty")) };
       }
     }
     setRecords((rows) => rows.map((row, at) => (at === index ? next : renumbered.has(at) ? { ...row, [valueKeyOf(row, "job_card_no")]: renumbered.get(at)! } : row)));
@@ -894,6 +972,22 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     const column = columns[cursor.col];
     const ctrl = event.ctrlKey || event.metaKey;
     const comboHere = Boolean(column?.options) && editableAt(cursor.row, column);
+    // F7 on Formula Approved and the other entries that keep a document with the row (Small_Entry KeyUp): the file opens in a new tab.
+    if (event.key === "F7" && DOCUMENT_ENTRIES.has(def?.entryId ?? 0)) {
+      event.preventDefault();
+      const record = records[shownRows[cursor.row]];
+      const processKey = Number(valueIn(record, "process_key") ?? "") || 0;
+      if (processKey > 0) {
+        try {
+          const file = await call<{ document: { name: string; type: string; data: string } | null }>("document", { processKey });
+          if (file.document) {
+            const bytes = Uint8Array.from(atob(file.document.data), (char) => char.charCodeAt(0));
+            window.open(URL.createObjectURL(new Blob([bytes], { type: file.document.type })), "_blank", "noopener");
+          }
+        } catch (error) { await ask(error instanceof Error ? error.message : String(error), "Document"); }
+      }
+      return;
+    }
     // Shift+↑ / Shift+↓ select rows, for Excel's Sum / Count / Average of a number column.
     if (event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
@@ -1115,6 +1209,18 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     // Func_BlankFieldValidation, as the master's: a compulsory column on screen and open on the row may not be blank.
     const blank = allocation ? "" : blankCompulsory(changedRows.map((index) => ({ rowNumber: index + 1, deleted: deleted.has(index), valueOf: (key: string) => records[index][key] })), setupColumns, (rowNumber, column) => isEditable(rowNumber - 1, column));
     if (blank !== "") { await ask(blank, BLANK_COMPULSORY_TITLE); return; }
+    // Challan/Order Close (entry 31): a Setoff, typed or loaded with the row, may not take Bill Qty + Setoff over the Order.
+    if (def.entryId === 31) {
+      const figure = (record: Record<string, string>, name: string) => Math.round((toDecimal(valueIn(record, name) ?? "") || 0) * 1e4) / 1e4;
+      const over = records.findIndex((record, at) => !deleted.has(at) && figure(record, "ag_qty") + figure(record, "setof_qty") > figure(record, "quantity") + 1e-9);
+      if (over >= 0) {
+        const record = records[over];
+        const at = shownRows.indexOf(over);
+        if (at >= 0) setCursor({ row: at, col: Math.max(0, columns.findIndex((column) => column.key.toLowerCase() === "setof_qty")) });
+        await ask(`Row ${(at >= 0 ? at : over) + 1}: Bill Qty ${figure(record, "ag_qty")} + Setoff ${figure(record, "setof_qty")} is more than Order ${figure(record, "quantity")}. Correct the Setoff to continue.`, "Entry Validation");
+        return;
+      }
+    }
     if ((await ask("Confirm to save data?", "Confirm Save", ["Yes", "No"], "Yes")) !== "Yes") return;
     let editPassword: string | undefined;
     if (def.rights.editPassword) {
@@ -1245,7 +1351,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                   const fixed = frozenCell(index, frozen, lefts);
                   const ruled = rowRuled(column.setup, column.editable);
                   return (
-                    <div key={column.key} className={`mp-cell ${fixed.className} ${filters[column.key] ? "mp-filtered" : ""} ${column.editable ? "" : "mp-head-readonly"} ${ruled ? "mp-head-rowruled" : ""} ${column.addon ? "mp-head-addon" : ""}`} style={{ width: widthOf(column), textAlign: alignOf(column), ...fixed.style }} title={`${column.caption}${column.editable ? (ruled ? " (editable on some rows only; grey cells are closed)" : "") : " (read-only)"}${column.tooltip ? ` · ${tooltipText(column.tooltip)}` : ""} · click to sort · ▾ to filter`}>
+                    <div key={column.key} className={`mp-cell ${fixed.className} ${filters[column.key] ? "mp-filtered" : ""} ${column.editable ? "" : "mp-head-readonly"} ${ruled ? "mp-head-rowruled" : ""} ${column.addon ? "mp-head-addon" : ""} ${headCurrent(index === cursor.col)}`} style={{ width: widthOf(column), textAlign: alignOf(column), ...fixed.style }} title={`${column.caption}${column.editable ? (ruled ? " (editable on some rows only; grey cells are closed)" : "") : " (read-only)"}${column.tooltip ? ` · ${tooltipText(column.tooltip)}` : ""} · click to sort · ▾ to filter`}>
                       <button type="button" className="mp-head-label" onClick={() => setSort((currentSort) => (currentSort?.key === column.key && currentSort.dir === "asc" ? { key: column.key, dir: "desc" } : currentSort?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                         {column.caption}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                       </button>
@@ -1310,7 +1416,11 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                                 style={{ textAlign: column.align === "R" ? "right" : "left" }}
                                 inputMode={["N", "C", "I"].includes(column.fieldType) ? "decimal" : undefined}
                                 value={editText}
-                                onChange={(event) => { if (mayType(column, editText, event.target.value)) setEditText(event.target.value); }}
+                                onChange={(event) => {
+                                  // A time cell builds a proper hh:mm as it is typed (features/grid/timeInput).
+                                  const typed = column.addon && column.key.toLowerCase().startsWith("input_") && isTimeCaption(column.caption) ? timeTyping(editText, event.target.value) : event.target.value;
+                                  if (typed !== null && mayType(column, editText, typed)) setEditText(typed);
+                                }}
                                 onKeyDown={(event) => void editorKeys(event)}
                               />
                               {tools.buttons(editorKindOf(column.fieldType), editText, setEditText, numberRules(column.setup), false, undefined, plainNumber(column))}

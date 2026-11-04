@@ -4206,3 +4206,7 @@ html body .lg-field .lg-eye{position:absolute!important;right:10px!important;top
 html body .lg-field .lg-eye:hover{background:#e3ecfa!important;color:#0b3a8c!important}
 html body .lg-field .lg-eye svg{display:block!important;width:24px!important;height:24px!important;flex:0 0 24px}
 html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
+/* Every grid (master, small entry, entry, report; features/grid/headCursor): the heading of the column the cursor is on is coloured, and goes back to its own colour when the cursor leaves. */
+.mp-head .mp-cell.mp-head-current,.mp-head .mp-cell.mp-head-current.mp-head-readonly:not(.mp-filtered),.ent-grid th.mp-head-current,.ent-grid th.ent-head-readonly.mp-head-current{background:#f4a6c3;color:#4b1528}
+/* An addon column is told apart only while it is the current one: its heading is purple, a standard column's pink. */
+.mp-head .mp-cell.mp-head-current.mp-head-addon:not(.mp-filtered):not(.mp-head-readonly),.mp-head .mp-cell.mp-head-current.mp-head-addon.mp-head-readonly:not(.mp-filtered),.ent-grid th.ent-head-addon.mp-head-current{background:#c3a6ec;color:#2b1650}
