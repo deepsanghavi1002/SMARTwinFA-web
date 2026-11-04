@@ -11,7 +11,7 @@ import { Matched } from "./Matched";
  * chooses, Esc closes the list and puts the chosen text back, Alt+Down or F4 opens it.
  * Leaving the box with text that exactly names an entry chooses that entry.
  */
-export type ComboItem = { text: string; value: string };
+export type ComboItem = { text: string; value: string; /** A figure shown at the right of the entry in the list, not part of its text (an account's closing balance). */ note?: string };
 
 const LIMIT = 300;
 
@@ -156,6 +156,7 @@ export function SearchCombo<T extends ComboItem>({
             >
               <span className="search-combo-tick">{value && option.value === value.value && option.text === value.text ? <svg className="ui-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg> : null}</span>
               <Matched text={option.text} query={query ?? ""} />
+              {option.note !== undefined && <span className={`search-combo-note${option.note.startsWith("-") ? " search-combo-neg" : ""}`}>{option.note}</span>}
             </li>
           ))}
           {matches.length === 0 && <li className="search-combo-none" role="presentation">Nothing matches “{query}”</li>}

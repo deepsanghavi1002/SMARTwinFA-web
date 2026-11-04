@@ -1,0 +1,90 @@
+SMARTwinFA - DATABASE SPEED INDEXES (company schemas)
+Written 2026-11-04. Keep this file for any new company database / schema.
+
+WHY
+  A company schema made by a migration / clone / restore has only its primary-key
+  indexes. Setup SQL (grids, reports, product help) then scans whole tables for every
+  row and runs very slowly. Examples: Product master 33 s -> 0.9 s; Sale Order
+  Allocate 37 s -> 72 ms after the indexes.
+
+WHERE THEY ARE NOW
+  UPDATE 2026-11-04: schemas were renamed - the new SQL Server copy is now rishabh_plastic27
+  (live, 64,347 ledger rows) and the previous one is rishabh_plastic27_old. Below, "_new" means the
+  schema that is now called rishabh_plastic27, and "rishabh_plastic27" the one now called _old.
+  Database smartwin_data, schemas rishabh_plastic26, rishabh_plastic27 and
+  rishabh_plastic27_new (copied from SQL Server on 2026-11-04). The 36 indexes below
+  are on rishabh_plastic27 and were copied to rishabh_plastic27_new, so both match.
+  Nothing in the data is changed by an index; they are additive and can be dropped.
+
+THE INDEXES (everything except primary keys)
+  table            index name                         columns
+  ac_balance       rp_ac_balance_code                 (code)
+  account          rp_account_code                    (code)
+  addon_aentry     ix_addon_aentry_processid          (aona_processid)
+  addon_aentry     rp_addon_aentry_aona_ledid         (aona_ledid)
+  addon_data       ix_addon_data_prod                 (prod_id)
+  addon_data       rp_addon_data_code                 (code)
+  addon_data       rp_addon_data_prod_id              (prod_id)
+  addon_ientry     rp_addon_ientry_aoni_il_id         (aoni_il_id)
+  address          ix_address_code_id                 (code, address_id)
+  ledger           ix_ledger_book_date                (book_code, doc_date)
+  ledger           rp_ledger_book                     (book)
+  ledger           rp_ledger_code                     (code)
+  ledger           rp_ledger_doc_date                 (doc_date)
+  ledger           rp_ledger_post_bkcode              (post_bkcode)
+  ledger           rp_ledger_year_id                  (year_id)
+  ledger_ext       rp_ledger_ext_il_id                (il_id)
+  ledger_ext       rp_ledger_ext_led_id               (led_id)
+  ledger_ext       rp_ledger_ext_slab_id              (slab_id)
+  ledger_ext       rp_ledger_ext_tax_id               (tax_id)
+  ledger_post      rp_ledger_post_led_id              (led_id)
+  ledger_post      rp_ledger_post_post_code           (post_code)
+  outclear         rp_outclear_code                   (code)
+  outclear         rp_outclear_out_ag_outid           (out_ag_outid)
+  outclear         rp_outclear_out_fulldocno          (out_fulldocno)
+  outclear         rp_outclear_out_ledid              (out_ledid)
+  pricelist        ix_pricelist_prod_pos_wefrom       (prod_id, pl_pos, pl_wefrom)
+  prod_balance     ix_prod_balance_prod_year          (prod_id, year_id)
+  prod_balance     rp_prod_balance_prod_id            (prod_id)
+  prod_ledger      ix_prod_ledger_led                 (led_id)
+  prod_ledger      ix_prod_ledger_module_prod         (trn_module, prod_id)
+  prod_ledger      rp_prod_ledger_il_date             (il_date)
+  prod_ledger      rp_prod_ledger_led_id              (led_id)
+  prod_ledger      rp_prod_ledger_process_id          (process_id)
+  prod_ledger      rp_prod_ledger_prod_id             (prod_id)
+  slab_master      rp_slab_master_slab_key            (slab_key)
+  tax_master       rp_tax_master_tax_rec              (tax_rec)
+
+THE 8 "ix_" INDEXES ARE KEPT IN CODE
+  .scratch/idx-all-schemas.mjs   (list "wanted"; add new ones there)
+  scripts/company-indexes.mjs    (the first 3 only)
+  The "rp_" indexes came with the original company schema (rishabh_plastic27); they are
+  not in code. They are copied by .scratch/idx-copy-rp.mjs, which reads the definitions
+  of rishabh_plastic27 and creates any that are missing in rishabh_plastic27_new.
+
+HOW TO ADD THEM TO A NEW COMPANY SCHEMA (run from D:SMARTwinFA-web)
+  1. node .scratch/idx-all-schemas.mjs            dry run, lists what is missing
+  2. node .scratch/idx-all-schemas.mjs --apply    creates the ix_ indexes (every schema)
+  3. Edit "from" / "to" in .scratch/idx-copy-rp.mjs, then
+     node .scratch/idx-copy-rp.mjs                copies the rp_ indexes
+  4. node .scratch/idx-compare.mjs                shows indexes that differ between
+                                                  rishabh_plastic27 and _new
+
+LESSONS FROM 2026-11-04
+  - Indexes are built CONCURRENTLY (people can keep working). A concurrent build waits
+    for every open transaction; if it times out it leaves an INVALID index of that name.
+    Check:  select relname from pg_index i join pg_class x on x.oid=i.indexrelid
+            where not i.indisvalid;
+    Fix:    DROP INDEX CONCURRENTLY "schema"."name";  then create it again.
+    (.scratch/idx-fix-invalid.mjs does this for rishabh_plastic27_new.)
+  - Close DBeaver's open transactions (commit / rollback) before building indexes.
+  - Run ANALYZE on the tables afterwards so the planner uses the indexes (the scripts do).
+  - A new slow grid: dump its SQL, EXPLAIN ANALYZE, look for SubPlan sequential scans,
+    try the index inside BEGIN ... ROLLBACK first, then add it to the list in
+    idx-all-schemas.mjs and to this file.
+
+OTHER THINGS A NEW COMPANY DATABASE NEEDS (not indexes)
+  - Setup is shared and lives in schema smart_setup (not copied with a company).
+  - Identity sequences: after a copy, set each sequence to max(id) or new entries clash.
+  - The older SQL Server dump lost non-ASCII characters (they are literal "?"); check
+    money and text columns of any new copy.

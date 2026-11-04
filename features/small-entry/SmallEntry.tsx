@@ -80,6 +80,7 @@ type Cursor = { row: number; col: number };
 
 /** A record's value by field name, whatever case the query gave the column. */
 /** The record's own spelling of a column's key (the query's case), else the name as given. */
+const LY_OUTSTANDING_ENTRY = 9;
 const valueKeyOf = (record: Readonly<Record<string, string>>, name: string): string => Object.keys(record).find((candidate) => candidate.toLowerCase() === name.toLowerCase()) ?? name;
 
 /** Entries whose rows keep a PDF or JPEG in <company>_IMAGE.DOCUMENT_UPLOAD (F7 views it). */
@@ -189,6 +190,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const editOnArrive = useRef(false);
   const screenRef = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  /** Last Year Outstanding's total line under the grid: it follows the grid's sideways scroll. */
+  const footerRow = useRef<HTMLDivElement>(null);
   const gridFocus = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   /**
@@ -303,6 +306,20 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const frozen = Math.min(frozenChosen ?? grid?.frozen ?? 0, setupColumns.length);
   const layout = useColumnLayout(setupColumns, frozen, (column) => Math.max(40, column.width));
   const { columns, widthOf } = layout;
+  /** Last Year Outstanding: the account's opening from the Opening label the setup fills (Opening : 1234.50 Dr), as a figure and its side. */
+  const lyOpening = useMemo(() => {
+    const found = /Opening\s*:\s*([\d.,]+)\s*(Dr|Cr)/i.exec(grid?.balance ?? "");
+    return found ? { amount: Number(found[1].replace(/,/g, "")) || 0, debit: found[2].toLowerCase() === "dr" } : null;
+  }, [grid]);
+  /** Last Year Outstanding: the Amount and the Pending Amount of the rows typed, and what is left of the opening to enter bills for. */
+  const lyTotals = useMemo(() => {
+    if (def?.entryId !== LY_OUTSTANDING_ENTRY || !grid) return null;
+    let amount = 0;
+    let pending = 0;
+    records.forEach((record, at) => { if (!deleted.has(at)) { amount += toDecimal(valueIn(record, "amount") ?? ""); pending += toDecimal(valueIn(record, "pend_amt") ?? ""); } });
+    const left = lyOpening ? Math.round((lyOpening.amount - pending) * 100) / 100 : 0;
+    return { amount, pending, left };
+  }, [def, grid, records, deleted, lyOpening]);
   const licence = def?.licence ?? 0;
   const yearStartText = yearStart ? formatDesktopDate(yearStart) : "";
   // Today is not inside the open accounting year (a last year's books): Production Planing cannot be entered.
@@ -358,8 +375,21 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         keepGridFocus(gridFocus);
         return;
       }
+      // Last Year Outstanding: Sale bills are entered against a debit opening, Purchase and Expense against a credit one.
+      if (def.entryId === LY_OUTSTANDING_ENTRY) {
+        const found = /Opening\s*:\s*([\d.,]+)\s*(Dr|Cr)/i.exec(body.grid.balance ?? "");
+        const sale = (controls.cmb_smallentry1 ?? "").trim().toUpperCase() === "SALE";
+        if (!found || !(Number(found[1].replace(/,/g, "")) > 0) || (found[2].toLowerCase() === "dr") !== sale) {
+          await ask("No pending Opening to enter bill details", "Entry Validation");
+          keepGridFocus(gridFocus);
+          return;
+        }
+      }
       setGrid(body.grid);
-      setRecords(body.grid.rows.map((row) => ({ ...row })));
+      // Last Year Outstanding: each row's Book starts as the Select Option (Sale, Purchase, Expense).
+      const bookColumn = def.entryId === LY_OUTSTANDING_ENTRY ? body.grid.columns.find((column) => column.key.toLowerCase() === "book") : undefined;
+      const bookDefault = bookColumn?.options?.find((option) => option.text.trim().toUpperCase() === (controls.cmb_smallentry1 ?? "").trim().toUpperCase());
+      setRecords(body.grid.rows.map((row) => ({ ...row, ...(bookColumn && bookDefault && (row[bookColumn.key] ?? "").trim() === "" ? { [bookColumn.key]: bookDefault.text, [`${bookColumn.key}__key`]: bookDefault.value } : {}) })));
       setSetoffs({});
       setEdited(new Set());
       setDeleted(new Set());
@@ -626,6 +656,28 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
     if (column.key.toLowerCase() === "book") {
       const series = columns.find((candidate) => candidate.key.toLowerCase() === "doc_series" && candidate.options !== undefined && columns.some((other) => other.options?.some((item) => item.series !== undefined)));
       if (series && (next[series.key] ?? "") !== "" && !(listFor(series, next, columns) ?? []).some((item) => item.text === next[series.key])) next = { ...next, [series.key]: "", [`${series.key}__key`]: "" };
+    }
+    // Last Year Outstanding: a bill is dated before the year starts; its Pending Amount is not more than its Amount, and all of them are not more than the opening.
+    if (def?.entryId === LY_OUTSTANDING_ENTRY) {
+      const key = column.key.toLowerCase();
+      if (key === "doc_date" && value.trim() !== "" && yearStart) {
+        const date = parseDesktopDate(value);
+        if (date && date.getTime() >= yearStart.getTime()) {
+          await ask(`Date should be before the year start ${formatDesktopDate(yearStart)} (up to ${formatDesktopDate(new Date(yearStart.getTime() - 86400000))})`, "Entry Validation");
+          return false;
+        }
+      }
+      if ((key === "pend_amt" || key === "amount") && toDecimal(valueIn(next, "pend_amt") ?? "") > toDecimal(valueIn(next, "amount") ?? "")) {
+        await ask("Pending Amount can not be greater than Amount", "Entry Validation");
+        return false;
+      }
+      if (key === "pend_amt" && lyOpening) {
+        const total = records.reduce((sum, other, at) => (at === index || deleted.has(at) ? sum : sum + toDecimal(valueIn(other, "pend_amt") ?? "")), 0) + toDecimal(value);
+        if (total > lyOpening.amount + 0.005) {
+          await ask(`Total of Pending Amount (${total.toFixed(2)}) can not be greater than Opening Balance ${lyOpening.amount.toFixed(2)} ${lyOpening.debit ? "Dr" : "Cr"}`, "Entry Validation");
+          return false;
+        }
+      }
     }
     // Payment Allotment (entry 38): the Set Off cannot be more than the bill's Amount; the cell stays open to change it.
     if (def?.entryId === 38 && column.key.toLowerCase() === "form_amt" && toDecimal(value) > toDecimal(valueIn(next, "amount") ?? "")) {
@@ -1316,7 +1368,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
           {!grid && <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red" onClick={() => void leave()}><Icon name="quit" /><HotkeyLabel text="Quit" hotkey="q" /></button>}
           {busy && <span className="mp-busy">{busy}…</span>}
           {grid?.balance && <span className="mp-balance">{grid.balance}</span>}
-          {grid?.finalAmount && <span className="mp-balance">{grid.finalAmount}</span>}
+                    {grid?.finalAmount && <span className="mp-balance">{grid.finalAmount}</span>}
         </span>
         {/* As the account help's "F8 Ledger": the key and what it does, at the right end of the first combo's line. */}
         {grid && <kbd className="mp-help-f1 se-f5-hint" style={{ gridRow: lastLine, gridColumn: 7 }} title="F5 leaves the grid and goes to the Save button"><b>F5</b> to Save</kbd>}
@@ -1324,8 +1376,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       </div>
 
       {grid ? (
-        <div className="mp-update">
-          <div className="mp-scroll" ref={scroller} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+        <div className="mp-update" style={lyTotals ? { gridTemplateRows: "minmax(0,1fr) auto" } : undefined}>
+          <div className="mp-scroll" ref={scroller} onScroll={(event) => { setScrollTop(event.currentTarget.scrollTop); if (footerRow.current) footerRow.current.scrollLeft = event.currentTarget.scrollLeft; }}>
             <div
               ref={gridFocus}
               tabIndex={0}
@@ -1444,6 +1496,23 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
               })}
             </div>
           </div>
+          {/* Last Year Outstanding: the total line - Balance (opening less pending) under Book, the Amount and Pending Amount totals under their columns. */}
+          {lyTotals && lyOpening && (
+            <div ref={footerRow} className="se-footer" role="row" aria-label="Totals">
+              <div className="se-footer-inner">
+                <div className="mp-cell mp-rownum" aria-hidden="true" />
+                {columns.map((column) => {
+                  const key = column.key.toLowerCase();
+                  const money = (value: number) => value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  const text = key === "book" ? `Balance : ${money(Math.abs(lyTotals.left))}`
+                    : key === "amount" ? money(lyTotals.amount)
+                    : key === "pend_amt" ? money(lyTotals.pending)
+                    : key === "doc_date" ? "Total" : "";
+                  return <div key={column.key} className={`mp-cell se-footer-cell${key === "amount" || key === "pend_amt" || key === "doc_date" ? " se-footer-right" : ""}`} style={{ width: widthOf(column) }} title={key === "book" ? "Opening less the Pending Amount entered: what is left to enter bills for" : undefined}>{text}</div>;
+                })}
+              </div>
+            </div>
+          )}
           {menu && cursorColumn && (
             <GridMenu at={menu} onClose={() => { setMenu(null); keepGridFocus(gridFocus); }} items={[
               { label: "Copy (Ctrl+C)", onClick: () => void copyCell() },

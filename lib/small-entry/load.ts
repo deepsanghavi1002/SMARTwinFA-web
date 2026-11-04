@@ -279,6 +279,16 @@ export async function loadEntry(loader: Loader, entryName: string, menuShortName
         }
         firstComboSets = sets;
       }
+      // Last Year Outstanding: Sale lists the debtors (account book 2), Purchase the creditors (3), Expense the general accounts (book 1, group 30), each with its opening balance.
+      const sides = /\(ac\.BOOK\s+in\s*\(2,3\)\s+or\s+\(ac\.book\s*=\s*1\s+and\s+ac\.bs_id\s*=\s*30\)\)/i;
+      if (entryId === LY_OUTSTANDING && sides.test(where)) {
+        const sets: Record<string, readonly EntryOption[]> = {};
+        for (const [name, filter] of [["Sale", "ac.BOOK=2"], ["Purchase", "ac.BOOK=3"], ["Expense", "(ac.book = 1 and ac.bs_id=30)"]] as const) {
+          sets[name] = await withClosing(loader, await queryOptions(loader, replaceEntryValues(sql.replace(where, where.replace(sides, filter)), baseContext)), "opening");
+        }
+        firstComboSets = sets;
+        firstCombo = { ...firstCombo, options: await withClosing(loader, firstCombo.options, "opening") };
+      }
     }
   }
 
@@ -548,10 +558,10 @@ export async function gridPlan(loader: Loader, entryName: string, state: EntrySt
 // ---------------------------------------------------------------------------------------
 // Setting_GridCol: the columns as the grid shows them
 
-/** Each account option's closing balance for the year as a signed figure (+1,234.00 Dr, -1,234.00 Cr), as its list note. */
-async function withClosing(loader: Loader, options: readonly EntryOption[]): Promise<EntryOption[]> {
+/** Each account option's closing (or, for Last Year Outstanding, opening) balance for the year as a signed figure (+1,234.00 Dr, -1,234.00 Cr), as its list note. */
+async function withClosing(loader: Loader, options: readonly EntryOption[], balance: "closing" | "opening" = "closing"): Promise<EntryOption[]> {
   const codes = options.map((option) => toInt(option.value)).filter((code) => code > 0);
-  const rows = codes.length === 0 ? [] : (await loader.readTable(`select code, closing::numeric as closing from ${loader.session.companySchema}.ac_balance where year_id = $1 and code = any($2::int[])`, [loader.session.yearId, codes])) ?? [];
+  const rows = codes.length === 0 ? [] : (await loader.readTable(`select code, ${balance}::numeric as closing from ${loader.session.companySchema}.ac_balance where year_id = $1 and code = any($2::int[])`, [loader.session.yearId, codes])) ?? [];
   const closing = new Map(rows.map((row) => [toInt(field(row, "code")), Number(field(row, "closing") ?? 0)]));
   const shown = (value: number) => `${value > 0 ? "+" : value < 0 ? "-" : ""}${Math.abs(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return options.map((option) => ({ ...option, note: shown(closing.get(toInt(option.value)) ?? 0) }));

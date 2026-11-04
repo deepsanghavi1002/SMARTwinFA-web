@@ -4210,3 +4210,15 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .mp-head .mp-cell.mp-head-current,.mp-head .mp-cell.mp-head-current.mp-head-readonly:not(.mp-filtered),.ent-grid th.mp-head-current,.ent-grid th.ent-head-readonly.mp-head-current{background:#f4a6c3;color:#4b1528}
 /* An addon column is told apart only while it is the current one: its heading is purple, a standard column's pink. */
 .mp-head .mp-cell.mp-head-current.mp-head-addon:not(.mp-filtered):not(.mp-head-readonly),.mp-head .mp-cell.mp-head-current.mp-head-addon.mp-head-readonly:not(.mp-filtered),.ent-grid th.ent-head-addon.mp-head-current{background:#c3a6ec;color:#2b1650}
+
+/* A combo entry's figure (Last Year Outstanding: the account's closing balance): at the right end of the list line. */
+.search-combo-list li:has(.search-combo-note){gap:16px}
+.search-combo-note{margin-left:auto;padding-left:16px;text-align:right;font-variant-numeric:tabular-nums;color:#1f64b8}
+.search-combo-neg{color:#c42636}
+.search-combo-list li.search-combo-active .search-combo-note,.search-combo-list li.search-combo-active .search-combo-neg{color:#fff}
+
+/* Last Year Outstanding's total line under the grid (features/small-entry): same columns as the grid, follows its sideways scroll. */
+.se-footer{overflow:hidden;scrollbar-gutter:stable;background:#dfe8e7;border-top:2px solid #8aa3a1}
+.se-footer-inner{display:flex;min-width:max-content}
+.se-footer .mp-cell{background:#dfe8e7;font-weight:700;color:#0d3a73}
+.se-footer .se-footer-right{text-align:right}
