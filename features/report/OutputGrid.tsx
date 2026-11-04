@@ -1,5 +1,6 @@
 "use client";
 
+import { printPatiya } from "./patiyaPrint";
 import { GROUP_PREFIX, withGroups } from "../../lib/report/growth";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
@@ -1047,7 +1048,11 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   };
   const guardedOutput = {
     ...gridOutput,
-    print: () => rightsCheck("print", () => void gridOutput.print()),
+    // Patiya prints its two slips (Dispatch Slip and Dispatch Loading Slip) at once, as the desktop opens both reports.
+    print: () => rightsCheck("print", () => {
+      if (output.reportKey !== 150) { void gridOutput.print(); return; }
+      if (!printPatiya(shown.filter(({ row }) => row.kind === "data").map(({ row }) => row.values))) void messageBox.alert("Can't open print priview as update grid is blank", "Print failed!!");
+    }),
     preview: () => rightsCheck("preview", () => void gridOutput.preview()),
     excel: () => rightsCheck("export", () => void gridOutput.excel()),
     pdf: () => rightsCheck("export", () => void gridOutput.pdf()),

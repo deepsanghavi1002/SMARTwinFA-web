@@ -72,6 +72,8 @@ const HELP_ROWS = 9;
 /** The row indicator column (C1FlexGrid's fixed column): a marker, not a second row number. */
 const INDICATOR_WIDTH = ROW_MARKER_WIDTH;
 const DELETE_BLOCKED_PROGRAMS = [4, 11, 16, 19, 24, 25, 34, 35, 27, 47];
+/** Party price masters, kept in party_rate: a row of them deletes without a record_exist check. */
+const PARTY_RATE_PROGRAMS = [21, 22, 23, 26, 28, 29, 32, 36, 42];
 const SECOND_RESET_PROGRAMS = [21, 22, 23, 26, 28, 29, 32, 36, 42, 49, 50, 51];
 /** Master_ProgramGrid_KeyUp: the Pause key closes SMARTwinFA for these licences. */
 const PAUSE_EXIT_LICENCES = [5, 9, 17, 49, 50, 52, 53, 60, 64, 65, 66, 67, 72, 76, 77, 79, 89, 90];
@@ -333,6 +335,10 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
   const ask = useCallback((text: string, heading: string, buttons: DialogButton[] = ["OK"], defaultButton?: DialogButton) => messageBox.ask(text, heading, buttons, { defaultButton }).then((answer) => { keepGridFocus(); return answer; }), []);
   const askPassword = useCallback((heading: string) => messageBox.prompt("Enter Password", heading, { password: true }), []);
 
+  // The parent hands a new onClose at every render (opening another window renders it): the load below must not run again for that, or the first combo goes back to its first row while the grid still holds the book chosen.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; });
+
   // ---- Master_ProgramGrid_Load
   useEffect(() => {
     if (!selection) return;
@@ -351,7 +357,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
           for (;;) {
             const typed = await askPassword("Password");
             if (cancelled) return;
-            if (typed === null) { onClose(); return; }
+            if (typed === null) { onCloseRef.current(); return; }
             const check = await masterCall<{ ok: boolean; message: string }>(selection, programName, "module-password", { menuShortName, password: typed }).catch((error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }));
             if (cancelled) return;
             if (check.ok) { setLocked(false); return; }
@@ -362,7 +368,7 @@ export function MasterProgram({ programName, menuShortName, title, onClose, zoom
       .catch((error: unknown) => { if (!cancelled) setFatal(error instanceof Error ? error.message : String(error)); })
       .finally(() => { if (!cancelled) setBusy(""); });
     return () => { cancelled = true; };
-  }, [selection, programName, menuShortName, ask, askPassword, onClose]);
+  }, [selection, programName, menuShortName, ask, askPassword]);
 
   const yearStartText = meta ? formatDesktopDate(new Date(meta.yearStart)) : "";
   const yearEndText = meta ? formatDesktopDate(new Date(meta.yearEnd)) : "";
@@ -1127,6 +1133,8 @@ Discard the changes?`, "Discard Changes", ["Yes", "No"], "No")) !== "Yes") retur
         continue;
       }
       if ([1, 49, 52].includes(programId)) { marked.add(row); markEdited(row); continue; }
+      // A price list holds rates, not a master others refer to: it has no record_exist check, and its rows (one, or a selection) delete freely.
+      if (PARTY_RATE_PROGRAMS.includes(programId) || /PRICE/i.test(programName)) { marked.add(row); markEdited(row); continue; }
       if (!keyOf(record, "record_exist")) continue;
       let exists = cellOf(record, "record_exist");
       if (exists === "") exists = (await call<{ recordExist: "Y" | "N" }>("record-exist", { masterGrid: false, row: eventRow(row, grids.columns[1]?.setup.field_name ?? "", "") })).recordExist;

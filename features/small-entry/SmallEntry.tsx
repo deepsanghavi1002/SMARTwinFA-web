@@ -51,6 +51,10 @@ import { BLANK_COMPULSORY_TITLE, blankCompulsory } from "../grid/compulsory";
 import { FoundText } from "../grid/FoundText";
 import { DateField } from "../grid/DateField";
 import { BANK_RECO, recoDateProblem } from "../../lib/small-entry/bankReco";
+
+/** Production Planing: entered for today only, and only inside the open accounting year. */
+const PRODUCTION_PLANING = 35;
+const PERIOD_MESSAGE = "Date out of accounting period";
 import { ENTRY_APPROVED, isLocked, LOCKED_BOOK, PARTY_STOP_MESSAGE } from "../../lib/small-entry/approval";
 
 /**
@@ -147,6 +151,8 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const [message, setMessage] = useState("");
   const [warnings, setWarnings] = useState<readonly string[]>([]);
   const [yearStart, setYearStart] = useState<Date | null>(null);
+  const [yearEnd, setYearEnd] = useState<Date | null>(null);
+  const periodWarned = useRef(false);
   /** The Log button: shown when the company keeps the special log (setup.logfile = S); logTable is the open Log window. */
   const [logKept, setLogKept] = useState(false);
   const [logTable, setLogTable] = useState<LogTable | null>(null);
@@ -236,18 +242,20 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   useEffect(() => {
     if (!selection) return;
     let cancelled = false;
-    smallEntryCall<{ entry: EntryDefinition; warnings: string[]; yearStart: string; logFileSpecial?: boolean; companyName: string; userName: string }>(selection, entryName, menuShortName, "entry")
+    smallEntryCall<{ entry: EntryDefinition; warnings: string[]; yearStart: string; yearEnd?: string; logFileSpecial?: boolean; companyName: string; userName: string }>(selection, entryName, menuShortName, "entry")
       .then(async (body) => {
         if (cancelled) return;
         setDef(body.entry);
         setYearStart(new Date(body.yearStart));
+        if (body.yearEnd) setYearEnd(new Date(body.yearEnd));
         setLogKept(body.logFileSpecial === true);
         setWho({ company: body.companyName, user: body.userName });
         setWarnings([...body.entry.unsupported, ...body.warnings]);
         // The first combo opens on the entry chosen last time in this entry, this company and user (else its first).
         const remembered = lastFirst(selection, entryName);
         setFirst(body.entry.firstCombo?.options.find((option) => option.value === remembered?.value && option.text === remembered?.text) ?? body.entry.firstCombo?.options[0] ?? null);
-        setControls(Object.fromEntries(body.entry.controls.map((control) => [control.name, control.initial])));
+        // Production Planing (35) is entered for today only: its Entry Date is today, and cannot be changed.
+        setControls(Object.fromEntries(body.entry.controls.map((control) => [control.name, body.entry.entryId === PRODUCTION_PLANING && control.type === "DT" ? formatDesktopDate(new Date()) : control.initial])));
         if (!body.entry.rights.modulePassword) { setLocked(false); return; }
         for (;;) {
           const password = await messageBox.prompt("Enter Password", "Password", { password: true });
@@ -292,10 +300,18 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
   const { columns, widthOf } = layout;
   const licence = def?.licence ?? 0;
   const yearStartText = yearStart ? formatDesktopDate(yearStart) : "";
+  // Today is not inside the open accounting year (a last year's books): Production Planing cannot be entered.
+  const outsideYear = Boolean(yearStart && yearEnd && (() => { const today = new Date(); today.setHours(0, 0, 0, 0); return today < new Date(yearStart.getFullYear(), yearStart.getMonth(), yearStart.getDate()) || today > new Date(yearEnd.getFullYear(), yearEnd.getMonth(), yearEnd.getDate()); })());
+  useEffect(() => {
+    if (def?.entryId !== PRODUCTION_PLANING || locked || !outsideYear || periodWarned.current) return;
+    periodWarned.current = true;
+    void ask(PERIOD_MESSAGE, "Date Validation");
+  }, [def?.entryId, locked, outsideYear, ask]);
 
   // ---- Cmb_FirstCombo_Leave: fill the grid
   const loadGrid = useCallback(async (firstChoice: EntryOption | null) => {
     if (!def || locked) return;
+    if (def.entryId === PRODUCTION_PLANING && outsideYear) { await ask(PERIOD_MESSAGE, "Date Validation"); return; }
     for (const control of def.controls) {
       if (control.compulsory && (controls[control.name] ?? "").trim() === "") { await ask(`${control.label} is required`, "Entry Validation"); return; }
     }
@@ -596,6 +612,29 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
       setTimeout(() => activeScope().querySelector<HTMLInputElement>(".mp-editor")?.select(), 0);
       return false;
     }
+    // Production Planing (Small_Entry AfterEdit, entry 35): Planing = Cartoon x Std Pack, Amount = Planing x Rate, and the job card numbers follow the planned rows.
+    const renumbered = new Map<number, string>();
+    if (def?.entryId === PRODUCTION_PLANING && ["cartoon", "planing"].includes(column.key.toLowerCase())) {
+      const figure = (name: string) => Number((valueIn(next, name) ?? "").replace(/,/g, "")) || 0;
+      const money = (amount: number) => String(Math.round(amount * 100) / 100);
+      const put = (name: string, amount: string) => { next = { ...next, [valueKeyOf(next, name)]: amount }; };
+      if (column.key.toLowerCase() === "cartoon") put("planing", figure("cartoon") > 0 ? money(figure("cartoon") * figure("std_pack")) : "");
+      put("stock_qty", figure("planing") > 0 ? money(figure("planing") * figure("pl_srate")) : "");
+      // A planned row is packed today unless another date is typed; a row planned no more loses the date it was given.
+      const today = formatDesktopDate(new Date());
+      const packing = (valueIn(next, "packing_date") ?? "").trim();
+      if (figure("planing") > 0 && packing === "") put("packing_date", today);
+      else if (!(figure("planing") > 0) && packing === today) put("packing_date", "");
+      // Every row with a Planing takes a job card in turn, from the number after the year's highest saved one, down the grid; a row with none has no job card.
+      // A plan already saved (it has its key) keeps its own number.
+      let given = (await call<{ next: number }>("job-card")).next;
+      records.map((row, at) => (at === index ? next : row)).forEach((row, at) => {
+        if (deleted.has(at) || (Number((valueIn(row, "prod_plan_key") ?? "").replace(/,/g, "")) || 0) > 0) return;
+        const card = (Number((valueIn(row, "planing") ?? "").replace(/,/g, "")) || 0) > 0 ? String(given++) : "";
+        if (at === index) next = { ...next, [valueKeyOf(next, "job_card_no")]: card };
+        else if ((valueIn(row, "job_card_no") ?? "") !== card) renumbered.set(at, card);
+      });
+    }
     // Order Allotment (Small_Entry AfterEdit, entry 39): Cartoon is only a helper, the saved figure is Allot Qty = Packing x Cartoon + Loose, and the balance stock follows it.
     let allotMessage = "";
     if (def?.entryId === 39 && ["bundle", "allot_qty"].includes(column.key.toLowerCase())) {
@@ -618,7 +657,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
         else if (allot > figure("bal_stock")) { allotMessage = "Pl. Enter Quantity Less than Balance Stock Qty..."; put("allot_qty", figure("bal_stock")); }
       }
     }
-    setRecords((rows) => rows.map((row, at) => (at === index ? next : row)));
+    setRecords((rows) => rows.map((row, at) => (at === index ? next : renumbered.has(at) ? { ...row, [valueKeyOf(row, "job_card_no")]: renumbered.get(at)! } : row)));
     settleEdited(index, next);
     // A refused Allot Qty stays open for editing in that same cell, showing the figure it was put back to.
     if (allotMessage !== "") {
@@ -1134,7 +1173,7 @@ export function SmallEntry({ entryName, menuShortName, title, onClose }: { entry
                   ariaLabel={control.label}
                   value={controls[control.name] ?? ""}
                   tools={tools}
-                  disabled={headLocked}
+                  disabled={headLocked || def?.entryId === PRODUCTION_PLANING}
                   required
                   onChange={(value) => setControls((currentControls) => ({ ...currentControls, [control.name]: value }))}
                 />

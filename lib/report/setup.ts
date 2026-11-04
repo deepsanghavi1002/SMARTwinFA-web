@@ -365,7 +365,14 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
   for (const request of helpRequests) {
     if (helps.some((help) => help.grid === request.grid)) continue;
     const help = await loadHelp(loader, request.helpId, request.grid, request.frozen);
-    if (help) helps.push(request.first ? { ...help, first: true } : help);
+    let shown = help;
+    if (help && reportKey === 187 && request.grid === "C1HelpProduct") {
+      // Stock With Ageing: the product help lists the finish goods only (the product's Type addon).
+      const finish = new Set((await loader.readTable(`SELECT DISTINCT prod_id FROM |sys.db|addon_data WHERE UPPER(BTRIM(txt_prodtype)) = 'FINISH GOODS'`) ?? []).map((row) => String(toInt(field(row, "prod_id")))));
+      const keyName = help.keyColumn.toLowerCase();
+      shown = { ...help, rows: help.rows.filter((row) => { const at = Object.keys(row).find((key) => key.toLowerCase() === keyName); return at !== undefined && finish.has(String(toInt(row[at]))); }) };
+    }
+    if (shown) helps.push(request.first ? { ...shown, first: true } : shown);
   }
 
   const runtime: RuntimeControl[] = [];

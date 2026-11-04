@@ -4137,8 +4137,7 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
   const book = call.fcValue;
   const licence = call.licence;
   if (call.formating.toUpperCase().includes("SUMM")) return partyStockSummary(loader, plan);
-  if ([37, 51].includes(licence)) throw new ReportRefusal(`The licence ${licence} variant of the Partywise Stock is not available in the web version yet.`, "Not ported yet");
-  void check;
+  const mrp = !toText(session.setup.entry_para).toUpperCase().includes("X_MRP,");
 
   // Product-wise slabs of the year for books 8 and 13 (CUR_SLAB).
   const slabs = (await runReportSql(loader, frag(`SELECT slab_key, slab_short, slab_master, slab_mathop FROM ${db}SLAB_MASTER WHERE SLAB_POS = 'P' and SLAB_FROMDT = '${desktopDate(call.tarikh1)}' AND SLAB_ACTIVE = 'Y' and BOOK in (8,13) ORDER BY BOOK, SLAB_ORDER`))).rows;
@@ -4151,13 +4150,15 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
   let columnTotal = "case when PURCH_VALUE = 0 then [SALE_VALUE] else [PURCH_VALUE] end";
   let taxSr = 0;
   const slabKeys: number[] = [];
+  // The slabs the net amount takes in: as the procedure builds its total, only those met before the first master (tax) slab.
+  const netSlabs: { short: string; lessen: boolean }[] = [];
   const add = (name: string) => { if (!headings.includes(name)) headings.push(name); };
   if (withSlabs) {
     for (const slab of slabs) {
       const short = toText(slab.slab_short);
       const master = toText(slab.slab_master) === "Y";
       slabKeys.push(num(slab.slab_key));
-      if (!master && taxSr === 0 && !columnTotal.includes(short)) columnTotal += toText(slab.slab_mathop) === "L" ? `-abs(${short})` : `+${short}`;
+      if (!master && taxSr === 0 && !columnTotal.includes(short)) { columnTotal += toText(slab.slab_mathop) === "L" ? `-abs(${short})` : `+${short}`; netSlabs.push({ short, lessen: toText(slab.slab_mathop) === "L" }); }
       if (headings.length === 0) { add(short); add(`${short}_%`); heading1 += `[${short}]`; }
       else {
         if (master) {
@@ -4176,21 +4177,29 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
   const inner = call.from_.slice(call.from_.indexOf("sys.ledext.bstart") + "sys.ledext.bstart".length, call.from_.indexOf("sys.ledext.join sys.ledext.bend"));
   const from = licence === 21 || call.acAddonRepdefa.includes("E") ? ` from ((${inner}) left join ${db}ADDON_AENTRY aentry on aentry.AONA_LEDID = PRODLED.LED_ID)` : ` from (${inner})`;
   let select = call.queryStart.split("sys.col.slabcol,").join("").split("sys.col.slabrate,").join("");
-  select = licence === 21 ? select.split("sys.col.box_qty").join('PRODLED.BUNDLE AS "BOX_QTY"') : select.split("sys.col.box_qty,").join("");
+  // What the procedure adds to the select: licence 21's LR number and month, the MRP rate and value (the setup's entry_para has no X_MRP), the barcode.
+  if (licence === 21) select += `, aentry.INPUT_LRNO as "LR_NO", trim(to_char(PRODLED.IL_DATE, 'Month')) as "MONTH_NAME"`;
+  if (licence === 2) select = select.split("PRODUCT.PROD_DESC").join("PRODUCT.PROD_SHORT");
+  if (mrp) select += `, PRODLED.MASTER_RATE as "MRP_RATE", ROUND(PRODLED.MASTER_RATE*PRODLED.QUANTITY,2) as "MRP_VALUE"`;
+  if (check("BARCODE")) select += `, product.BAR_CODE as "BAR_CODE"`;
+  select = licence === 21 ? select.split("sys.col.box_qty").join('PRODUCT.BASE_PACK AS "PACKING",PRODLED.BUNDLE AS "BOX_QTY"') : select.split("sys.col.box_qty,").join("");
   const fromText = desktopDate(call.from);
   const uptoText = desktopDate(call.upto);
-  let where = `${call.where.split("|sys.yearid|").join(call.yearId)} and PRODUCT.INVENTORY = 'Y' and PRODLED.INVENTORY = 'Y' AND PRODLED.IL_DATE >= '${fromText}' AND PRODLED.IL_DATE <= '${uptoText}'`;
+  let where = `${call.where.split("|sys.yearid|").join(call.yearId)}${licence === 37 ? "" : " and PRODUCT.INVENTORY = 'Y' and PRODLED.INVENTORY = 'Y'"} AND PRODLED.IL_DATE >= '${fromText}' AND PRODLED.IL_DATE <= '${uptoText}'`;
   const drCrBook = num((await runReportSql(loader, frag(`SELECT COUNT(*) AS n FROM ${db}BOOK_PROPERTIES WHERE STKM_POS <> 'D' and BOOK_KEY = ${book === 8 ? 8 : 13} and POSITION(' 2, 3,' IN BS_ACHELP) > 0`))).rows[0]?.n) > 0;
-  if (book === 8) where += drCrBook && licence !== 21 ? " and (PRODLED.BOOK = 16 or PRODLED.BOOK = 8)" : " and (PRODLED.BOOK = 13 or PRODLED.BOOK = 16 or PRODLED.BOOK = 11 or PRODLED.BOOK = 8) and ac.book = 2";
+  if (book === 8 && licence === 51) { /* licence 51 takes every book of the ledger lines */ }
+  else if (book === 8) where += drCrBook && licence !== 21 ? " and (PRODLED.BOOK = 16 or PRODLED.BOOK = 8)" : " and (PRODLED.BOOK = 13 or PRODLED.BOOK = 16 or PRODLED.BOOK = 11 or PRODLED.BOOK = 8) and ac.book = 2";
   else if (book === 9) where += " and PRODLED.BOOK = 9 and ac.book = 2";
   else where += drCrBook && licence !== 21 ? ` and (PRODLED.BOOK = 11 or PRODLED.BOOK = ${book})` : ` and (PRODLED.BOOK = 8 or PRODLED.BOOK = 11 or PRODLED.BOOK = 16 or PRODLED.BOOK = ${book}) and ac.book = 3`;
+  // bitHideBook: licences 19, 29 and 73 hide entries booked against an account whose short name says CA_ENT.
+  if ([19, 29, 73].includes(licence) && num((await runReportSql(loader, frag(`SELECT COUNT(*) AS n FROM ${db}ACCOUNT WHERE A_POS <> 'D' and POSITION('CA_ENT' IN A_SHORT) > 0`))).rows[0]?.n) === 0) where += ` and (prodled.book_code in (select code from ${db}ACCOUNT where a_pos='A') or prodled.book_code is null)`;
   // The order: the groups ticked (the account or an addon, first ticked first), then the date, then the voucher number; with none ticked, the date and the voucher number.
   if (plan.tickedGroups.length === 0) throw new ReportRefusal("Please tick at least one Group to generate the report.", "Group Required");
   const ticked = tickedGroupOrder(plan.tickedGroups, call.unionGroups);
   const order = [...ticked, "TO_CHAR(PRODLED.IL_DATE,'YYYYMMDD')", "PRODLED.DOC_NO1", "PRODLED.FULL_DOCNO"].join(", ");
   const result = await runReportSql(loader, frag(`SELECT ${select}, PRODLED.BOOK AS "line_book" ${from} ${where} ORDER BY ${order}`));
   const table = tableFromResult(result);
-  for (const column of ["ADD_QTY", "LESS_QTY", "BOX_QTY", "RATE", "PURCH_VALUE", "SALE_VALUE"]) if (table.has(column)) table.setKind(column, "decimal");
+  for (const column of ["ADD_QTY", "LESS_QTY", "BOX_QTY", "RATE", "PURCH_VALUE", "SALE_VALUE", "MRP_RATE", "MRP_VALUE"]) if (table.has(column)) table.setKind(column, "decimal");
 
   if (headings.length > 0) {
     const ilKeys = table.rows.map((row) => num(table.get(row, "IL_KEY")));
@@ -4217,8 +4226,20 @@ export async function partyStock(loader: Loader, plan: ReportPlan): Promise<Resu
       void names;
       for (const row of table.rows) {
         let total = num(table.get(row, "PURCH_VALUE")) === 0 ? num(table.get(row, "SALE_VALUE")) : num(table.get(row, "PURCH_VALUE"));
-        for (const slab of slabs) if (toText(slab.slab_master) !== "Y") total += toText(slab.slab_mathop) === "L" ? -Math.abs(num(table.get(row, toText(slab.slab_short)))) : num(table.get(row, toText(slab.slab_short)));
+        for (const slab of netSlabs) total += slab.lessen ? -Math.abs(num(table.get(row, slab.short))) : num(table.get(row, slab.short));
         table.set(row, "NET_AMOUNT", Math.round(total * 100) / 100);
+      }
+      // Licence 21: the net amount of a return (book 8 lines of purchase value, book 13 lines of sale value) is negative, and ACT_RATE is the net amount for each unit.
+      if (licence === 21) {
+        table.addColumn("ACT_RATE");
+        table.setKind("ACT_RATE", "decimal");
+        for (const row of table.rows) {
+          if (book === 8 && num(table.get(row, "PURCH_VALUE")) > 0) table.set(row, "NET_AMOUNT", -num(table.get(row, "NET_AMOUNT")));
+          if (book === 13 && num(table.get(row, "SALE_VALUE")) > 0) table.set(row, "NET_AMOUNT", -num(table.get(row, "NET_AMOUNT")));
+          const net = num(table.get(row, "NET_AMOUNT"));
+          const units = num(table.get(row, "LESS_QTY"));
+          if (net !== 0 && units !== 0) table.set(row, "ACT_RATE", Math.round((net / units) * 100) / 100);
+        }
       }
     }
   }

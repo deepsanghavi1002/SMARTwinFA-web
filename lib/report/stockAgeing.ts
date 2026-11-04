@@ -4,6 +4,7 @@ import { ResultTable } from "./call";
 import type { ResultRow } from "./call";
 import { desktopDate } from "./formula";
 import type { ReportPlan } from "./generate";
+import { SYSTEM_SCHEMA } from "../master-program/session";
 import { ReportRefusal } from "./refusal";
 import { num, runReportSql } from "./run";
 
@@ -92,6 +93,34 @@ export async function stockAgeing(loader: Loader, plan: ReportPlan): Promise<Res
     }
   }
 
+  // Stock older than the year: the procedure goes on to the previous year's database (by the product's short code) when the year's additions do not cover the closing.
+  const priorLots = new Map<string, { date: Date; qty: number }[]>();
+  const needy = products.filter((product) => {
+    const closing = round2(num(product.opening) + (movement.get(num(product.prod_key)) ?? 0));
+    return closing > 0 && (lots.get(num(product.prod_key)) ?? []).reduce((sum, lot) => sum + lot.qty, 0) < closing;
+  }).map((product) => toText(product.prod_short).trim());
+  if (needy.length > 0) {
+    const { session } = loader;
+    const prior = (await loader.client.query(
+      `SELECT LOWER(BTRIM(c.co_dataname)) AS schema_name FROM ${SYSTEM_SCHEMA}.company c JOIN ${SYSTEM_SCHEMA}.cname n ON n.c_id = c.co_key JOIN ${SYSTEM_SCHEMA}.year_ac y ON y.year_key = n.c_yearid
+       WHERE c.co_pos = 'A' AND BTRIM(c.name) = $1 AND y.year_start::date = $2::date AND LOWER(BTRIM(c.co_dataname)) <> $3 AND LOWER(BTRIM(c.co_dataname)) ~ '^[a-z_][a-z0-9_]*$'
+         AND EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = LOWER(BTRIM(c.co_dataname))) ORDER BY c.co_key DESC LIMIT 1`,
+      [session.companyName, desktopDate(new Date(call.tarikh1.getFullYear() - 1, call.tarikh1.getMonth(), call.tarikh1.getDate())), session.companySchema])).rows[0];
+    if (prior) {
+      const pdb = `${String(prior.schema_name)}.`;
+      const pQuantity = quantity.replace(/prodled\./g, "pl.").replace(/btrim\(pl\.trn_module\)/g, "btrim(pl.trn_module)");
+      for (const row of (await runReportSql(loader, `SELECT btrim(pm.prod_short) AS short, pl.il_date, (${vinayak ? pQuantity : `CASE WHEN btrim(pl.trn_module) IN ('JOB-OUT', 'JOB-IN') THEN pl.quantity ELSE pl.quantity - pl.ag_qty END`})::numeric AS qty`
+        + ` FROM ${pdb}prod_ledger pl LEFT JOIN ${pdb}product_master pm ON pm.prod_key = pl.prod_id`
+        + ` WHERE pl."TYPE"::numeric <> $1 AND btrim(pm.prod_short) = ANY($2::text[]) AND pl.stock_nat = 'A' AND pm.prod_pos <> 'D' AND pl.il_pos = 'A' AND pl.inventory = 'Y' AND pm.inventory = 'Y'`
+        + ` AND (pl.quantity - pl.ag_qty > 0 OR btrim(pl.trn_module) IN ('JOB-OUT', 'JOB-IN')) ORDER BY pm.prod_short, pl.il_date DESC, pl.il_key DESC`, [noteType, needy])).rows) {
+        const short = toText(row.short);
+        const list = priorLots.get(short);
+        const lot = { date: row.il_date as Date, qty: num(row.qty) };
+        if (list) list.push(lot); else priorLots.set(short, [lot]);
+      }
+    }
+  }
+
   const table = new ResultTable();
   for (const column of ["PROD_KEY", "CODE", "ITEM", ...(boxes ? ["PROD_PACK"] : [])]) table.addColumn(column);
   for (const at of levels) table.addColumn(aliasOf(at));
@@ -125,6 +154,15 @@ export async function stockAgeing(loader: Loader, plan: ReportPlan): Promise<Res
         left = round2(left - lot.qty);
         if (left <= 0) { left = 0; break; }
       }
+      for (const lot of left > 0 ? priorLots.get(toText(product.prod_short).trim()) ?? [] : []) {
+        const age = dayNumber(upto) - dayNumber(lot.date) + 1;
+        row.Days = age;
+        const at = bucketOf(age);
+        const taken = left > lot.qty ? lot.qty : left;
+        if (at >= 0) row[columns[at].name] = round2(num(row[columns[at].name]) + taken);
+        left = round2(left - lot.qty);
+        if (left <= 0) { left = 0; break; }
+      }
       if (left > 0) {
         row.Days = 99999;
         const at = bucketOf(99999);
@@ -148,6 +186,18 @@ export async function stockAgeing(loader: Loader, plan: ReportPlan): Promise<Res
       row.TOTALAMT_ABOVE_90 = num(row.Days) > 90 ? num(row.Amount) : null;
     }
     if (closing !== 0) table.rows.push(row);
+  }
+  // Net Value Require (CHK_NETVAL): the amounts at 75% (68% for the Export items; their Neg_Amt still at 75%), rounded to whole rupees. The procedure leaves the
+  // fourth age amount out of the scaling once there are five or more age columns.
+  if (call.checkQuery.includes("CHK_NETVAL")) {
+    const whole = (value: number) => Math.round(value + Math.sign(value) * 1e-9);
+    for (const row of table.rows) {
+      const exported = toText(row.ITEM).slice(0, 6) === "Export";
+      const rate = exported ? 68 : 75;
+      row.Amount = whole(num(row.Amount) * rate / 100);
+      row.Neg_Amt = whole(num(row.Neg_Amt) * 75 / 100);
+      columns.forEach((column, at) => { if (columns.length >= 5 && at === 3) return; row[column.amount] = whole(num(row[column.amount]) * rate / 100); });
+    }
   }
   return table;
 }

@@ -224,15 +224,15 @@
 
 .menu-branch{position:relative}
 
-.dropdown>.menu-branch>button,.submenu>button,.submenu>.menu-branch>button{
+.dropdown>button,.dropdown>.menu-branch>button,.submenu>button,.submenu>.menu-branch>button{
 
-  width:100%;height:31px;padding:0 8px;display:grid;grid-template-columns:17px 1fr auto;align-items:center;
+  width:100%;height:26px;padding:0 8px;display:grid;grid-template-columns:17px 1fr auto;align-items:center;
 
   gap:6px;border:0;color:#123a76;background:#fff;text-align:left;font-size:13px;font-weight:600;cursor:pointer
 
 }
 
-.dropdown>.menu-branch>button:hover,.submenu>button:hover,.submenu>.menu-branch>button:hover,
+.dropdown>button:hover,.dropdown>.menu-branch>button:hover,.submenu>button:hover,.submenu>.menu-branch>button:hover,
 
 .dropdown>.menu-branch>button:focus,.submenu>button:focus{outline:0;color:#0b2f66;background:#dbe9fb}
 
@@ -4078,3 +4078,14 @@ html .se-head .mp-btn:focus{filter:brightness(1.18) saturate(1.1);box-shadow:0 0
 .rp-panel-on .rp-chart-head{position:sticky;top:-14px;z-index:4;margin:-14px -16px 0;padding:14px 64px 8px 16px;background:linear-gradient(180deg,#f3f6fd,#f3f6fd)}
 .rp-panel-on .rp-chart-head .rp-chart-close{position:absolute;right:14px;top:14px}
 html[data-mtheme="dark"] .rp-panel-on .rp-chart-head{background:#171712}
+
+/* A dropdown taller than the window (MASTER) gets shorter rows so its last row shows (see the menu fit in page.tsx). */
+.dropdown.fit-rows>button,.dropdown.fit-rows>.menu-branch>button,.submenu.fit-rows>button,.submenu.fit-rows>.menu-branch>button{height:var(--menu-row);padding-top:0;padding-bottom:0;line-height:1}
+
+/* Small entry grids: the read-only cells were a pale grey-blue that looked blurred; they read in the same dark text as the editable cells. */
+html .se-grid .mp-row:not(.mp-current-row) .mp-cell.mp-readonly,html .se-grid .mp-readonly{color:#14243a!important}
+html .se-grid .mp-cell{-webkit-font-smoothing:auto;text-rendering:optimizeLegibility}
+
+/* Master grids (update and all masters): the read-only cells were a pale grey-blue that looked blurred; they read in the same dark text as the editable cells. */
+html .mp-screen .mp-row:not(.mp-current-row) .mp-cell.mp-readonly{color:#14243a}
+html .mp-screen .mp-cell{-webkit-font-smoothing:auto;text-rendering:optimizeLegibility}

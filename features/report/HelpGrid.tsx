@@ -250,6 +250,8 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
       case "End": if (event.ctrlKey) { event.preventDefault(); move(rows.length - 1); } return;
       case " ":
       case "Enter": {
+        // Space typed after letters is part of what is being found ("a v s"), not a tick.
+        if (event.key === " " && typed) break;
         event.preventDefault();
         // With rows selected (Shift+click or Shift+↑↓) Space ticks them all, as the cursor row goes.
         if (event.key === " " && isSelectedRange) { const row = rows[at]; if (row && canTick(row)) tickRange(low, high, !ticked.has(rowKey(row))); }

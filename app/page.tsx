@@ -554,6 +554,24 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   useLayoutEffect(() => {
     const fit = () => {
       const margin = 6;
+      // The dropdown itself (MASTER has 22 rows) must show its last row: its rows are made shorter to fit the window, and only a menu that
+      // would still not fit (rows under 20 px) scrolls. Rows are not scrolled when they can be squeezed, so a branch's submenu is not clipped.
+      const dropdown = openMenu !== null ? menuBar.current?.querySelector<HTMLElement>(`[data-menu-panel="${openMenu}"]`) : null;
+      if (dropdown && getComputedStyle(dropdown).position === "absolute") {
+        dropdown.classList.remove("fit-rows");
+        dropdown.style.removeProperty("--menu-row");
+        dropdown.style.maxHeight = "";
+        dropdown.style.overflowY = "";
+        const top = dropdown.getBoundingClientRect().top;
+        const room = window.innerHeight - top - margin;
+        // Its own height, not scrollHeight: an open submenu hangs below it and would make a menu that fits look too tall.
+        if (dropdown.getBoundingClientRect().height > room) {
+          const rows = dropdown.querySelectorAll(":scope > button, :scope > .menu-branch > button").length || 1;
+          const height = Math.min(26, Math.floor((room - 8) / rows));
+          if (height >= 20) { dropdown.style.setProperty("--menu-row", `${height}px`); dropdown.classList.add("fit-rows"); }
+          else { dropdown.style.maxHeight = `${room}px`; dropdown.style.overflowY = "auto"; }
+        }
+      }
       for (const panel of menuBar.current?.querySelectorAll<HTMLElement>(".open-branch > .submenu") ?? []) {
         // The modern view's sidebar opens submenus in place: nothing to move there.
         if (getComputedStyle(panel).position !== "absolute") continue;
@@ -562,9 +580,18 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         panel.style.right = "";
         panel.style.maxHeight = "";
         panel.style.overflowY = "";
+        panel.classList.remove("fit-rows");
+        panel.style.removeProperty("--menu-row");
         let rect = panel.getBoundingClientRect();
         const room = window.innerHeight - 2 * margin;
-        if (rect.height > room) { panel.style.maxHeight = `${room}px`; panel.style.overflowY = "auto"; rect = panel.getBoundingClientRect(); }
+        if (rect.height > room) {
+          // Shorter rows first, so the whole list shows as the MASTER menu does; only a list that still would not fit scrolls.
+          const rows = panel.querySelectorAll(":scope > button, :scope > .menu-branch > button").length || 1;
+          const height = Math.min(26, Math.floor((room - 12) / rows));
+          if (height >= 20) { panel.style.setProperty("--menu-row", `${height}px`); panel.classList.add("fit-rows"); }
+          else { panel.style.maxHeight = `${room}px`; panel.style.overflowY = "auto"; }
+          rect = panel.getBoundingClientRect();
+        }
         const below = rect.bottom - (window.innerHeight - margin);
         if (below > 0) {
           const maxShiftUp = Math.max(0, rect.top - margin);

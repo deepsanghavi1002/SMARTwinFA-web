@@ -105,20 +105,37 @@ export async function checkBeforeSave(loader: Loader, entryId: number, rows: rea
     return "";
   }
   if (entryId !== 54) return "";
-  for (const { values, deleted } of rows) {
-    if (deleted) continue;
-    const planned = number(cellOf(values, "planing"));
-    const short = number(cellOf(values, "PLAN_SORT"));
-    if (!(planned > 0 && short > 0)) continue;
+  // The rows with both a Planing and a Short are checked together: what was produced of every job card is read in one query (the desktop reads it row by row),
+  // then the rows are judged in grid order, so the first that is wrong is the one named.
+  const planned = rows.filter(({ values, deleted }) => !deleted && number(cellOf(values, "planing")) > 0 && number(cellOf(values, "PLAN_SORT")) > 0);
+  if (planned.length === 0) return "";
+  const jobCards = [...new Set(planned.map(({ values }) => cellOf(values, "job_card_no") ?? ""))];
+  const made = new Map<string, number>();
+  for (const row of (await loader.readTable(
+    `select aent.input_job_card as job_card, prodmas.prod_desc as item, sum(prodled.quantity) as qty from ${schema}.prod_ledger prodled left join ${schema}.addon_aentry aent on aent.aona_processid=prodled.process_id left join ${schema}.product_master prodmas on prodmas.prod_key=prodled.prod_id where prodled.il_pos='A' and prodled.trn_module='PROD-FG' and aent.input_job_card = any($1::text[]) group by aent.input_job_card, prodmas.prod_desc`,
+    [jobCards],
+  )) ?? []) made.set(`${String(row.job_card ?? "")}\u0000${String(row.item ?? "")}`, number(String(row.qty ?? "0")));
+  for (const { values } of planned) {
     const jobCard = cellOf(values, "job_card_no") ?? "";
-    const produced = await loader.readTable(
-      `select sum(quantity) as qty from ${schema}.prod_ledger prodled left join ${schema}.addon_aentry aent on aent.aona_processid=prodled.process_id left join ${schema}.product_master prodmas on prodmas.prod_key=prodled.prod_id where prodled.il_pos='A' and trn_module='PROD-FG' and aent.input_job_card=$1 and prodmas.prod_desc=$2`,
-      [jobCard, cellOf(values, "item") ?? ""],
-    );
-    const due = planned - number(String(produced?.[0]?.qty ?? "0"));
+    const short = number(cellOf(values, "PLAN_SORT"));
+    const due = number(cellOf(values, "planing")) - (made.get(`${jobCard}\u0000${cellOf(values, "item") ?? ""}`) ?? 0);
     if (short !== due) return `${short > due ? "Plan Short greater than equal " : "Plan Short less than equal "}${due} Not Allowed for Job Card No : ${jobCard}`;
   }
   return "";
+}
+
+/**
+ * The next Production Planing job card number: one after the highest of the year's plans (the digits of job_card_no), or the year's
+ * first, the last two digits of the year's start and of its end then 0001 (2627 + 0001 for 2026-27).
+ */
+export async function nextJobCard(loader: Loader): Promise<number> {
+  const { session } = loader;
+  const highest = await loader.readTable(
+    `select max(nullif(regexp_replace(job_card_no, '\\D', '', 'g'), '')::numeric) as top from ${session.companySchema}.production_planing where ent_type='PP' and coalesce(job_card_no,'')<>'' and ent_date >= $1`,
+    [formatDesktopDate(session.tarikh1)],
+  );
+  const top = Number(highest?.[0]?.top ?? 0);
+  return top > 0 ? top + 1 : Number(`${String(session.tarikh1.getFullYear()).slice(2)}${String(session.tarikh2.getFullYear()).slice(2)}0001`);
 }
 
 /**
@@ -129,13 +146,7 @@ export async function checkBeforeSave(loader: Loader, entryId: number, rows: rea
  */
 export async function prepareRows(loader: Loader, entryId: number, rows: readonly EditedRow[]): Promise<EditedRow[]> {
   if (entryId !== 35) return [...rows];
-  const { session } = loader;
-  const highest = await loader.readTable(
-    `select max(nullif(regexp_replace(job_card_no, '\\D', '', 'g'), '')::numeric) as top from ${session.companySchema}.production_planing where ent_type='PP' and coalesce(job_card_no,'')<>'' and ent_date >= $1`,
-    [formatDesktopDate(session.tarikh1)],
-  );
-  const top = Number(highest?.[0]?.top ?? 0);
-  let next = top > 0 ? top + 1 : Number(`${String(session.tarikh1.getFullYear()).slice(2)}${String(session.tarikh2.getFullYear()).slice(2)}0001`);
+  let next = await nextJobCard(loader);
   return rows.map((row) => {
     if (row.deleted || number(cellOf(row.values, "planing")) <= 0 || (cellOf(row.values, "job_card_no") ?? "").trim() !== "") return row;
     const key = Object.keys(row.values).find((name) => name.toLowerCase() === "job_card_no") ?? "job_card_no";

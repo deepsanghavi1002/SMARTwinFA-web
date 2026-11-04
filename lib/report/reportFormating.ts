@@ -3981,7 +3981,8 @@ async function finishProductCosting(loader: Loader, plan: ReportPlan): Promise<R
  * the purchase vouchers (book 13) of the period, with the purchase order line it was received against (PROD_LINK: the order's date,
  * number, quantity, rate, unit and delivery date), the days from the party's invoice to the delivery date, the rate difference
  * (order rate less received rate), the line's GST % and amount, and the transport details of the entry. The voucher's total is on its
- * first line only (Sr_No is the line's place within the entry and party).
+ * first line only (Sr_No is the line's place within the entry and party, counted in the order the procedure fills its table: entry date, entry
+ * number, then PO number with the lines that have none first, as SQL Server sorts a NULL; the entry numbers are sorted as text, any case).
  *
  * The procedure joins the GST slab rows twice (once for the % and once for the amount) and numbers its rows before DISTINCT; here the
  * GST rows are read once, and the rows are numbered in the one statement, which is what makes it quick on a year's purchases.
@@ -3991,30 +3992,34 @@ async function dailyIncoming(loader: Loader, plan: ReportPlan): Promise<ResultTa
   const db = call.database;
   const iso = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   const shown = (column: string) => `to_char(${column}, 'DD-Mon-YY')`;
-  const sql = `WITH GST AS (
-      SELECT ledext.il_id, max(CASE WHEN idoptmst.opt_desc = 'IGST' THEN ledext.slab_perc ELSE ledext.slab_perc * 2 END) AS gst_perc,
-             max(CASE WHEN idoptmst.opt_desc = 'IGST' THEN ledext.slab_amt::numeric ELSE ledext.slab_amt::numeric * 2 END) AS gst_amt
+  // The GST % and the GST amount are each joined on their own, as the procedure does, so a line with two GST rows comes out once for each pairing (and once more for
+  // each ADDON_DATA row of its product): the old report's row count has those repeats.
+  const gstRows = (column: string, alias: string) => `SELECT ledext.il_id, CASE WHEN idoptmst.opt_desc = 'IGST' THEN ${column} ELSE ${column} * 2 END AS ${alias}
         FROM ${db}LEDGER_EXT ledext
         JOIN ${db}SLAB_MASTER slabmst ON ledext.slab_id = slabmst.slab_key
         JOIN ${db}TAX_MASTER taxmst ON ledext.tax_id = taxmst.tax_rec
         JOIN ${db}IDOPT_MASTER idoptmst ON idoptmst.idopt_key = nullif(taxmst.tax_type,'')::int
-       WHERE ledext.tax_id > 0 AND slabmst.slab_link = 0 AND ledext.il_id IS NOT NULL GROUP BY ledext.il_id),
+       WHERE ledext.tax_id > 0 AND slabmst.slab_link = 0 AND ledext.il_id IS NOT NULL`;
+  const sql = `WITH GSTP AS (${gstRows("ledext.slab_perc", "gst_perc")}),
+    GSTA AS (${gstRows("ledext.slab_amt::numeric", "gst_amt")}),
     RECEIVED AS (
       SELECT led.led_key, prodled.il_key, prodled.prod_id, led.doc_date, led.chln_date,
              btrim(led.doc_no1) AS invoice_no, btrim(led.doc_no) AS entry_no, aient.input_pjobcard AS job_card_no,
              ac.name AS party_name, addr.city AS place, prodmas.prod_desc AS item, aient.input_pcweight AS weight,
              prodled.quantity AS recd_qty, prodled.rate::numeric AS recd_rate, prduom.uom_short AS recd_uom, led.amount::numeric AS inv_total_value,
-             GST.gst_perc, GST.gst_amt, aent.input_despatch AS transport_name, aent.input_vehno AS vehicle_no, aent.input_lrno AS lr_no,
+             GSTP.gst_perc, GSTA.gst_amt, aent.input_despatch AS transport_name, aent.input_vehno AS vehicle_no, aent.input_lrno AS lr_no,
              aent.input_lrdate AS lr_date, aent.input_gatekiper AS gate_keeper_no
         FROM ${db}LEDGER led
         LEFT JOIN ${db}PROD_LEDGER prodled ON prodled.led_id = led.led_key
         LEFT JOIN ${db}PRODUCT_MASTER prodmas ON prodmas.prod_key = prodled.prod_id
+        LEFT JOIN ${db}ADDON_DATA adata ON adata.prod_id = prodmas.prod_key
         LEFT JOIN ${db}ADDON_AENTRY aent ON aent.aona_ledid = led.led_key
         LEFT JOIN ${db}ACCOUNT ac ON ac.code = led.code
         LEFT JOIN ${db}ADDRESS addr ON addr.code = ac.code
         LEFT JOIN ${db}PROD_UOM prduom ON prduom.uom_key = prodled.rateuom_id
         LEFT JOIN ${db}ADDON_IENTRY aient ON aient.aoni_il_id = prodled.il_key
-        LEFT JOIN GST ON GST.il_id = prodled.il_key
+        LEFT JOIN GSTP ON GSTP.il_id = prodled.il_key
+        LEFT JOIN GSTA ON GSTA.il_id = prodled.il_key
        WHERE led.doc_date BETWEEN $1 AND $2 AND addr.address_id = 1 AND led.doc_pos <> 'D' AND prodled.il_pos <> 'D' AND led.book = 13),
     ORDERED AS (
       SELECT prdlink.led_rec2, prdlink.iled_rec2, a.il_date AS po_date, btrim(a.full_docno) AS po_no, a.quantity AS po_qty, a.rate::numeric AS po_rate,
@@ -4028,7 +4033,7 @@ async function dailyIncoming(loader: Loader, plan: ReportPlan): Promise<ResultTa
        WHERE b.il_pos = 'A' AND b.stk_module = 'ORD-IN' AND ac.book = 3 AND prdlink.led_rec2 IN (SELECT led_key FROM RECEIVED)),
     JOINED AS (
       SELECT sc.*, tc.po_date, tc.po_no, tc.po_qty, tc.po_rate, tc.po_uom, tc.delivery_date,
-             row_number() OVER (PARTITION BY sc.entry_no, sc.party_name ORDER BY sc.led_key, sc.il_key, tc.po_no) AS line_no
+             row_number() OVER (PARTITION BY sc.entry_no, sc.party_name ORDER BY tc.po_no NULLS FIRST, sc.led_key, sc.il_key) AS line_no
         FROM RECEIVED sc LEFT JOIN ORDERED tc ON sc.prod_id = tc.prod_id AND sc.led_key = tc.led_rec2 AND sc.il_key = tc.iled_rec2)
     SELECT line_no AS "Sr_No", ${shown("chln_date")} AS "Invoice_Date", invoice_no AS "Invoice_No", ${shown("doc_date")} AS "Entry_Date", entry_no AS "Entry_No",
            job_card_no AS "Job_Card_No", ${shown("po_date")} AS "PO_DATE", po_no AS "PO_NO", ${shown("delivery_date")} AS "DELIVERY_DATE",
@@ -4037,7 +4042,7 @@ async function dailyIncoming(loader: Loader, plan: ReportPlan): Promise<ResultTa
            (po_rate - recd_rate) AS "Diff_Rate", recd_uom AS "Recd_Uom", CASE WHEN line_no = 1 THEN inv_total_value ELSE 0 END AS "Inv_Total_Value",
            gst_perc AS "Gst_%", gst_amt AS "Gst_Amt", transport_name AS "Transport_Name", vehicle_no AS "VEHICLE_NO", lr_no AS "LR_NO",
            lr_date AS "LR_DATE", gate_keeper_no AS "Gate_Keeper_No"
-      FROM JOINED ORDER BY doc_date, entry_no, po_no`;
+      FROM JOINED ORDER BY doc_date, lower(entry_no) COLLATE "C", po_no NULLS FIRST, line_no`;
   const result = await runReportSqlHashed(loader, sql, [iso(call.from), iso(call.upto)]);
   const table = tableFromResult(result);
   if (table.has("Sr_No")) table.setKind("Sr_No", "int");

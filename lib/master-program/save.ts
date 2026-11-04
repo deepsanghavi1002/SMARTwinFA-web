@@ -35,6 +35,29 @@ type Row = Record<string, unknown>;
 const field = Loader.field;
 const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
 
+/** The party price masters (party, addon, purchase and product addon rates): all kept in party_rate, a deleted row removed from it. */
+const PARTY_RATE_PROGRAMS = [21, 22, 23, 26, 28, 29, 32, 36, 42];
+const PARTY_RATE_COMBINATION = ["pr_accode", "pr_prodid", "pr_aonsub", "pr_aonsub1", "pr_paraselect", "pr_addless"];
+
+/**
+ * DELETE of one party_rate line: by its key when the row holds one, else by the combination it shows (party, product, addon values,
+ * side, and the date it applies from). Nothing is built for a row that shows none of them, so no other line can go with it.
+ */
+function partyRateDelete(schema: string, values: Readonly<Record<string, string>>): string {
+  const key = toInt(values.pr_key ?? "");
+  if (key > 0) return `DELETE FROM ${schema}.party_rate WHERE pr_key=${key}`;
+  const tests: string[] = [];
+  for (const name of PARTY_RATE_COMBINATION) {
+    if (!(name in values)) continue;
+    const value = (values[name] ?? "").trim();
+    tests.push(value === "" ? `${name} IS NULL` : /^-?\d+$/.test(value) ? `${name}=${value}` : `${name}=${quote(value)}`);
+  }
+  if (!tests.some((test) => /^pr_(accode|prodid|aonsub1?)=/.test(test))) return "";
+  const from = "pr_wefrom" in values ? parseDesktopDate(values.pr_wefrom) : null;
+  if (from) tests.push(`pr_wefrom=${quote(formatDesktopDate(from))}`);
+  return `DELETE FROM ${schema}.party_rate WHERE ${tests.join(" AND ")}`;
+}
+
 /** A row of c1dg_SaveGrid. */
 type SaveRow = {
   mode: "A" | "E" | "D";
@@ -773,6 +796,13 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
       let firstTableHasQuery = false;
       let boolRunDelete = false;
 
+      if (record.deleted && PARTY_RATE_PROGRAMS.includes(programId)) {
+        const sql = partyRateDelete(session.companySchema, record.values);
+        if (sql !== "") { statements.push(sql); await runStatement(client, sql); }
+        keys.push(0);
+        continue;
+      }
+
       for (let i = 0; i < grid.updateTables.length; i += 1) {
         const table = grid.updateTables[i];
         const keyField = await primaryKeyField(loader, table);
@@ -869,7 +899,8 @@ export async function editSave(client: Client, loader: Loader, request: EditSave
                         default: fieldValue = quote(cell);
                       }
                     } else if (source.force_inputtype === "P") {
-                      fieldValue = quote(writePw(backup));
+                      // A password left as it was reaches here as the mask the grid shows; writing that would replace the real password with asterisks.
+                      if (backup.trim() !== "" && !/^\*+$/.test(backup.trim())) fieldValue = quote(writePw(backup));
                     } else {
                       fieldValue = quote(cell);
                       if (programId === 2 && saveRow.field.includes("SUB_NAME")) addonName = fieldValue;

@@ -183,7 +183,8 @@ export async function loadProgram(loader: Loader, programName: string, menuShort
       bound = false;
       let list = first.combo_list;
       if (programId === 25) {
-        list = ({ AD: "ADMIN|USER|EXECUTIVE|AUDITOR|END USER", US: "USER", EX: "EXECUTIVE", AU: "AUDITOR", EN: "END USER" } as Record<string, string>)[session.userType] ?? "";
+        // User Password: each login sees only its own type, and below only its own row.
+        list = ({ AD: "ADMIN", US: "USER", EX: "EXECUTIVE", AU: "AUDITOR", EN: "END USER" } as Record<string, string>)[session.userType] ?? "";
       }
       options = list.split("|").map((text) => ({ text, value: text }));
     }
@@ -272,13 +273,11 @@ async function secondComboOptions(loader: Loader, programId: number, group: Grou
   const value = group.firstCombo.value;
   let temp = comboLeave;
   let temp1 = comboLeave;
-  if (programId === 28) temp = temp1.split("and pr_aonsub=|sys.firstcombovalue| ").join("");
-  else if (programId === 36) temp = temp1.split("and pr_accode=|sys.firstcombovalue| ").join("");
-  else if (programId === 26) temp = temp1.split("|sys.firstcombovalue|").join(value);
-  else temp = temp.split("|sys.firstcombovalue|").join(value);
-  if (programId === 28) temp1 = temp1.split("and pr_aonsub=|sys.firstcombovalue| ").join("");
-  else if (programId === 36) temp1 = temp1.split("and pr_accode=|sys.firstcombovalue| ").join("");
-  else if (programId === 26) temp1 = temp1.split("|sys.firstcombovalue|").join(value);
+  // The party price masters list only the dates party_rate holds for the name chosen in the first combo; with no name yet there is nothing to narrow by.
+  const byName = (text: string) => (value.trim() === "" ? text.split(/and pr_(?:aonsub|accode)=\|sys\.firstcombovalue\| /i).join("") : text.split("|sys.firstcombovalue|").join(value));
+  if ([28, 36].includes(programId)) { temp = byName(temp1); temp1 = temp; }
+  else if (programId === 26) temp = temp1 = byName(temp1);
+  else temp = byName(temp);
 
   const context = loadContext(loader.session, programId, group, { masterGrid: true, ...(await rateAddons(loader, programId)) });
   let rows: Row[] | null;
@@ -296,10 +295,10 @@ async function secondComboOptions(loader: Loader, programId: number, group: Grou
   rows = await loader.readTable(temp);
   if (rows) {
     let options = optionsFrom(rows, "date_range", programId === 50 ? "pl_key" : "pr_key");
-    if (programId !== 28) options = withBlank(options);
+    options = withBlank(options);
     return options;
   }
-  if ([26, 28, 36, 49, 50].includes(programId)) {
+  if ([49, 50].includes(programId)) {
     if (programId === 28) temp1 = temp1.split("and pr_aonsub=|sys.firstcombovalue| ").join("");
     else if (programId === 50) temp1 = temp1.split("and pr_aonfiel1=|sys.firstcombovalue| ").join("");
     else temp1 = temp1.split("and pr_accode=|sys.firstcombovalue| ").join("");
@@ -909,6 +908,13 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
         for (const column of ["trg_key", "trg_value", "last_savedate", "last_savetime"]) record[column] = displayValue(field(match, column));
       }
     }
+    // User Password (25) lists the signed-in login's own row only.
+    if (programId === 25) {
+      records = records.filter((record) => {
+        const key = Object.keys(record).find((name) => name.toLowerCase() === "login_name");
+        return key !== undefined && toText(record[key]).trim().toUpperCase() === session.loginName.trim().toUpperCase();
+      });
+    }
     backup = records.map((record) => ({ ...record }));
 
     // Programs 20 and 25 keep passwords masked; the real value stays on the server.
@@ -917,8 +923,8 @@ export async function loadGroup(loader: Loader, programName: string, group: Grou
       if (passwordColumn) {
         const index = columns.indexOf(passwordColumn);
         const next = columns[index + 1];
-        // Only the ADMIN user is shown the saved passwords (as `__reveal_<column>`, for display); everyone else sees the mask.
-        const admin = session.loginName.trim().toUpperCase() === "ADMIN";
+        // The User master shows the saved passwords (as `__reveal_<column>`, for display) to the ADMIN user only; User Password has just the login's own row, which it may read.
+        const admin = programId === 25 || session.loginName.trim().toUpperCase() === "ADMIN";
         for (let r = 0; r < records.length; r += 1) {
           if (admin) {
             records[r][`__reveal_${passwordColumn.key}`] = readPw(toText(records[r][passwordColumn.key]));
