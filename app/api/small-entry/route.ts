@@ -7,6 +7,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { loadEntry, loadEntryGrid } from "@/lib/small-entry/load";
+import { transferProduct } from "@/lib/small-entry/locationTransfer";
 import { saveEntry, smallEntryLog } from "@/lib/small-entry/save";
 import type { EditedRow, EntryDefinition, EntryOption, EntryState } from "@/lib/small-entry/types";
 import { logError } from "@/lib/log";
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
       switch (body.action) {
         case "entry": {
           const entry = await loadEntry(loader, body.entryName, moduleName);
-          return { entry, warnings: loader.warnings, logFileSpecial: session.flags.logFileSpecial, companyName: session.companyName, userName: session.loginName, yearStart: session.tarikh1.toISOString() };
+          return { entry, warnings: loader.warnings, logFileSpecial: session.flags.logFileSpecial, companyName: session.companyName, userName: session.loginName, yearStart: session.tarikh1.toISOString(), yearEnd: session.tarikh2.toISOString() };
         }
         case "grid": {
           const def = await loadEntry(loader, body.entryName, moduleName);
@@ -94,6 +95,15 @@ export async function POST(request: Request) {
           const rows = (await client.query(`SELECT closing FROM ${session.companySchema}.ac_balance WHERE code = $1 AND year_id = $2`, [Number(body.code) || 0, session.yearId])).rows as { closing: string | number | null }[];
           return { closing: Number(rows[0]?.closing ?? 0) };
         }
+        // F7 on the entries that keep a document with the row (Small_Entry KeyUp): the first file stored for the row's process.
+        case "document": {
+          const row = (await client.query(`SELECT document_path, document_image FROM ${session.companySchema}_image.document_upload WHERE entry_mode = 'P' AND entry_id = $1 ORDER BY doc_image_key LIMIT 1`, [Number(body.processKey) || 0])).rows[0] as { document_path: string | null; document_image: Buffer | null } | undefined;
+          if (!row || !(row.document_image instanceof Buffer) || row.document_image.length === 0) throw new Error("No document is stored for this row");
+          const name = String(row.document_path ?? "").trim().split(/[\\/]/).pop() || "document";
+          return { document: { name, type: /\.pdf$/i.test(name) ? "application/pdf" : "image/jpeg", data: row.document_image.toString("base64") } };
+        }
+        // Location Transfer: the packing of the product a grid line names (Cartoon x packing = Quantity).
+        case "pack": return { pack: await transferProduct(loader, String(body.description ?? "")) };
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);
       }

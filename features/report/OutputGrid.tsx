@@ -8,6 +8,7 @@ import type { OutputColumn, OutputRow, ReportOutput } from "../../lib/report/typ
 import { ArrangeColumns } from "../grid/ArrangeColumns";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { filterHolds, sortedDistinct, statsOf } from "../grid/filter";
+import { headCurrent } from "../grid/headCursor";
 import type { ColumnStats } from "../grid/filter";
 import { exportTableFrom } from "../grid/exportTable";
 import { FoundText } from "../grid/FoundText";
@@ -1147,7 +1148,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                 <div
                   key={column.key}
                   data-head={column.key}
-                  className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${isColSelected(col) ? "rp-head-sel" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
+                  className={`mp-cell ${col === at.col ? "rp-head-on" : ""} ${headCurrent(col === at.col)}${isColSelected(col) ? "rp-head-sel" : ""} ${filterable && filters[column.key] ? "mp-filtered" : ""} ${col < frozenCount ? "mp-frozen" : ""} ${col === frozenAt ? "rp-frozen-edge" : ""}`}
                   style={{ width: widthOf(column), textAlign: align(column), ...(col < frozenCount ? { left: lefts[col] } : {}) }}
                   data-tip={`${column.caption} · click to select column · ${filterable ? "▾ to filter · " : ""}right-click for options · drag right edge to size`}
                   onMouseDown={(event) => {

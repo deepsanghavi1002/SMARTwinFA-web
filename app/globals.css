@@ -4078,3 +4078,7 @@ html .se-head .mp-btn:focus{filter:brightness(1.18) saturate(1.1);box-shadow:0 0
 .rp-panel-on .rp-chart-head{position:sticky;top:-14px;z-index:4;margin:-14px -16px 0;padding:14px 64px 8px 16px;background:linear-gradient(180deg,#f3f6fd,#f3f6fd)}
 .rp-panel-on .rp-chart-head .rp-chart-close{position:absolute;right:14px;top:14px}
 html[data-mtheme="dark"] .rp-panel-on .rp-chart-head{background:#171712}
+/* Every grid (master, small entry, entry, report; features/grid/headCursor): the heading of the column the cursor is on is coloured, and goes back to its own colour when the cursor leaves. */
+.mp-head .mp-cell.mp-head-current,.mp-head .mp-cell.mp-head-current.mp-head-readonly:not(.mp-filtered),.ent-grid th.mp-head-current,.ent-grid th.ent-head-readonly.mp-head-current{background:#f4a6c3;color:#4b1528}
+/* An addon column is told apart only while it is the current one: its heading is purple, a standard column's pink. */
+.mp-head .mp-cell.mp-head-current.mp-head-addon:not(.mp-filtered):not(.mp-head-readonly),.mp-head .mp-cell.mp-head-current.mp-head-addon.mp-head-readonly:not(.mp-filtered),.ent-grid th.ent-head-addon.mp-head-current{background:#c3a6ec;color:#2b1650}

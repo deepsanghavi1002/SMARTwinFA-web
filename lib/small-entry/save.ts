@@ -7,6 +7,7 @@ import type { EntryStatement } from "./entrySave";
 import { approvalStatements } from "./approvals";
 import { allocationStatements, OUTSTANDING_ALLOCATION } from "./allocation";
 import { conferenceStatements } from "./conference";
+import { locationTransferStatements } from "./locationTransfer";
 import { ADD_TYPE_ENTRIES, rowSystemValues } from "./lastYear";
 import type { RowValues } from "./lastYear";
 import { overlayEdits, PAYMENT_ENTRIES, PAYMENT_ROW_KEY, paymentStatements } from "./payments";
@@ -449,7 +450,7 @@ export async function saveEntry(loader: Loader, request: SaveRequest): Promise<E
   // Entries the desktop saves in code: Similar Product, the approvals (stock posting) and the
   // payment approvals (vouchers).
   const approval = allocation ?? (await approvalStatements(loader, entryId, request.rows, plan.context)) ?? (await paymentStatements(loader, entryId, request.rows, plan.context))
-    ?? (await conferenceStatements(loader, entryId, request.rows, request.state, request.choices));
+    ?? (await conferenceStatements(loader, entryId, request.rows, request.state, request.choices)) ?? (await locationTransferStatements(loader, entryId, request.rows, request.state, request.choices));
   const custom = approval?.statements ?? entryStatements(entryId, request.rows, keys, request.state);
   if (approval) warnings.push(...approval.messages);
   if (approval && approval.statements.length === 0 && approval.messages.length > 0) return fail(approval.messages.join("\n"));

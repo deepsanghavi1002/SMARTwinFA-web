@@ -8,6 +8,7 @@ import type { HelpColumn, HelpGrid as HelpGridData } from "../../lib/report/type
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { filterHolds, kindOfFieldType, sortedDistinct } from "../grid/filter";
 import { FoundText } from "../grid/FoundText";
+import { headCurrent } from "../grid/headCursor";
 import { findKindOfType, useTypeFind } from "../grid/typeFind";
 import { selectionTotals } from "../grid/totals";
 import { useColumnLayout } from "../grid/useColumnLayout";
@@ -383,7 +384,7 @@ export function HelpGrid({ help, enabled, ticked, rowKey, filter, rowDisabled, o
               <span className="mp-head-label">Tick</span>
             </div>
             {columns.map((column, index) => (
-              <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${index === atCol ? "rp-head-on" : ""}`} style={{ width: layout.widthOf(column), textAlign: cellAlign(column), ...frozenStyle(index) }} title={`${caption(column)} · click to sort · ▾ to filter`}>
+              <div key={column.key} className={`mp-cell ${index < frozenCount ? "mp-frozen" : ""} ${filters[column.key] ? "mp-filtered" : ""} ${index === atCol ? "rp-head-on" : ""} ${headCurrent(index === atCol)}`} style={{ width: layout.widthOf(column), textAlign: cellAlign(column), ...frozenStyle(index) }} title={`${caption(column)} · click to sort · ▾ to filter`}>
                 <button type="button" tabIndex={-1} className="mp-head-label" onClick={() => setSort((current) => (current?.key === column.key && current.dir === "asc" ? { key: column.key, dir: "desc" } : current?.key === column.key ? null : { key: column.key, dir: "asc" }))}>
                   {caption(column)}{sort?.key === column.key && <i>{sort.dir === "asc" ? " ▲" : " ▼"}</i>}
                 </button>

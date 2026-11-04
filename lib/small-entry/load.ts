@@ -39,7 +39,7 @@ export const BLANK_ROWS = 500;
 
 /** Entries whose own branches of Small_Entry.cs are ported; the rest may be viewed, not saved. */
 export const PORTED_ENTRIES: ReadonlySet<number> = new Set([
-  BANK_RECO, 6, 7, 9, 11, 19, 26, 31, ENTRY_APPROVED, 33, 34, 35, 37, 38, 39, 41, 42, 43, 44, 46, 47, 48, 51, 52, 54, 57, 60, 64, 65, 68, 108,
+  BANK_RECO, 6, 7, 9, 11, 19, 26, 31, ENTRY_APPROVED, 33, 34, 35, 37, 38, 39, 41, 42, 43, 44, 46, 47, 48, 51, 52, 54, 57, 60, 64, 65, 68, 108, 115, 116,
 ]);
 
 /** Small_Entry KeyUp: the Delete key removes selected rows in these entries (103 only for an AD user). */
@@ -293,6 +293,11 @@ export async function loadEntry(loader: Loader, entryName: string, menuShortName
     const initial = type === "DT" ? defaultDate(entryId, name, session, now) : type === "LB" ? (options[0]?.text ?? "") : text(row, "defa_fixvalue");
     controls.push({ name, label: text(row, "label_caption"), type, options, compulsory: flag(row, "value_compulsory"), tooltip: text(row, "field_tooltips"), initial });
   }
+  // A From / Upto pair opens with From on the year's first day, whatever the desktop's own default for the entry.
+  if (controls.some((control) => control.name === "dtp_date2")) {
+    const from = controls.findIndex((control) => control.name === "dtp_date");
+    if (from >= 0) controls[from] = { ...controls[from], initial: formatDesktopDate(session.tarikh1) };
+  }
 
   const rights = await readRights(loader.client, session, `Menu-${menuShortName}`);
   return {
@@ -362,9 +367,11 @@ export function addonColumns(fields: readonly Row[], bodyRows: readonly Row[], a
         case "I": {
           if (baseName !== "_addon_input") break;
           const column = `input_${save}`;
-          const mbal = text(addon, "fiel_mbal");
+          // A time of day (End Time) is typed with its colon or point, and a Remark is words: both are text cells (a time is checked as one,
+          // features/grid/timeInput), not numbers, whatever the addon's number setting says.
+          const mbal = /\btime\b|remark/i.test(desc) && text(addon, "fiel_mbal") === "N" ? "T" : text(addon, "fiel_mbal");
           select.push(`${addonFor}.${column}`);
-          body.push({ column, addon: true, row: { ...base, field_name: column, head_label: desc, head_grid: desc, value_compulsory: compulsory, field_type: mbal === "D" ? "D" : mbal === "N" ? "N" : "T", force_inputtype: mbal === "D" ? "D" : "I", number_positiveonly: mbal === "N", decimal_points: mbal === "N" ? 2 : 0, update_grid_align: mbal === "N" ? "R" : "L", update_grid_editable: onlyDisplay ? false : field(base, "update_grid_editable") } });
+          body.push({ column, addon: true, row: { ...base, field_name: column, head_label: desc, head_grid: desc, value_compulsory: compulsory, field_type: mbal === "D" ? "D" : mbal === "N" ? "N" : "T", force_inputtype: mbal === "D" ? "D" : "I", number_positiveonly: mbal === "N", decimal_points: mbal === "N" ? 2 : 0, update_grid_align: mbal === "N" ? "R" : "L", ...(mbal === "D" ? { update_grid_width: 130 } : {}), update_grid_editable: onlyDisplay ? false : field(base, "update_grid_editable") } });
           break;
         }
         case "F": {
