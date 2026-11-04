@@ -5,7 +5,7 @@ import type { ResultRow } from "./call";
 import { desktopDate } from "./formula";
 import type { ReportPlan } from "./generate";
 import { pgFragment } from "./generate";
-import { num, runReportSql } from "./run";
+import { num, runReportSql, runReportSqlHashed } from "./run";
 
 /**
  * 212: STOCK FLOW (REPORT_RPI_STOCK_FLOW, SP_FRT_RPT_RPI_STOCK_FLOW; SPECIAL > Extra Report (RP1) > Stock Flow).
@@ -24,7 +24,7 @@ export async function stockFlow(loader: Loader, plan: ReportPlan): Promise<Resul
   const db = call.database;
   const frag = (sql: string) => pgFragment(sql, plan, loader.session.companySchema);
   const baseWhere = frag(call.where.split("|sys.yearid|").join(call.yearId));
-  const where = whereAnd(whereAnd(baseWhere, "prodbal.prec_flag = 'RP'"), "txt_prodtype <> 'FINISH GOODS'");
+  const where = whereAnd(whereAnd(baseWhere, "prodbal.prec_flag = 'RP'"), "UPPER(BTRIM(txt_prodtype)) <> 'FINISH GOODS'");
   const levels = [0, 1, 2, 3].filter((at) => call.addon[at].trim() !== "");
   const aliasOf = (at: number) => /as\s+"([^"]+)"/i.exec(call.headingAddon[at])?.[1] ?? `ADDON${at + 1}`;
   const uom = (pcs: string, q1: string, q2: string, q3: string, pack: string, weight: string, other: string) => `case when product.rep1_uom = product.pcs_uom then ${pcs} when product.rep1_uom = product.qty1_uom then ${q1} when product.rep1_uom = product.qty2_uom then ${q2}`
@@ -33,7 +33,7 @@ export async function stockFlow(loader: Loader, plan: ReportPlan): Promise<Resul
   // The products with their opening in the report unit.
   const addonSelect = levels.map((at, index) => `, ${call.addon[at].trim()}::text AS a${index}`).join("");
   const opening = uom("prodbal.open_pcs::numeric", "prodbal.open_qty1::numeric", "prodbal.open_qty2::numeric", "prodbal.open_qty3::numeric", "prodbal.open_pack::numeric", "prodbal.open_weight::numeric", "prodbal.open_pcs::numeric");
-  const products = (await runReportSql(loader, `SELECT product.prod_key, product.prod_desc, ${opening} AS open_qty, coalesce(prodbal.excise_rate::numeric, 0) AS rate, product.min_qty, product.lead_days, product.prod_message${addonSelect}`
+  const products = (await runReportSqlHashed(loader, `SELECT product.prod_key, product.prod_desc, ${opening} AS open_qty, coalesce(prodbal.excise_rate::numeric, 0) AS rate, product.min_qty, product.lead_days, product.prod_message${addonSelect}`
     + ` ${frag(call.from_)} ${where}`)).rows;
   const seen = new Set<string>();
   const base = products.filter((row) => {
@@ -51,7 +51,7 @@ export async function stockFlow(loader: Loader, plan: ReportPlan): Promise<Resul
   const done = "prodled.inventory = 'Y'";
   const processed = "prodled.process_id IS NOT NULL";
   const sum = (condition: string, value: string, name: string) => `sum(CASE WHEN ${condition} THEN ${value} ELSE 0 END) AS ${name}`;
-  const flows = (await runReportSql(loader, `SELECT product.prod_key, `
+  const flows = (await runReportSqlHashed(loader, `SELECT product.prod_key, `
     + [
       sum(`prodled.stock_nat = 'A' AND ((${trnModule} = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD' AND proce.ent_approve = 'Yes') OR (${trnModule} = 'PROD-FG' AND proce.ent_approve = 'Yes') OR ${trnModule} = 'PROD-SFG' OR ${trnModule} = 'PROD-MULTI') AND ${done} AND ${processed}`, `(${simple("0")})`, "packing"),
       sum(`prodled.book = 16 AND prodled.stock_nat = 'A' AND ${done} AND prodled.led_id IS NOT NULL`, "(prodled.quantity::numeric - prodled.ag_qty::numeric)", "cr_qty"),
@@ -88,7 +88,7 @@ export async function stockFlow(loader: Loader, plan: ReportPlan): Promise<Resul
   for (const row of (await runReportSql(loader, `SELECT prod_id, full_docno FROM ${db}prod_ledger WHERE btrim(trn_module) = 'MFG-BOM' AND il_pos <> 'D' AND stock_nat = 'A' ORDER BY il_key`)).rows) madeBy.set(num(row.prod_id), toText(row.full_docno));
 
   // Still to make on each job card (planned less made), as the BOM it follows needs.
-  const pending = (await runReportSql(loader, `SELECT prodplan.prod_id, coalesce(sum(prodplan.plan_qty::numeric - coalesce(prodplan.plan_sort, 0)::numeric), 0) - coalesce(pq.production_qty, 0) AS plan_pend FROM ${db}production_planing prodplan`
+  const pending = (await runReportSqlHashed(loader, `SELECT prodplan.prod_id, coalesce(sum(prodplan.plan_qty::numeric - coalesce(prodplan.plan_sort, 0)::numeric), 0) - coalesce(pq.production_qty, 0) AS plan_pend FROM ${db}production_planing prodplan`
     + ` LEFT JOIN (SELECT prodled.prod_id, aent.input_job_card, sum(CASE WHEN prodled.stock_nat = 'A' AND ((btrim(prodled.trn_module) = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD') OR (btrim(prodled.trn_module) = 'PROD-FG' AND proce.ent_approve = 'Yes')`
     + ` OR btrim(prodled.trn_module) = 'PROD-SFG' OR (btrim(prodled.trn_module) = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> '')) AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL THEN (prodled.quantity::numeric - prodled.ag_qty::numeric) ELSE 0 END) AS production_qty`
     + ` FROM ${db}prod_ledger prodled LEFT JOIN ${db}addon_aentry aent ON aent.aona_processid = prodled.process_id LEFT JOIN ${db}process proce ON proce.process_key = prodled.process_id`

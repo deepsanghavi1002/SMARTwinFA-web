@@ -134,35 +134,37 @@ async function dailyPacking(loader: Loader, plan: ReportPlan, db: string, where:
   const plant22 = db.toLowerCase().includes("rishabh_plastic22");
 
   // The plan of each job card and product: the quantity, and what was still to be made before From.
+  const jobKey = (text: unknown) => toText(text).replace(/\s+$/, "").toLowerCase();
   const plans = new Map<string, { lot: number; pending: number }>();
   for (const row of (await runReportSql(loader, `SELECT prodplan.job_card_no, prodplan.prod_id, coalesce(sum(prodplan.plan_qty), 0) AS plan_qty, coalesce(sum(prodplan.plan_qty - coalesce(prodplan.plan_sort, 0)), 0) - coalesce(pq.production_qty, 0) AS plan_pend`
-    + ` FROM ${db}production_planing prodplan LEFT JOIN (SELECT prodled.prod_id, aent.input_job_card, sum(CASE WHEN prodled.stock_nat = 'A' AND ((prodled.trn_module = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD')`
-    + ` OR (prodled.trn_module = 'PROD-FG' AND proce.ent_approve = 'Yes') OR (prodled.trn_module = 'PROD-SFG') OR (prodled.trn_module = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> ''))`
+    + ` FROM ${db}production_planing prodplan LEFT JOIN (SELECT prodled.prod_id, aent.input_job_card, sum(CASE WHEN prodled.stock_nat = 'A' AND ((btrim(prodled.trn_module) = 'SVOU-ADD' AND upper(left(prodled.full_docno, 4)) = 'PROD')`
+    + ` OR (btrim(prodled.trn_module) = 'PROD-FG' AND proce.ent_approve = 'Yes') OR (btrim(prodled.trn_module) = 'PROD-SFG') OR (btrim(prodled.trn_module) = 'PROD-MULTI' AND coalesce(prodled.close_remark, '') <> ''))`
     + ` AND prodled.inventory = 'Y' AND prodled.process_id IS NOT NULL THEN (prodled.quantity - prodled.ag_qty) ELSE 0 END) AS production_qty FROM ${db}prod_ledger prodled`
     + ` LEFT JOIN ${db}addon_aentry aent ON aent.aona_processid = prodled.process_id LEFT JOIN ${db}process proce ON proce.process_key = prodled.process_id`
     + ` WHERE prodled.il_pos = 'A' AND coalesce(aent.input_job_card, '') <> '' AND prodled.il_date < $1 GROUP BY prodled.prod_id, aent.input_job_card) pq ON pq.prod_id = prodplan.prod_id AND pq.input_job_card = prodplan.job_card_no`
     + ` WHERE coalesce(prodplan.job_card_no, '') <> '' GROUP BY prodplan.prod_id, prodplan.job_card_no, pq.production_qty`, [period[0]])).rows) {
-    plans.set(`${toText(row.job_card_no)}\u0000${num(row.prod_id)}`, { lot: num(row.plan_qty), pending: num(row.plan_pend) });
+    plans.set(`${jobKey(row.job_card_no)}\u0000${num(row.prod_id)}`, { lot: num(row.plan_qty), pending: num(row.plan_pend) });
   }
 
   // The entries.
   type Entry = { job: string; date: Date; entryNo: string; row: ResultRow; prodId: number; sr: number; total: number | null; gross: number; rate: number };
   const entries: Entry[] = [];
   for (const row of (await runReportSql(loader, `SELECT prodled.prod_id, prodled.il_date, adata.txt_produnit AS unit, btrim(aent.input_job_card) AS job_card, prodled.full_docno, prodmas.prod_desc, prodled.quantity,`
-    + ` trunc(prodmas.base_pack::numeric) AS base_pack, coalesce(sale.sale_rate, 0) AS rate, adata.txt_prodgroup AS prod_group, adata.txt_prodcat AS category, proce.stk_remark AS remarks`
+    + ` trunc(prodmas.base_pack::numeric) AS base_pack, prodmas.base_pack AS base_pack_raw, coalesce(sale.sale_rate, 0) AS rate, adata.txt_prodgroup AS prod_group, adata.txt_prodcat AS category, proce.stk_remark AS remarks`
     + ` FROM ${db}prod_ledger prodled LEFT JOIN ${db}product_master prodmas ON prodled.prod_id = prodmas.prod_key LEFT JOIN ${db}addon_data adata ON adata.prod_id = prodmas.prod_key`
     + ` LEFT JOIN ${db}addon_aentry aent ON aent.aona_processid = prodled.process_id LEFT JOIN ${db}process proce ON proce.process_key = prodled.process_id ${RATE_OF_DAY(db)}`
     + ` ${where} AND prodled.il_date BETWEEN $1 AND $2 AND prodled.il_pos = 'A' AND proce.il_pos = 'A' AND prodled.stock_nat = 'A' AND btrim(prodled.trn_module) = 'PROD-FG' AND upper(btrim(adata.txt_prodtype)) = 'FINISH GOODS'`, period)).rows) {
     const quantity = num(row.quantity);
     const pack = row.base_pack === null ? 0 : num(row.base_pack);
-    const cartons = pack > 1 ? Math.trunc(Math.trunc(quantity) / pack) : 0;
-    const loose = pack > 1 ? quantity - pack * cartons : 0;
+    const packed = row.base_pack_raw !== null && num(row.base_pack_raw) > 1;
+    const cartons = packed && pack > 0 ? Math.trunc(Math.trunc(quantity) / pack) : 0;
+    const loose = packed ? quantity - pack * cartons : 0;
     const total = r2(cartons * pack + loose);
     const rate = num(row.rate);
     const name = toText(row.prod_desc);
     const netRate = rate !== 0 ? r2(rate * (isExport(name) ? exportRate : other) / 100) : 0;
     const job = toText(row.job_card);
-    const planned = plans.get(`${job}\u0000${num(row.prod_id)}`);
+    const planned = plans.get(`${jobKey(job)}\u0000${num(row.prod_id)}`);
     entries.push({
       job, date: row.il_date as Date, entryNo: toText(row.full_docno), prodId: num(row.prod_id), sr: 0, total, gross: Math.round(total * rate), rate,
       row: { Date: dateStyle6(row.il_date as Date), PACKING_UNIT: toText(row.unit), JOB_CARD: job, FG_ENTRY_NO: toText(row.full_docno), FG_NAME: name, LOT_QTY: planned ? planned.lot : 0, PLAN_QTY: planned ? planned.pending : 0,
@@ -173,7 +175,7 @@ async function dailyPacking(loader: Loader, plan: ReportPlan, db: string, where:
 
   // The numbering within each job card (by date, then entry number), and the running balance of the lot.
   const byJob = new Map<string, Entry[]>();
-  for (const entry of entries) { const list = byJob.get(entry.job) ?? []; list.push(entry); byJob.set(entry.job, list); }
+  for (const entry of entries) { const at = jobKey(entry.job); const list = byJob.get(at) ?? []; list.push(entry); byJob.set(at, list); }
   for (const [job, list] of byJob) {
     if (plant22 && job === "") continue;
     list.sort((a, b) => a.date.getTime() - b.date.getTime() || a.entryNo.localeCompare(b.entryNo));

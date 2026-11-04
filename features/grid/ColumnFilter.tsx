@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { emptyCondition, FILTER_OPS, FILTER_TITLE, filterFromDraft, NO_VALUE_OPS, STATS_OPS } from "./filter";
 import type { ColumnFilter, Condition, FilterDraft, FilterKind } from "./filter";
@@ -90,6 +90,10 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
   const searchBox = useRef<HTMLInputElement>(null);
   const shown = draft !== null && draft.key === columnKey && state.openFilter === columnKey;
   useEffect(() => { if (shown) searchBox.current?.focus({ preventScroll: true }); }, [shown]);
+  // The ticked values as a set: array lookups per value per draw were quadratic on a column of tens of thousands of values.
+  const chosenSet = useMemo(() => new Set(draft?.chosen ?? []), [draft?.chosen]);
+  const needle = search.trim().toLowerCase();
+  const listed = useMemo(() => (needle ? values.filter((value) => (value === "" ? "(blank)" : value).toLowerCase().includes(needle)) : values), [values, needle]);
   if (!draft || draft.key !== columnKey || state.openFilter !== columnKey) return null;
   const place = (element: HTMLDivElement | null) => {
     if (!element) return;
@@ -115,9 +119,6 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
     const shift = Math.min(Math.max(0, box.right - right), Math.max(0, box.left - left));
     element.style.left = `${-shift}px`;
   };
-  const needle = search.trim().toLowerCase();
-  const label = (value: string) => (value === "" ? "(blank)" : value);
-  const listed = needle ? values.filter((value) => label(value).toLowerCase().includes(needle)) : values;
   // A long list draws its first values only (tens of thousands of rows took seconds to draw); the search box narrows it, and Select All still takes every value.
   const drawn = listed.length > LIST_LIMIT ? listed.slice(0, LIST_LIMIT) : listed;
   const change = (update: Partial<FilterDraft>) => setDraft((current) => (current ? { ...current, ...update } : current));
@@ -147,10 +148,10 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
       onMouseDown={(event) => event.stopPropagation()}>
       <input type="search" placeholder="Search values…" aria-label={`Search ${caption} values`} value={search} ref={searchBox} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") apply(columnKey, values, colours); if (event.key === "Escape") { event.preventDefault(); setOpenFilter(null); } }} />
       <label className="mp-filter-all">
-        <input type="checkbox" checked={listed.length > 0 && listed.every((value) => draft.chosen.includes(value))} onChange={(event) => change({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !listed.includes(value)) })} />
+        <input type="checkbox" checked={listed.length > 0 && listed.every((value) => chosenSet.has(value))} onChange={(event) => { const gone = new Set(listed); change({ chosen: event.target.checked ? [...new Set([...draft.chosen, ...listed])] : draft.chosen.filter((value) => !gone.has(value)) }); }} />
         <b>{needle ? "(Select all found)" : "(Select All)"}</b>
         <span className="mp-filter-tip">Shift+click: range</span>
-        <span className="mp-filter-count">{listed.filter((value) => draft.chosen.includes(value)).length}/{listed.length}</span>
+        <span className="mp-filter-count">{listed.filter((value) => chosenSet.has(value)).length}/{listed.length}</span>
       </label>
       <ul>
         {drawn.map((value) => (
@@ -158,19 +159,19 @@ export function FilterPopup({ state, columnKey, caption, kind, values, area, flo
             <button
               type="button"
               role="checkbox"
-              aria-checked={draft.chosen.includes(value)}
+              aria-checked={chosenSet.has(value)}
               className="mp-filter-value"
               onClick={(event) => {
-                const tick = !draft.chosen.includes(value);
+                const tick = !chosenSet.has(value);
                 const from = anchor.current === null ? -1 : listed.indexOf(anchor.current);
                 const to = listed.indexOf(value);
                 // Shift+click: everything from the last clicked value to this one takes this one's new state.
                 const range = event.shiftKey && from >= 0 ? listed.slice(Math.min(from, to), Math.max(from, to) + 1) : [value];
-                change({ chosen: tick ? [...new Set([...draft.chosen, ...range])] : draft.chosen.filter((item) => !range.includes(item)) });
+                change({ chosen: tick ? [...new Set([...draft.chosen, ...range])] : (() => { const gone = new Set(range); return draft.chosen.filter((item) => !gone.has(item)); })() });
                 anchor.current = value;
               }}
             >
-              <span className="mp-filter-box" aria-hidden="true">{draft.chosen.includes(value) ? "✓" : ""}</span>{value === "" ? <em>(blank)</em> : value}
+              <span className="mp-filter-box" aria-hidden="true">{chosenSet.has(value) ? "✓" : ""}</span>{value === "" ? <em>(blank)</em> : value}
             </button>
           </li>
         ))}

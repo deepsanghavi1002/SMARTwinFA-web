@@ -41,7 +41,8 @@ export async function logReport(loader: Loader, plan: ReportPlan): Promise<Resul
   const schema = loader.session.companySchema;
   const log = `${schema}_biglog`;
   const first = call.fcValue;
-  if (first < 1 || first > 7) throw new ReportRefusal("Select what the log is of first.", "Logfile");
+  const all = call.fcText.trim().toUpperCase() === "ALL";
+  if (!all && (first < 1 || first > 7)) throw new ReportRefusal("Select what the log is of first.", "Logfile");
 
   const format = call.formating.toUpperCase();
   const mode = format === "" || format === "ALL" ? "ALL" : format.slice(0, 1);
@@ -61,6 +62,47 @@ export async function logReport(loader: Loader, plan: ReportPlan): Promise<Resul
   const day = (column: string) => `to_char(${column}, 'DD/MM/YYYY')`;
   /** The edit and delete counts of a record over the whole special log of a master (program) id. */
   const masterCounts = (where: string) => `cnt AS (SELECT lmaster_id, lmaster_code, sum(CASE WHEN coalesce(lmaster_mode, '') = 'E' THEN 1 ELSE 0 END) AS edit_count, sum(CASE WHEN coalesce(lmaster_mode, '') = 'D' THEN 1 ELSE 0 END) AS delete_count FROM ${log}.log_allmaster WHERE ${where} GROUP BY lmaster_id, lmaster_code)`;
+
+  // ALL: one line for each kind of log (Account Master, Product Master, each addon, each book's entries and transactions, each report / other entry) and user,
+  // with how many were added, edited and deleted and, for reports, shown on screen, exported and printed. As the procedure's CTEs, joined by UNION (alike lines merge);
+  // the special log reads the company's _biglog, and lines with nothing in them are dropped.
+  if (all) {
+    const span = (column: string) => `${column} >= $1::date AND ${column} < $2::date + 1`;
+    const who = (column: string) => (users !== "" ? ` AND ${column} IN ${users}` : "");
+    const count = (column: string, modeValue: string) => `sum(CASE WHEN coalesce(${column}, '') = '${modeValue}' THEN 1 ELSE 0 END)`;
+    const edits = (column: string, withEdit = true) => `${count(column, "A")} AS add_count, ${withEdit ? count(column, "E") : "0"} AS edit_count, ${count(column, "D")} AS delete_count, 0 AS screen_count, 0 AS export_count, 0 AS print_count`;
+    const bookOf = `LEFT JOIN ${schema}.book_properties bkpro ON ltrim(rtrim(bkpro.stkm_short)) = ltrim(rtrim(proce.stk_module)) LEFT JOIN ${schema}.account ac ON ac.book = bkpro.book_key`;
+    const report = `SELECT led.report_head AS type, us.user_name, 0 AS add_count, 0 AS edit_count, 0 AS delete_count, ${count("lrep_logmode", "S")} AS screen_count, ${count("lrep_logmode", "E")} AS export_count, ${count("lrep_logmode", "P")} AS print_count`
+      + ` FROM ${schema}.log_report lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lrep_loguser LEFT JOIN smart_setup.report_properties led ON led.report_key = lmst.lrep_id WHERE ${span("lrep_logdate")}${who("lmst.lrep_loguser")} GROUP BY led.report_head, us.user_name`;
+    const parts = special
+      ? [
+        `SELECT 'Account Master' AS type, us.user_name, ${edits("lmaster_mode")} FROM ${log}.log_allmaster lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lmaster_user WHERE lmaster_id = 14 AND ${span("lmaster_savedate")}${who("lmst.lmaster_user")} GROUP BY us.user_name`,
+        `SELECT 'Product Master' AS type, us.user_name, ${edits("lmaster_mode")} FROM ${log}.log_allmaster lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lmaster_user WHERE lmaster_id = 8 AND ${span("lmaster_savedate")}${who("lmst.lmaster_user")} GROUP BY us.user_name`,
+        `SELECT afld.fiel_name AS type, us.user_name, ${edits("lmaster_mode")} FROM ${log}.log_allmaster lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lmaster_user LEFT JOIN ${schema}.addon_sub asub ON asub.sub_code = lmst.lmaster_code`
+        + ` LEFT JOIN ${schema}.addon_fld afld ON afld.fiel_key = asub.para_id WHERE ${span("lmaster_savedate")} AND lmaster_id NOT IN (3,4,6,7,8,11,12,13,14,16,18,19,20,22,23,24,25,31,34,35,38,43,45,47,51) AND lmst.lmaster_code > 0${who("lmst.lmaster_user")} GROUP BY afld.fiel_name, us.user_name`,
+        `SELECT ac.name AS type, us.user_name, ${edits("lentry_mode")} FROM ${log}.log_entry lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lentry_user LEFT JOIN ${schema}.process proce ON proce.process_key = lmst.lentry_processid ${bookOf}`
+        + ` WHERE ${span("lentry_savedate")} AND lmst.lentry_processid > 0 AND lmst.lentry_user > 0${who("lmst.lentry_user")} GROUP BY us.user_name, ac.name`,
+        `SELECT ac.name AS type, us.user_name, ${edits("lentry_mode")} FROM ${log}.log_entry lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lentry_user LEFT JOIN ${schema}.ledger led ON led.led_key = lmst.lentry_ledid LEFT JOIN ${schema}.account ac ON ac.code = led.book_code`
+        + ` WHERE ${span("lentry_savedate")} AND lmst.lentry_ledid > 0 AND lmst.lentry_user > 0${who("lmst.lentry_user")} GROUP BY us.user_name, ac.name`,
+        `SELECT led.entry_status_head AS type, us.user_name, ${edits("lsmall_mode", false)} FROM ${log}.log_smallentry lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lsmall_user LEFT JOIN smart_setup.entry_properties led ON led.entry_key = lmst.lsmall_smallid`
+        + ` WHERE ${span("lsmall_savedate")} AND lmst.lsmall_user > 0${who("lmst.lsmall_user")} GROUP BY us.user_name, led.entry_status_head`,
+        report,
+      ]
+      : [
+        `SELECT 'Account Master' AS type, us.user_name, ${edits("lmst_logmode")} FROM ${schema}.log_master lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lmst_loguser WHERE lmst_top_id = 14 AND ${span("lmst_logdate")}${who("lmst.lmst_loguser")} GROUP BY us.user_name`,
+        `SELECT 'Product Master' AS type, us.user_name, ${edits("lmst_logmode")} FROM ${schema}.log_master lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lmst_loguser WHERE lmst_top_id = 8 AND ${span("lmst_logdate")}${who("lmst.lmst_loguser")} GROUP BY us.user_name`,
+        `SELECT afld.fiel_name AS type, us.user_name, ${edits("lmst_logmode")} FROM ${schema}.log_master lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lmst_loguser LEFT JOIN ${schema}.addon_sub asub ON asub.sub_code = lmst.lmst_pk`
+        + ` LEFT JOIN ${schema}.addon_fld afld ON afld.fiel_key = asub.para_id WHERE ${span("lmst_logdate")} AND lmst_top_id NOT IN (8, 14)${who("lmst.lmst_loguser")} GROUP BY afld.fiel_name, us.user_name`,
+        `SELECT ac.name AS type, us.user_name, ${edits("lled_logmode")} FROM ${schema}.log_ledger lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lled_loguser LEFT JOIN ${schema}.ledger led ON led.led_key = lmst.lled_id LEFT JOIN ${schema}.account ac ON led.book_code = ac.code`
+        + ` WHERE ${span("lled_logdate")} AND led.book IN (4,5,6,8,11,13,16,19)${who("lmst.lled_loguser")} GROUP BY ac.name, us.user_name`,
+        `SELECT ac.name AS type, us.user_name, ${edits("lreg_logmode")} FROM ${schema}.log_regtrn lmst LEFT JOIN smart_system.user_master us ON us.user_no = lmst.lreg_loguser LEFT JOIN ${schema}.prod_ledger led ON led.il_key = lmst.lreg_id LEFT JOIN ${schema}.process proce ON led.process_id = proce.process_key ${bookOf}`
+        + ` WHERE ${span("lreg_logdate")} AND led.process_id > 0${who("lmst.lreg_loguser")} GROUP BY ac.name, us.user_name`,
+        report,
+      ];
+    const found = await rows(`SELECT * FROM (${parts.join(" UNION ")}) t${special ? " WHERE coalesce(add_count, 0) <> 0 OR coalesce(edit_count, 0) <> 0 OR coalesce(delete_count, 0) <> 0 OR coalesce(screen_count, 0) <> 0 OR coalesce(export_count, 0) <> 0 OR coalesce(print_count, 0) <> 0" : ""} ORDER BY user_name`);
+    return tableOf({ columns: ["Type", "user_name", "add_count", "edit_count", "delete_count", "screen_count", "export_count", "print_count"],
+      kinds: { add_count: "int", edit_count: "int", delete_count: "int", screen_count: "int", export_count: "int", print_count: "int" }, rows: found });
+  }
 
   // 1: ACCOUNT, 2: PRODUCT (the same log, of master 14 / 8)
   if (first === 1 || first === 2) {

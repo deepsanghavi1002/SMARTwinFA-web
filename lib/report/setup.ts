@@ -366,7 +366,7 @@ export async function loadReport(loader: Loader, reportName: string, menuShortNa
     if (helps.some((help) => help.grid === request.grid)) continue;
     const help = await loadHelp(loader, request.helpId, request.grid, request.frozen);
     let shown = help;
-    if (help && reportKey === 187 && request.grid === "C1HelpProduct") {
+    if (help && (reportKey === 151 || reportKey === 163 || reportKey === 170 || reportKey === 175 || reportKey === 187 || reportKey === 189 || reportKey === 210) && request.grid === "C1HelpProduct") {
       // Stock With Ageing: the product help lists the finish goods only (the product's Type addon).
       const finish = new Set((await loader.readTable(`SELECT DISTINCT prod_id FROM |sys.db|addon_data WHERE UPPER(BTRIM(txt_prodtype)) = 'FINISH GOODS'`) ?? []).map((row) => String(toInt(field(row, "prod_id")))));
       const keyName = help.keyColumn.toLowerCase();

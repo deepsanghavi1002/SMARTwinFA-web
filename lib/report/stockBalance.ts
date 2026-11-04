@@ -3,7 +3,7 @@ import { toText } from "../master-program/legacy";
 import { ResultTable } from "./call";
 import type { ResultRow } from "./call";
 import type { ReportPlan } from "./generate";
-import { num, runReportSql } from "./run";
+import { num, runReportSql, runReportSqlHashed } from "./run";
 
 /**
  * 221 and 222: STOCK BALANCE (REPORT_RPI_STOCK_BALANCE / REPORT_RPI_JOB_CARD_BOM, SP_FRT_RPT_RPI_STOCK_BALANCE; SPECIAL > Extra Report (RP1)).
@@ -56,26 +56,30 @@ export async function stockBalance(loader: Loader, plan: ReportPlan): Promise<Re
   const jobRows: JobRow[] = sheet
     ? (await runReportSql(loader, `SELECT prodplan.prod_id, prodplan.job_card_no, to_char(prodplan.ent_date, 'DD/MM/YYYY') AS entry, prodplan.plan_qty::numeric AS plan_qty FROM ${db}production_planing prodplan WHERE prodplan.ent_type = 'PP' AND prodplan.job_card_no = ANY($1::text[]) ORDER BY prodplan.job_card_no`, [jobList])).rows
       .map((row) => ({ prod: num(row.prod_id), job: toText(row.job_card_no), entry: toText(row.entry), qty: r2(num(row.plan_qty)) }))
-    : (await runReportSql(loader, `SELECT prodplan.prod_id, prodplan.job_card_no, prodplan.plan_qty::numeric AS plan_qty FROM ${db}production_planing prodplan LEFT JOIN ${production}`
-      + ` WHERE prodplan.ent_type = 'PP' AND prodplan.job_card_no = ANY($1::text[]) GROUP BY prodplan.prod_id, prodplan.job_card_no, prodplan.plan_qty, prodplan.plan_sort, pq.production_qty ORDER BY prodplan.job_card_no`, [jobList])).rows
+    // (the procedure's production join only grouped on; it never changes a line, so the full ledger aggregate is not read here)
+    : (await runReportSql(loader, `SELECT prodplan.prod_id, prodplan.job_card_no, prodplan.plan_qty::numeric AS plan_qty FROM ${db}production_planing prodplan`
+      + ` WHERE prodplan.ent_type = 'PP' AND prodplan.job_card_no = ANY($1::text[]) GROUP BY prodplan.prod_id, prodplan.job_card_no, prodplan.plan_qty, prodplan.plan_sort ORDER BY prodplan.job_card_no`, [jobList])).rows
       .map((row) => ({ prod: num(row.prod_id), job: toText(row.job_card_no), entry: "", qty: r2(num(row.plan_qty)) }));
 
   // The components of the BOMs of those products (a BOM is credited to the product of the first BOM it is made by, as the procedure's ranking does).
   const stock = "CASE WHEN prodmas.rep1_uom = prodmas.pcs_uom THEN prodbal.clsg_pcs WHEN prodmas.rep1_uom = prodmas.qty1_uom THEN prodbal.clsg_qty1 WHEN prodmas.rep1_uom = prodmas.qty2_uom THEN prodbal.clsg_qty2"
     + " WHEN prodmas.rep1_uom = prodmas.qty3_uom THEN prodbal.clsg_qty3 WHEN prodmas.rep1_uom = prodmas.pack_uom THEN prodbal.clsg_pack WHEN prodmas.rep1_uom = prodmas.weight_uom THEN prodbal.clsg_weight ELSE prodbal.clsg_pcs END";
-  const ranked = (column: string, partition: string, alias: string) => `LEFT JOIN (SELECT * FROM (SELECT prodl.full_docno, ${column} AS ${alias}, row_number() OVER (PARTITION BY ${partition} ORDER BY ${partition}, prodl.full_docno) AS rn`
-    + ` FROM ${db}product_master prod LEFT JOIN ${db}prod_ledger prodl ON prod.prod_key = prodl.prod_id WHERE btrim(prodl.trn_module) = 'MFG-BOM' AND prod.prod_pos = 'A' AND prodl.il_pos <> 'D' AND prodl.stock_nat = 'A') r WHERE rn = 1) ${alias} ON ${alias}.full_docno = prodled.full_docno`;
   const purchaseOrders = pending
     ? `LEFT JOIN (SELECT pl.prod_id, coalesce(sum(pl.quantity::numeric - pl.ag_qty::numeric), 0) AS pend_purch_order FROM ${db}prod_ledger pl LEFT JOIN ${db}process pr ON pr.process_key = pl.process_id LEFT JOIN ${db}account ac ON ac.code = pr.code`
       + ` WHERE pl.il_pos <> 'D' AND ac.book = 3 AND btrim(pl.trn_module) = 'ORD-IN' AND pl.quantity::numeric - (pl.ag_qty::numeric + coalesce(pl.setof_qty, 0)::numeric) > 0 GROUP BY pl.prod_id) po ON po.prod_id = prodmas.prod_key`
     : "";
   const finished = [...new Set(jobRows.map((row) => row.prod))];
-  const bomRows = (await runReportSql(loader, `SELECT coalesce(finish_prod_id.finish_prod_id, 0) AS finish_prod_id, prodmas.prod_key AS semi_prod_id, finish_goods.finish_goods, prodmas.prod_desc AS semi_finish_prod, prodled.quantity::numeric AS quantity,`
+  // The first BOM document of each product (by key, and by description), read once: finish_prod_id / finish_goods of a BOM document.
+  const firstBom = (column: string, alias: string, only: string) => `${alias} AS (SELECT full_docno, ${column} AS ${alias} FROM (SELECT full_docno, ${column}, row_number() OVER (PARTITION BY ${column} ORDER BY full_docno) AS rn FROM bf) r WHERE rn = 1${only})`;
+  const bomRows = (await runReportSqlHashed(loader, `WITH bf AS MATERIALIZED (SELECT prod.prod_key, prod.prod_desc, prodl.full_docno FROM ${db}product_master prod JOIN ${db}prod_ledger prodl ON prod.prod_key = prodl.prod_id`
+    + ` WHERE btrim(prodl.trn_module) = 'MFG-BOM' AND prod.prod_pos = 'A' AND prodl.il_pos <> 'D' AND prodl.stock_nat = 'A'),`
+    + ` ${firstBom("prod_key", "finish_prod_id", " AND prod_key = ANY($1::int[])")}, ${firstBom("prod_desc", "finish_goods", "")}`
+    + ` SELECT finish_prod_id.finish_prod_id AS finish_prod_id, prodmas.prod_key AS semi_prod_id, finish_goods.finish_goods, prodmas.prod_desc AS semi_finish_prod, prodled.quantity::numeric AS quantity,`
     + ` adata.txt_prodgroup AS prod_group, adata.txt_prodtype AS prod_type, adata.txt_prodcat AS category, (${stock})::numeric AS clsg_qty${pending ? ", coalesce(po.pend_purch_order, 0) AS pend_purch_order" : ""}`
-    + ` FROM ${db}prod_ledger prodled LEFT JOIN ${db}product_master prodmas ON prodmas.prod_key = prodled.prod_id LEFT JOIN ${db}addon_data adata ON prodmas.prod_key = adata.prod_id LEFT JOIN ${db}prod_balance prodbal ON prodmas.prod_key = prodbal.prod_id`
-    + ` ${ranked("prod.prod_key", "prod.prod_key", "finish_prod_id")} ${ranked("prod.prod_desc", "prod.prod_desc", "finish_goods")} ${purchaseOrders}`
-    + ` WHERE btrim(prodled.trn_module) = 'MFG-BOM' AND prodled.il_pos <> 'D' AND prodled.stock_nat = 'L' AND prodmas.prod_pos = 'A' AND prodmas.inventory = 'Y' AND finish_prod_id.finish_prod_id = ANY($1::int[])`
-    + ` AND prodled.full_docno IN (SELECT full_docno FROM ${db}prod_ledger WHERE btrim(trn_module) = 'MFG-BOM' AND il_pos <> 'D' AND stock_nat = 'A') ORDER BY prodled.full_docno`, [finished])).rows;
+    + ` FROM finish_prod_id JOIN ${db}prod_ledger prodled ON prodled.full_docno = finish_prod_id.full_docno AND btrim(prodled.trn_module) = 'MFG-BOM' AND prodled.il_pos <> 'D' AND prodled.stock_nat = 'L'`
+    + ` JOIN ${db}product_master prodmas ON prodmas.prod_key = prodled.prod_id AND prodmas.prod_pos = 'A' AND prodmas.inventory = 'Y' LEFT JOIN finish_goods ON finish_goods.full_docno = prodled.full_docno`
+    + ` LEFT JOIN ${db}addon_data adata ON prodmas.prod_key = adata.prod_id LEFT JOIN ${db}prod_balance prodbal ON prodmas.prod_key = prodbal.prod_id ${purchaseOrders}`
+    + ` ORDER BY prodled.full_docno`, [finished])).rows;
   type Bom = { finish: number; semi: number; goods: string | null; semiName: string | null; quantity: number; group: string | null; type: string | null; category: string | null; closing: number | null; ordered: number };
   const boms = new Map<number, Bom[]>();
   for (const row of bomRows) {
@@ -88,7 +92,7 @@ export async function stockBalance(loader: Loader, plan: ReportPlan): Promise<Re
   // What the pending plans (of all job cards) still need to make of each product, and so of each component.
   const planPending = new Map<number, number>();
   if (pending) {
-    for (const row of (await runReportSql(loader, `SELECT prodplan.prod_id, coalesce(sum(prodplan.plan_qty::numeric - coalesce(prodplan.plan_sort, 0)::numeric), 0) - coalesce(pq.production_qty, 0) AS plan_pend FROM ${db}production_planing prodplan LEFT JOIN ${production}`
+    for (const row of (await runReportSqlHashed(loader, `SELECT prodplan.prod_id, coalesce(sum(prodplan.plan_qty::numeric - coalesce(prodplan.plan_sort, 0)::numeric), 0) - coalesce(pq.production_qty, 0) AS plan_pend FROM ${db}production_planing prodplan LEFT JOIN ${production}`
       + ` WHERE coalesce(prodplan.job_card_no, '') <> '' GROUP BY prodplan.prod_id, prodplan.job_card_no, pq.production_qty`)).rows) if (num(row.plan_pend) > 0) planPending.set(num(row.prod_id), (planPending.get(num(row.prod_id)) ?? 0) + num(row.plan_pend));
   }
   const actual = new Map<number, number>();
