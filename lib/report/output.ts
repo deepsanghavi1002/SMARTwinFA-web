@@ -512,8 +512,15 @@ export async function buildOutput(loader: Loader, plan: ReportPlan, table: Resul
       if (match) { entry.kind = "subtotal"; entry.level = [1, 3, 0][Number(match[1])]; }
     }
   }
-  const rows: OutputRow[] = out.map((entry) => {
-    const values: Record<string, string> = {};
+  // The rows go into the grid's form one by one, and each source row is let go as soon as it is done: a year's lines are hundreds of thousands
+  // of rows, and holding the table, the list of lines and the finished rows all at once is three times the memory (the server's limit is 800 MB).
+  table.rows = [];
+  // Every row's values start from the same list of keys, made by JSON.parse: V8 gives such objects one shared shape, where cells added one by
+  // one under computed keys end up as slow dictionary objects (230,000 rows of 52 columns: 0.9 GB that way, 0.3 GB with a shared shape).
+  const valuesTemplate = JSON.stringify(Object.fromEntries(shown.map((column) => [column.name, ""])));
+  const rows: OutputRow[] = out.map((entry, entryAt) => {
+    out[entryAt] = undefined as never;
+    const values: Record<string, string> = JSON.parse(valuesTemplate);
     const node = entry.kind !== "data";
     const rowType = entry.rowType.toUpperCase();
     for (const column of shown) {

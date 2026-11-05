@@ -2251,7 +2251,10 @@ async function checklistInventory(loader: Loader, plan: ReportPlan): Promise<Res
       + ` WHERE LEDEXT.SLAB_ID IN (${slabKeys.join(",")}) AND LEDEXT.il_id IN (SELECT il_key FROM ${db}PROD_LEDGER WHERE il_date BETWEEN '${desktopDate(call.from)}' AND '${desktopDate(call.upto)}') GROUP BY LEDEXT.il_id) lx on lx.il_id = prodled.il_key` : "");
   const where = `prodled.il_date BETWEEN '${desktopDate(call.from)}' AND '${desktopDate(call.upto)}' and prodmas.prod_pos='A' and prodled.il_pos='A'`
     + (book < 0 ? ` and prodled.inventory='Y'` : ` and ((prodled.book_code is null and prodled."TYPE"=${book}) or (prodled.book_code is not null and prodled.book_code=${Math.trunc(call.fcValue)}))`);
-  const table = tableFromResult(await runReportSql(loader, pgFragment(`SELECT ${select} FROM ${from} WHERE ${where} ORDER BY prodled.il_date, prodled.doc_no1, prodled.full_docno`, plan, loader.session.companySchema)));
+  // A year's lines are hundreds of thousands of rows: the query's own rows become the table's, not a second copy of each.
+  const result = await runReportSql(loader, pgFragment(`SELECT ${select} FROM ${from} WHERE ${where} ORDER BY prodled.il_date, prodled.doc_no1, prodled.full_docno`, plan, loader.session.companySchema));
+  const table = tableFromFields(result.fields);
+  table.rows = result.rows;
   const challan = table.name("CHALLAN_NO");
   if (challan !== undefined) table.numberKinds.delete(challan);
   return table;
