@@ -62,7 +62,7 @@ export async function writeOrders(client: Client, session: MasterSession, compan
   const top = Number(await scalar("last order key", `SELECT coalesce(max(process_key), 0) AS v FROM ${trf}.process`));
 
   await step("orders", `INSERT INTO ${trf}.process (stk_module, code, p_date, doc_no2, p_docseries, full_docno, p_bkdbcode, p_amount, book, stk_remark, entry_for, post_date, il_pos, year_id, entry_no, last_savedate, last_savetime, trf_processkey)`
-    + ` SELECT 'ORD-PURCH', ${account}, led.doc_date, led.doc_no, 'ODi', 'ODi/' || ltrim(rtrim(led.doc_no)), 1, coalesce(led.amount, 0::money), 13, '', 'P', led.doc_date, 'A', ${year}, led.full_docno, now()::date, to_char(now(), 'HH24:MI:SS'), led.led_key`
+    + ` SELECT 'ORD-PURCH', ${account}, led.doc_date, led.doc_no, 'ODi', 'ODi/' || ltrim(rtrim(led.doc_no)), 1, coalesce(led.amount::numeric, 0), 13, '', 'P', led.doc_date, 'A', ${year}, led.full_docno, now()::date, to_char(now(), 'HH24:MI:SS'), led.led_key`
     + ` FROM ${s}.ledger led WHERE led.book = 8 AND led.doc_pos = 'A' AND led.doc_posting = 'P' AND led.doc_date BETWEEN $1::date AND $2::date AND led.code = ${entAccount}`
     + ` AND NOT EXISTS (SELECT 1 FROM ${trf}.process p WHERE p.il_pos = 'A' AND btrim(p.stk_module) = 'ORD-PURCH' AND btrim(p.doc_no2) = btrim(led.doc_no) AND p.code = ${account}) ORDER BY led.doc_no, led.doc_date`, [from, upto]);
   await step("order slabs", `INSERT INTO ${trf}.ledger_ext (process_id, slab_id, slab_amt, s_lastot, form_recd, slab_perc, tax_id, year_id) SELECT p.process_key, e.slab_id, e.slab_amt, e.s_lastot, 'N', 0, null::int, ${year}`
