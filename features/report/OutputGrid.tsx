@@ -18,10 +18,11 @@ import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuItem, GridMenuPlace } from "../grid/GridMenu";
-import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, DARK_GRAND_TOTAL_COLOUR, DARK_LEVEL_COLOURS, MODERN_GRAND_TOTAL_COLOUR, MODERN_LEVEL_COLOURS, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import { closingSubtotal, groupToClose, headingLevelOf, resolveLevelColours, rowLook, DARK_GRAND_TOTAL_COLOUR, DARK_LEVEL_COLOURS, MODERN_GRAND_TOTAL_COLOUR, MODERN_LEVEL_COLOURS, NO_SCREEN_COLOUR } from "../grid/levelStyle";
 import { useModernDark, useModernLight } from "../ui/modernTheme";
 import { useMasterDetails } from "../entry/useMasterDetails";
-import { askHideRows, parseAskPlan } from "../../lib/report/askFilter";
+import { askHideRows, columnByPrefix, parsePeriodAsk, parseAskPlan } from "../../lib/report/askFilter";
+import type { PeriodAsk } from "../../lib/report/askFilter";
 import type { RowKind, RowLook } from "../grid/levelStyle";
 import { LogViewer } from "../grid/LogViewer";
 import type { LogTable } from "../grid/LogViewer";
@@ -32,7 +33,7 @@ import { HotkeyLabel } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { messageBox } from "../ui/MessageBox";
 import { ReportChart } from "./ReportChart";
-import { applyGroupBy, removeGroups } from "../../lib/report/groupBy";
+import { applyGroupBy, dateColumns, removeGroups, specCaption } from "../../lib/report/groupBy";
 import type { GroupSpec } from "../../lib/report/groupBy";
 import { BudgetPanel } from "./BudgetPanel";
 import { GrowthPanel } from "./GrowthPanel";
@@ -98,10 +99,11 @@ const ASK_HELP = [
   "• 'parti -#clos' is not zero   (the Closing Balance line)   ·   'parti -open' is zero   (without #, only that line is shown)",
   "• '* creditor'   (the first group, by its stars)   ·   '** alfa'   (the second group)",
   "• 'date' is may2026, '* debtors', '** -closing' less than zero",
+  "• A summary by date (the Group By button's own): monthly summary · weekly · daily · 15 days · quarterly · half yearly · yearly · 'date' by month  (say 'no summary' to go back)",
   "",
   "Or in plain words: closing balance is zero · only debtors with closing balance -ve · date only of may2026",
 ].join("\n");
-const TREE_KEYS = "F6 : Create Tree / F4 : Remove Tree";
+const TREE_KEYS = "Ctrl+Enter : Close This Group / F6 : Close All / Enter : Open-Close Line / F4 : Remove Tree";
 const GRID_KEYS = "F6 : Create Tree F4 : Remove Tree";
 
 type Point = { row: number; col: number };
@@ -326,6 +328,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   /** The ask bar: the rows of the ledgers a typed sentence took off (their index in output.rows), kept with the report it was asked of. */
   const [asked, setAsked] = useState<{ forOutput: ReportOutput; hide: ReadonlySet<number>; text: string } | null>(null);
   const [askText, setAskText] = useState("");
+  /** A summary by period asked for in the bar: once its Group By is applied, the tree closes every group to its line (one line to a month). */
+  const collapseAfterGroup = useRef(false);
   const askHide = asked?.forOutput === output ? asked.hide : NO_ROWS;
   /** What every print, preview, PDF, Excel and CSV of a report the ask bar has filtered says at its foot, so no one takes it for the whole report. */
   const askNote = asked?.forOutput === output && asked.hide.size > 0 ? `AI filter: ${asked.text}` : "";
@@ -637,6 +641,23 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   };
 
   const toggleNode = (index: number) => setClosed((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
+  /**
+   * Ctrl+Enter in the tree: close the group the cursor is in without going down to its subtotal line (which sits after its entries). On an entry
+   * it closes the entry's group (a month); on an open subtotal line, that line; on a line already closed, the group around it (so pressing it
+   * again closes outwards). The cursor lands on the line the group is now closed to.
+   */
+  const closeGroupAround = () => {
+    const entry = shown[at.row];
+    if (!entry) return;
+    const target = groupToClose(entry.index, entry.row.kind === "subtotal" && !closed.has(entry.index), groupStart, closed);
+    if (target < 0) return;
+    const first = groupStart.get(target) ?? target;
+    // Everything before the group stays on screen, so the closed line is the next row after them.
+    const row = shown.filter((visible) => visible.index < first).length;
+    setClosed((current) => new Set(current).add(target));
+    setCursor({ row, col: at.col });
+    setSelEnd(null);
+  };
   const showLevel = (level: number) => setClosed(new Set(output.rows.flatMap((row, index) => (row.kind === "subtotal" && row.level >= level ? [index] : []))));
   const resetView = () => { setTree(false); setClosed(new Set()); setCursor({ row: 0, col: 0 }); setSelEnd(null); setPicked(new Set()); setBorders(new Set()); setDrawing(false); setHeaderSelected(false); };
   // A pivot named in words is worked out once, on the first run that has the columns it names, and shown at once.
@@ -670,6 +691,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     onStatus({ hotKeys: TREE_KEYS, message: "Click ⊞ / ⊟ (or Enter on a subtotal) to open or close a group" });
     scroller.current?.focus();
   };
+  // "monthly summary": the Group By is applied first (it needs a render), then the tree (the Create Tree button's own logic) folds it to one line per period.
+  useEffect(() => {
+    if (!collapseAfterGroup.current || groupSpecs.length === 0 || !output.subtotals || output.groups.length === 0) return;
+    collapseAfterGroup.current = false;
+    void createTree();
+  });
 
   /** Btn_Group_Create_Click / ResetGroupReport: "Create Group ?" Yes shows the entries for grouping; No goes back to the report. */
   const createGroup = async () => {
@@ -889,10 +916,37 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     setAskText("");
     onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: "Showing the whole report" });
   };
+  /**
+   * "monthly summary", "weekly", "15 days" ... : the Group By button's job. The bar only reads the period and then makes the choice the Group By
+   * panel makes when it is applied (setGroupSpecs, resetView), so the grouping, its subtotals and its totals are that button's own.
+   */
+  const askPeriod = async (period: PeriodAsk) => {
+    if (period.clear) {
+      collapseAfterGroup.current = false;
+      setGroupSpecs([]);
+      resetView();
+      onStatus({ hotKeys: GRID_KEYS, message: "Summary taken off: the report as it was" });
+      return;
+    }
+    const dates = dateColumns(served);
+    const column = period.column === null ? dates[0] : columnByPrefix(dates, period.column);
+    if (!column) {
+      await messageBox.alert(dates.length === 0 ? "This report has no date column to summarise by" : `No date column begins with '${period.column}'. This report's date columns: ${dates.map((date) => date.caption).join(", ")}`, "Ask the report", "info");
+      return;
+    }
+    const spec: GroupSpec = { kind: "period", key: column.key, unit: period.unit };
+    setGroupSpecs([spec]);
+    resetView();
+    setPanelMax(false);
+    collapseAfterGroup.current = true;
+    onStatus({ hotKeys: GRID_KEYS, message: `Group By : ${specCaption(spec, served.columns)}` });
+  };
   /** The ask bar: the sentence is read into a condition, the ledgers that do not fit come off the report on screen, and the totals are worked out again. */
   const runAsk = async () => {
     const sentence = askText.trim();
     if (sentence === "") { if (asked) clearAsk(); return; }
+    const period = parsePeriodAsk(sentence);
+    if (period) { await askPeriod(period); return; }
     const plan = parseAskPlan(sentence);
     if (plan !== null && "error" in plan) { await messageBox.alert(plan.error, "Ask the report", "info"); return; }
     if (plan === null) {
@@ -900,7 +954,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       return;
     }
     const tickKeys = Object.keys(output.headingCaptions);
-    const result = askHideRows(output, plan, { isHeading: (row) => structural(row) && row.rowType !== "GAP", headingLevel: (row) => headingLevelOf(row.rowType, output.headingLevels, tickKeys), groupStart });
+    const result = askHideRows(output, plan, { isHeading: (row) => structural(row) && row.rowType !== "GAP", headingLevel: (row) => headingLevelOf(row.rowType, output.headingLevels, tickKeys), groupStart, closedLines: tree ? closed : NO_ROWS });
     if ("problem" in result) { await messageBox.alert(result.problem, "Ask the report", "info"); return; }
     // What the export says is the question written out in full (every column by its whole heading, the words spelt right), not the letters typed.
     setAsked({ forOutput: output, hide: result.hide, text: result.text });
@@ -994,6 +1048,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         return;
       case "Enter": {
         const entry = shown[at.row];
+        if (tree && (event.ctrlKey || event.metaKey)) { event.preventDefault(); closeGroupAround(); return; }
         if (tree && entry?.row.kind === "subtotal") { event.preventDefault(); toggleNode(entry.index); return; }
         // Zoom: the voucher of the row opens in its own screen, an account row (Trial Balance, Sales with Expense) in its Ledger, a Profit and Loss
         // cell with an account's name in that account's Ledger.
@@ -1431,7 +1486,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                   onChange={(event) => setAskText(event.target.value)}
                   placeholder="Ask: 'date' between may and jun2026, 'parti -closing bal' is zero"
                   aria-label="Ask the report"
-                  title={"Name a column in single quotes (its first letters, at least 4 if the heading is longer), then a condition in English; a comma means and.\n'date' between may and jun2026 · 'debit' greater than 10000 · 'parti' contains 'sale'\n'parti -closing bal' is zero (each party's closing balance) · '* creditor' (first group) · '** alfa' (second group)\n'parti -#open' is less than zero (# = the ledger's opening balance decides; its whole ledger is shown)\nOnly the report on screen is filtered; the totals are worked out again."}
+                  title={"Name a column in single quotes (its first letters, at least 4 if the heading is longer), then a condition in English; a comma means and.\n'date' between may and jun2026 · 'debit' greater than 10000 · 'parti' contains 'sale'\n'parti -closing bal' is zero (each party's closing balance) · '* creditor' (first group) · '** alfa' (second group)\n'parti -#open' is less than zero (# = the ledger's opening balance decides; its whole ledger is shown)\nmonthly summary · weekly · daily · 15 days · quarterly · half yearly · yearly (the Group By button's own; 'no summary' goes back)\nOnly the report on screen is filtered; the totals are worked out again."}
                 />
                 {askHide.size > 0 && <button type="button" className="rp-ask-clear" onClick={clearAsk} title="Show the whole report again" aria-label="Show the whole report again">✕</button>}
               </form>

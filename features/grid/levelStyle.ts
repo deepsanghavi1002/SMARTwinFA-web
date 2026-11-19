@@ -120,3 +120,20 @@ export function closingSubtotal(rows: readonly { kind: string; level: number }[]
   }
   return -1;
 }
+
+/**
+ * The tree group to close for the row the cursor is on (Ctrl+Enter), so a long open group need not be scrolled to its subtotal line, which sits
+ * after its entries. On an open subtotal line: that line. Otherwise the smallest group around the row that is still open (so on a line already
+ * closed it is the group outside it, and pressing again closes outwards). -1 when there is none.
+ */
+export function groupToClose(rowIndex: number, isOpenSubtotal: boolean, groupStart: ReadonlyMap<number, number>, closed: ReadonlySet<number>): number {
+  if (isOpenSubtotal) return rowIndex;
+  let target = -1;
+  let size = Infinity;
+  for (const [subtotal, start] of groupStart) {
+    if (closed.has(subtotal) || start > rowIndex || rowIndex >= subtotal || subtotal - start >= size) continue;
+    size = subtotal - start;
+    target = subtotal;
+  }
+  return target;
+}

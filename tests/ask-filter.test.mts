@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { amountColumnOf, askHideRows, closingColumnsOf, columnByPrefix, dateColumnOf, parseAsk, parseAskPlan, readValueCondition } from "../lib/report/askFilter.ts";
+import { amountColumnOf, askHideRows, closingColumnsOf, columnByPrefix, dateColumnOf, parseAsk, parseAskPlan, parsePeriodAsk, readValueCondition } from "../lib/report/askFilter.ts";
 
 test("a sentence is read into a sign, an amount and names", () => {
   assert.deepEqual(parseAsk("only closing balance is zero")?.amount, { op: "zero", a: 0, b: 0 });
@@ -332,4 +332,67 @@ test("a report with no groups is asked about its rows", () => {
   assert.ok("problem" in stars && /need a report with groups/.test(stars.problem));
   const closing = askHideRows(flat, planOf("closing balance is zero"), here);
   assert.ok("problem" in closing && /has none/.test(closing.problem));
+});
+
+test("in the tree a closed line is what is on screen: its own Debit / Credit are tested; a blank figure holds no amount", () => {
+  // Three parties, each shown as one closed line: Alfa 43,142 / 43,142, Beta 2,87,69,912 / 1,92,80,730, Gamma 0 / 5,892 (their entries are many small ones).
+  const tree = { columns: [column("NAME", "text"), column("DATE", "date"), column("DEBIT", "number"), column("CREDIT", "number")], rows: [
+    row("data", 0, "BOOK", { NAME: "* DEBTORS LEDGER" }),
+    row("data", 0, "AC", { NAME: "** Alfa" }), row("data", 0, "LED", { DATE: "10-May-2026", DEBIT: "43,142.00" }), row("data", 0, "LED", { DATE: "11-May-2026", CREDIT: "43,142.00" }), row("subtotal", 1, "", { NAME: "** Subtotal For : Alfa", DEBIT: "43,142.00", CREDIT: "43,142.00" }),
+    row("data", 0, "AC", { NAME: "** Beta" }), row("data", 0, "LED", { DATE: "10-Jun-2026", DEBIT: "40,000.00" }), row("data", 0, "LED", { DATE: "11-Jun-2026", DEBIT: "40,000.00" }), row("data", 0, "LED", { DATE: "12-Jun-2026", CREDIT: "100.00" }), row("subtotal", 1, "", { NAME: "** Subtotal For : Beta", DEBIT: "2,87,69,912.00", CREDIT: "1,92,80,730.00" }),
+    row("data", 0, "AC", { NAME: "** Gamma" }), row("data", 0, "LED", { DATE: "03-May-2026", CREDIT: "5,892.00" }), row("subtotal", 1, "", { NAME: "** Subtotal For : Gamma", DEBIT: "0.00", CREDIT: "5,892.00" }),
+    row("subtotal", 0, "", { NAME: "* Subtotal For : DEBTORS LEDGER" }),
+  ] } as never;
+  const start = new Map([[4, 1], [9, 5], [12, 10], [13, 0]]);
+  const closed = new Set([4, 9, 12]);
+  const open = { ...context, groupStart: start };
+  const shut = { ...open, closedLines: closed };
+  const run = (sentence: string, where: typeof open) => { const result = askHideRows(tree, planOf(sentence), where); if ("problem" in result) assert.fail(result.problem); return result; };
+  // On the closed lines: Alfa (43,142) and Gamma (0.00) are below 50,000, Beta's line (2,87,69,912) is not.
+  const below = run("'debit' below 50000", shut);
+  assert.deepEqual([below.kept, below.total], [2, 3]);
+  assert.ok(below.hide.has(5) && below.hide.has(9) && !below.hide.has(1) && !below.hide.has(10));
+  assert.equal(run("debit below 50000", shut).kept, 2, "the same in plain words");
+  assert.equal(run("'credit' greater than 100000", shut).kept, 1, "only Beta's line is over a lakh");
+  assert.equal(run("'debit' is zero", shut).kept, 1, "0.00 is a zero amount");
+  // With the groups open, the entries are tested, and an entry with no debit holds no amount: Alfa's 43,142 debit is the only one under 50,000... and Beta's two 40,000
+  const entries = run("'debit' below 50000", open);
+  assert.deepEqual([entries.kept, entries.total], [2, 3], "Gamma has no debit entry at all, so it goes");
+  assert.ok(!entries.hide.has(2) && entries.hide.has(3), "Alfa's credit entry (blank debit) is not a 'debit below 50000'");
+  // a date is not on the closed line, so it is tested on the entries (the line itself stays, as the tree shows it)
+  assert.equal(run("'debit' below 50000, 'date' is may2026", shut).kept, 2, "Alfa and Gamma: their lines fit and each has a May entry");
+});
+
+test("a summary by date period is read for the Group By button; anything else is left to the filters", () => {
+  const unit = (sentence: string) => { const period = parsePeriodAsk(sentence); return period && !period.clear ? period.unit : period; };
+  assert.equal(unit("monthly summary"), "month");
+  assert.equal(unit("summary by month"), "month");
+  assert.equal(unit("month wise"), "month");
+  assert.equal(unit("show me weekly"), "week");
+  assert.equal(unit("daily"), "day");
+  assert.equal(unit("date wise summary"), "day");
+  assert.equal(unit("15 days summary"), "fifteen");
+  assert.equal(unit("fortnightly"), "fifteen");
+  assert.equal(unit("4 week month"), "fourweek");
+  assert.equal(unit("quarterly summary"), "quarter");
+  assert.equal(unit("half yearly"), "half");
+  assert.equal(unit("half-yearly summary"), "half");
+  assert.equal(unit("yearly"), "year");
+  assert.equal(unit("I want monthly summary of the report"), "month");
+  assert.deepEqual(parsePeriodAsk("'date' by month"), { clear: false, unit: "month", column: "date" });
+  assert.deepEqual(parsePeriodAsk("monthly summary of 'doc date'"), { clear: false, unit: "month", column: "doc date" });
+  assert.deepEqual(parsePeriodAsk("monthly"), { clear: false, unit: "month", column: null });
+  assert.deepEqual(parsePeriodAsk("no summary"), { clear: true });
+  assert.deepEqual(parsePeriodAsk("remove group by"), { clear: true });
+  assert.deepEqual(parsePeriodAsk("ungroup"), { clear: true });
+  // not a period ask: these are filters (or have more in them than a period)
+  assert.equal(parsePeriodAsk("date only of may2026"), null);
+  assert.equal(parsePeriodAsk("'date' is this month"), null);
+  assert.equal(parsePeriodAsk("last month"), null);
+  assert.equal(parsePeriodAsk("closing balance is zero"), null);
+  assert.equal(parsePeriodAsk("'date' between may and jun2026"), null);
+  assert.equal(parsePeriodAsk("debit above 10000 monthly"), null, "a filter and a period together are not read as a period");
+  assert.equal(parsePeriodAsk("'debit' below 50000, 'date' monthly"), null);
+  assert.equal(parsePeriodAsk("yesterday"), null);
+  assert.equal(parsePeriodAsk("market traders"), null);
 });

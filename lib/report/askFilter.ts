@@ -1,3 +1,4 @@
+import type { PeriodUnit } from "./groupBy.ts";
 import type { OutputColumn, OutputRow, ReportOutput } from "./types.ts";
 
 /**
@@ -245,6 +246,11 @@ export type AskContext = Readonly<{
   headingLevel: (row: OutputRow) => number;
   /** Where each subtotal's group starts (row index of the subtotal -> row index of the group's first row). */
   groupStart: ReadonlyMap<number, number>;
+  /**
+   * The subtotal lines the tree has closed (their entries are out of sight): such a line is what the screen shows for its group, so a test on a
+   * figure the line shows (its Debit, its Credit) is made on the line, not on the hidden entries.
+   */
+  closedLines?: ReadonlySet<number>;
 }>;
 
 const headingText = (row: OutputRow) => (Object.values(row.values).map((value) => value.trim()).find((value) => value !== "") ?? "").replace(/^[*\s]+/, "");
@@ -303,7 +309,6 @@ function hideByQuery(output: ReportOutput, query: AskQuery, context: AskContext)
     if (!key) return { problem: `This report has no ${condition.column} column` };
     amountKeys.set(condition, key);
   }
-  const rowLevel = dateKey !== null || query.columns.length > 0;
   const signed = (row: OutputRow): number | null => {
     if (!closingColumns) return null;
     const raw = (row.values[closingColumns.closing] ?? "").replace(/[,\s]/g, "");
@@ -311,14 +316,18 @@ function hideByQuery(output: ReportOutput, query: AskQuery, context: AskContext)
     const side = closingColumns.side ? (row.values[closingColumns.side] ?? "").trim().toUpperCase() : "";
     return side === "CR" ? -Math.abs(Number(raw)) : side === "DR" ? Math.abs(Number(raw)) : Number(raw);
   };
-  const entryFits = (row: OutputRow): boolean => {
-    if (query.dates && dateKey && !dateFits(query.dates, row.values[dateKey] ?? "")) return false;
+  /** The Debit / Credit tests on a row (an entry, or a closed group's subtotal line). A blank figure holds no amount: only "zero" matches it. */
+  const amountsFit = (row: OutputRow): boolean => {
     for (const condition of query.columns) {
       const raw = (row.values[amountKeys.get(condition) ?? ""] ?? "").replace(/[,\s]/g, "");
-      const value = raw === "" || !Number.isFinite(Number(raw)) ? 0 : Number(raw);
-      if (!fits(condition.sign, condition.amount, value)) return false;
+      if (raw === "") { if (condition.amount?.op === "zero" && condition.sign === null) continue; return false; }
+      if (!Number.isFinite(Number(raw)) || !fits(condition.sign, condition.amount, Number(raw))) return false;
     }
     return true;
+  };
+  const entryFits = (row: OutputRow, amounts = true): boolean => {
+    if (query.dates && dateKey && !dateFits(query.dates, row.values[dateKey] ?? "")) return false;
+    return !amounts || amountsFit(row);
   };
   const hide = new Set<number>();
   const names: string[] = [];
@@ -340,15 +349,18 @@ function hideByQuery(output: ReportOutput, query: AskQuery, context: AskContext)
     }
     total += 1;
     let keep = holds(query, closing, names.filter((name) => NAMED.test(name)).join(" "));
+    // A closed tree line stands for its group: its own Debit / Credit are tested, and only the date (a figure the line does not show) goes to the entries.
+    const asLine = context.closedLines?.has(index) ?? false;
+    if (keep && asLine && query.columns.length > 0) keep = amountsFit(row);
     const own: number[] = [];
-    if (keep && rowLevel) {
+    if (keep && (dateKey !== null || (!asLine && query.columns.length > 0))) {
       let last = true;
       let entries = 0;
       for (let at = start; at < index; at += 1) {
         const candidate = output.rows[at];
         if (candidate.kind !== "data" || context.isHeading(candidate)) continue;
         const narration = /narration/i.test(candidate.rowType);
-        const fit: boolean = narration ? last : entryFits(candidate);
+        const fit: boolean = narration ? last : entryFits(candidate, !asLine);
         if (!narration) last = fit;
         if (!fit) own.push(at);
         else if (!narration) entries += 1;
@@ -670,7 +682,8 @@ function cellTest(column: OutputColumn, rows: readonly OutputRow[], cond: ValueC
     if (cond.op === "blank") return (cell) => cell.trim() === "";
     if (cond.op === "notblank") return (cell) => cell.trim() !== "";
     const test = numberTest(cond);
-    return typeof test === "string" ? test : (cell) => { const raw = cell.replace(/[,\s]/g, ""); return test(raw === "" || !Number.isFinite(Number(raw)) ? 0 : Number(raw)); };
+    // A blank figure cell holds no amount: only "is zero" matches it (so "debit below 50000" does not take in the credit entries).
+    return typeof test === "string" ? test : (cell) => { const raw = cell.replace(/[,\s]/g, ""); return raw === "" ? cond.op === "zero" : Number.isFinite(Number(raw)) && test(Number(raw)); };
   }
   return textTest(cond);
 }
@@ -857,15 +870,21 @@ function hideByClauses(output: ReportOutput, clauses: readonly Clause[], context
       keep = line.test(picked ? balanceOf(picked) : 0);
     }
     const partial = lineTests.filter((line) => !line.whole);
+    // A closed tree line stands for its group: a test on a figure the line shows (its Debit, its Credit) is made on the line itself, as the
+    // screen shows it; a test on a column the line leaves blank (a date, a narration) still goes to the group's entries.
+    const asLine = context.closedLines?.has(index) ?? false;
+    const lineShows = (test: { column: OutputColumn }) => asLine && (row.values[test.column.key] ?? "").trim() !== "";
+    if (keep && asLine) keep = cellTests.filter(lineShows).every(({ column, test }) => test(row.values[column.key] ?? ""));
+    const entryTests = cellTests.filter((test) => !lineShows(test));
     const own: number[] = [];
-    if (keep && (cellTests.length > 0 || partial.length > 0)) {
+    if (keep && (entryTests.length > 0 || partial.length > 0)) {
       let last = true;
       let entries = 0;
       for (let at = start; at < index; at += 1) {
         const candidate = output.rows[at];
         if (candidate.kind !== "data" || context.isHeading(candidate)) continue;
         const narration = /narration/i.test(candidate.rowType);
-        const fit: boolean = narration ? last : cellTests.every(({ column, test }) => test(candidate.values[column.key] ?? ""))
+        const fit: boolean = narration ? last : entryTests.every(({ column, test }) => test(candidate.values[column.key] ?? ""))
           && partial.every((line) => {
             const hit = lineMatches(candidate, line.key, line.word) && line.test(balanceOf(candidate));
             if (hit) line.seen.add(lineLabel(candidate, line.key));
@@ -899,4 +918,46 @@ export function askHideRows(output: ReportOutput, plan: AskPlan, context: AskCon
   if (plan.kind === "structured") return hideByClauses(output, plan.clauses, context);
   const result = hideByQuery(output, plan.query, context);
   return "problem" in result ? result : { ...result, text: plan.summary };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A summary by date period ("monthly summary", "weekly", "15 days", "quarterly", "'date' by month"): not a filter but the Group By button's own
+// job, so the bar only reads which period is wanted; the grid then does exactly what choosing it in the Group By panel does.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type PeriodAsk = Readonly<{ clear: true } | { clear: false; unit: PeriodUnit; column: string | null }>;
+
+/** The period phrases, the longer ones first ("half yearly" before "yearly", "4 week month" before "week" and "month"). */
+const PERIOD_PHRASES: readonly (readonly [PeriodUnit, RegExp])[] = [
+  ["half", /\b(?:half[\s-]?yearly|half[\s-]?year(?:[\s-]?wise)?|six[\s-]?monthly|6[\s-]?monthly|semi[\s-]?annual(?:ly)?)\b/],
+  ["fourweek", /\b(?:4|four)[\s-]?weeks?(?:[\s-]?month)?(?:[\s-]?wise)?\b/],
+  ["fifteen", /\b(?:15|fifteen)[\s-]?days?(?:[\s-]?wise)?\b|\bfortnight(?:ly)?\b|\bhalf[\s-]?monthly\b/],
+  ["quarter", /\bquarter(?:ly|[\s-]?wise)?\b/],
+  ["month", /\bmonth(?:ly|[\s-]?wise)?\b/],
+  ["week", /\bweek(?:ly|[\s-]?wise)?\b/],
+  ["year", /\b(?:yearly|year[\s-]?wise|annual(?:ly)?|by\s+year|per\s+year)\b/],
+  ["day", /\b(?:daily|day[\s-]?wise|date[\s-]?wise|by\s+(?:day|date)|per\s+day|each\s+day)\b/],
+];
+const PERIOD_CLEAR = /\b(?:remove|clear|cancel|stop|reset|undo|without|no)\s+(?:the\s+)?(?:summary|summarize|summarise|grouping|group[\s-]?by|period)\b|\bungroup\b|\bback\s+to\s+(?:details?|normal|the\s+report|full\s+report)\b/;
+/** Words that may stand around a period phrase without being something else asked for. */
+const PERIOD_FILLER = new Set(["show", "me", "give", "display", "view", "see", "list", "make", "the", "a", "an", "of", "in", "by", "wise", "per", "each", "summary", "summarise", "summarize", "summarised", "summarized", "report", "reports", "total", "totals", "only", "please", "date", "dates", "data", "all", "on", "for", "with", "and", "to", "it", "this", "that", "i", "want", "wants", "need", "like", "as", "can", "you"]);
+
+/**
+ * A request for a summary by date period (or to take it off), else null: the sentence is then a filter. It must hold nothing but the period
+ * phrase and filler words, and at most one quoted name (the date column: "'date' monthly").
+ */
+export function parsePeriodAsk(sentence: string): PeriodAsk | null {
+  const text = ` ${sentence.toLowerCase().replace(/[‘’“”"`]/g, "'")} `;
+  if (/\b(?:this|last|previous|current|next)\s+(?:month|week|year|quarter)\b|\bmonth\s+of\b/.test(text)) return null;
+  const quotes = text.match(/'[^']*'/g) ?? [];
+  if (quotes.length > 1) return null;
+  const bare = text.replace(/'[^']*'/g, " ");
+  if (PERIOD_CLEAR.test(bare)) return { clear: true };
+  for (const [unit, phrase] of PERIOD_PHRASES) {
+    if (!phrase.test(bare)) continue;
+    const rest = bare.replace(phrase, " ").replace(/[^a-z0-9]+/g, " ").split(" ").filter((word) => word !== "" && !PERIOD_FILLER.has(word));
+    if (rest.length > 0) return null;
+    return { clear: false, unit, column: quotes.length === 1 ? quotes[0].slice(1, -1).trim() || null : null };
+  }
+  return null;
 }
