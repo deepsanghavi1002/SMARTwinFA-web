@@ -32,6 +32,11 @@ export type ExportTable = Readonly<{
   titleRight?: string;
   /** Printed in the middle of every page's footer, e.g. "342 records". */
   footerCenter?: string;
+  /**
+   * A bold line above the footer of every page, and the last row of Excel and CSV: what a reader must know before trusting the figures
+   * (the report is a filtered one, "AI filter: only closing balance is zero"), so no one takes it for the whole report.
+   */
+  footerNote?: string;
   columns: readonly ExportColumn[];
   rows: readonly (readonly ExportCell[])[];
   /** Column totals (null where a column is not summed); omitted when nothing is summed. */

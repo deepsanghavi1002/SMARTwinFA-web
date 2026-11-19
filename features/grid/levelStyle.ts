@@ -35,6 +35,15 @@ export const DARK_LEVEL_COLOURS: readonly LevelColour[] = [
 ];
 export const DARK_GRAND_TOTAL_COLOUR: LevelColour = { fill: "#3f1818", text: "#ffc9c9", rule: "#a04444" };
 
+/** The same levels on the Modern view's light theme: softer tints (on screen only: print and export keep the stronger fills above). */
+export const MODERN_LEVEL_COLOURS: readonly LevelColour[] = [
+  { fill: "#f1edfb", text: "#43307f", rule: "#d6cdf2" }, // soft purple
+  { fill: "#fbeef3", text: "#7a2848", rule: "#f0c9d9" }, // soft rose
+  { fill: "#eaf2fc", text: "#14447c", rule: "#c0d8f5" }, // soft blue
+  { fill: "#fdf7e0", text: "#6a5210", rule: "#ecdfa6" }, // soft amber
+];
+export const MODERN_GRAND_TOTAL_COLOUR: LevelColour = { fill: "#fdebeb", text: "#7a1c1c", rule: "#eeb0b0" };
+
 /** What a user's own screen colour is changed to when it is one of the four (provision, see resolveLevelColours). */
 export const LIGHT_RED: LevelColour = { fill: "#fbd9d9", text: "#6b1212", rule: "#e48a8a" };
 

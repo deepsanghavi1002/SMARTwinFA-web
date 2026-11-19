@@ -194,7 +194,8 @@ export function pageLayout(table: ExportTable, options: PdfOptions): PageLayout 
   const topLines = [table.company, table.title, ...table.subtitle].filter((line) => line.trim() !== "");
   const topHeight = topLines.reduce((sum, _, index) => sum + (index === 0 ? 15 : index === 1 ? 13 : 11), 0) + 6;
   const bodyTop = pageHeight - margin - topHeight - headHeight;
-  const bodyBottom = margin + 16;
+  // A footer note (a filtered report's warning) takes a line above the footer.
+  const bodyBottom = margin + 16 + (table.footerNote ? 10 : 0);
   const perPage = Math.max(1, Math.floor((bodyTop - bodyBottom) / rowHeight));
   const lineCount = table.rows.length + (withTotals ? 1 : 0);
   const blockCount = Math.max(1, Math.ceil(lineCount / perPage));
@@ -255,7 +256,7 @@ export function recordLayout(table: ExportTable, options: PdfOptions): RecordLay
   const barTop = margin + topHeight;
   const barHeight = size * 1.3 + 6;
   const bodyTop = barTop + barHeight + 4;
-  const bodyBottom = pageHeight - margin - 16;
+  const bodyBottom = pageHeight - margin - 16 - (table.footerNote ? 10 : 0);
   const widest = Math.max(0, ...table.columns.map((column) => textWidth(column.caption, size, true)));
   const labelWidth = Math.min(usable * 0.4, Math.max(70, widest + pad * 2));
   const valueRoom = usable - labelWidth - pad * 2;
@@ -344,6 +345,7 @@ function headingOps(table: ExportTable, topLines: readonly string[], text: TextO
 
 /** The footer: print date and user on the left, the record count in the middle, the page on the right. */
 function footerOps(table: ExportTable, options: PdfOptions, text: TextOp, pageWidth: number, margin: number, usable: number, pageText: string) {
+  if (table.footerNote) text(fit(winAnsi(table.footerNote), usable, 7.5, true), margin, margin + 10, 7.5, true);
   text(fit(winAnsi(options.footer), usable * 0.38, 7, false), margin, margin, 7);
   if (table.footerCenter) {
     const middle = fit(winAnsi(table.footerCenter), usable * 0.3, 7, false);

@@ -11,7 +11,6 @@ import { headerProblems } from "@/lib/entry/checks";
 import { entryLog } from "@/lib/entry/log";
 import { entryAll } from "@/lib/entry/all";
 import { entryBill } from "@/lib/entry/bill";
-import { masterDetails } from "@/lib/entry/details";
 import { accountLedger } from "@/lib/entry/ledger";
 import { accountOutstanding } from "@/lib/entry/outstanding";
 import { isLinkRegister, linkEntries, linkLines } from "@/lib/entry/link";
@@ -260,11 +259,6 @@ export async function POST(request: Request) {
             party: party ? { code: Number(party.code) || 0, name: clip(party.name, 100), book: Number(party.book) || 0, closing: clip(party.closing, 30), limit: clip(party.limit, 30), message: clip(party.message, 500), startDate: clip(party.startDate, 20), lastDate: clip(party.lastDate, 20) } : undefined,
           });
           return { problems, warnings: loader.warnings };
-        }
-        case "master-details": {
-          const key = Number(body.key);
-          if (!Number.isInteger(key) || key <= 0 || (body.kind !== "account" && body.kind !== "product")) throw new Error("Choose an account or a product row");
-          return { details: await masterDetails(loader, body.kind, key), warnings: loader.warnings };
         }
         case "party-stock": {
           const code = Number(body.code ?? 0);

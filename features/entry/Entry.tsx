@@ -29,6 +29,7 @@ import { UploadDocuments, docRowsFor } from "./UploadDocuments";
 import { RangePanel } from "./RangePanel";
 import type { DocRow } from "./UploadDocuments";
 import { MasterDetails } from "./MasterDetails";
+import { masterDetailsCall } from "./useMasterDetails";
 import { AccountLedger } from "./AccountLedger";
 import { LinkPick } from "./LinkPick";
 import type { LinkList as LinkListData } from "../../lib/entry/link";
@@ -591,8 +592,8 @@ export function Entry({ entryName, menuShortName, title, onClose, zoom }: { entr
     if (!row || !key) return;
     setBusy("Master details");
     try {
-      const body = await call<{ details: MasterDetailsData }>("master-details", { kind, key });
-      setDetails({ kind, data: body.details });
+      const reply = selection ? await masterDetailsCall(selection, { kind, key }) : null;
+      if (reply) setDetails({ kind, data: reply.details });
     } catch (error) {
       await failed(error);
     } finally {

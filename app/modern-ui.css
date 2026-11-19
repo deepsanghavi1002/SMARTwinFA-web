@@ -191,3 +191,64 @@ html[data-mtheme] .rp-actions .mp-btn.rp-ok { background: var(--mx-accent); colo
 html[data-mtheme] .rp-actions .mp-btn.rp-quit { background: var(--mx-tint-coral); color: var(--mx-coral); text-shadow: none; }
 html[data-mtheme] .rp-actions .rp-ok .mp-icon,
 html[data-mtheme] .rp-actions .rp-quit .mp-icon { stroke: currentColor; filter: none; }
+
+/* ── reports, Selection screen: calmer cards, roomier lists, a clear active tab ── */
+html[data-mtheme] .rp-screen { background: var(--mx-bg); --rp-line: var(--mx-border); --rp-ink: var(--mx-text); --rp-accent: var(--mx-sky); }
+html[data-mtheme] .rp-select { gap: 14px 16px; padding: 16px 18px; }
+html[data-mtheme] .rp-top-label { color: var(--mx-muted); font-family: var(--mx-display); letter-spacing: 0.1em; }
+html[data-mtheme] .rp-box { gap: 6px; }
+html[data-mtheme] .rp-box-head { padding-left: 4px; font-size: 10.5px; line-height: 14px; letter-spacing: 0.1em; color: var(--mx-muted); }
+html[data-mtheme] .rp-list { height: calc(4 * 22px + 3px + 8px); padding: 4px; gap: 1px; border: 1px solid var(--mx-border); border-radius: 12px; background: var(--mx-surface); box-shadow: none; }
+html[data-mtheme] .rp-list:focus { border-color: var(--mx-ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mx-ring) 22%, transparent); }
+html[data-mtheme] .rp-item { height: 22px; padding: 0 8px; gap: 8px; border-radius: 7px; font-size: 12px; color: var(--mx-text); }
+html[data-mtheme] .rp-item:hover { background: var(--mx-surface2); }
+html[data-mtheme] .rp-list-pick .rp-item-on,
+html[data-mtheme] .rp-list-tick .rp-item-on { background: var(--mx-sel); color: var(--mx-text); font-weight: 600; box-shadow: inset 3px 0 0 var(--mx-accent); }
+html[data-mtheme] .rp-list:focus .rp-item-active { box-shadow: inset 0 0 0 1.5px var(--mx-ring); }
+html[data-mtheme] .rp-list-pick:focus .rp-item-active.rp-item-on { box-shadow: inset 3px 0 0 var(--mx-accent), inset 0 0 0 1.5px var(--mx-ring); }
+html[data-mtheme] .rp-check { width: 14px; height: 14px; border: 1.5px solid var(--mx-muted); border-radius: 4px; background: var(--mx-surface); color: var(--mx-accent-ink); }
+html[data-mtheme] .rp-item-on .rp-check { border-color: var(--mx-accent); background: var(--mx-accent); }
+html[data-mtheme] .rp-item small { background: var(--mx-accent); color: var(--mx-accent-ink); }
+html[data-mtheme] .rp-field { color: var(--mx-muted); }
+html[data-mtheme] .rp-field select,
+html[data-mtheme] .rp-field input { border-color: var(--mx-border); border-radius: 8px; background: var(--mx-surface); color: var(--mx-text); }
+
+html[data-mtheme] .rp-help-tabs { gap: 2px; border-bottom: 1px solid var(--mx-border); }
+html[data-mtheme] .rp-help-tabs > button { border: 0; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; padding: 7px 14px; color: var(--mx-muted); font-weight: 600; }
+html[data-mtheme] .rp-help-tabs > button:hover { background: var(--mx-surface2); color: var(--mx-text); }
+html[data-mtheme] .rp-help-tabs > button.rp-tab-on { background: transparent; color: var(--mx-text); box-shadow: none; border-bottom-color: var(--mx-accent); }
+html[data-mtheme] .rp-help-tabs > button.rp-help-tab-live:not(.rp-tab-on) { color: var(--mx-mint); }
+html[data-mtheme] .rp-help { border: 1px solid var(--mx-border); border-top: 0; border-radius: 0 0 12px 12px; background: var(--mx-surface); overflow: hidden; box-shadow: var(--mx-shadow); }
+html[data-mtheme] .rp-help-find input { border-color: var(--mx-border); background: var(--mx-surface); color: var(--mx-text); }
+html[data-mtheme] .rp-help-find input:focus { border-color: var(--mx-ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mx-ring) 22%, transparent); }
+html[data-mtheme] .rp-help-find-icon { color: var(--mx-muted); }
+html[data-mtheme] .rp-help-bar { background: var(--mx-surface2); border-top: 1px solid var(--mx-line); color: var(--mx-muted); }
+html[data-mtheme] .rp-help-keys { color: var(--mx-muted); }
+html[data-mtheme] .rp-link { color: var(--mx-sky); }
+html[data-mtheme] .rp-help-scroll:focus { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mx-ring) 40%, transparent); }
+
+html[data-mtheme] .rp-vtabs { background: var(--mx-bg); border-left: 1px solid var(--mx-border); gap: 8px; }
+html[data-mtheme] .rp-vtabs > button { border-color: var(--mx-border); background: var(--mx-surface); color: var(--mx-muted); font-weight: 600; letter-spacing: 0.08em; }
+html[data-mtheme] .rp-vtabs > button:hover:not(:disabled) { background: var(--mx-surface2); color: var(--mx-text); }
+html[data-mtheme] .rp-vtabs > button.rp-tab-on { background: var(--mx-accent); border-color: var(--mx-accent); color: var(--mx-accent-ink); box-shadow: none; }
+
+html[data-mtheme] .rp-actions { padding: 8px 10px 8px 16px; border-radius: 14px; background: var(--mx-surface); box-shadow: var(--mx-shadow); }
+html[data-mtheme] .rp-date,
+html[data-mtheme] .rp-message,
+html[data-mtheme] .rp-runtime-label { color: var(--mx-muted); }
+
+/* ── reports, Output grid: a card around the grid, quiet heads, no vertical rules in the body ── */
+html[data-mtheme] .rp-output { background: var(--mx-bg); }
+html[data-mtheme] .rp-output .mp-update { margin: 0 12px; border: 1px solid var(--mx-border); border-radius: 12px; overflow: hidden; background: var(--mx-surface); box-shadow: var(--mx-shadow); }
+html[data-mtheme] .rp-out-scroll .mp-row.mp-head .mp-cell { padding-top: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--mx-muted); background: var(--mx-head); }
+html[data-mtheme] .rp-out-scroll .mp-row.mp-head .mp-cell.rp-head-on { color: var(--mx-text); box-shadow: inset 0 -2px 0 var(--mx-accent); }
+html[data-mtheme] .rp-out-scroll .mp-row:not(.mp-head) .mp-cell { border-right-color: transparent; border-bottom-color: var(--mx-line); }
+html[data-mtheme] .rp-out-scroll .mp-row:not(.mp-head) .mp-cell.mp-rownum { border-right-color: var(--mx-line); }
+html[data-mtheme] .rp-out-scroll .mp-row.mp-current-row .mp-cell { background: var(--mx-sel); }
+html[data-mtheme] .rp-cellbar { margin: 0 12px 8px; border-radius: 10px; box-shadow: none; }
+html[data-mtheme] .rp-run-info { border-radius: 999px; padding: 3px 12px; }
+/* short windows keep the compact list rows, so the left column still fits without a scrollbar */
+@media (max-height: 780px) {
+  html[data-mtheme] .rp-list { height: calc(4 * 16px + 3px + 8px); }
+  html[data-mtheme] .rp-item { height: 16px; border-radius: 5px; }
+}

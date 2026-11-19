@@ -105,3 +105,28 @@ export async function masterDetails(loader: Loader, kind: "account" | "product",
     rows: [...fieldsOf("PRODUCT", product), ...await addonRows(loader, "P", "prod_id", key)],
   };
 }
+
+/** What a report cell shows for an account or an item, as the master holds it: "** Subtotal For : Alfa Industries - Purchase" -> "Alfa Industries - Purchase". */
+export function masterNameOf(text: string): string {
+  return text.replace(/^[*\s]+/, "").replace(/^sub\s*total\s*for\s*:\s*/i, "").trim();
+}
+
+export type MasterHint = "account" | "product" | "any";
+
+/**
+ * The F1 of a report: the master record of the account or item whose name a cell shows. `hint` says which master to look in first
+ * (a column called Product / Item, or an account column); "any" tries the accounts, then the items. null when no master has that name.
+ */
+export async function masterDetailsByName(loader: Loader, text: string, hint: MasterHint): Promise<{ kind: "account" | "product"; details: MasterDetails } | null> {
+  const name = masterNameOf(text);
+  if (name === "") return null;
+  const order: ("account" | "product")[] = hint === "account" ? ["account"] : hint === "product" ? ["product"] : ["account", "product"];
+  for (const kind of order) {
+    const found = kind === "account"
+      ? (await loader.readTable(`SELECT code AS key FROM |sys.db|account WHERE UPPER(BTRIM(name)) = UPPER($1) ORDER BY code LIMIT 1`, [name]))?.[0]
+      : (await loader.readTable(`SELECT prod_key AS key FROM |sys.db|product_master WHERE UPPER(BTRIM(prod_desc)) = UPPER($1) OR UPPER(BTRIM(prod_short)) = UPPER($1) ORDER BY prod_key LIMIT 1`, [name]))?.[0];
+    const key = Number(field(found, "key"));
+    if (Number.isInteger(key) && key > 0) return { kind, details: await masterDetails(loader, kind, key) };
+  }
+  return null;
+}

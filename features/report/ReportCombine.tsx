@@ -455,7 +455,7 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
       setOutputRun((count) => count + 1);
       setTab("output");
       // The rows and the generation time show by Arrange Columns in the output, not here.
-      say("", "F6 : Summarize F4 : Unsummarize");
+      say("", "F6 : Create Tree F4 : Remove Tree");
       return true;
     } catch (error) {
       say("Report generation failed...", "", true);

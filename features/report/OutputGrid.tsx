@@ -18,8 +18,10 @@ import { useZoom } from "./zoom";
 import { GridRibbon, RibbonAction, RibbonOutputButton } from "../grid/GridRibbon";
 import { columnMenuItems, GridMenu } from "../grid/GridMenu";
 import type { GridMenuItem, GridMenuPlace } from "../grid/GridMenu";
-import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, DARK_GRAND_TOTAL_COLOUR, DARK_LEVEL_COLOURS, NO_SCREEN_COLOUR } from "../grid/levelStyle";
-import { useModernDark } from "../ui/modernTheme";
+import { closingSubtotal, headingLevelOf, resolveLevelColours, rowLook, DARK_GRAND_TOTAL_COLOUR, DARK_LEVEL_COLOURS, MODERN_GRAND_TOTAL_COLOUR, MODERN_LEVEL_COLOURS, NO_SCREEN_COLOUR } from "../grid/levelStyle";
+import { useModernDark, useModernLight } from "../ui/modernTheme";
+import { useMasterDetails } from "../entry/useMasterDetails";
+import { askHideRows, parseAskPlan } from "../../lib/report/askFilter";
 import type { RowKind, RowLook } from "../grid/levelStyle";
 import { LogViewer } from "../grid/LogViewer";
 import type { LogTable } from "../grid/LogViewer";
@@ -82,8 +84,25 @@ const MARK = 16;
 const TREE = 20;
 const BORDER_OUT = 3;
 const BORDER_IN = 1;
-const TREE_KEYS = "F6 : Close / F4 : Open Tree";
-const GRID_KEYS = "F6 : Summarize F4 : Unsummarize";
+/** A column that shows account or item names: while the cursor is in one, the F1 Master details hint is offered beside Refresh. */
+const MASTER_COLUMN = /name|party|account|prod|item|particular|customer|supplier|vendor|agent|broker|transporter|ledger/i;
+/** What the ask bar says when a sentence holds nothing it can read. */
+const ASK_HELP = [
+  "That could not be read. Put a column name in single quotes (type its first letters: at least 4 when the heading is longer than 4), then a condition in English; a comma means \"and\":",
+  "• 'date' between may and jun2026",
+  "• 'date' is may2026   ·   'date' after 31-may-2026",
+  "• 'debit' greater than 10000   ·   'credit' less than zero",
+  "• 'parti' contains 'sale'   ·   'parti' not equal 'opening'",
+  "• 'parti -closing bal' is zero   (each party's closing balance)",
+  "• 'parti -#open' is less than zero   (# = the ledger's Opening Balance line decides; the whole ledger is shown)",
+  "• 'parti -#clos' is not zero   (the Closing Balance line)   ·   'parti -open' is zero   (without #, only that line is shown)",
+  "• '* creditor'   (the first group, by its stars)   ·   '** alfa'   (the second group)",
+  "• 'date' is may2026, '* debtors', '** -closing' less than zero",
+  "",
+  "Or in plain words: closing balance is zero · only debtors with closing balance -ve · date only of may2026",
+].join("\n");
+const TREE_KEYS = "F6 : Create Tree / F4 : Remove Tree";
+const GRID_KEYS = "F6 : Create Tree F4 : Remove Tree";
 
 type Point = { row: number; col: number };
 
@@ -177,7 +196,6 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   // A pivot already has the added columns worked in (they are its fields and values); otherwise they follow the grouping, as before.
   const output = useMemo(() => (pivotSpec ? shaped : withFormulaColumns(shaped, formulaSpecs)), [shaped, formulaSpecs, openReports, pivotSpec]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState(false);
   /** Freeze: the columns up to this one (by key) stay in sight while the grid scrolls sideways. */
   const [frozenKey, setFrozenKey] = useState<string | null>(null);
@@ -212,6 +230,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(500);
   const scroller = useRef<HTMLDivElement>(null);
+  /** F1 on a cell that shows an account or an item: its master record (the same window as the entry screens' F1); Esc gives the grid the keyboard back. */
+  const master = useMasterDetails(() => { setTimeout(() => scroller.current?.focus(), 0); });
   const dragging = useRef(false);
 
   useEffect(() => {
@@ -257,24 +277,68 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     return starts;
   }, [output]);
 
-  // ---- Column filters (a report with no group heading rows) and the search box ----
-  // Subtotals without headings (the Register's month totals) keep the filters: each is worked out again from the rows shown.
-  const filterable = !output.rows.some((row) => row.kind === "data" && (row.rowType === "GAP" || (row.rowType !== "FT" && output.headingColours[row.rowType] !== undefined)));
+  // ---- Column filters and the search box ----
+  // A report with group headings and subtotals (the Ledger) filters too: the headings stay as the report drew them, a group with no entry left
+  // is not drawn, and each subtotal and the final total are worked out again from the entries shown (see `shown`).
+  /** A heading or a blank gap line: the report's structure, not an entry, so a filter never tests it. */
+  const structural = (row: OutputRow) => row.kind === "data" && (row.rowType === "GAP" || (row.rowType !== "FT" && output.headingColours[row.rowType] !== undefined));
+  const filterable = true;
+  /**
+   * What is on screen, for the filters and the totals (the tree; F6 builds it): the rows a closed tree group hides; `amount`, the rows
+   * whose figures make the totals (the entries on screen, and the subtotal line standing for each closed group); `headings`, the headings on
+   * screen with no entry under them (a Book whose parties are shown as lines), which a column filter can test.
+   */
+  const view = useMemo(() => {
+    const hiddenByTree = new Set<number>();
+    if (tree) for (const node of closed) { const start = groupStart.get(node) ?? node; for (let at = start; at < node; at += 1) hiddenByTree.add(at); }
+    const amount = new Set<number>();
+    output.rows.forEach((row, at) => {
+      if (hiddenByTree.has(at)) return;
+      if (row.kind === "subtotal") { if (tree && closed.has(at)) amount.add(at); }
+      else if (row.kind === "data" && row.rowType !== "COUNT" && row.rowType !== "FT" && !structural(row)) amount.add(at);
+    });
+    const headings = new Map<number, number>();
+    const tickKeys = Object.keys(output.headingCaptions);
+    const alive: boolean[] = new Array(16).fill(false);
+    for (let at = output.rows.length - 1; at >= 0; at -= 1) {
+      const row = output.rows[at];
+      if (row.kind === "data" && amount.has(at)) alive.fill(true);
+      else if (structural(row) && row.rowType !== "GAP") {
+        const level = Math.min(15, headingLevelOf(row.rowType, output.headingLevels, tickKeys));
+        if (!hiddenByTree.has(at) && !alive[level]) headings.set(at, level);
+        for (let deeper = level; deeper < alive.length; deeper += 1) alive[deeper] = false;
+      }
+    }
+    return { hiddenByTree, amount, headings };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- structural reads only output
+  }, [output, tree, closed, groupStart]);
   const columnFilters = useColumnFilters();
   const { filters } = columnFilters;
   const clearAllFilters = columnFilters.clearAll;
-  useEffect(() => { clearAllFilters(); }, [output, clearAllFilters]);
+  // A filter made on the tree's lines means nothing on the entries (and the other way round), so creating or removing the tree starts with none.
+  useEffect(() => { clearAllFilters(); }, [output, clearAllFilters, tree]);
   const activeFilters = filterable ? Object.keys(filters).length : 0;
   /** Rows hidden with Delete (their index in output.rows), and the sets before each Delete, which Ctrl+Z brings back one step at a time. */
   const [hiding, setHiding] = useState<{ forOutput: ReportOutput; rows: ReadonlySet<number> }>({ forOutput: output, rows: new Set() });
   // A new output (a refresh, another run) brings every hidden row back.
   const deleted = hiding.forOutput === output ? hiding.rows : NO_ROWS;
   const setDeleted = (rows: ReadonlySet<number>) => setHiding({ forOutput: output, rows });
+  /** The ask bar: the rows of the ledgers a typed sentence took off (their index in output.rows), kept with the report it was asked of. */
+  const [asked, setAsked] = useState<{ forOutput: ReportOutput; hide: ReadonlySet<number>; text: string } | null>(null);
+  const [askText, setAskText] = useState("");
+  const askHide = asked?.forOutput === output ? asked.hide : NO_ROWS;
+  /** What every print, preview, PDF, Excel and CSV of a report the ask bar has filtered says at its foot, so no one takes it for the whole report. */
+  const askNote = asked?.forOutput === output && asked.hide.size > 0 ? `AI filter: ${asked.text}` : "";
+  /** The ask bar is on every report with rows: a report with groups is asked about its ledgers, one without about its rows. */
+  const askReady = output.rows.length > 0;
   const needle = search.trim().toUpperCase();
-  /** The rows a filter or the search can leave out: the entries, not the total or the day book's "Total Entries" line. */
-  const filteredKind = (row: OutputRow) => row.kind === "data" && row.rowType !== "COUNT" && row.rowType !== "FT";
-  /** Whether a row passes the search and every column filter but `except` (the one whose list is being opened). */
   const rowIndex = useMemo(() => new Map(output.rows.map((row, index) => [row, index])), [output]);
+  /** The rows a filter or the search can leave out: the entries, not the total or the day book's "Total Entries" line. */
+  const filteredKind = (row: OutputRow) => { const at = rowIndex.get(row) ?? -1; return view.amount.has(at) || view.headings.has(at); };
+  /** The rows whose figures make the totals: the entries on screen, and the subtotal line standing for each closed group (F6, the tree). */
+  const amountRow = (row: OutputRow) => view.amount.has(rowIndex.get(row) ?? -1);
+  /** A heading or a subtotal line: text in the column's cell that is not an entry's value. */
+  const lineRow = (row: OutputRow) => row.kind !== "data" || structural(row);
   /** A cell's colour as the grid draws it: its border colour when one was drawn on it, else the report's own cell colour ("" none). */
   const colourOf = (row: OutputRow, key: string) => (borders.has(`${rowIndex.get(row) ?? -1}|${key}`) ? borderColour : (row.cellColours?.[key] ?? ""));
   /** The average and ranks of a figure column's entries (for Above / Below Average and Top / Bottom N), worked out once for each output. */
@@ -282,21 +346,26 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     const map = new Map<string, ColumnStats>();
     const needed = Object.entries(filters).filter(([, filter]) => ["aboveAvg", "belowAvg", "top", "bottom"].some((op) => filter.first?.op === op || filter.second?.op === op)).map(([key]) => key);
     for (const key of needed) {
-      map.set(key, statsOf(output.rows.filter((row) => row.kind === "data" && row.rowType !== "COUNT" && row.rowType !== "FT").flatMap((row) => { const text = (row.values[key] ?? "").replace(/,/g, "").trim(); const figure = Number(text); return text !== "" && Number.isFinite(figure) ? [figure] : []; })));
+      map.set(key, statsOf(output.rows.filter((row, at) => view.amount.has(at)).flatMap((row) => { const text = (row.values[key] ?? "").replace(/,/g, "").trim(); const figure = Number(text); return text !== "" && Number.isFinite(figure) ? [figure] : []; })));
     }
     return map;
-  }, [output, filters]);
+  }, [output, filters, view]);
   const statsFor = (column: OutputColumn): ColumnStats | undefined => statsByColumn.get(column.key);
+  /** Whether a row passes the search and every column filter but `except` (the one whose list is being opened). */
   const passes = (row: OutputRow, except?: string) => {
+    if (askHide.size > 0 && askHide.has(rowIndex.get(row) ?? -1)) return false;
     if (!filteredKind(row)) return true;
     if (groupGate !== null && !groupGate.has(row)) return false;
     if (deleted.size > 0 && deleted.has(rowIndex.get(row) ?? -1)) return false;
-    if (needle !== "" && !Object.values(row.values).some((value) => value.toUpperCase().includes(needle))) return false;
+    // A heading is tested only by the column filters (a search for a party must not hide the Book it is under).
+    if (needle !== "" && !(row.kind === "data" && structural(row)) && !Object.values(row.values).some((value) => value.toUpperCase().includes(needle))) return false;
     if (activeFilters === 0) return true;
     return Object.entries(filters).every(([key, columnFilter]) => {
       if (key === except) return true;
       const column = output.columns.find((candidate) => candidate.key === key);
       const value = row.values[key] ?? "";
+      // A line that shows nothing in the column (a party line in the Book's column, a Book heading in the party's) is not tested by it.
+      if (lineRow(row) && value === "") return true;
       return !column || filterHolds(column.kind, columnFilter, value.replace(/,/g, ""), value, { colour: columnFilter.colours ? colourOf(row, key) : undefined, stats: statsFor(column) });
     });
   };
@@ -306,7 +375,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     for (const row of output.rows) if (filteredKind(row) && passes(row, column.key)) seen.add(colourOf(row, column.key));
     return seen.size > 1 || (seen.size === 1 && !seen.has("")) ? [...seen].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b))) : [];
   };
-  const valuesOf = (column: OutputColumn) => sortedDistinct(output.rows.filter((row) => filteredKind(row) && passes(row, column.key)).map((row) => row.values[column.key] ?? ""));
+  const valuesOf = (column: OutputColumn) => sortedDistinct(output.rows.filter((row) => filteredKind(row) && passes(row, column.key)).flatMap((row) => { const value = row.values[column.key] ?? ""; return value === "" && lineRow(row) ? [] : [value]; }));
 
   /**
    * The rows shown, with their index in output.rows. With a filter or a search in use the final
@@ -314,9 +383,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
    * shown entries of its group (a group with none left is not drawn), and "Total Entries" their count.
    */
   const shown = useMemo(() => {
-    const hidden = new Set<number>();
-    if (tree) for (const node of closed) { const start = groupStart.get(node) ?? node; for (let at = start; at < node; at += 1) hidden.add(at); }
-    const narrowed = needle !== "" || activeFilters > 0 || deleted.size > 0;
+    const hidden = view.hiddenByTree;
+    const narrowed = needle !== "" || activeFilters > 0 || deleted.size > 0 || askHide.size > 0;
     const list: { row: OutputRow; index: number }[] = [];
     const sums = new Map<string, number>();
     /** Per subtotal level, the shown entries' sums and count since that level's last subtotal. */
@@ -347,17 +415,57 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       return { ...row, values: { ...row.values, [captionKey]: row.values[from.key] ?? "", [from.key]: "" } };
     };
     let entries = 0;
+    // With a filter on, a heading (or the blank line before a main group) with no entry left under it is not drawn. One pass from the end:
+    // an entry that passes keeps every heading level above it alive, and a heading ends the entries counted for its own level and deeper.
+    const emptied = new Set<number>();
+    if (narrowed) {
+      const tickKeys = Object.keys(output.headingCaptions);
+      const alive: boolean[] = new Array(16).fill(false);
+      let gapAlive = false;
+      for (let at = output.rows.length - 1; at >= 0; at -= 1) {
+        const row = output.rows[at];
+        if (amountRow(row)) {
+          if (passes(row)) { alive.fill(true); gapAlive = true; }
+        } else if (structural(row)) {
+          if (row.rowType === "GAP") {
+            if (!gapAlive) emptied.add(at);
+            gapAlive = false;
+          } else {
+            const level = Math.min(15, headingLevelOf(row.rowType, output.headingLevels, tickKeys));
+            if (!alive[level]) emptied.add(at);
+            for (let deeper = level; deeper < alive.length; deeper += 1) alive[deeper] = false;
+          }
+        }
+      }
+    }
+    // F6 summary or the tree with a filter: a Book heading (shown with no entries under it) that fails a column filter takes its whole group
+    // with it, down to the group's own closing total.
+    const failed = new Set<number>();
+    if (narrowed) {
+      for (const [at, level] of view.headings) {
+        if (passes(output.rows[at])) continue;
+        for (let k = at; k < output.rows.length; k += 1) {
+          failed.add(k);
+          const closing = output.rows[k];
+          if (closing.kind === "subtotal" && closing.level === level) break;
+        }
+      }
+    }
     output.rows.forEach((row, index) => {
       if (hidden.has(index)) return;
+      if (emptied.has(index)) return;
+      if (failed.has(index)) return;
       if (!passes(row)) return;
-      if (narrowed && filteredKind(row)) {
+      if (narrowed && amountRow(row)) {
+        // An entry belongs to every level's group; a closed group's subtotal line only to its own level and the ones above it.
+        const top = row.kind === "subtotal" ? row.level : deepest;
         for (const column of output.columns) {
           if (column.kind !== "number") continue;
           const amount = Number((row.values[column.key] ?? "").replace(/,/g, "")) || 0;
           sums.set(column.key, (sums.get(column.key) ?? 0) + amount);
-          for (let level = 0; level <= deepest; level += 1) groupAt(level).sums.set(column.key, (groupAt(level).sums.get(column.key) ?? 0) + amount);
+          for (let level = 0; level <= top; level += 1) groupAt(level).sums.set(column.key, (groupAt(level).sums.get(column.key) ?? 0) + amount);
         }
-        for (let level = 0; level <= deepest; level += 1) groupAt(level).count += 1;
+        for (let level = 0; level <= top; level += 1) groupAt(level).count += 1;
         if (row.rowType === "LED") entries += 1;
       }
       let drawn = row;
@@ -371,23 +479,22 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       } else if (narrowed && row.rowType === "COUNT") {
         drawn = { ...row, values: Object.fromEntries(Object.entries(row.values).map(([key, value]) => [key, value.startsWith("Total Entries") ? `Total Entries : ${entries}` : value])) };
       }
-      if (!tree && collapsed && row.kind === "data") return;
       list.push({ row: toCaptionColumn(drawn), index });
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-  }, [output, tree, closed, groupStart, collapsed, needle, filters, activeFilters, groupGate, deleted, borders]);
+  }, [output, tree, closed, groupStart, needle, filters, activeFilters, groupGate, deleted, askHide, borders]);
   /** The column the chart filtered the grid on (its picked slice), which the chart itself does not apply. */
   const [openList, setOpenList] = useState<{ key: string; values: string[]; colours: string[] } | null>(null);
   const [chartFilter, setChartFilter] = useState<string | null>(null);
   /** The rows the filters and the search let through, whatever the tree or F6 hides (what the chart counts). */
   const passingIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row) ? [index] : []))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-    [output, needle, filters, activeFilters, groupGate, deleted]);
+    [output, needle, filters, activeFilters, groupGate, deleted, askHide]);
   /** The same without the chart's own pick, so its donut stays whole and another slice can be picked. */
   const donutIndexes = useMemo(() => new Set(output.rows.flatMap((row, index) => (passes(row, chartFilter ?? undefined) ? [index] : []))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads the filters and the search
-    [output, needle, filters, activeFilters, chartFilter, groupGate, deleted]);
+    [output, needle, filters, activeFilters, chartFilter, groupGate, deleted, askHide]);
   /** A slice picked in the chart: the grid's column filtered to its value (null clears it). */
   const filterTo = (columnKey: string, value: string | null) => {
     setChartFilter(value === null ? null : columnKey);
@@ -473,7 +580,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     }
     return selectionTotals(cells, places) ?? "";
   }, [box?.r1, box?.r2, box?.c1, box?.c2, picked, at.row, at.col, columns, shown, output, rowByIndex]); // eslint-disable-line react-hooks/exhaustive-deps -- box is derived from these
-  const rowsText = `Rows : ${shown.length === 0 ? 0 : `${at.row + 1}-${shown.length}`}${shown.length !== output.rows.length ? ` of ${output.rows.length}` : ""}${collapsed && !tree ? " · Summary" : ""}${tree ? " · Tree" : ""}${groupMode ? " · Group" : ""}`;
+  const rowsText = `Rows : ${shown.length === 0 ? 0 : `${at.row + 1}-${shown.length}`}${shown.length !== output.rows.length ? ` of ${output.rows.length}` : ""}${tree ? " · Tree" : ""}${groupMode ? " · Group" : ""}`;
   /**
    * The bordered (coloured) cells' total: those of the current column when it is a number column
    * with borders in it, else every bordered number cell.
@@ -531,7 +638,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
 
   const toggleNode = (index: number) => setClosed((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
   const showLevel = (level: number) => setClosed(new Set(output.rows.flatMap((row, index) => (row.kind === "subtotal" && row.level >= level ? [index] : []))));
-  const resetView = () => { setTree(false); setClosed(new Set()); setCollapsed(false); setCursor({ row: 0, col: 0 }); setSelEnd(null); setPicked(new Set()); setBorders(new Set()); setDrawing(false); setHeaderSelected(false); };
+  const resetView = () => { setTree(false); setClosed(new Set()); setCursor({ row: 0, col: 0 }); setSelEnd(null); setPicked(new Set()); setBorders(new Set()); setDrawing(false); setHeaderSelected(false); };
   // A pivot named in words is worked out once, on the first run that has the columns it names, and shown at once.
   const sumifDone = useRef(false);
   useEffect(() => {
@@ -558,7 +665,6 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     if (tree) { setTree(false); setClosed(new Set()); onStatus({ hotKeys: GRID_KEYS, message: "Tree format removed" }); return; }
     if (output.groups.length === 0) { await messageBox.alert("No groups selected\nTrees can be created only for groups", "Tree Creation Failure", "warning"); return; }
     setTree(true);
-    setCollapsed(false);
     showLevel(output.groups.length - 1);
     setCursor({ row: 0, col: at.col });
     onStatus({ hotKeys: TREE_KEYS, message: "Click ⊞ / ⊟ (or Enter on a subtotal) to open or close a group" });
@@ -765,6 +871,47 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     }
   };
 
+  /** F1: the master record of the account or item named in the cell the cursor is on (a column called Product / Item looks in the items first). */
+  const showMasterDetails = async () => {
+    const column = columns[at.col];
+    const text = column && column.kind !== "number" ? (shown[at.row]?.row.values[column.key] ?? "").trim() : "";
+    if (text === "") { await messageBox.alert("Put the cursor on a cell that shows an account or an item name, then press F1", "Master Details", "info"); return; }
+    const hint = /prod|item|article|goods|material/i.test(`${column.key} ${column.caption}`) ? "product" : "any";
+    try {
+      if (!(await master.show({ name: text, hint }))) await messageBox.alert(`No account or item named "${text}" in the masters`, "Master Details", "info");
+    } catch (error) {
+      await messageBox.alert(error instanceof Error ? error.message : String(error), "Master Details", "warning");
+    }
+  };
+
+  const clearAsk = () => {
+    setAsked(null);
+    setAskText("");
+    onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: "Showing the whole report" });
+  };
+  /** The ask bar: the sentence is read into a condition, the ledgers that do not fit come off the report on screen, and the totals are worked out again. */
+  const runAsk = async () => {
+    const sentence = askText.trim();
+    if (sentence === "") { if (asked) clearAsk(); return; }
+    const plan = parseAskPlan(sentence);
+    if (plan !== null && "error" in plan) { await messageBox.alert(plan.error, "Ask the report", "info"); return; }
+    if (plan === null) {
+      await messageBox.alert(ASK_HELP, "Ask the report", "info");
+      return;
+    }
+    const tickKeys = Object.keys(output.headingCaptions);
+    const result = askHideRows(output, plan, { isHeading: (row) => structural(row) && row.rowType !== "GAP", headingLevel: (row) => headingLevelOf(row.rowType, output.headingLevels, tickKeys), groupStart });
+    if ("problem" in result) { await messageBox.alert(result.problem, "Ask the report", "info"); return; }
+    // What the export says is the question written out in full (every column by its whole heading, the words spelt right), not the letters typed.
+    setAsked({ forOutput: output, hide: result.hide, text: result.text });
+    setCursor({ row: 0, col: at.col });
+    setSelEnd(null);
+    onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: `${result.text} · ${result.kept} of ${result.total} ${result.unit} shown` });
+    if (result.kept === 0) await messageBox.alert(`No ${result.unit === "rows" ? "row" : "ledger"} fits: ${result.text}`, "Ask the report", "info");
+  };
+  const cursorColumn = columns[at.col];
+  const onMasterColumn = cursorColumn !== undefined && cursorColumn.kind !== "number" && MASTER_COLUMN.test(`${cursorColumn.key} ${cursorColumn.caption}`);
+
   // ---- Keyboard ----
   const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const page = Math.max(1, Math.floor(viewHeight / ROW) - 2);
@@ -830,15 +977,20 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     switch (event.key) {
       case "Home": event.preventDefault(); go(event.ctrlKey ? { row: 0, col: 0 } : { row: from.row, col: 0 }, event.shiftKey); setTyped(""); setHeaderSelected(false); return;
       case "End": event.preventDefault(); go(event.ctrlKey ? { row: shown.length - 1, col: columns.length - 1 } : { row: from.row, col: columns.length - 1 }, event.shiftKey); setTyped(""); setHeaderSelected(false); return;
+      case "F1":
+        event.preventDefault();
+        void showMasterDetails();
+        return;
       case "F6":
         event.preventDefault();
-        if (tree) showLevel(0); else { setCollapsed(true); setCursor({ row: 0, col: at.col }); setSelEnd(null); }
-        onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: tree ? "All groups closed" : "Summarized" });
+        // As on the desktop, F6 runs the Create Tree button's own logic (the deepest groups closed: Book, a line for each party, the Book total).
+        // With the tree already made it builds it again from the start (the button, pressed again, removes the tree).
+        if (tree) { showLevel(output.groups.length - 1); setCursor({ row: 0, col: at.col }); setSelEnd(null); } else void createTree();
         return;
       case "F4":
         event.preventDefault();
-        if (tree) setClosed(new Set()); else { setCollapsed(false); setCursor({ row: 0, col: at.col }); setSelEnd(null); }
-        onStatus({ hotKeys: tree ? TREE_KEYS : GRID_KEYS, message: tree ? "All groups open" : "Unsummarized" });
+        // ... and F4 runs the same button's remove-tree logic.
+        if (tree) void createTree();
         return;
       case "Enter": {
         const entry = shown[at.row];
@@ -991,7 +1143,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const rowColours = (row: OutputRow): { background?: string; bold: boolean } => { const look = lookOf(row); return { background: look.background, bold: look.bold }; };
   /** Modern dark: the level fills are dark tints on screen; print and export (rowColours) keep the light ones. */
   const dark = useModernDark();
-  const screenLook = (row: OutputRow): RowLook => (dark ? rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), DARK_LEVEL_COLOURS, DARK_GRAND_TOTAL_COLOUR) : lookOf(row));
+  const modernLight = useModernLight();
+  const screenLook = (row: OutputRow): RowLook => (dark
+    ? rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), DARK_LEVEL_COLOURS, DARK_GRAND_TOTAL_COLOUR)
+    : modernLight
+      ? rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), MODERN_LEVEL_COLOURS, MODERN_GRAND_TOTAL_COLOUR)
+      : lookOf(row));
   const rowStyle = (row: OutputRow): CSSProperties | undefined => {
     // The blank line before a main group stays plain, whatever the alternate colour would be.
     if (row.rowType === "GAP") return { background: "var(--mx-surface, #ffffff)" };
@@ -1004,9 +1161,20 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     if (!output.subtotals || !isHeading(row)) return -1;
     return closingSubtotal(output.rows, source, headingLevel(row), groupStart);
   };
-  const toggleHeading = (node: number) => { if (!tree) { setTree(true); setCollapsed(false); } toggleNode(node); };
+  const toggleHeading = (node: number) => { if (!tree) setTree(true); toggleNode(node); };
 
   // ---- Output (print / export), with the grid's heading and subtotal colours ----
+  /**
+   * The entries count a print or export carries: the report's own count, or when a filter, the search, the ask bar or Delete has taken rows off,
+   * the entries that are left (rows a tree has only folded away still count; rows taken off do not).
+   */
+  const entriesInOutput = () => {
+    if (askHide.size === 0 && activeFilters === 0 && needle === "" && deleted.size === 0 && groupGate === null) return output.records;
+    const typed = output.rows.some((row) => row.kind === "data" && row.rowType === "LED");
+    const keyed = !typed && output.rows.some((row) => row.ledKey > 0);
+    const isEntry = (row: OutputRow) => (typed ? row.kind === "data" && row.rowType === "LED" : keyed ? row.ledKey > 0 : row.kind === "data" && !structural(row) && row.rowType !== "COUNT" && row.rowType !== "FT");
+    return output.rows.reduce((count, row, index) => (isEntry(row) && passingIndexes.has(index) ? count + 1 : count), 0);
+  };
   const gridOutput = useGridOutput({
     table: () => {
       const fills = new Map<string, string>();
@@ -1018,7 +1186,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         return { fill: name ? fills.get(name) : undefined, bold: colours.bold };
       };
       const table = exportTableFrom(
-        { company: companyName, title: output.title || fallbackTitle, titleRight: output.dateLine, footerCenter: `${output.records} entries` },
+        { company: companyName, title: output.title || fallbackTitle, titleRight: output.dateLine, footerCenter: `${entriesInOutput()} entries`, footerNote: askNote || undefined },
         columns.map((column) => ({ caption: column.caption, kind: column.kind, decimals: column.decimals, align: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", width: widthOf(column), summed: false })),
         shown.map(({ row }) => columns.map((column) => (row.values[column.key] ?? "").replace(/,/g, column.kind === "number" ? "" : ","))),
         shown.map(({ row }) => styleOf(row)),
@@ -1036,7 +1204,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     },
     name: output.title || fallbackTitle,
     sheet: (output.title || fallbackTitle).slice(0, 31),
-    csv: () => [columns.map((column) => column.caption), ...shown.map(({ row }) => columns.map((column) => row.values[column.key] ?? ""))],
+    csv: () => [columns.map((column) => column.caption), ...shown.map(({ row }) => columns.map((column) => row.values[column.key] ?? "")), ...(askNote ? [[""], [askNote]] : [])],
     shownRows: shown.length,
     totalRows: output.rows.length,
     unsaved: false,
@@ -1106,6 +1274,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
 
   return (
     <div className="rp-output">
+      {master.element}
       <div className="rp-output-head">
         <b>{output.title}</b>
         <span>{output.dateLine}</span>
@@ -1199,7 +1368,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
                     const here = current && col === at.col;
                     const label = drawn === labelAt;
                     // The oldest Days / longest CDays on a party's subtotal line show only once Create Tree is on or F6 has summarized.
-                    const text = row.treeOnly?.includes(column.key) && !tree && !collapsed ? "" : row.values[column.key] ?? "";
+                    const text = row.treeOnly?.includes(column.key) && !tree ? "" : row.values[column.key] ?? "";
                     const selected = isSelected(position, col);
                     return (
                       <div
@@ -1253,6 +1422,21 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         source="report"
         actions={(
           <>
+            {askReady && (
+              <form className="rp-ask" onSubmit={(event) => { event.preventDefault(); void runAsk(); }}>
+                <span className="rp-ask-icon" aria-hidden="true">✦</span>
+                <input
+                  type="text"
+                  value={askText}
+                  onChange={(event) => setAskText(event.target.value)}
+                  placeholder="Ask: 'date' between may and jun2026, 'parti -closing bal' is zero"
+                  aria-label="Ask the report"
+                  title={"Name a column in single quotes (its first letters, at least 4 if the heading is longer), then a condition in English; a comma means and.\n'date' between may and jun2026 · 'debit' greater than 10000 · 'parti' contains 'sale'\n'parti -closing bal' is zero (each party's closing balance) · '* creditor' (first group) · '** alfa' (second group)\n'parti -#open' is less than zero (# = the ledger's opening balance decides; its whole ledger is shown)\nOnly the report on screen is filtered; the totals are worked out again."}
+                />
+                {askHide.size > 0 && <button type="button" className="rp-ask-clear" onClick={clearAsk} title="Show the whole report again" aria-label="Show the whole report again">✕</button>}
+              </form>
+            )}
+            {onMasterColumn && <button type="button" className="mp-help-f1" onClick={() => void showMasterDetails()} title="F1 opens the whole master record of the account or item in this cell"><b>F1</b> Master details</button>}
             <RibbonAction kind="refresh" disabled={busy || groupBusy} onClick={() => { setGroupMode(false); setGroupOutput(null); onRefresh(); }} title="Generate the report again" />
             <RibbonAction kind="log" disabled={busy} onClick={() => void showLog()} title="The edit log of the voucher of the current row" />
             <RibbonAction kind="quit" onClick={onQuit} />

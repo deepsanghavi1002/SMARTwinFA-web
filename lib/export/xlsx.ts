@@ -245,12 +245,15 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
       return cellXml(ref, index === labelColumn ? "Total" : "", S_TOTAL_LABEL);
     }).join("")}</row>`);
   }
+  // A filtered report's warning ("AI filter: ...") is the last row, a blank row below the data (and the totals), and in the printed footer.
+  const noteRow = lastData + (table.totals && table.rows.length > 0 ? 1 : 0) + 2;
+  if (table.footerNote) rows.push(`<row r="${noteRow}">${cellXml(`A${noteRow}`, table.footerNote, S_TITLE)}</row>`);
   const widths = table.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${Math.max(6, Math.min(80, Math.round(column.width / 6.5)))}" customWidth="1"/>`).join("");
   const chart = table.chart && table.chart.count > 0 && table.rows.length > 0 ? table.chart : undefined;
   const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
-<dimension ref="A1:${last}${Math.max(headRow, lastData + (table.totals ? 1 : 0))}"/>
+<dimension ref="A1:${last}${Math.max(headRow, lastData + (table.totals ? 1 : 0), table.footerNote ? noteRow : 0)}"/>
 <sheetViews><sheetView workbookViewId="0"><pane ySplit="${headRow}" topLeftCell="A${headRow + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="15"/>
 <cols>${widths}</cols>
@@ -258,7 +261,7 @@ export function xlsx(table: ExportTable, sheetName = "Master"): Uint8Array {
 <autoFilter ref="A${headRow}:${last}${Math.max(headRow, lastData)}"/>
 <pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>
 <pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>
-<headerFooter><oddFooter>&amp;LPrinted &amp;D &amp;T&amp;RPage &amp;P of &amp;N</oddFooter></headerFooter>
+<headerFooter><oddFooter>&amp;LPrinted &amp;D &amp;T${table.footerNote ? `&amp;C${xml(table.footerNote.replace(/&/g, "&&"))}` : ""}&amp;RPage &amp;P of &amp;N</oddFooter></headerFooter>
 ${chart ? '<drawing r:id="rId1"/>\n' : ""}</worksheet>`;
   const name = xml(sheetName.replace(/[[\]:*?/\\]/g, " ").slice(0, 31) || "Master");
   const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

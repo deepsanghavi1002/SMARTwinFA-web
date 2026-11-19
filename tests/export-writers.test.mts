@@ -195,3 +195,25 @@ test("long values wrap onto more lines instead of being cut", async () => {
   assert.deepEqual(wrap("", 100, 9, false), [""]);
   assert.ok(wrap("X".repeat(200), 100, 9, false).every((line) => line.length > 0 && line.length < 200), "a word too long for a line is broken");
 });
+
+test("a filtered report says so at its foot: on every PDF and print page, and as the last row of Excel", async () => {
+  const { previewPages } = await import("../lib/export/pages.ts");
+  const note = "AI filter: only closing balance is zero <& more>";
+  const rows = Array.from({ length: 120 }, (_, index) => [index + 1, `Party ${index + 1}`, index * 10, null] as const);
+  const options = { orientation: "portrait", fontSize: 8, totals: true, footer: "Printed by ADMIN" } as const;
+  const filtered = { ...table, rows, footerNote: note };
+  const text = String.fromCharCode(...pdf(filtered, options));
+  const pages = Number(/\/Count (\d+)/.exec(text)![1]);
+  assert.equal(text.match(/\(AI filter: only closing balance is zero <& more>\) Tj/g)?.length, pages, "the note is on every PDF page");
+  const plainPages = Number(/\/Count (\d+)/.exec(String.fromCharCode(...pdf({ ...table, rows }, options)))![1]);
+  assert.ok(pages >= plainPages, "the note's line is kept clear of the rows (never fewer pages)");
+  const preview = previewPages(filtered, options);
+  assert.equal(preview.pageCount, pages, "the preview and the PDF break the pages the same way");
+  for (let index = 0; index < preview.pageCount; index += 1) assert.match(preview.page(index), /pv-bold[^>]*>AI filter: only closing balance is zero &lt;&amp; more&gt;<\/div>/);
+  assert.doesNotMatch(previewPages({ ...table, rows }, options).page(0), /AI filter/, "an unfiltered report has no note");
+  const sheet = unzip(xlsx({ ...table, footerNote: note })).get("xl/worksheets/sheet1.xml")!;
+  // headings on row 6, data on 7-9, the totals on row 10, a blank row, then the note on row 12
+  assert.match(sheet, /<row r="12"><c r="A12"[^>]*><is><t xml:space="preserve">AI filter: only closing balance is zero &lt;&amp; more&gt;<\/t>/);
+  assert.match(sheet, /<autoFilter ref="A6:D9"\/>/, "the filter range does not take the note in");
+  assert.match(sheet, /<oddFooter>[^<]*&amp;CAI filter: only closing balance is zero &lt;&amp;&amp; more&gt;&amp;R/, "and in Excel's printed footer");
+});

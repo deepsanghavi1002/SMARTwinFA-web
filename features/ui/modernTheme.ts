@@ -10,6 +10,11 @@ function subscribe(listener: () => void) {
   return () => watcher.disconnect();
 }
 
+/** Whether the Modern view is on in its light theme (the Legacy view sets no data-mtheme). */
+export function useModernLight(): boolean {
+  return useSyncExternalStore(subscribe, () => document.documentElement.dataset.mtheme === "light", () => false);
+}
+
 export function useModernDark(): boolean {
   return useSyncExternalStore(subscribe, () => document.documentElement.dataset.mtheme === "dark", () => false);
 }

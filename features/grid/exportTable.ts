@@ -21,7 +21,7 @@ export type ExportGridColumn = Readonly<{
 export const NOT_SUMMED = /(^|_)(SR_?NO|SERIAL|KEY|CODE|ID|NO)$/i;
 
 /** `rowStyles`: each row's colour and weight, where the grid colours its headings and subtotals. */
-export function exportTableFrom(heading: Readonly<{ company: string; title: string; titleRight?: string; footerCenter?: string; recordTitleColumn?: number }>, columns: readonly ExportGridColumn[], rows: readonly (readonly string[])[], rowStyles?: readonly (ExportRowStyle | null)[]): ExportTable {
+export function exportTableFrom(heading: Readonly<{ company: string; title: string; titleRight?: string; footerCenter?: string; footerNote?: string; recordTitleColumn?: number }>, columns: readonly ExportGridColumn[], rows: readonly (readonly string[])[], rowStyles?: readonly (ExportRowStyle | null)[]): ExportTable {
   const exportColumns: ExportColumn[] = columns.map(({ caption, kind, decimals, align, width }) => ({ caption, kind, decimals: kind === "number" ? decimals : 0, align, width }));
   const cells: ExportCell[][] = rows.map((row) => row.map((value, index) => {
     const raw = value.trim();
@@ -33,5 +33,5 @@ export function exportTableFrom(heading: Readonly<{ company: string; title: stri
   const totals = columns.some((column) => column.summed)
     ? columns.map((column, index) => (column.summed ? cells.reduce((sum, row) => sum + (typeof row[index] === "number" ? (row[index] as number) : 0), 0) : null))
     : undefined;
-  return { company: heading.company, title: heading.title, subtitle: [], titleRight: heading.titleRight, footerCenter: heading.footerCenter, columns: exportColumns, rows: cells, totals, rowStyles, recordTitleColumn: heading.recordTitleColumn ?? 0 };
+  return { company: heading.company, title: heading.title, subtitle: [], titleRight: heading.titleRight, footerCenter: heading.footerCenter, footerNote: heading.footerNote, columns: exportColumns, rows: cells, totals, rowStyles, recordTitleColumn: heading.recordTitleColumn ?? 0 };
 }

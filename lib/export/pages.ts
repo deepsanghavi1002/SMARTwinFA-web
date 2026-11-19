@@ -67,8 +67,9 @@ function headingHtml(table: ExportTable, topLines: readonly string[], margin: nu
 /** The footer: print date and user on the left, the record count in the middle, the page on the right. */
 function footerHtml(table: ExportTable, options: PdfOptions, pageWidth: number, pageHeight: number, margin: number, usable: number, pageText: string): string {
   const footerTop = pageHeight - margin - 7;
+  const note = table.footerNote ? `<div class="pv-foot pv-bold" style="left:${pt(margin)};top:${pt(footerTop - 10)};max-width:${pt(usable)}">${escape(table.footerNote)}</div>` : "";
   const middle = table.footerCenter ? `<div class="pv-foot pv-foot-center" style="top:${pt(footerTop)};width:${pt(usable * 0.3)};left:${pt((pageWidth - usable * 0.3) / 2)}">${escape(table.footerCenter)}</div>` : "";
-  return `<div class="pv-foot" style="left:${pt(margin)};top:${pt(footerTop)};max-width:${pt(usable * 0.38)}">${escape(options.footer)}</div>${middle}<div class="pv-foot" style="right:${pt(margin)};top:${pt(footerTop)}">${escape(pageText)}</div>`;
+  return `${note}<div class="pv-foot" style="left:${pt(margin)};top:${pt(footerTop)};max-width:${pt(usable * 0.38)}">${escape(options.footer)}</div>${middle}<div class="pv-foot" style="right:${pt(margin)};top:${pt(footerTop)}">${escape(pageText)}</div>`;
 }
 
 /** "One record per page": each record starts a new page, every field's heading beside its value. */
