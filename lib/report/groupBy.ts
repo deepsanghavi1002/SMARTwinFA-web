@@ -1,4 +1,5 @@
 import { amountOf, isEntry } from "./compare";
+import { groupCaptions } from "./names";
 import type { OutputColumn, OutputRow, ReportOutput } from "./types";
 
 /**
@@ -101,6 +102,23 @@ export function specCaption(spec: GroupSpec, columns: readonly OutputColumn[]): 
   return spec.kind === "column" ? caption : `${caption} (${PERIOD_UNITS.find(([unit]) => unit === spec.unit)?.[1] ?? spec.unit})`;
 }
 
+/** The added "Group n" column of level n (0-based): holds the group each row belongs to. */
+export const groupKey = (level: number) => `__GROUP_${level + 1}`;
+/** Whether a column is one of those added Group columns (kept off the printout). */
+export const isGroupColumn = (key: string) => /^__GROUP_\d$/.test(key);
+
+/**
+ * The columns of a grouped output, shared by the Group By button and F6 / Create Tree (which run on the report's own groups): the Group 1 / 2 / 3
+ * columns first, then the report's columns. In Summary only the figures stay, and only those that hold something on a subtotal or total line:
+ * the date, voucher and party columns are the Group columns already, and a figure blank on every subtotal would only print blank. (They are taken
+ * out, not just marked: the grid's column layout ignores `visible`.)
+ */
+export function groupedColumns(captions: readonly string[], columns: readonly OutputColumn[], rows: readonly OutputRow[], summary: boolean): OutputColumn[] {
+  const groupColumns = captions.map((caption, level): OutputColumn => ({ key: groupKey(level), caption, width: 150, align: "L", kind: "text", decimals: 0, visible: true }));
+  const figures = (column: OutputColumn) => column.kind === "number" && rows.some((row) => row.kind !== "data" && (row.values[column.key] ?? "").trim() !== "");
+  return [...groupColumns, ...(summary ? columns.filter(figures) : columns)];
+}
+
 /** Columns that stand for a running balance (blank after regrouping). */
 export const BALANCE = /^closing_?bal|^closings$|^dr_cr$|^opening_?bal/i;
 
@@ -121,7 +139,7 @@ export const compareLabels = (a: Label, b: Label) => (a.order !== null && b.orde
   ? a.order - b.order
   : a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }));
 
-export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]): ReportOutput {
+export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[], summary = false): ReportOutput {
   if (specs.length === 0) return output;
   const numbers = output.columns.filter((column) => column.kind === "number" && !BALANCE.test(column.key) && !/RATE|PERC|%/i.test(`${column.key} ${column.caption}`));
   const total = output.rows.find((row) => row.kind === "total");
@@ -142,8 +160,10 @@ export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]):
   const rows: OutputRow[] = [];
   const running: number[][] = specs.map(() => sums.map(() => 0));
   const whole = sums.map(() => 0);
-  const subtotal = (level: number, label: string, amounts: readonly number[]): OutputRow => {
+  const subtotal = (level: number, label: string, amounts: readonly number[], labels: readonly Label[]): OutputRow => {
     const values: Record<string, string> = {};
+    // A subtotal says which group (and parent groups) it closes, so a folded Summary still reads on its own.
+    for (let at = 0; at <= level; at += 1) values[groupKey(at)] = labels[at].label;
     sums.forEach((column, at) => { values[column.key] = format(amounts[at], column); });
     if (headingColumn) values[headingColumn.key] = `${"*".repeat(level + 1)} Subtotal For : ${label} `;
     return { kind: "subtotal", level, rowType: "", values, ledKey: 0, processKey: 0 };
@@ -152,6 +172,7 @@ export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]):
   entries.forEach(({ row, labels }, at) => {
     const values: Record<string, string> = { ...row.values };
     for (const column of output.columns) if (BALANCE.test(column.key)) values[column.key] = "";
+    labels.forEach((label, index) => { values[groupKey(index)] = label.label; });
     rows.push({ ...row, values });
     sums.forEach((column, index) => {
       const amount = amountOf(row.values[column.key]);
@@ -163,7 +184,7 @@ export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]):
       // A group ends where the next entry differs at this level or any level outside it.
       const ends = !next || next.labels.slice(0, level + 1).some((label, index) => label.label !== labels[index].label);
       if (!ends) continue;
-      rows.push(subtotal(level, labels[level].label, running[level]));
+      rows.push(subtotal(level, labels[level].label, running[level], labels));
       running[level] = sums.map(() => 0);
     }
   });
@@ -174,6 +195,9 @@ export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]):
 
   return {
     ...output,
+    // Group 1 / 2 / 3 close the row: on screen, in Excel, PDF and CSV; Print and Preview leave them out (isGroupColumn).
+    // Group 1 / 2 / 3 come first; in Summary only they and the figures stay (see groupedColumns).
+    columns: groupedColumns(specs.map((spec, index) => `Group ${index + 1} : ${specCaption(spec, output.columns)}`), output.columns, rows, summary),
     rows,
     records: entries.length,
     groups: specs.map((spec) => specCaption(spec, output.columns)),
@@ -181,6 +205,44 @@ export function applyGroupBy(output: ReportOutput, specs: readonly GroupSpec[]):
     formating: "",
     headingCaptions: {},
   };
+}
+
+/**
+ * F6 / Create Tree on a report with its own groups (Customer Type › Account ...), shown as the Group By Summary is: each line of the tree
+ * says which groups it belongs to in Group 1 / 2 / 3 columns that come first, and the columns that are blank on the subtotal lines (the
+ * date, the voucher, the particulars ...) are taken out, so a folded group reads on its own. The rows are the same rows, so the tree's open
+ * and closed lines still stand.
+ *
+ * The report prints a group's lines first and its own subtotal line after them, so each line's groups are read from the subtotal lines
+ * that follow it: the nearest one of each level.
+ */
+export function summarizeNativeGroups(output: ReportOutput): ReportOutput {
+  const levels = output.groups.length;
+  if (levels === 0 || output.columns.some((column) => isGroupColumn(column.key))) return output;
+  const text = output.columns.filter((column) => column.kind !== "number");
+  const labelOf = (row: OutputRow) => {
+    const caption = text.map((column) => (row.values[column.key] ?? "").trim()).find((value) => value !== "") ?? "";
+    return caption.replace(/^\*+\s*Subtotal For\s*:\s*/i, "").trim() || "(blank)";
+  };
+  const current: string[] = Array.from({ length: levels }, () => "");
+  const rows: OutputRow[] = new Array(output.rows.length);
+  for (let at = output.rows.length - 1; at >= 0; at -= 1) {
+    const row = output.rows[at];
+    if (row.kind === "subtotal" && row.level >= 0 && row.level < levels) {
+      current[row.level] = labelOf(row);
+      for (let inner = row.level + 1; inner < levels; inner += 1) current[inner] = "";
+      const values: Record<string, string> = { ...row.values };
+      for (let level = 0; level < levels; level += 1) values[groupKey(level)] = level <= row.level ? current[level] : "";
+      rows[at] = { ...row, values };
+    } else if (row.kind === "total") {
+      rows[at] = { ...row, values: { ...row.values, ...Object.fromEntries(Array.from({ length: levels }, (_, level) => [groupKey(level), ""])) } };
+    } else {
+      rows[at] = { ...row, values: { ...row.values, ...Object.fromEntries(current.map((label, level) => [groupKey(level), label])) } };
+    }
+  }
+  const names = groupCaptions(output);
+  const captions = Array.from({ length: levels }, (_, level) => names[level] || output.groups[level].replace(/^SMART_/i, "").replace(/^SELECTED_ADDON(d+)$/i, "Addon $1").replace(/_/g, " ").toLowerCase().replace(/(^|s)S/g, (letter) => letter.toUpperCase()));
+  return { ...output, columns: groupedColumns(captions, output.columns, rows, true), rows };
 }
 
 /**

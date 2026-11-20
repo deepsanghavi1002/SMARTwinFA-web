@@ -24,6 +24,8 @@ import type { PrintSetup } from "./printFrame";
 export type GridOutputSource = Readonly<{
   /** The grid as shown, built only when one of the outputs runs. */
   table: () => ExportTable;
+  /** The same grid for Print, Preview and PDF when it differs from the Excel export (columns kept off the paper); defaults to `table`. */
+  printTable?: () => ExportTable;
   /** The file name, without extension (made safe here). */
   name: string;
   /** The Excel sheet's name. */
@@ -78,7 +80,7 @@ export function useGridOutput(source: GridOutputSource) {
   };
   const showPreview = async () => {
     if (await noRows()) return;
-    setPreview({ table: source.table(), options: pdfOptions(), name: fileName() });
+    setPreview({ table: (source.printTable ?? source.table)(), options: pdfOptions(), name: fileName() });
   };
   const excel = async () => {
     if (await noRows()) return;
@@ -100,8 +102,8 @@ export function useGridOutput(source: GridOutputSource) {
     remember({ orientation: setup.orientation, fontSize: setup.fontSize, totals: setup.totals });
     setChoice(null);
     const options: PdfOptions = { orientation: setup.orientation, fontSize: setup.fontSize, totals: setup.totals, style: setup.style, footer: printedLine() };
-    if (setup.purpose === "print") printHtmlDocument(printDocument(fileName(), previewPages(source.table(), options), options.orientation));
-    else download(pdf(source.table(), options), `${fileName()}.pdf`, "application/pdf");
+    if (setup.purpose === "print") printHtmlDocument(printDocument(fileName(), previewPages((source.printTable ?? source.table)(), options), options.orientation));
+    else download(pdf((source.printTable ?? source.table)(), options), `${fileName()}.pdf`, "application/pdf");
   };
 
   /** The preview window and the Print / PDF dialog; render once, anywhere in the screen. */

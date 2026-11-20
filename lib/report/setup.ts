@@ -147,8 +147,10 @@ export async function smartHelp(loader: Loader, helpId: string, bookList = " 1, 
  */
 async function helpColumns(loader: Loader, helpId: string, keys: readonly string[]): Promise<HelpColumn[]> {
   const properties = await loader.readTable(`SELECT * FROM ${SETUP_SCHEMA}.help_properties WHERE help_name = $1 AND help_for = 'R' ORDER BY col_serial`, [helpId]) ?? [];
+  // A query names a column "BOOK HEADING" where the properties name it BOOK_HEADING: space and underscore are the same letter here.
+  const same = (a: string, b: string) => a.toLowerCase().replace(/[\s_]+/g, "_") === b.toLowerCase().replace(/[\s_]+/g, "_");
   return keys.map((key) => {
-    const property = properties.find((candidate) => text(candidate, "col_field").toLowerCase() === key.toLowerCase());
+    const property = properties.find((candidate) => text(candidate, "col_field").toLowerCase() === key.toLowerCase()) ?? properties.find((candidate) => same(text(candidate, "col_field"), key));
     if (!property) return { key, caption: key, width: 90, visible: true, type: "T", decimals: 0, align: "L" as const };
     const align = text(property, "col_alignment").toUpperCase();
     return {

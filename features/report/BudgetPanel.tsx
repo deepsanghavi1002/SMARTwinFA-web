@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { BudgetUse } from "../../lib/report/planning";
 import { useEscapeClose } from "../grid/useEscapeClose";
 import { Icon } from "../ui/Icon";
+import { PanelButtons, usePanelTools } from "./panelTools";
 
 /**
  * Budget against actual for the accounts the report was run for (web only). The budget is the one
@@ -17,19 +18,24 @@ const OVER = "#eb6834";
 const money = (value: number) => value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const share = (used: number) => `${(used * 100).toFixed(1)}%`;
 
-type Order = "used" | "name" | "variance";
+type Order = "used" | "least" | "name" | "namez" | "variance";
+type SavedView = { order: Order; overOnly: boolean; positiveOnly: boolean };
 
-export function BudgetPanel({ budgets, period, onClose }: { budgets: readonly BudgetUse[] | null; period: string; onClose: () => void }) {
+export function BudgetPanel({ budgets, period, viewKey = "budget", onClose }: { budgets: readonly BudgetUse[] | null; period: string; /** What a saved view is kept under (the report). */ viewKey?: string; onClose: () => void }) {
   useEscapeClose(onClose);
-  const [overOnly, setOverOnly] = useState(false);
-  const [order, setOrder] = useState<Order>("used");
+  const tools = usePanelTools<SavedView>(`smartwinfa.budget.${viewKey}`);
+  const [overOnly, setOverOnly] = useState(tools.saved.overOnly ?? false);
+  const [positiveOnly, setPositiveOnly] = useState(tools.saved.positiveOnly ?? false);
+  const [order, setOrder] = useState<Order>(tools.saved.order ?? "used");
 
   const list = budgets ?? [];
   const budget = list.reduce((sum, item) => sum + item.budget, 0);
   const actual = list.reduce((sum, item) => sum + item.actual, 0);
   const over = list.filter((item) => item.actual > item.budget);
   const unused = list.filter((item) => item.actual === 0);
-  const shown = [...(overOnly ? over : list)].sort((a, b) => (order === "name" ? a.name.localeCompare(b.name) : order === "variance" ? b.variance - a.variance : b.used - a.used));
+  const byName = (x: string, y: string) => x.localeCompare(y, undefined, { numeric: true, sensitivity: "base" });
+  const shown = [...(overOnly ? over : list)].filter((item) => !positiveOnly || item.actual > 0).sort((a, b) => (order === "name" ? byName(a.name, b.name) : order === "namez" ? byName(b.name, a.name) : order === "variance" ? b.variance - a.variance : order === "least" ? a.used - b.used : b.used - a.used));
+  const lines = [["Account", "Budget", "Actual", "Used %", "Over (+) / left (-)"], ...shown.map((item) => [item.name, money(item.budget), money(item.actual), (item.used * 100).toFixed(1), money(item.variance)])];
 
   return (
     <aside className="rp-chart rp-budget" aria-label="Budget">
@@ -54,12 +60,16 @@ export function BudgetPanel({ budgets, period, onClose }: { budgets: readonly Bu
             <label>Order
               <select value={order} onChange={(event) => setOrder(event.target.value as Order)}>
                 <option value="used">Most used first</option>
+                <option value="least">Least used first</option>
                 <option value="variance">Biggest overrun first</option>
-                <option value="name">Name</option>
+                <option value="name">Name, A to Z</option>
+                <option value="namez">Name, Z to A</option>
               </select>
             </label>
             <label className="rp-compare-sort"><input type="checkbox" checked={overOnly} onChange={(event) => setOverOnly(event.target.checked)} /> Over budget only</label>
+            <label className="rp-compare-sort"><input type="checkbox" checked={positiveOnly} onChange={(event) => setPositiveOnly(event.target.checked)} /> Only figures above zero</label>
           </div>
+          <PanelButtons note={tools.note} copyDisabled={shown.length === 0} onCopy={() => void tools.copy(lines)} onSave={() => tools.save({ order, overOnly, positiveOnly })} onReset={tools.reset} />
           {shown.length === 0 ? <p className="rp-chart-empty">No account is over its budget.</p> : (
             <ul className="rp-budget-list">
               {shown.map((item) => {

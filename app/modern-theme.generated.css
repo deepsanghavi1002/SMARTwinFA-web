@@ -5421,6 +5421,64 @@ html[data-mtheme="light"] .rp-ask-clear {
 html[data-mtheme="light"] .rp-ask-clear:hover {
     color: #b00
 }
+html[data-mtheme="light"] .rp-chart-tabs button {
+    border: 1px solid #e3e6ec;
+    background: #ffffff;
+    color: #52607f
+}
+html[data-mtheme="light"] .rp-chart-tabs button.rp-chart-tab-on {
+    background: #c9d0dd;
+    border-color: #c1c8d5;
+    color: #fff
+}
+html[data-mtheme="light"] .rp-3g-axis span {
+    color: #52607f
+}
+html[data-mtheme="light"] .rp-3g-plot {
+    border-bottom: 1px solid #c9d0db
+}
+html[data-mtheme="light"] .rp-3g-grid {
+    border-top: 1px solid #e8eaef
+}
+html[data-mtheme="light"] .rp-3g-stack>div {
+    border-top: 2px solid #fcfcfb
+}
+html[data-mtheme="light"] .rp-3g-summary th {
+    border-bottom: 1px solid #d2d8e1;
+    color: #52607f
+}
+html[data-mtheme="light"] .rp-3g-summary td {
+    border-bottom: 1px solid #f1f2f5
+}
+html[data-mtheme="light"] .rp-3g-summary tr.rp-3g-pick:hover td {
+    background: #f9fbfd
+}
+html[data-mtheme="light"] .rp-3g-summary tr.rp-3g-total td {
+    border-top: 2px solid #d2d8e1
+}
+html[data-mtheme="light"] .rp-3g-summary tr.rp-3g-top td {
+    background: #fafbfd
+}
+html[data-mtheme="light"] .rp-3g-fold {
+    border: 0;
+    background: transparent;
+    color: #4a5ff0
+}
+html[data-mtheme="light"] .rp-3g-summary tr.rp-3g-on td {
+    background: #f4f7fb
+}
+html[data-mtheme="light"] .rp-chart .mp-btn.rp-compare-run:hover:not(:disabled), html[data-mtheme="light"] .rp-chart .mp-btn.rp-compare-run:focus-visible {
+    color: #4a5ff0
+}
+html[data-mtheme="light"] .rp-growth tr.rp-growth-on td {
+    background: #f4f7fb
+}
+html[data-mtheme="light"] .rp-growth-check {
+    color: #52607f !important
+}
+html[data-mtheme="light"] .rp-growth-table th.rp-growth-sort, html[data-mtheme="light"] .rp-compare-table th.rp-growth-sort:hover {
+    color: #4a5ff0
+}
 html[data-mtheme="light"] .modern-view {
     --modern-bg: #fafbfd;
     --modern-surface: #ffffff;
@@ -11332,6 +11390,64 @@ html[data-mtheme="dark"] .rp-ask-clear {
 }
 html[data-mtheme="dark"] .rp-ask-clear:hover {
     color: #ff4747
+}
+html[data-mtheme="dark"] .rp-chart-tabs button {
+    border: 1px solid #212834;
+    background: #0e1218;
+    color: #949dae
+}
+html[data-mtheme="dark"] .rp-chart-tabs button.rp-chart-tab-on {
+    background: #29364c;
+    border-color: #313b4d;
+    color: #fff
+}
+html[data-mtheme="dark"] .rp-3g-axis span {
+    color: #949dae
+}
+html[data-mtheme="dark"] .rp-3g-plot {
+    border-bottom: 1px solid #2d3747
+}
+html[data-mtheme="dark"] .rp-3g-grid {
+    border-top: 1px solid #202732
+}
+html[data-mtheme="dark"] .rp-3g-stack>div {
+    border-top: 2px solid #282822
+}
+html[data-mtheme="dark"] .rp-3g-summary th {
+    border-bottom: 1px solid #242b38;
+    color: #949dae
+}
+html[data-mtheme="dark"] .rp-3g-summary td {
+    border-bottom: 1px solid #1e2530
+}
+html[data-mtheme="dark"] .rp-3g-summary tr.rp-3g-pick:hover td {
+    background: #11151c
+}
+html[data-mtheme="dark"] .rp-3g-summary tr.rp-3g-total td {
+    border-top: 2px solid #242b38
+}
+html[data-mtheme="dark"] .rp-3g-summary tr.rp-3g-top td {
+    background: #10141b
+}
+html[data-mtheme="dark"] .rp-3g-fold {
+    border: 0;
+    background: transparent;
+    color: #5569f1
+}
+html[data-mtheme="dark"] .rp-3g-summary tr.rp-3g-on td {
+    background: #131720
+}
+html[data-mtheme="dark"] .rp-chart .mp-btn.rp-compare-run:hover:not(:disabled), html[data-mtheme="dark"] .rp-chart .mp-btn.rp-compare-run:focus-visible {
+    color: #5569f1
+}
+html[data-mtheme="dark"] .rp-growth tr.rp-growth-on td {
+    background: #131720
+}
+html[data-mtheme="dark"] .rp-growth-check {
+    color: #949dae !important
+}
+html[data-mtheme="dark"] .rp-growth-table th.rp-growth-sort, html[data-mtheme="dark"] .rp-compare-table th.rp-growth-sort:hover {
+    color: #5569f1
 }
 html[data-mtheme="dark"] .modern-view {
     --modern-bg: #10151c;

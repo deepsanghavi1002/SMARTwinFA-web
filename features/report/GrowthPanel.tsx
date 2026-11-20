@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { addDays, formatDate, isEntry, monthBefore, parseDate, periodBefore, planPeriod } from "../../lib/report/compare";
+import { columnCaption } from "../../lib/report/names";
 import { GROUP_PREFIX, movers, quietParties, rankParties, withGroups } from "../../lib/report/growth";
 import type { MoverKind } from "../../lib/report/growth";
 import type { ReportOutput } from "../../lib/report/types";
@@ -19,6 +20,14 @@ import type { CompareResult } from "./ReportCompare";
 const money = (value: number, places: number) => value.toLocaleString("en-IN", { minimumFractionDigits: places, maximumFractionDigits: places });
 const KIND: Record<MoverKind, string> = { new: "New", gone: "Gone", up: "▲ Up", down: "▼ Down", same: "Same" };
 const LIMIT = 200;
+/** The Top / Bottom table's order: the column whose heading was clicked, and which way. */
+type SortState = { by: "figure" | "name" | "share" | "class" | "count"; dir: "asc" | "desc" } | null;
+/** A heading clicked: its first direction, then the other way, then the sort off (the tab's own order). */
+const nextSort = (current: SortState, by: NonNullable<SortState>["by"], first: "asc" | "desc"): SortState =>
+  current?.by !== by ? { by, dir: first } : current.dir === first ? { by, dir: first === "asc" ? "desc" : "asc" } : null;
+/** Which figures of the main number column to list. */
+type Show = "all" | "positive" | "negative" | "zero" | "nonzero";
+type SavedView = { tab: "top" | "bottom" | "movers" | "quiet"; byKey: string; thenKey: string; valueKey: string; sort: SortState; show: Show };
 
 function downloadCsv(name: string, lines: readonly (readonly string[])[]) {
   const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
@@ -44,19 +53,26 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
   onPickMany?: (columnKey: string, parties: string[] | null) => void;
 }) {
   useEscapeClose(onClose);
-  const [tab, setTab] = useState<"top" | "movers" | "quiet">("top");
+  const storageKey = `smartwinfa.growth.${output.reportKey ?? output.title}`;
+  const [saved] = useState<Partial<SavedView>>(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey) ?? "{}") as Partial<SavedView>; } catch { return {}; }
+  });
+  const [tab, setTab] = useState<"top" | "bottom" | "movers" | "quiet">(saved.tab ?? "top");
+  const [sort, setSort] = useState<SortState>(saved.sort && typeof saved.sort === "object" ? saved.sort : null);
+  const [show, setShow] = useState<Show>(saved.show ?? "all");
   // The report's own groups (area, zone, the party heading ...) join the party list, so a growth can be measured by any of them.
   const grouped = useMemo(() => withGroups(output), [output]);
   const work = grouped.output;
   const texts: { key: string; caption: string }[] = [
     // The system's heading column (PARTICULARS) heads the groups; where the entries carry their own text in it (the stock summary's products) it is the party.
-    ...output.columns.filter((column) => column.kind === "text" && (column.key !== "HEADING_COLUMN_BY_SYSTEM" || output.rows.some((row) => isEntry(row) && (row.values[column.key] ?? "").trim() !== ""))),
+    // (named as the operator ticked them: Area, Account, Product ..., not SELECTED AREA(S) or PARTICULARS)
+    ...output.columns.filter((column) => column.kind === "text" && (column.key !== "HEADING_COLUMN_BY_SYSTEM" || output.rows.some((row) => isEntry(row) && (row.values[column.key] ?? "").trim() !== ""))).map((column) => ({ key: column.key, caption: columnCaption(output, column) })),
     ...grouped.groups.map((group) => ({ key: group.key, caption: `${group.caption} (group)` })),
   ];
   const numbers = output.columns.filter((column) => column.kind === "number" && !/CLOSING|BAL|RATE|PERC|%|^DR_CR$/i.test(`${column.key} ${column.caption}`));
   const dates = output.columns.filter((column) => column.kind === "date");
-  const [byKey, setByKey] = useState("");
-  const [valueKey, setValueKey] = useState("");
+  const [byKey, setByKey] = useState(saved.byKey ?? "");
+  const [valueKey, setValueKey] = useState(saved.valueKey ?? "");
   const [dateKey, setDateKey] = useState("");
   const by = texts.find((column) => column.key === byKey) ?? texts.find((column) => !column.key.startsWith(GROUP_PREFIX) && /PARTICULARS|PARTY|NAME|ACCOUNT/i.test(`${column.key} ${column.caption}`)) ?? texts.find((column) => column.key === `${GROUP_PREFIX}AC`) ?? texts[0];
   const value = numbers.find((column) => column.key === valueKey) ?? numbers[0];
@@ -64,7 +80,7 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
   const places = value?.decimals ?? 2;
 
   // A second column ("then by") makes the party the pair, e.g. salesman › area; the list, Up / down and Follow-up all work on the pairs.
-  const [thenKey, setThenKey] = useState("");
+  const [thenKey, setThenKey] = useState(saved.thenKey ?? "");
   const then = by && thenKey !== "" && thenKey !== by.key ? texts.find((column) => column.key === thenKey) : undefined;
   const COMBO = "__growth_pair";
   const part = (text: string | undefined) => { const trimmed = (text ?? "").trim(); return trimmed === "" ? "(blank)" : trimmed; };
@@ -75,6 +91,30 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
   const gridKey = by && then ? `${by.key}${then.key}` : by?.key ?? "";
   const gridValue = (party: string) => (then ? party : party === "(blank)" ? "" : party);
   const ranked = target && value ? rankParties(workPair, target.key, value.key) : [];
+  /** The lines as the user asked to see them (Top / Bottom, a clicked heading's sort, the Show filter), with the cumulative share counted in that order. */
+  const byName = (x: string, y: string) => x.localeCompare(y, undefined, { numeric: true, sensitivity: "base" });
+  const view = (() => {
+    const keep = (figure: number) => (show === "positive" ? figure > 0 : show === "negative" ? figure < 0 : show === "zero" ? figure === 0 : show === "nonzero" ? figure !== 0 : true);
+    const list = ranked.filter((item) => keep(item.value));
+    // No heading clicked: the tab's own order (Top: the largest first, Bottom: the smallest first).
+    const used: NonNullable<SortState> = sort ?? { by: "figure", dir: tab === "bottom" ? "asc" : "desc" };
+    const sign = used.dir === "asc" ? 1 : -1;
+    list.sort((x, y) => sign * (used.by === "name" ? byName(x.party, y.party) : used.by === "class" ? x.grade.localeCompare(y.grade) || y.value - x.value : used.by === "share" ? x.share - y.share : used.by === "count" ? x.entries - y.entries : x.value - y.value));
+    let running = 0;
+    return list.map((item) => { running += item.share; return { ...item, running }; });
+  })();
+  const viewLines = [["Rank", "Group By", value?.caption ?? "", "Count", "Share %", "Cumulative %", "Class"], ...view.map((item, index) => [String(index + 1), item.party, money(item.value, places), String(item.entries), (item.share * 100).toFixed(2), (item.running * 100).toFixed(2), item.grade])];
+  const [note, setNote] = useState("");
+  const say = (text: string) => { setNote(text); setTimeout(() => setNote(""), 3500); };
+  /** Copy: the lines as tab-separated text, ready to paste into Excel, Word or a message. */
+  const copyView = async () => {
+    try { await navigator.clipboard.writeText(viewLines.map((line) => line.join("\t")).join("\n")); say(`Copied ${view.length.toLocaleString("en-IN")} lines`); } catch { say("The browser did not allow copying"); }
+  };
+  /** Save view: this report's Group By, Then by, Figure, tab, sort and zero filter, back the next time its Growth opens. */
+  const saveView = () => {
+    try { localStorage.setItem(storageKey, JSON.stringify({ tab, byKey: by?.key ?? "", thenKey: then?.key ?? "", valueKey: value?.key ?? "", sort, show })); say("View saved for this report"); } catch { say("The browser did not allow saving"); }
+  };
+  const resetView = () => { try { localStorage.removeItem(storageKey); say("Saved view removed"); } catch { say("The browser did not allow it"); } };
 
   const [mode, setMode] = useState<"period" | "month" | "lastyear">("period");
   const [busy, setBusy] = useState(false);
@@ -113,10 +153,11 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
 
   /** A card clicked (Up, Down, New, Gone): the list, and the grid when the parties have rows in it, show only those parties. */
   const [kindFilter, setKindFilter] = useState<MoverKind | null>(null);
-  const clearKind = () => { setKindFilter(null); if (by && onPickMany) onPickMany(gridKey, null); };
+  const clearKind = () => { setKindFilter(null); setShown(null); if (by && onPickMany) onPickMany(gridKey, null); };
   const pickKind = (kind: MoverKind) => {
     if (kindFilter === kind) { clearKind(); return; }
     setKindFilter(kind);
+    setShown(null);
     if (by && onPickMany) {
       // A gone party has no entry in the period on screen, so the grid can show nothing of it: its list alone is narrowed.
       if (kind === "gone") onPickMany(gridKey, null);
@@ -133,8 +174,16 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
   });
   const biggest = ranked[0]?.value || 1;
   const drill = onPick && by ? onPick : undefined;
-  const pick = (party: string) => { if (by && drill) drill(gridKey, gridValue(party)); };
-  const rowProps = (party: string) => (drill ? { onClick: () => pick(party), className: "rp-growth-pick", title: `Show ${party} in the grid` } : {});
+  /** The party the grid is narrowed to by a click on its line; clicking it again, or "Show all parties", gives the whole report back. */
+  const [shown, setShown] = useState<string | null>(null);
+  const showAll = () => { setShown(null); if (by && onPickMany) onPickMany(gridKey, null); };
+  const pick = (party: string) => {
+    if (!by || !drill) return;
+    if (shown === party && onPickMany) { showAll(); return; }
+    setShown(party);
+    drill(gridKey, gridValue(party));
+  };
+  const rowProps = (party: string) => (drill ? { onClick: () => pick(party), className: `rp-growth-pick${shown === party ? " rp-growth-on" : ""}`, title: shown === party ? "Click again to show all parties" : `Show ${party} in the grid` } : {});
 
   return (
     <aside className="rp-chart rp-growth" aria-label="Business growth">
@@ -145,28 +194,59 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
       {texts.length === 0 || numbers.length === 0 ? <p className="rp-chart-empty">This report has no party column with an amount to work on.</p> : (
         <>
           <div className="rp-chart-controls">
-            {texts.length > 1 && <label>Party<select value={by?.key ?? ""} onChange={(event) => setByKey(event.target.value)}>{texts.map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}</select></label>}
+            {texts.length > 1 && <label>Group By<select value={by?.key ?? ""} onChange={(event) => setByKey(event.target.value)}>{texts.map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}</select></label>}
             {texts.length > 1 && <label>Then by<select value={then?.key ?? ""} onChange={(event) => { setThenKey(event.target.value); setBefore(null); }}><option value="">(none)</option>{texts.filter((column) => column.key !== by?.key).map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}</select></label>}
-            {numbers.length > 1 && <label>Amount<select value={value?.key ?? ""} onChange={(event) => setValueKey(event.target.value)}>{numbers.map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}</select></label>}
+            {numbers.length > 1 && <label>Figure of Column<select value={value?.key ?? ""} onChange={(event) => setValueKey(event.target.value)}>{numbers.map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}</select></label>}
           </div>
+          {shown !== null && (
+            <p className="rp-chart-note rp-growth-shown">Grid shows only <b>{shown}</b>. <button type="button" className="mp-btn mp-btn-plain" onClick={showAll}>Show all parties</button></p>
+          )}
           <div className="rp-growth-tabs" role="tablist">
-            {([["top", "Top parties"], ["movers", "Up / down"], ["quiet", "Follow-up"]] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? "rp-btn-on" : ""} onClick={() => setTab(id)}>{label}</button>)}
+            {([["top", "Top Group By"], ["bottom", "Bottom Group By"], ["movers", "Up / down"], ["quiet", "Follow-up"]] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? "rp-btn-on" : ""} onClick={() => { setTab(id); setSort(null); }}>{label}</button>)}
+          </div>
+          <div className="rp-growth-buttons">
+            <button type="button" className="mp-btn mp-btn-plain" onClick={saveView} title="Remember Group By, Figure, tab and sort for this report">Save view</button>
+            <button type="button" className="mp-btn mp-btn-plain" onClick={resetView} title="Forget the saved view of this report">Reset view</button>
+            {note !== "" && <span className="rp-chart-note" role="status">{note}</span>}
           </div>
 
-          {tab === "top" && (
+          {(tab === "top" || tab === "bottom") && (
             <>
-              <p className="rp-chart-note">{ranked.length.toLocaleString("en-IN")} parties by {value?.caption}. A makes the first 80% of the total, B the next 15%, C the rest.</p>
+              <p className="rp-chart-note">{view.length.toLocaleString("en-IN")} of {ranked.length.toLocaleString("en-IN")} lines by {value?.caption}. Click a heading to sort by it; click again to turn it round. The cumulative share adds up in the order shown. A makes the first 80% of the total, B the next 15%, C the rest.</p>
               <div className="rp-cards">
                 {gradeTotals.map((item) => <div key={item.grade} className="rp-card"><span>Class {item.grade} · {item.count} parties</span><b>{(item.share * 100).toFixed(1)}%</b></div>)}
               </div>
+              <div className="rp-chart-controls rp-growth-tools">
+                <label>Show ({value?.caption})
+                  <select value={show} onChange={(event) => setShow(event.target.value as Show)}>
+                    <option value="all">All figures</option>
+                    <option value="positive">Only positive</option>
+                    <option value="negative">Only negative</option>
+                    <option value="zero">Only zero</option>
+                    <option value="nonzero">Not zero</option>
+                  </select>
+                </label>
+              </div>
               <table className="rp-legend rp-growth-table">
-                <thead><tr><th>#</th><th>Party</th><th>{value?.caption}</th><th>Share</th><th>Cum.</th><th>Cl</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    {([["name", "Group By", "asc"], ["figure", value?.caption ?? "", "desc"], ["count", "Count", "desc"], ["share", "Share", "desc"]] as const).map(([by, label, first]) => (
+                      <th key={by} className="rp-growth-sort" aria-sort={sort?.by === by ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} title="Click to sort; again to turn it round; a third time to go back to the original order" onClick={() => setSort(nextSort(sort, by, first))}>
+                        {label}{sort?.by === by ? (sort.dir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                    ))}
+                    <th>Cum.</th>
+                    <th className="rp-growth-sort" aria-sort={sort?.by === "class" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} title="Click to sort; again to turn it round; a third time to go back to the original order" onClick={() => setSort(nextSort(sort, "class", "asc"))}>Cl{sort?.by === "class" ? (sort.dir === "asc" ? " ▲" : " ▼") : ""}</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {ranked.slice(0, LIMIT).map((item, index) => (
+                  {view.slice(0, LIMIT).map((item, index) => (
                     <tr key={item.party} {...rowProps(item.party)}>
                       <td className="rp-legend-num">{index + 1}</td>
                       <td className="rp-legend-name" title={item.party}><span className="rp-growth-bar" style={{ width: `${Math.max(0, (item.value / biggest) * 100)}%` }} />{item.party}</td>
                       <td className="rp-legend-num">{money(item.value, places)}</td>
+                      <td className="rp-legend-num">{item.entries.toLocaleString("en-IN")}</td>
                       <td className="rp-legend-num">{(item.share * 100).toFixed(1)}%</td>
                       <td className="rp-legend-num">{(item.running * 100).toFixed(1)}%</td>
                       <td className={`rp-growth-grade rp-growth-${item.grade}`}>{item.grade}</td>
@@ -174,8 +254,11 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
                   ))}
                 </tbody>
               </table>
-              {ranked.length > LIMIT && <p className="rp-chart-note">The first {LIMIT} of {ranked.length.toLocaleString("en-IN")} are shown; the CSV has them all.</p>}
-              <button type="button" className="mp-btn mp-btn-plain" onClick={() => downloadCsv("top-parties", [["Rank", "Party", value?.caption ?? "", "Share %", "Cumulative %", "Class"], ...ranked.map((item, index) => [String(index + 1), item.party, money(item.value, places), (item.share * 100).toFixed(2), (item.running * 100).toFixed(2), item.grade])])}>Download CSV</button>
+              {view.length > LIMIT && <p className="rp-chart-note">The first {LIMIT} of {view.length.toLocaleString("en-IN")} are shown; Copy and the CSV have them all.</p>}
+              <div className="rp-growth-buttons">
+                <button type="button" className="mp-btn mp-btn-plain" disabled={view.length === 0} onClick={() => void copyView()}>Copy</button>
+                <button type="button" className="mp-btn mp-btn-plain" disabled={view.length === 0} onClick={() => downloadCsv(tab === "bottom" ? "bottom-group-by" : "top-group-by", viewLines)}>Download CSV</button>
+              </div>
             </>
           )}
 
@@ -204,7 +287,7 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
                   </div>
                   {kindFilter && <button type="button" className="mp-btn mp-btn-plain rp-compare-run" onClick={clearKind}>✕ Remove filter ({KIND[kindFilter].replace(/^[▲▼] /, "")} only)</button>}
                   <table className="rp-legend rp-growth-table">
-                    <thead><tr><th>Party</th><th>Now</th><th>Before</th><th>Change</th><th></th></tr></thead>
+                    <thead><tr><th>Group By</th><th>Now</th><th>Before</th><th>Change</th><th></th></tr></thead>
                     <tbody>
                       {moved.filter((item) => (kindFilter ? item.kind === kindFilter : item.kind !== "same")).slice(0, LIMIT).map((item) => (
                         <tr key={item.party} {...rowProps(item.party)}>
@@ -232,7 +315,7 @@ export function GrowthPanel({ output, period, yearStart, yearEnd, load, onClose,
                 </div>
                 <p className="rp-chart-note">{quiet.length.toLocaleString("en-IN")} parties whose last entry in this report is {days} days or more before {formatDate(asOf)}, the longest first.</p>
                 <table className="rp-legend rp-growth-table">
-                  <thead><tr><th>Party</th><th>Last entry</th><th>Days</th><th>{value?.caption}</th></tr></thead>
+                  <thead><tr><th>Group By</th><th>Last entry</th><th>Days</th><th>{value?.caption}</th></tr></thead>
                   <tbody>
                     {quiet.slice(0, LIMIT).map((item) => (
                       <tr key={item.party} {...rowProps(item.party)}>

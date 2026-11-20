@@ -4248,3 +4248,47 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .rp-ask input{width:250px;height:20px;padding:0;border:0;outline:0;background:transparent;color:#16365f;font-size:12px}
 .rp-ask-clear{border:0;background:none;padding:0 5px;color:#678;font-size:12px;cursor:pointer}
 .rp-ask-clear:hover{color:#b00}
+
+/* Chart panel: the 3 groups chart (x axis, stacked bars, summary, pie) */
+.rp-chart.rp-chart-wide{width:min(760px,62vw)}
+.rp-chart-tabs{display:flex;gap:6px}
+.rp-chart-tabs button{height:28px;padding:0 14px;border:1px solid #dfe4f0;border-radius:999px;background:#fff;color:#52607f;font:700 12px "Segoe UI",Arial,sans-serif;cursor:pointer}
+.rp-chart-tabs button.rp-chart-tab-on{background:#4a5ff0;border-color:#4a5ff0;color:#fff}
+.rp-chart-controls.rp-chart-controls-wrap{flex-wrap:wrap}
+.rp-chart-controls.rp-chart-controls-wrap label{flex:1 1 150px;min-width:140px}
+.rp-3g-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px}
+.rp-3g-legend span{display:flex;align-items:center;gap:4px}
+.rp-3g-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.rp-3g-pick{cursor:pointer}
+.rp-3g-chart{display:grid;grid-template-columns:58px 1fr;column-gap:6px}
+.rp-3g-axis{position:relative}
+.rp-3g-axis span{position:absolute;right:0;transform:translateY(-50%);font-size:11px;color:#52607f;white-space:nowrap}
+.rp-3g-plot{position:relative;border-bottom:1px solid #9aa6c4}
+.rp-3g-grid{position:absolute;left:0;right:0;border-top:1px solid #e3e8f4}
+.rp-3g-columns{position:absolute;inset:0;display:flex;gap:6px;align-items:flex-end}
+.rp-3g-col{flex:1;min-width:0;height:100%;display:flex;align-items:flex-end}
+.rp-3g-stack{width:100%;display:flex;flex-direction:column}
+.rp-3g-stack>div{border-top:2px solid #fcfcfb;min-height:1px}
+.rp-3g-labels{display:flex;gap:6px;height:84px;padding-top:6px}
+.rp-3g-labels span{flex:1;min-width:0;position:relative;font-size:11px}
+.rp-3g-labels em{position:absolute;right:50%;top:0;transform-origin:100% 0;transform:rotate(-45deg);white-space:nowrap;font-style:normal;max-width:120px;overflow:hidden;text-overflow:ellipsis;margin-right:-4px}
+.rp-3g-summary{width:100%;border-collapse:collapse;font-size:12px}
+.rp-3g-summary th{text-align:right;font-weight:800;padding:4px 8px;border-bottom:1px solid #c9d8ea;color:#52607f}
+.rp-3g-summary th:first-child,.rp-3g-summary td:first-child{text-align:left}
+.rp-3g-summary td{text-align:right;padding:3px 8px;border-bottom:1px solid #eef1f8;font-variant-numeric:tabular-nums}
+.rp-3g-summary tr.rp-3g-pick:hover td{background:#eef0ff}
+.rp-3g-summary tr.rp-3g-total td{font-weight:800;border-top:2px solid #c9d8ea}
+.rp-3g-summary tr.rp-3g-top td{font-weight:700;background:#f3f6fd}
+.rp-3g-fold{display:inline-block;width:18px;border:0;background:transparent;padding:0;font-size:13px;line-height:1;color:#4a5ff0;cursor:pointer;vertical-align:middle}
+.rp-3g-summary tr.rp-3g-on td{background:#dfe5ff}
+/* The Compare / Show button keeps its text colour on hover (it went white on the pale hover fill) */
+.rp-chart .mp-btn.rp-compare-run:hover:not(:disabled),.rp-chart .mp-btn.rp-compare-run:focus-visible{color:#4a5ff0}
+.rp-growth tr.rp-growth-on td{background:#dfe5ff}
+.rp-growth-shown{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rp-growth-tabs{flex-wrap:wrap}
+.rp-growth-tabs button{flex:1 1 auto;padding:0 12px;white-space:nowrap}
+.rp-growth-buttons{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.rp-growth-check{flex-direction:row!important;align-items:center;gap:6px!important;text-transform:none!important;letter-spacing:0!important;font-weight:600!important;color:#52607f!important;align-self:flex-end;min-height:34px}
+.rp-growth-tools{flex-wrap:wrap;align-items:flex-end}
+.rp-growth-table th.rp-growth-sort,.rp-compare-table th.rp-growth-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.rp-growth-table th.rp-growth-sort,.rp-compare-table th.rp-growth-sort:hover{color:#4a5ff0}

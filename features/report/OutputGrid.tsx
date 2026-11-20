@@ -33,7 +33,7 @@ import { HotkeyLabel } from "../ui/hotkeys";
 import { Icon } from "../ui/Icon";
 import { messageBox } from "../ui/MessageBox";
 import { ReportChart } from "./ReportChart";
-import { applyGroupBy, dateColumns, removeGroups, specCaption } from "../../lib/report/groupBy";
+import { applyGroupBy, dateColumns, isGroupColumn, removeGroups, specCaption, summarizeNativeGroups } from "../../lib/report/groupBy";
 import type { GroupSpec } from "../../lib/report/groupBy";
 import { BudgetPanel } from "./BudgetPanel";
 import { GrowthPanel } from "./GrowthPanel";
@@ -176,9 +176,10 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const [groupBusy, setGroupBusy] = useState(false);
   /** Group By: the levels the rows on screen are regrouped by (none: the report as it is). */
   // (kept with the report it was set for, so a report generated again starts ungrouped)
-  const [grouping, setGrouping] = useState<{ forBase: ReportOutput; specs: readonly GroupSpec[] }>({ forBase: base, specs: initialGroupBy ?? [] });
+  const [grouping, setGrouping] = useState<{ forBase: ReportOutput; specs: readonly GroupSpec[]; summary: boolean }>({ forBase: base, specs: initialGroupBy ?? [], summary: false });
   const groupSpecs = grouping.forBase === base ? grouping.specs : NO_GROUPS;
-  const setGroupSpecs = (specs: readonly GroupSpec[]) => { setGrouping({ forBase: base, specs }); onGroupBy?.(specs); };
+  const groupSummary = grouping.forBase === base && grouping.summary;
+  const setGroupSpecs = (specs: readonly GroupSpec[], summary = false) => { setGrouping({ forBase: base, specs, summary: summary && specs.length > 0 }); onGroupBy?.(specs); };
   const served = groupMode && groupOutput ? groupOutput : base;
   /** Remove Group: the group headings and subtotal lines taken off (kept with the report it was set for). */
   const [ungroup, setUngroup] = useState<{ forBase: ReportOutput; forServed: ReportOutput } | null>(null);
@@ -194,15 +195,26 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const openReports = useSyncExternalStore(subscribeOpenReports, openReportsVersion, () => 0);
   /** The report with its added columns, before any pivot: the pivot takes its fields and values from these, the added columns among them. */
   const withAdded = useMemo(() => withFormulaColumns(served, formulaSpecs), [served, formulaSpecs, openReports]); // eslint-disable-line react-hooks/exhaustive-deps
-  const shaped = useMemo(() => (pivotSpec ? applyPivot(withAdded, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs)), [served, withAdded, groupSpecs, ungrouped, pivotSpec]);
-  // A pivot already has the added columns worked in (they are its fields and values); otherwise they follow the grouping, as before.
-  const output = useMemo(() => (pivotSpec ? shaped : withFormulaColumns(shaped, formulaSpecs)), [shaped, formulaSpecs, openReports, pivotSpec]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const [tree, setTree] = useState(false);
-  /** Freeze: the columns up to this one (by key) stay in sight while the grid scrolls sideways. */
-  const [frozenKey, setFrozenKey] = useState<string | null>(null);
   /** Closed tree nodes: indexes of subtotal rows in output.rows. */
   const [closed, setClosed] = useState<ReadonlySet<number>>(new Set());
+  const shaped = useMemo(() => (pivotSpec ? applyPivot(withAdded, pivotSpec) : ungrouped ? removeGroups(served) : applyGroupBy(served, groupSpecs, groupSummary)), [served, withAdded, groupSpecs, groupSummary, ungrouped, pivotSpec]);
+  // A pivot already has the added columns worked in (they are its fields and values); otherwise they follow the grouping, as before.
+  const plainOutput = useMemo(() => (pivotSpec ? shaped : withFormulaColumns(shaped, formulaSpecs)), [shaped, formulaSpecs, openReports, pivotSpec]); // eslint-disable-line react-hooks/exhaustive-deps
+  /**
+   * F6 / Create Tree on a report with its own groups: every deepest group closed to its subtotal line. The grid then reads as the Group By Summary
+   * does (Group 1 / 2 / 3 columns first, the columns blank on the subtotal lines taken out); opening a group shows the full columns again.
+   */
+  const treeSummary = useMemo(() => {
+    if (!tree || pivotSpec || plainOutput.groups.length === 0 || !plainOutput.subtotals) return false;
+    const deepest = plainOutput.groups.length - 1;
+    const lines = plainOutput.rows.flatMap((row, index) => (row.kind === "subtotal" && row.level === deepest ? [index] : []));
+    return lines.length > 0 && lines.every((index) => closed.has(index));
+  }, [tree, closed, pivotSpec, plainOutput]);
+  const output = useMemo(() => (treeSummary ? summarizeNativeGroups(plainOutput) : plainOutput), [treeSummary, plainOutput]);
+
+  /** Freeze: the columns up to this one (by key) stay in sight while the grid scrolls sideways. */
+  const [frozenKey, setFrozenKey] = useState<string | null>(null);
   const [cursor, setCursor] = useState<Point>({ row: 0, col: 0 });
   const [selEnd, setSelEnd] = useState<Point | null>(null);
   /** Whether the current selection includes the column header when copied (e.g. clicked column header or copied with header). */
@@ -250,6 +262,12 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const layout = useColumnLayout(output.columns, 0, (column) => Math.max(30, Math.round(column.width * 1.2)));
   const columns = layout.columns;
   const widthOf = layout.widthOf;
+  // The columns change as a tree is folded to its summary (and back): the cursor stays inside them.
+  useEffect(() => {
+    const last = Math.max(0, columns.length - 1);
+    setCursor((current) => (current.col > last ? { ...current, col: last } : current));
+    setSelEnd((current) => (current && current.col > last ? { ...current, col: last } : current));
+  }, [columns.length]);
   // This report, as the other windows' VLOOKUP sees it: its names, its columns as shown, and the cells of its entry rows.
   const lookupSource = useRef({ output, columns, fallbackTitle });
   useEffect(() => { lookupSource.current = { output, columns, fallbackTitle }; });
@@ -935,7 +953,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       return;
     }
     const spec: GroupSpec = { kind: "period", key: column.key, unit: period.unit };
-    setGroupSpecs([spec]);
+    setGroupSpecs([spec], true);
     resetView();
     setPanelMax(false);
     collapseAfterGroup.current = true;
@@ -1231,7 +1249,23 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
     return output.rows.reduce((count, row, index) => (isEntry(row) && passingIndexes.has(index) ? count + 1 : count), 0);
   };
   const gridOutput = useGridOutput({
-    table: () => {
+    table: () => buildTable(columns),
+    // In Details, Print, Preview, PDF and CSV leave the added Group 1 / 2 / 3 columns out (they stay on screen and in Excel, for filtering there).
+    // In Summary they are the only way to tell the lines apart, so the paper has every column as on screen.
+    printTable: () => buildTable((groupSummary || treeSummary) ? columns : columns.filter((column) => !isGroupColumn(column.key))),
+    name: output.title || fallbackTitle,
+    sheet: (output.title || fallbackTitle).slice(0, 31),
+    csv: () => { const cols = (groupSummary || treeSummary) ? columns : columns.filter((column) => !isGroupColumn(column.key)); return [cols.map((column) => column.caption), ...shown.map(({ row }) => cols.map((column) => row.values[column.key] ?? "")), ...(askNote ? [[""], [askNote]] : [])]; },
+    shownRows: shown.length,
+    totalRows: output.rows.length,
+    unsaved: false,
+    userName,
+    width: totalWidth,
+    ask: (text, heading) => messageBox.alert(text, heading),
+    onPreviewClose: () => scroller.current?.focus(),
+  });
+  function buildTable(cols: readonly OutputColumn[]) {
+    {
       const fills = new Map<string, string>();
       const styleOf = (row: OutputRow): ExportRowStyle | null => {
         const colours = rowColours(row);
@@ -1242,11 +1276,11 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       };
       const table = exportTableFrom(
         { company: companyName, title: output.title || fallbackTitle, titleRight: output.dateLine, footerCenter: `${entriesInOutput()} entries`, footerNote: askNote || undefined },
-        columns.map((column) => ({ caption: column.caption, kind: column.kind, decimals: column.decimals, align: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", width: widthOf(column), summed: false })),
-        shown.map(({ row }) => columns.map((column) => (row.values[column.key] ?? "").replace(/,/g, column.kind === "number" ? "" : ","))),
+        cols.map((column) => ({ caption: column.caption, kind: column.kind, decimals: column.decimals, align: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", width: widthOf(column), summed: false })),
+        shown.map(({ row }) => cols.map((column) => (row.values[column.key] ?? "").replace(/,/g, column.kind === "number" ? "" : ","))),
         shown.map(({ row }) => styleOf(row)),
       );
-      if (formulaSpecs.length === 0) return table;
+      if (formulaSpecs.length === 0 || cols.length !== columns.length) return table;
       // The added columns go to Excel as real formulas (the cell keeps its value beside it).
       const entries = new Set(entryIndexes(output));
       const formulas = excelFormulas({
@@ -1256,18 +1290,8 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
         headRow: xlsxHeadRow(table),
       });
       return { ...table, formulas };
-    },
-    name: output.title || fallbackTitle,
-    sheet: (output.title || fallbackTitle).slice(0, 31),
-    csv: () => [columns.map((column) => column.caption), ...shown.map(({ row }) => columns.map((column) => row.values[column.key] ?? "")), ...(askNote ? [[""], [askNote]] : [])],
-    shownRows: shown.length,
-    totalRows: output.rows.length,
-    unsaved: false,
-    userName,
-    width: totalWidth,
-    ask: (text, heading) => messageBox.alert(text, heading),
-    onPreviewClose: () => scroller.current?.focus(),
-  });
+    }
+  }
   const rightsCheck = async (right: "print" | "preview" | "export", run: () => void) => {
     if (!rights[right]) { await messageBox.alert(`${right === "print" ? "Print" : right === "preview" ? "Preview" : "Export"} Rights Not Available For User`, "Rights Validation", "error"); return; }
     run();
@@ -1466,11 +1490,11 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       {(charting || panel !== null) && !panelMin && <button type="button" className="rp-panel-maxbtn" aria-label={panelMax ? "Restore the panel size" : "Maximize the panel"} title={panelMax ? "Restore: the grid is shown beside the panel again" : "Maximize: the panel takes the whole grid area"} onClick={() => setPanelMax((value) => !value)}>{panelMax ? "❐ Restore" : "⤢ Maximize"}</button>}
       {(charting || panel !== null) && <button type="button" className="rp-panel-toggle" aria-label={panelMin ? "Show the side panel" : "Minimize the side panel"} title={panelMin ? "Show the side panel" : "Minimize the side panel (the grid gets the room)"} onClick={() => setPanelMin((value) => !value)}>{panelMin ? "◀" : "▶"}</button>}
       {charting && <ReportChart key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} shownIndexes={passingIndexes} donutIndexes={donutIndexes} canFilter={filterable} onFilter={(columnKey, value) => { filterTo(columnKey, value); if (value !== null) setPanelMax(false); }} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs) => { setGroupSpecs(specs); resetView(); setPanelMax(false); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "groupby" && <GroupByPanel key={`${base.title}|${groupMode}`} output={served} specs={groupSpecs} onApply={(specs, summary) => { setGroupSpecs(specs, summary); resetView(); setPanelMax(false); collapseAfterGroup.current = summary && specs.length > 0; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "pivot" && <PivotPanel key={`${base.title}|${groupMode}`} output={withAdded} spec={pivotSpec} onApply={(spec) => { setPivoting(spec ? { forBase: base, spec } : null); resetView(); setPanelMax(false); }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       {panel === "growth" && <GrowthPanel key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={loadCompare} onPick={filterable ? (columnKey, party) => { filterToMany(columnKey, [party]); setPanelMax(false); } : undefined} onPickMany={filterable ? (columnKey, values) => { filterToMany(columnKey, values); if (values !== null) setPanelMax(false); } : undefined} onClose={() => { if (chartFilter) filterTo(chartFilter, null); setGroupGate(null); setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
-      {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto, lastYear) => { const result = await loadCompare(from, upto, lastYear); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "budget" && <BudgetPanel budgets={output.budgets} period={output.dateLine} viewKey={String(output.reportKey ?? output.title)} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
+      {panel === "compare" && <ReportCompare key={`${output.title}|${output.rows.length}|${groupMode}`} output={output} period={comparePeriod} yearStart={yearStart} yearEnd={yearEnd} load={async (from, upto, lastYear) => { const result = await loadCompare(from, upto, lastYear); return result.output && groupSpecs.length > 0 ? { ...result, output: applyGroupBy(result.output, groupSpecs, groupSummary) } : result; }} onClose={() => { setPanel(null); scroller.current?.focus(); }} />}
       </div>
       </div>
       <GridRibbon

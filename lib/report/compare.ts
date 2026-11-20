@@ -58,9 +58,13 @@ export function compareLines(output: Pick<ReportOutput, "columns" | "rows">): Co
   const blank = () => Object.fromEntries(numbers.map((column) => [column.key, 0]));
   const running: Record<string, number>[] = Array.from({ length: levels }, blank);
   const whole = blank();
+  const counts: number[] = Array.from({ length: levels }, () => 0);
+  let wholeCount = 0;
   const lines: CompareLine[] = [];
   for (const row of output.rows) {
     if (isEntry(row)) {
+      wholeCount += 1;
+      for (let at = 0; at < counts.length; at += 1) counts[at] += 1;
       for (const column of numbers) {
         const value = amountOf(row.values[column.key]);
         whole[column.key] += value;
@@ -69,22 +73,26 @@ export function compareLines(output: Pick<ReportOutput, "columns" | "rows">): Co
     } else if (row.kind === "subtotal" && row.level < levels) {
       const caption = text.map((column) => (row.values[column.key] ?? "").trim()).find((value) => value !== "") ?? "";
       const label = caption.replace(/^\*+\s*Subtotal For\s*:\s*/i, "").trim() || "(blank)";
-      lines.push({ key: `subtotal|${row.level}|${label}`, label, level: row.level, kind: "subtotal", values: { ...running[row.level] } });
+      lines.push({ key: `subtotal|${row.level}|${label}`, label, level: row.level, kind: "subtotal", values: { ...running[row.level], [COUNT_KEY]: counts[row.level] } });
       running[row.level] = blank();
+      counts[row.level] = 0;
     }
   }
-  lines.push({ key: "total|-1|All entries", label: "All entries", level: -1, kind: "total", values: whole });
+  lines.push({ key: "total|-1|All entries", label: "All entries", level: -1, kind: "total", values: { ...whole, [COUNT_KEY]: wholeCount } });
   return lines;
 }
 
-export type CompareRow = { label: string; level: number; kind: "subtotal" | "total"; now: number; then: number };
+/** The number of entries a line (a group, a name, the total) is made of: kept among its values, so lines added together add their counts. */
+export const COUNT_KEY = "__count";
+
+export type CompareRow = { label: string; level: number; kind: "subtotal" | "total"; now: number; then: number; nowCount: number; thenCount: number };
 
 /** Each group of the report now beside the same group before (a group only in one of them counts 0 in the other), the final total last. */
 export function compareRows(now: readonly CompareLine[], before: readonly CompareLine[], columnKey: string): CompareRow[] {
   const earlier = new Map(before.map((line) => [line.key, line]));
-  const rows: CompareRow[] = now.map((line) => ({ label: line.label, level: line.level, kind: line.kind, now: line.values[columnKey] ?? 0, then: earlier.get(line.key)?.values[columnKey] ?? 0 }));
+  const rows: CompareRow[] = now.map((line) => ({ label: line.label, level: line.level, kind: line.kind, now: line.values[columnKey] ?? 0, then: earlier.get(line.key)?.values[columnKey] ?? 0, nowCount: line.values[COUNT_KEY] ?? 0, thenCount: earlier.get(line.key)?.values[COUNT_KEY] ?? 0 }));
   const seen = new Set(now.map((line) => line.key));
-  for (const line of before) if (!seen.has(line.key)) rows.push({ label: line.label, level: line.level, kind: line.kind, now: 0, then: line.values[columnKey] ?? 0 });
+  for (const line of before) if (!seen.has(line.key)) rows.push({ label: line.label, level: line.level, kind: line.kind, now: 0, then: line.values[columnKey] ?? 0, nowCount: 0, thenCount: line.values[COUNT_KEY] ?? 0 });
   return [...rows.filter((row) => row.kind !== "total"), ...rows.filter((row) => row.kind === "total")];
 }
 

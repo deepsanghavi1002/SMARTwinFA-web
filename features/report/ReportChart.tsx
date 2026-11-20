@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import type { OutputColumn, OutputRow, ReportOutput } from "../../lib/report/types";
 import { useEscapeClose } from "../grid/useEscapeClose";
 import { Icon } from "../ui/Icon";
+import { isGroupColumn } from "../../lib/report/groupBy";
+import { columnCaption } from "../../lib/report/names";
 import { PlanningPanel } from "./PlanningPanel";
 import { canTrend, TrendChart } from "./TrendChart";
 
@@ -149,10 +151,11 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
   const entriesOf = (indexes: ReadonlySet<number>): Entry[] => output.rows.flatMap((row, index) => (indexes.has(index) && isEntry(row, ledgerKeyed) ? [{ row, groups: groupOf.values[index] }] : []));
   const entries = useMemo(() => entriesOf(shownIndexes), [output, shownIndexes, groupOf]); // eslint-disable-line react-hooks/exhaustive-deps -- entriesOf reads these
   const donutEntries = useMemo(() => entriesOf(donutIndexes), [output, donutIndexes, groupOf]); // eslint-disable-line react-hooks/exhaustive-deps -- entriesOf reads these
-  const labelOf = (entry: Entry) => {
-    const text = splitKey.startsWith(GROUP) ? entry.groups.get(splitKey.slice(GROUP.length)) ?? "" : splitKey === MONTH ? monthOf(entry.row.values[dateColumn?.key ?? ""] ?? "") ?? "" : (entry.row.values[splitKey] ?? "").trim();
+  const labelFor = (entry: Entry, key: string) => {
+    const text = key.startsWith(GROUP) ? entry.groups.get(key.slice(GROUP.length)) ?? "" : key === MONTH ? monthOf(entry.row.values[dateColumn?.key ?? ""] ?? "") ?? "" : (entry.row.values[key] ?? "").trim();
     return text === "" ? "(blank)" : text;
   };
+  const labelOf = (entry: Entry) => labelFor(entry, splitKey);
 
   /** The slices of one column: positive amounts by split label, largest first; past the 7th, the rest as Others. */
   const slicesOf = (column: OutputColumn): { slices: Slice[]; total: number } => {
@@ -192,7 +195,7 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
   const topSlice = donuts[0]?.slices.find((slice) => !slice.others);
   const places = Math.max(0, ...charted.map((column) => column.decimals));
 
-  const splitCaption = splitKey.startsWith(GROUP) ? groupOf.groups.find((group) => group.type === splitKey.slice(GROUP.length))?.caption ?? "Group" : splitKey === MONTH ? "Month" : output.columns.find((column) => column.key === splitKey)?.caption ?? splitKey;
+  const splitCaption = splitKey.startsWith(GROUP) ? groupOf.groups.find((group) => group.type === splitKey.slice(GROUP.length))?.caption ?? "Group" : splitKey === MONTH ? "Month" : (() => { const found = output.columns.find((column) => column.key === splitKey); return found ? columnCaption(output, found) : splitKey; })();
   const filterable = canFilter && !splitKey.startsWith(GROUP) && splitKey !== MONTH;
   const pick = (slice: Slice) => {
     if (slice.others) return;
@@ -202,12 +205,26 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
   };
   const pickedLabel = picked && picked.split === splitKey ? picked.label : "";
 
+  // "3 groups": the chart that asks for its own three groupings (x axis, bar colours, pie), whatever Group By says; "Cards and donut": the summary cards and the donut.
+  const [view, setView] = useState<"groups" | "cards">("groups");
+  const splitOptions = [
+    ...groupOf.groups.map((group) => ({ key: `${GROUP}${group.type}`, label: `${group.caption} (group)` })),
+    ...(dateColumn ? [{ key: MONTH, label: "Month" }] : []),
+    ...textColumns.map((column) => ({ key: column.key, label: columnCaption(output, column) })),
+  ];
+
   return (
-    <aside className="rp-chart" aria-label="Report chart">
+    <aside className={`rp-chart${view === "groups" ? " rp-chart-wide" : ""}`} aria-label="Report chart">
       <div className="rp-chart-head">
         <b><Icon name="chart" />Chart</b>
         <button type="button" className="rp-chart-close" onClick={onClose} aria-label="Close chart">×</button>
       </div>
+      <div className="rp-chart-tabs" role="tablist" aria-label="Chart view">
+        <button type="button" role="tab" aria-selected={view === "groups"} className={view === "groups" ? "rp-chart-tab-on" : ""} onClick={() => setView("groups")}>3 groups</button>
+        <button type="button" role="tab" aria-selected={view === "cards"} className={view === "cards" ? "rp-chart-tab-on" : ""} onClick={() => setView("cards")}>Cards and donut</button>
+      </div>
+      {view === "groups" ? <ThreeGroupChart entries={entries} options={splitOptions} numberColumns={numberColumns} defaultX={defaultSplit} hasMonth={dateColumn !== undefined} labelFor={labelFor} /> : (
+      <>
       <div className="rp-chart-controls">
         <label>Value
           <select value={valueKey} onChange={(event) => { setValueKey(event.target.value); setPicked(null); }}>
@@ -219,7 +236,7 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
           <select value={splitKey} onChange={(event) => { if (picked && filterable) onFilter(picked.split, null); setSplitKey(event.target.value); setPicked(null); }}>
             {groupOf.groups.map((group) => <option key={group.type} value={`${GROUP}${group.type}`}>{group.caption} (group)</option>)}
             {dateColumn && <option value={MONTH}>Month</option>}
-            {textColumns.map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}
+            {textColumns.map((column) => <option key={column.key} value={column.key}>{columnCaption(output, column)}</option>)}
           </select>
         </label>
       </div>
@@ -261,6 +278,301 @@ export function ReportChart({ output, shownIndexes, donutIndexes, canFilter, onF
         </div>
       )}
       <p className="rp-chart-note">{filterable ? "Click a slice to filter the grid to it; click again to clear." : canFilter ? "Charted from the rows the grid shows." : "Charted from the rows the grid shows; the search box narrows it."}</p>
+      </>
+      )}
     </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The "3 groups" chart (web only). It asks for its own three groupings, whatever Group By is doing:
+//   X axis        : the columns of the bar chart (up to 13: the 12 largest and a grey "Others", every month when it is a month)
+//   Bars split by : the colours stacked inside each column (the 10 largest, the 11th grey is "Others")
+//   Pie chart by  : a second chart, a pie (the 12 largest, the 13th grey is "Others")
+// and a Value (y axis) of any number column. A summary of the figures stands under the bar chart, and the pie under that.
+// Clicking a column, a coloured piece or a pie slice picks it: the pie follows the column, the columns follow the slice.
+// Grey is used for "Others" only.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const BAR_COLOURS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948", "#0ea5b7", "#8a5a2b", "#7c9a1c", "#c04fc0"];
+const MAX_COLUMNS = 13;
+const MAX_PIECES = 10;
+const MAX_SLICES = 12;
+const OTHERS_NAME = "Others";
+const PLOT_HEIGHT = 240;
+/** The summary's lines under each parent: the largest ones, the rest as one Others line. */
+const TREE_KEEP = 15;
+
+type ThreePick = { a: string | null; b: string | null; c: string | null };
+const NOTHING: ThreePick = { a: null, b: null, c: null };
+
+/** "Apr-2026" → a number that sorts by time (0 when it is no month). */
+const monthRank = (label: string) => {
+  const found = /^([A-Za-z]{3})-(\d{4})$/.exec(label);
+  const at = found ? MONTHS.findIndex((name) => name.toLowerCase() === found[1].toLowerCase()) : -1;
+  return found && at >= 0 ? Number(found[2]) * 12 + at : 0;
+};
+/** 12,34,567 → "1.2 Cr" / "50 L" / "30 K": short enough for an axis. */
+const compact = (value: number) => {
+  const size = Math.abs(value);
+  return size >= 1e7 ? `${+(value / 1e7).toFixed(2)} Cr` : size >= 1e5 ? `${+(value / 1e5).toFixed(2)} L` : size >= 1e3 ? `${+(value / 1e3).toFixed(1)} K` : String(Math.round(value));
+};
+/** The top of a y axis: 1, 2, 5 or 10 times a power of ten that holds the largest column. */
+const niceTop = (value: number) => {
+  if (value <= 0) return 1;
+  const power = 10 ** Math.floor(Math.log10(value));
+  const lead = value / power;
+  return (lead <= 1 ? 1 : lead <= 2 ? 2 : lead <= 5 ? 5 : 10) * power;
+};
+
+function ThreeGroupChart({ entries, options, numberColumns, defaultX, hasMonth, labelFor }: {
+  entries: readonly Entry[];
+  options: readonly { key: string; label: string }[];
+  numberColumns: readonly OutputColumn[];
+  defaultX: string;
+  hasMonth: boolean;
+  labelFor: (entry: Entry, key: string) => string;
+}) {
+  const [valueKey, setValueKey] = useState(numberColumns[0]?.key ?? "");
+  const [xKey, setXKey] = useState(defaultX);
+  const [barKey, setBarKey] = useState("");
+  const [pieKey, setPieKey] = useState(hasMonth && defaultX !== MONTH ? MONTH : "");
+  const [pick, setPick] = useState<ThreePick>(NOTHING);
+  /** The summary's open and closed lines: a line the user toggled, else the all-open / all-closed button, else only the first level open. */
+  const [opened, setOpened] = useState<{ mode: "all" | "none" | null; lines: ReadonlyMap<string, boolean> }>({ mode: null, lines: new Map() });
+  const value = numberColumns.find((column) => column.key === valueKey) ?? numberColumns[0];
+  const places = value?.decimals ?? 0;
+  const nameOf = (key: string) => options.find((option) => option.key === key)?.label ?? key;
+
+  // Every positive entry with its three labels.
+  const rows = useMemo(() => {
+    const list: { x: string; b: string; c: string; value: number }[] = [];
+    if (!value) return list;
+    for (const entry of entries) {
+      const figure = amount(entry.row.values[value.key]);
+      if (figure <= 0) continue;
+      list.push({ x: xKey ? labelFor(entry, xKey) : "", b: barKey ? labelFor(entry, barKey) : "", c: pieKey ? labelFor(entry, pieKey) : "", value: figure });
+    }
+    return list;
+  }, [entries, value, xKey, barKey, pieKey]); // eslint-disable-line react-hooks/exhaustive-deps -- labelFor follows the report
+
+  /** The largest `keep` labels by value (the rest fall into Others); months stay in time order, anything else largest first. */
+  const topLabels = (sums: Map<string, number>, key: string, keep: number) => {
+    const largest = [...sums].sort((x, y) => y[1] - x[1]).slice(0, keep).map(([label]) => label);
+    return key === MONTH ? largest.sort((x, y) => monthRank(x) - monthRank(y)) : largest;
+  };
+  const sumBy = (list: typeof rows, field: "x" | "b" | "c") => {
+    const sums = new Map<string, number>();
+    for (const row of list) sums.set(row[field], (sums.get(row[field]) ?? 0) + row.value);
+    return sums;
+  };
+
+  // The columns follow the picked pie slice; the pie follows the picked column and piece.
+  const columnRows = rows.filter((row) => pick.c === null || row.c === pick.c);
+  const pieRows = rows.filter((row) => (pick.a === null || row.x === pick.a) && (pick.b === null || row.b === pick.b));
+
+  const xSums = sumBy(columnRows, "x");
+  const xKeep = xSums.size > MAX_COLUMNS ? MAX_COLUMNS - 1 : MAX_COLUMNS;
+  const xTop = topLabels(xSums, xKey, xKeep);
+  const bSums = sumBy(columnRows, "b");
+  const bTop = barKey ? topLabels(bSums, barKey, MAX_PIECES) : [""];
+  const pieceOf = (label: string) => (!barKey ? "" : bTop.includes(label) ? label : OTHERS_NAME);
+  const colourOf = (piece: string) => (piece === OTHERS_NAME ? OTHERS_COLOUR : BAR_COLOURS[Math.max(0, bTop.indexOf(piece))]);
+
+  type Column = { label: string; others: boolean; parts: Map<string, number>; total: number; count: number };
+  const columnOf = new Map<string, Column>();
+  const columns: Column[] = xTop.map((label) => ({ label, others: false, parts: new Map(), total: 0, count: 0 }));
+  columns.forEach((column) => columnOf.set(column.label, column));
+  const othersColumn: Column = { label: OTHERS_NAME, others: true, parts: new Map(), total: 0, count: 0 };
+  for (const row of columnRows) {
+    const column = columnOf.get(row.x) ?? othersColumn;
+    const piece = pieceOf(row.b);
+    column.parts.set(piece, (column.parts.get(piece) ?? 0) + row.value);
+    column.total += row.value;
+    column.count += 1;
+  }
+  if (othersColumn.count > 0) { othersColumn.label = `${OTHERS_NAME} (${new Set(columnRows.filter((row) => !columnOf.has(row.x)).map((row) => row.x)).size})`; columns.push(othersColumn); }
+  // Anything but a month goes largest first, with Others last.
+  if (xKey !== MONTH) columns.sort((x, y) => Number(x.others) - Number(y.others) || y.total - x.total);
+  const pieces = barKey ? [...bTop, ...(columns.some((column) => column.parts.has(OTHERS_NAME)) ? [OTHERS_NAME] : [])] : [""];
+  const grand = columns.reduce((sum, column) => sum + column.total, 0);
+  const top = niceTop(Math.max(0, ...columns.map((column) => column.total)));
+  const ticks = [1, 0.75, 0.5, 0.25, 0];
+
+  // The pie.
+  const cSums = sumBy(pieRows, "c");
+  const cCounts = new Map<string, number>();
+  for (const row of pieRows) cCounts.set(row.c, (cCounts.get(row.c) ?? 0) + 1);
+  const cSorted = [...cSums].sort((x, y) => y[1] - x[1]);
+  const slices: Slice[] = cSorted.slice(0, MAX_SLICES).map(([label, sum], index) => ({ label, value: sum, count: cCounts.get(label) ?? 0, colour: BAR_COLOURS[index], others: false }));
+  if (cSorted.length > MAX_SLICES) {
+    const rest = cSorted.slice(MAX_SLICES);
+    slices.push({ label: `${OTHERS_NAME} (${rest.length})`, value: rest.reduce((sum, [, sum2]) => sum + sum2, 0), count: rest.reduce((sum, [label]) => sum + (cCounts.get(label) ?? 0), 0), colour: OTHERS_COLOUR, others: true });
+  }
+  const pieTotal = slices.reduce((sum, slice) => sum + slice.value, 0);
+
+  /** Pick what was clicked; the same click again lets it go. */
+  const toggle = (next: Partial<ThreePick>) => setPick((current) => {
+    const keys = Object.keys(next) as (keyof ThreePick)[];
+    const same = keys.every((key) => current[key] === next[key]);
+    const result = { ...current };
+    for (const key of keys) result[key] = same ? null : next[key] ?? null;
+    return result;
+  });
+  const change = (set: (key: string) => void) => (event: { target: { value: string } }) => { set(event.target.value); setPick(NOTHING); };
+  const pickText = [pick.a, pick.b, pick.c].filter((part): part is string => part !== null).join(" › ");
+  const pieFor = [pick.a, pick.b].filter((part): part is string => part !== null).join(" › ");
+  const largest = columns.filter((column) => !column.others).sort((x, y) => y.total - x.total)[0];
+
+  // The summary as a tree: each x value, then the bar split inside it, then the pie grouping inside that (each level the 15 largest and the rest as one "Others" line).
+  /** `a` / `b`: the x value and the bar split a line stands for, which the pie shows when the line is clicked (b null: the whole x value). */
+  type TreeLine = { key: string; level: number; label: string; total: number; count: number; expandable: boolean; others: boolean; a: string; b: string | null };
+  const isOpen = (key: string, level: number) => opened.lines.get(key) ?? (opened.mode === "all" ? true : opened.mode === "none" ? false : level === 0);
+  const treeLines: TreeLine[] = [];
+  const emit = (list: typeof rows, fields: ("b" | "c")[], level: number, parent: string, path: { a: string; b: string | null }) => {
+    if (fields.length === 0) return;
+    const [field, ...rest] = fields;
+    const parts = new Map<string, { total: number; count: number }>();
+    for (const row of list) { const item = parts.get(row[field]) ?? { total: 0, count: 0 }; parts.set(row[field], { total: item.total + row.value, count: item.count + 1 }); }
+    const sorted = [...parts].sort((x, y) => y[1].total - x[1].total);
+    for (const [label, item] of sorted.slice(0, TREE_KEEP)) {
+      const key = `${parent}\u0001${label}`;
+      const here = { a: path.a, b: field === "b" ? label : path.b };
+      treeLines.push({ key, level, label, total: item.total, count: item.count, expandable: rest.length > 0, others: false, ...here });
+      if (rest.length > 0 && isOpen(key, level)) emit(list.filter((row) => row[field] === label), rest, level + 1, key, here);
+    }
+    if (sorted.length > TREE_KEEP) {
+      const more = sorted.slice(TREE_KEEP);
+      treeLines.push({ key: `${parent}\u0001others`, level, label: `${OTHERS_NAME} (${more.length})`, total: more.reduce((sum, [, item]) => sum + item.total, 0), count: more.reduce((sum, [, item]) => sum + item.count, 0), expandable: false, others: true, ...path });
+    }
+  };
+  const lowerFields: ("b" | "c")[] = [...(barKey ? ["b" as const] : []), ...(pieKey ? ["c" as const] : [])];
+  for (const column of columns) {
+    treeLines.push({ key: column.label, level: 0, label: column.label, total: column.total, count: column.count, expandable: !column.others && lowerFields.length > 0, others: column.others, a: column.label, b: null });
+    if (!column.others && lowerFields.length > 0 && isOpen(column.label, 0)) emit(columnRows.filter((row) => row.x === column.label), lowerFields, 1, column.label, { a: column.label, b: null });
+  }
+  /** A click on a line of the summary: the pie shows that x value (an x line) or that x value's bar split (a line under it); the same click again goes back to all. */
+  const selectLine = (line: TreeLine) => {
+    if (line.others) return;
+    setPick((current) => (current.a === line.a && current.b === line.b ? { ...current, a: null, b: null } : { ...current, a: line.a, b: line.b }));
+  };
+  const toggleLine = (key: string, level: number) => setOpened((current) => ({ ...current, lines: new Map(current.lines).set(key, !isOpen(key, level)) }));
+  const summaryHead = [nameOf(xKey), ...(barKey ? [nameOf(barKey)] : []), ...(pieKey ? [nameOf(pieKey)] : [])].join(" › ");
+
+  const choose = (current: string, set: (key: string) => void, none: string | null) => (
+    <select value={current} onChange={change(set)}>
+      {none !== null && <option value="">{none}</option>}
+      {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+    </select>
+  );
+
+  return (
+    <>
+      <div className="rp-chart-controls rp-chart-controls-wrap">
+        <label>Value (y axis)
+          <select value={value?.key ?? ""} onChange={change(setValueKey)}>
+            {numberColumns.map((column) => <option key={column.key} value={column.key}>{column.caption}</option>)}
+          </select>
+        </label>
+        <label>X axis (e.g. Area){choose(xKey, setXKey, null)}</label>
+        <label>Bars split by (e.g. Particulars){choose(barKey, setBarKey, "— none —")}</label>
+        <label>Pie chart by (e.g. Month){choose(pieKey, setPieKey, "— none —")}</label>
+      </div>
+      {pick.a !== null || pick.b !== null || pick.c !== null ? <p className="rp-chart-note">Picked : <b>{pickText}</b> <button type="button" className="mp-btn mp-btn-plain" onClick={() => setPick(NOTHING)}>Clear</button></p> : null}
+
+      {rows.length === 0 ? <p className="rp-chart-empty">No positive figures to chart.</p> : (
+        <>
+          {barKey !== "" && (
+            <div className="rp-3g-legend">
+              {pieces.map((piece) => (
+                <span key={piece} className={piece === OTHERS_NAME ? "" : "rp-3g-pick"} style={{ opacity: pick.b !== null && pick.b !== piece ? 0.45 : 1 }} onClick={() => { if (piece !== OTHERS_NAME) toggle({ b: piece }); }}>
+                  <i style={{ background: colourOf(piece) }} />{piece}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="rp-3g-chart" role="img" aria-label={`${value?.caption} by ${nameOf(xKey)}${barKey ? `, split by ${nameOf(barKey)}` : ""}`}>
+            <div className="rp-3g-axis" style={{ height: PLOT_HEIGHT }}>
+              {ticks.map((part) => <span key={part} style={{ top: `${(1 - part) * 100}%` }}>{compact(top * part)}</span>)}
+            </div>
+            <div className="rp-3g-plot" style={{ height: PLOT_HEIGHT }}>
+              {ticks.map((part) => <div key={part} className="rp-3g-grid" style={{ top: `${(1 - part) * 100}%` }} />)}
+              <div className="rp-3g-columns">
+                {columns.map((column) => {
+                  const dim = pick.a !== null && pick.a !== column.label;
+                  return (
+                    <div key={column.label} className="rp-3g-col" style={{ opacity: dim ? 0.45 : 1 }}>
+                      <div className="rp-3g-stack" style={{ height: `${(column.total / top) * 100}%` }}>
+                        {[...pieces].reverse().filter((piece) => column.parts.has(piece)).map((piece) => {
+                          const part = column.parts.get(piece) ?? 0;
+                          const clickable = !column.others && piece !== OTHERS_NAME;
+                          return <div key={piece} title={`${column.label}${piece ? ` › ${piece}` : ""} : ${money(part, places)}`} onClick={() => { if (clickable) toggle(barKey ? { a: column.label, b: piece } : { a: column.label }); }}
+                            style={{ height: `${(part / column.total) * 100}%`, background: colourOf(piece), cursor: clickable ? "pointer" : "default", outline: pick.a === column.label && pick.b === piece ? "2px solid #1f2a4d" : undefined }} />;
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div />
+            <div className="rp-3g-labels">
+              {columns.map((column) => (
+                <span key={column.label} title={column.label} className={column.others ? "" : "rp-3g-pick"} style={{ fontWeight: pick.a === column.label ? 800 : 500 }} onClick={() => { if (!column.others) toggle({ a: column.label }); }}><em>{column.label}</em></span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rp-cards">
+            <div className="rp-card"><span>Total {value?.caption}</span><b>{money(grand, places)}</b></div>
+            <div className="rp-card"><span>{nameOf(xKey)} shown</span><b>{columns.length}</b></div>
+            {largest && <div className="rp-card rp-card-wide"><span>Largest {nameOf(xKey).toLowerCase()}</span><b>{money(largest.total, places)}</b><small>{largest.label} · {percent(largest.total, grand)}</small></div>}
+          </div>
+          {lowerFields.length > 0 && (
+            <p className="rp-chart-note">
+              <button type="button" className="mp-btn mp-btn-plain" onClick={() => setOpened({ mode: "all", lines: new Map() })}>Open all</button>{" "}
+              <button type="button" className="mp-btn mp-btn-plain" onClick={() => setOpened({ mode: "none", lines: new Map() })}>Close all</button>{" "}
+              Click ⊞ / ⊟ to open or close a line. Each level shows its 15 largest; the share is of the total.
+            </p>
+          )}
+          <table className="rp-3g-summary">
+            <thead><tr><th>{summaryHead}</th><th>{value?.caption}</th><th>Share</th><th>Entries</th></tr></thead>
+            <tbody>
+              {treeLines.map((line) => (
+                <tr key={line.key} className={`${line.level === 0 ? "rp-3g-top" : ""} ${line.others ? "" : "rp-3g-pick"} ${!line.others && pick.a === line.a && pick.b === line.b ? "rp-3g-on" : ""}`} onClick={() => selectLine(line)}>
+                  <td style={{ paddingLeft: 8 + line.level * 18 }}>
+                    {line.expandable ? <button type="button" className="rp-3g-fold" aria-label={isOpen(line.key, line.level) ? "Close" : "Open"} onClick={(event) => { event.stopPropagation(); toggleLine(line.key, line.level); }}>{isOpen(line.key, line.level) ? "⊟" : "⊞"}</button> : <span className="rp-3g-fold" />}
+                    <span>{line.label}</span>
+                  </td>
+                  <td>{money(line.total, places)}</td><td>{percent(line.total, grand)}</td><td>{line.count}</td>
+                </tr>
+              ))}
+              <tr className="rp-3g-total"><td>Total</td><td>{money(grand, places)}</td><td>{percent(grand, grand)}</td><td>{columns.reduce((sum, column) => sum + column.count, 0)}</td></tr>
+            </tbody>
+          </table>
+
+          {pieKey !== "" && pieTotal > 0 && (
+            <div className="rp-donuts">
+              <div className="rp-donut-block">
+                <Donut caption={`${value?.caption} by ${nameOf(pieKey)} — ${pieFor !== "" ? pieFor : "all"}`} slices={slices} total={pieTotal} picked={pick.c ?? ""} onPick={(slice) => { if (!slice.others) toggle({ c: slice.label }); }} />
+                <table className="rp-legend">
+                  <tbody>
+                    {slices.map((slice) => (
+                      <tr key={slice.label} className={`${slice.others ? "" : "rp-legend-pick"} ${pick.c === slice.label ? "rp-legend-on" : ""}`} onClick={() => { if (!slice.others) toggle({ c: slice.label }); }}>
+                        <td><i style={{ background: slice.colour }} /></td>
+                        <td className="rp-legend-name">{slice.label}</td>
+                        <td className="rp-legend-num">{money(slice.value, places)}</td>
+                        <td className="rp-legend-num">{percent(slice.value, pieTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      <p className="rp-chart-note">Charted from the rows the grid shows (a filter or the search narrows it); only positive figures count. Click a column, a coloured piece or a pie slice to pick it, click again to clear. This panel is wider for the chart: Minimize ▶ hides it and the grid gets the room back.</p>
+    </>
   );
 }

@@ -26,8 +26,10 @@ function decode(value: string): GroupSpec | null {
   return null;
 }
 
-export function GroupByPanel({ output, specs, onApply, onClose }: { output: ReportOutput; specs: readonly GroupSpec[]; onApply: (specs: GroupSpec[]) => void; onClose: () => void }) {
+export function GroupByPanel({ output, specs, onApply, onClose }: { output: ReportOutput; specs: readonly GroupSpec[]; onApply: (specs: GroupSpec[], summary: boolean) => void; onClose: () => void }) {
   useEscapeClose(onClose);
+  /** Details (default) shows every entry under its groups; Summary shows only each group's subtotal line, as the Ask bar's "monthly summary" does. */
+  const [mode, setMode] = useState<"details" | "summary">("details");
   const [draft, setDraft] = useState<string[]>(() => Array.from({ length: LEVELS }, (_, index) => encode(specs[index])));
 
   const texts = output.columns.filter((column) => column.kind === "text" && column.key !== "HEADING_COLUMN_BY_SYSTEM");
@@ -41,7 +43,7 @@ export function GroupByPanel({ output, specs, onApply, onClose }: { output: Repo
   const apply = () => {
     // The same level twice would be one group inside itself: keep the first.
     const seen = new Set<string>();
-    onApply(chosen.filter((spec) => { const value = encode(spec); if (seen.has(value)) return false; seen.add(value); return true; }));
+    onApply(chosen.filter((spec) => { const value = encode(spec); if (seen.has(value)) return false; seen.add(value); return true; }), mode === "summary");
   };
   const entries = output.rows.filter((row) => row.kind === "data").length;
 
@@ -63,9 +65,14 @@ export function GroupByPanel({ output, specs, onApply, onClose }: { output: Repo
               </select>
             </label>
           ))}
+          <div className="rp-groupby-level" role="radiogroup" aria-label="Show">
+            <span>Show</span>
+            <label><input type="radio" name="groupby-mode" checked={mode === "details"} onChange={() => setMode("details")} /> Details</label>
+            <label><input type="radio" name="groupby-mode" checked={mode === "summary"} onChange={() => setMode("summary")} /> Summary</label>
+          </div>
           <div className="rp-groupby-buttons">
             <button type="button" className="mp-btn mp-btn-green" onClick={apply} disabled={chosen.length === 0}>Apply</button>
-            <button type="button" className="mp-btn mp-btn-plain" onClick={() => { setDraft(Array.from({ length: LEVELS }, () => "")); onApply([]); }} disabled={specs.length === 0 && chosen.length === 0}>Clear</button>
+            <button type="button" className="mp-btn mp-btn-plain" onClick={() => { setDraft(Array.from({ length: LEVELS }, () => "")); onApply([], false); }} disabled={specs.length === 0 && chosen.length === 0}>Clear</button>
           </div>
           {specs.length > 0 && <p className="rp-chart-note">Grouped by {specs.map((spec) => specCaption(spec, output.columns)).join(" › ")}. Create Tree opens and closes the groups; F6 shows only the subtotals.</p>}
         </>
