@@ -651,6 +651,12 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
       setBusy("");
     }
   }, [call]);
+  /** Add Details: the field lists, which column holds the account / product name, and the values of the ticked fields. */
+  const loadDetails = useCallback(async (action: "detailFields" | "detailIdentity" | "detailValues", payload: Record<string, unknown>) => {
+    const reply = await call<Record<string, unknown>>(action, payload);
+    if (reply.refusal) throw new Error((reply.refusal as { message: string }).message);
+    return reply;
+  }, [call]);
   const loadLog = useCallback(async (ledKey: number, processKey: number, master?: { id: number; code: number; first: string; small?: boolean }) => (await call<{ log: LogTable }>("log", { ledKey, processKey, ...(master ? { masterId: master.id, masterCode: master.code, masterFirst: master.first, masterSmall: master.small === true } : {}) })).log, [call]);
   const generateEinvoice = useCallback(async (vouchers: { ledKey: number; code: number; distanceKm: string }[]) => {
     if (!selection) throw new Error("No company is open");
@@ -914,6 +920,7 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
           generateEinvoice={generateEinvoice}
           loadGroup={loadGroup}
           loadCompare={loadCompare}
+          loadDetails={loadDetails}
           comparePeriod={generatedPeriod}
           yearStart={def.dates.yearStart}
           yearEnd={def.dates.yearEnd}

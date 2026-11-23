@@ -5479,6 +5479,64 @@ html[data-mtheme="light"] .rp-growth-check {
 html[data-mtheme="light"] .rp-growth-table th.rp-growth-sort, html[data-mtheme="light"] .rp-compare-table th.rp-growth-sort:hover {
     color: #4a5ff0
 }
+html[data-mtheme="light"] .rp-adddetails h3 {
+    color: #1f2a4d
+}
+html[data-mtheme="light"] .rp-ad-find {
+    border: 1px solid #e3e6ec;
+    background: #fbfcfe;
+    color: #1f2a4d
+}
+html[data-mtheme="light"] .rp-ad-find:focus {
+    outline: 0;
+    border-color: #c1c8d5;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(74,95,240,.15)
+}
+html[data-mtheme="light"] .rp-ad-section {
+    border-top: 1px solid #e8eaef
+}
+html[data-mtheme="light"] .rp-ad-listhead {
+    color: #8a95b0
+}
+html[data-mtheme="light"] .rp-ad-section {
+    border: 1px solid #e8eaef;
+    background: #ffffff
+}
+html[data-mtheme="light"] .rp-ad-icon {
+    background: #f9fbfd;
+    color: #4a5ff0
+}
+html[data-mtheme="light"] .rp-ad-chip {
+    background: #e8f6ee;
+    color: #1a7a43
+}
+html[data-mtheme="light"] .rp-ad-chip-off {
+    background: #f9f9fa;
+    color: #8a95b0
+}
+html[data-mtheme="light"] .rp-ad-off {
+    background: #fcfcfd
+}
+html[data-mtheme="light"] .rp-ad-off .rp-ad-item, html[data-mtheme="light"] .rp-ad-off .rp-ad-grouphead b, html[data-mtheme="light"] .rp-ad-off .rp-ad-listhead {
+    color: #a6aec4
+}
+html[data-mtheme="light"] .rp-ad-listhead em {
+    background: #f9fbfd;
+    color: #4a5ff0
+}
+html[data-mtheme="light"] .rp-ad-group {
+    border-top: 1px solid #f1f2f5
+}
+html[data-mtheme="light"] .rp-ad-grouphead b {
+    color: #1f2a4d
+}
+html[data-mtheme="light"] .rp-ad-grouphead i {
+    color: #8a95b0
+}
+html[data-mtheme="light"] .rp-ad-count {
+    color: #8a95b0
+}
 html[data-mtheme="light"] .modern-view {
     --modern-bg: #fafbfd;
     --modern-surface: #ffffff;
@@ -11448,6 +11506,64 @@ html[data-mtheme="dark"] .rp-growth-check {
 }
 html[data-mtheme="dark"] .rp-growth-table th.rp-growth-sort, html[data-mtheme="dark"] .rp-compare-table th.rp-growth-sort:hover {
     color: #5569f1
+}
+html[data-mtheme="dark"] .rp-adddetails h3 {
+    color: #c1c9d6
+}
+html[data-mtheme="dark"] .rp-ad-find {
+    border: 1px solid #212834;
+    background: #10141b;
+    color: #c1c9d6
+}
+html[data-mtheme="dark"] .rp-ad-find:focus {
+    outline: 0;
+    border-color: #313b4d;
+    background: #0e1218;
+    box-shadow: 0 0 0 3px rgba(74,95,240,.15)
+}
+html[data-mtheme="dark"] .rp-ad-section {
+    border-top: 1px solid #202732
+}
+html[data-mtheme="dark"] .rp-ad-listhead {
+    color: #7c889c
+}
+html[data-mtheme="dark"] .rp-ad-section {
+    border: 1px solid #202732;
+    background: #0e1218
+}
+html[data-mtheme="dark"] .rp-ad-icon {
+    background: #11151c;
+    color: #5569f1
+}
+html[data-mtheme="dark"] .rp-ad-chip {
+    background: #102318;
+    color: #94e8b8
+}
+html[data-mtheme="dark"] .rp-ad-chip-off {
+    background: #12161e;
+    color: #7c889c
+}
+html[data-mtheme="dark"] .rp-ad-off {
+    background: #10141b
+}
+html[data-mtheme="dark"] .rp-ad-off .rp-ad-item, html[data-mtheme="dark"] .rp-ad-off .rp-ad-grouphead b, html[data-mtheme="dark"] .rp-ad-off .rp-ad-listhead {
+    color: #a6aec4
+}
+html[data-mtheme="dark"] .rp-ad-listhead em {
+    background: #11151c;
+    color: #5569f1
+}
+html[data-mtheme="dark"] .rp-ad-group {
+    border-top: 1px solid #1e2530
+}
+html[data-mtheme="dark"] .rp-ad-grouphead b {
+    color: #c1c9d6
+}
+html[data-mtheme="dark"] .rp-ad-grouphead i {
+    color: #7c889c
+}
+html[data-mtheme="dark"] .rp-ad-count {
+    color: #7c889c
 }
 html[data-mtheme="dark"] .modern-view {
     --modern-bg: #10151c;

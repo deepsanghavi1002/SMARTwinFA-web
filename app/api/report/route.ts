@@ -14,6 +14,8 @@ import { runGroupedReport, runReport } from "@/lib/report/reportCombine";
 import { loadReport, againstBookItems, formFilterItems, lostFocusItems, slabFilterItems } from "@/lib/report/setup";
 import { readEntryLog } from "@/lib/report/log";
 import { zoomTarget } from "@/lib/report/zoom";
+import { detailCatalog, detailIdentity, detailValues } from "@/lib/report/details";
+import type { DetailRequest } from "@/lib/report/detailTypes";
 import type { ReportDefinition, ReportOutput, ReportSelection } from "@/lib/report/types";
 import { packedOutputStream } from "@/lib/report/wire";
 import { logError, logWarn } from "@/lib/log";
@@ -23,7 +25,7 @@ import { logError, logWarn } from "@/lib/log";
  * REPORT row of the company's visible menu can be opened, and everything runs read-only.
  */
 
-type Body = Readonly<{ action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; masterId?: number; masterCode?: number; masterFirst?: string; masterSmall?: boolean; acCode?: number; name?: string; fields?: string[]; compareYear?: string }>;
+type Body = Readonly<{ candidates?: unknown; request?: unknown; action: string; session: SessionKey; reportName: string; menuShortName?: string; selection?: ReportSelection; password?: string; ledKey?: number; processKey?: number; masterId?: number; masterCode?: number; masterFirst?: string; masterSmall?: boolean; acCode?: number; name?: string; fields?: string[]; compareYear?: string }>;
 
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
 const headers = { "cache-control": "no-store" };
@@ -144,6 +146,9 @@ export async function POST(request: Request) {
         case "forms": return await formFilterItems(loader);
         case "log": if (Number(body.masterId) > 0 && body.masterSmall === true) return { log: await readSmallEntryLog(loader, Math.trunc(Number(body.masterId)), String(body.masterFirst ?? "")) }; if (Number(body.masterId) > 0) return { log: await readMasterLog(loader, Math.trunc(Number(body.masterId)), String(body.masterFirst ?? ""), Math.trunc(Number(body.masterCode) || 0)) }; return { log: await readEntryLog(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0)) };
         case "zoom": return { zoom: await zoomTarget(loader, Math.trunc(Number(body.ledKey) || 0), Math.trunc(Number(body.processKey) || 0), Math.trunc(Number(body.acCode) || 0), String(body.name ?? "").slice(0, 200)) };
+        case "detailFields": return { fields: await detailCatalog(loader) };
+        case "detailIdentity": return { identity: await detailIdentity(loader, body.candidates) };
+        case "detailValues": return { values: await detailValues(loader, body.request as DetailRequest) };
         case "module-password": return verifyModulePassword(loader, moduleName, String(body.password ?? ""));
         default: throw new Error(`Unknown action ${body.action}`);
       }

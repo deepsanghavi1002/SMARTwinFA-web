@@ -4292,3 +4292,32 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .rp-growth-tools{flex-wrap:wrap;align-items:flex-end}
 .rp-growth-table th.rp-growth-sort,.rp-compare-table th.rp-growth-sort{cursor:pointer;user-select:none;white-space:nowrap}
 .rp-growth-table th.rp-growth-sort,.rp-compare-table th.rp-growth-sort:hover{color:#4a5ff0}
+.rp-adddetails h3{margin:0 0 2px;font-size:13px;font-weight:800;color:#1f2a4d}
+.rp-ad-find{height:34px;padding:0 12px;border:1px solid #dfe4f0;border-radius:12px;background:#f6f8fd;color:#1f2a4d;font:600 12.5px "Segoe UI",Arial,sans-serif}
+.rp-ad-find:focus{outline:0;border-color:#4a5ff0;background:#fff;box-shadow:0 0 0 3px rgba(74,95,240,.15)}
+.rp-ad-section{border-top:1px solid #e3e8f4;padding-top:10px;display:flex;flex-direction:column;gap:6px}
+.rp-ad-lists{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px}
+.rp-ad-listhead{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#8a95b0;margin-bottom:2px}
+.rp-ad-listhead .mp-btn{height:24px;padding:0 10px;font-size:11px}
+.rp-ad-item{display:flex;align-items:center;gap:8px;padding:2px 0;font-size:12.5px;cursor:pointer}
+.rp-ad-item input{margin:0}
+/* Add Details: section cards, groups that open and close, a section that is off */
+.rp-ad-section{border:1px solid #e3e8f4;border-radius:14px;background:#fff;padding:12px 14px;gap:8px}
+.rp-ad-title{display:flex;align-items:center;gap:10px}
+.rp-ad-title h3{flex:1;margin:0}
+.rp-ad-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;background:#eef0ff;color:#4a5ff0}
+.rp-ad-icon .mp-icon{width:16px;height:16px}
+.rp-ad-chip{font-size:11px;font-weight:700;padding:2px 10px;border-radius:999px;background:#e8f6ee;color:#1a7a43}
+.rp-ad-chip-off{background:#f0f1f5;color:#8a95b0}
+.rp-ad-off{background:#f7f8fb}
+.rp-ad-off .rp-ad-item,.rp-ad-off .rp-ad-grouphead b,.rp-ad-off .rp-ad-listhead{color:#a6aec4}
+.rp-ad-lists{grid-template-columns:1fr;gap:10px}
+.rp-ad-listhead em{font-style:normal;margin-left:6px;padding:0 7px;border-radius:999px;background:#eef0ff;color:#4a5ff0;letter-spacing:0}
+.rp-ad-group{border-top:1px solid #eef1f8}
+.rp-ad-grouphead{display:flex;align-items:center;gap:8px;padding:6px 2px;cursor:pointer;user-select:none}
+.rp-ad-grouphead b{flex:1;font-size:12.5px;font-weight:700;color:#1f2a4d}
+.rp-ad-grouphead input{margin:0}
+.rp-ad-grouphead i{font-style:normal;color:#8a95b0;width:12px;text-align:center}
+.rp-ad-count{font-size:11px;font-weight:700;color:#8a95b0}
+.rp-ad-items{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;padding-bottom:6px}
+.rp-ad-indent{padding-left:22px}
