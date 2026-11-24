@@ -3389,7 +3389,7 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   // What moved between the year's start and the day before From, for all the products in one query (a subquery for each product timed out with many products).
   const movedBefore = new Map<number, number>();
   if (between) {
-    for (const row of (await runReportSql(loader, frag(`SELECT pl.PROD_ID AS "pid", (SUM(CASE pl.STOCK_NAT WHEN 'A' THEN ${qtyOf("pl", "p1", "JOB-IN", summary)} ELSE 0 END) - SUM(CASE pl.STOCK_NAT WHEN 'L' THEN ${qtyOf("pl", "p1", "JOB-OUT", summary)} ELSE 0 END))::numeric AS "moved"`
+    for (const row of (await runReportSqlHashed(loader, frag(`SELECT pl.PROD_ID AS "pid", (SUM(CASE pl.STOCK_NAT WHEN 'A' THEN ${qtyOf("pl", "p1", "JOB-IN", summary)} ELSE 0 END) - SUM(CASE pl.STOCK_NAT WHEN 'L' THEN ${qtyOf("pl", "p1", "JOB-OUT", summary)} ELSE 0 END))::numeric AS "moved"`
       + ` FROM ${db}PROD_LEDGER pl join ${db}PRODUCT_MASTER p1 on p1.PROD_KEY = pl.PROD_ID WHERE ${lineWhere("pl", true)} AND pl.IL_DATE BETWEEN '${yearStart}' AND '${dayBeforeFrom}' GROUP BY pl.PROD_ID`))).rows) movedBefore.set(num(row.pid), num(row.moved));
   }
   // Factor columns (CHK_FACTOR, Summary): the same lines in the product's second report unit: OPEN_FACT (the year's opening and what moved before From), ADD_FACT, LESS_FACT and BAL_FACT.
@@ -3413,7 +3413,7 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   const addonLevels = [0, 1, 2, 3].filter((at) => call.addon[at].trim() !== "" && call.headingAddon[at].trim() !== "" && !/godown/i.test(call.addon[at]));
   const addonSelect = addonLevels.map((at) => `, ${call.selectedAddon[at].trim() !== "" ? call.selectedAddon[at].trim() : `${call.addon[at].trim()} as "SMART_SELECTED_ADDON${at + 1}"`}, ${call.headingAddon[at].trim()}`).join("");
   const headingAliases = addonLevels.map((at) => addonAlias(call.headingAddon[at])).filter((alias) => alias !== "");
-  const products = (await runReportSql(loader, frag(`SELECT product.PROD_KEY AS "prod_key"${addonSelect}, product.PROD_SHORT AS "prod_short", product.hsn_code AS "hsn_code", product.bar_code AS "bar_code", product.prod_message AS "prod_message", product.min_qty::numeric AS "min_qty", product.max_qty::numeric AS "max_qty", (SELECT mu.UOM_SHORT FROM ${db}PROD_UOM mu WHERE mu.UOM_KEY = product.minuom_id) AS "min_uom", (SELECT xu.UOM_SHORT FROM ${db}PROD_UOM xu WHERE xu.UOM_KEY = product.maxuom_id) AS "max_uom",`
+  const products = (await runReportSqlHashed(loader, frag(`SELECT product.PROD_KEY AS "prod_key"${addonSelect}, product.PROD_SHORT AS "prod_short", product.hsn_code AS "hsn_code", product.bar_code AS "bar_code", product.prod_message AS "prod_message", product.min_qty::numeric AS "min_qty", product.max_qty::numeric AS "max_qty", (SELECT mu.UOM_SHORT FROM ${db}PROD_UOM mu WHERE mu.UOM_KEY = product.minuom_id) AS "min_uom", (SELECT xu.UOM_SHORT FROM ${db}PROD_UOM xu WHERE xu.UOM_KEY = product.maxuom_id) AS "max_uom",`
     + ` case when LEVEL.DIV_MAXLVL=LEVEL.STOCK_LEVEL then PRODUCT.PROD_DESC when LEVEL.STOCK_LEVEL=1 then PRODUCT.DESC_1 when LEVEL.STOCK_LEVEL=2 then PRODUCT.DESC_1 || ' ' || PRODUCT.DESC_2 when LEVEL.STOCK_LEVEL=3 then PRODUCT.DESC_1 || ' ' || PRODUCT.DESC_2 || ' ' || PRODUCT.DESC_3 when LEVEL.STOCK_LEVEL=4 then PRODUCT.DESC_1 || ' ' || PRODUCT.DESC_2 || ' ' || PRODUCT.DESC_3 || ' ' || PRODUCT.DESC_4 else ' ' end AS "prod_desc",`
     + ` (SELECT PUOM.UOM_SHORT FROM ${db}PROD_UOM PUOM WHERE PUOM.UOM_KEY = PRODUCT.REP1_UOM) AS "uom1", prodbal.rep_rate::numeric AS "rep_rate", prodbal.open_rate::numeric AS "open_rate", (SELECT p2.UOM_SHORT FROM ${db}PROD_UOM p2 WHERE p2.UOM_KEY = PRODUCT.REP2_UOM) AS "uom2", product.fg_costing_rate::numeric AS "fg_rate", (case when product.rep2_uom=product.pcs_uom then prodbal.OPEN_PCS when product.rep2_uom=product.qty1_uom then prodbal.open_qty1 when product.rep2_uom=product.qty2_uom then prodbal.open_qty2 when product.rep2_uom=product.qty3_uom then prodbal.open_qty3 when product.rep2_uom=product.pack_uom then prodbal.open_pack when product.rep2_uom=product.weight_uom then prodbal.open_weight else prodbal.OPEN_PCS end) AS "open_fact", product.toll_perc::numeric AS "toll_perc",`
     + ` (case when ${openingCase("pcs")} then prodbal.OPEN_PCS when ${openingCase("qty1")} then prodbal.open_qty1 when ${openingCase("qty2")} then prodbal.open_qty2 when ${openingCase("qty3")} then prodbal.open_qty3 when ${openingCase("pack")} then prodbal.open_pack when ${openingCase("weight")} then prodbal.open_weight else prodbal.OPEN_PCS end) AS "opening"`
@@ -3434,15 +3434,15 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
   // The Summary needs only each product's totals: the server adds the lines up (a row for each product, not for each line), and the columns come from a query that returns nothing.
   const orderAt = lineSql.lastIndexOf(" ORDER BY PRODUCT.PROD_SHORT");
   const lineBody = lineSql.slice(0, orderAt);
-  const lines = summary ? await runReportSql(loader, `${lineBody} LIMIT 0`) : await runReportSql(loader, lineSql);
-  const totals = summary ? (await runReportSql(loader, (() => { const named = (wanted: string) => `t."${lines.fields.find((field) => field.name.toLowerCase() === wanted)?.name ?? wanted}"`; return `SELECT ${named("prod_key")} AS "pk", SUM(${named("add_qty")}) AS "a", SUM(${named("less_qty")}) AS "l" FROM (${lineBody}) t GROUP BY ${named("prod_key")}`; })())).rows : [];
+  const lines = summary ? await runReportSqlHashed(loader, `${lineBody} LIMIT 0`) : await runReportSqlHashed(loader, lineSql);
+  const totals = summary ? (await runReportSqlHashed(loader, (() => { const named = (wanted: string) => `t."${lines.fields.find((field) => field.name.toLowerCase() === wanted)?.name ?? wanted}"`; return `SELECT ${named("prod_key")} AS "pk", SUM(${named("add_qty")}) AS "a", SUM(${named("less_qty")}) AS "l" FROM (${lineBody}) t GROUP BY ${named("prod_key")}`; })())).rows : [];
   const table = tableFromFields(lines.fields);
   // TAX: the report heading of the entry's tax (not SGST), read from the ledger entry's extension by its ledger key, else by the second key the line carries.
   const taxOf = new Map<number, string>();
   {
     const ledKeys = summary ? [] : [...new Set(lines.rows.flatMap((row) => [num(row.SMART_LED_KEY), num(row.SYSTEM_BLANK2)]).filter((key) => key > 0))];
     if (ledKeys.length > 0) {
-      for (const row of (await runReportSql(loader, frag(`SELECT DISTINCT ON (ledext.led_id) ledext.led_id AS "led_id", taxmst.TAX_REPOHD AS "code" FROM ${db}LEDGER_EXT ledext join ${db}TAX_MASTER taxmst on taxmst.tax_rec = ledext.tax_id join ${db}IDOPT_MASTER idopt on idopt.idopt_key::text = taxmst.tax_type::text`
+      for (const row of (await runReportSqlHashed(loader, frag(`SELECT DISTINCT ON (ledext.led_id) ledext.led_id AS "led_id", taxmst.TAX_REPOHD AS "code" FROM ${db}LEDGER_EXT ledext join ${db}TAX_MASTER taxmst on taxmst.tax_rec = ledext.tax_id join ${db}IDOPT_MASTER idopt on idopt.idopt_key::text = taxmst.tax_type::text`
         + ` WHERE ledext.led_id = ANY($1::int[]) and idopt.IDOPT_FLAG = 'TT' and idopt.opt_desc <> 'SGST' ORDER BY ledext.led_id, (idopt.opt_desc = 'CGST') DESC, ledext.ctid DESC`), [ledKeys])).rows) taxOf.set(num(row.led_id), toText(row.code));
     }
   }
@@ -3488,7 +3488,7 @@ async function stockReport(loader: Loader, plan: ReportPlan): Promise<ResultTabl
     if (tax !== undefined) table.set(row, "FORM_CODE", tax);
     const key = num(table.get(row, "Prod_key"));
     const list = byProduct.get(key);
-    if (list) list.push({ ...row }); else byProduct.set(key, [{ ...row }]);
+    if (list) list.push(row); else byProduct.set(key, [row]); // the row itself, not a copy: a Ledger of every product holds a very large number of lines
   }
 
   // Summary: the rows with nothing at all are dropped, then those closing at nil unless Print Zero Stock, then those closing below nil unless Print Negative Stock.

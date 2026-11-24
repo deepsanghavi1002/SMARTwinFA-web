@@ -4321,3 +4321,48 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .rp-ad-count{font-size:11px;font-weight:700;color:#8a95b0}
 .rp-ad-items{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;padding-bottom:6px}
 .rp-ad-indent{padding-left:22px}
+
+/* PAYROLL (features/payroll/Payroll.tsx) */
+.pr-screen{padding:10px 14px;gap:10px;overflow:auto}
+.pr-staff{flex-direction:row;align-items:flex-start}
+.pr-left{flex:0 0 38%;min-width:300px;display:flex;flex-direction:column;gap:8px}
+.pr-right{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.pr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;align-items:start}
+.pr-screen fieldset{border:1px solid #c9ced6;border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.pr-field{display:flex;align-items:center;gap:8px}
+.pr-field>span{flex:0 0 150px;font-size:12px}
+.pr-field input,.pr-field select{flex:1;min-width:0;padding:3px 6px}
+.pr-field em{font-style:normal;opacity:.7}
+.pr-check{display:flex;align-items:center;gap:6px;font-size:12px}
+.pr-table{border-collapse:collapse;width:100%;font-size:12px}
+.pr-table th,.pr-table td{border-bottom:1px solid #e1e4e8;padding:4px 6px;text-align:left}
+.pr-table tbody tr{cursor:pointer}
+.pr-table tr.pr-pick{background:#e8f0fe}
+.pr-off{opacity:.55}
+.pr-num{text-align:right;white-space:nowrap}
+.pr-note{font-size:12px;opacity:.75;margin:2px 0}
+.pr-head{margin:0;font-size:15px}
+.pr-head small{font-weight:400;opacity:.7;margin-left:6px}
+.pr-actions{display:flex;gap:8px;margin-top:4px}
+.pr-primary{font-weight:600}
+.pr-picker{position:relative}
+.pr-found{position:absolute;z-index:5;left:0;right:0;margin:2px 0 0;padding:0;list-style:none;background:#fff;border:1px solid #c9ced6;border-radius:6px;max-height:220px;overflow:auto;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.pr-found button{display:block;width:100%;text-align:left;border:0;background:none;padding:5px 8px;cursor:pointer}
+.pr-found button:hover{background:#e8f0fe}
+.pr-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.pr-tiles{display:flex;flex-wrap:wrap;gap:10px}
+.pr-tiles>div{border:1px solid #c9ced6;border-radius:6px;padding:6px 14px;display:flex;flex-direction:column;min-width:130px}
+.pr-tiles small{opacity:.7}.pr-tiles b{font-size:16px}
+.pr-warn{color:#9a5b00;background:#fff4e0;border:1px solid #f0cf94;border-radius:6px;padding:6px 10px;font-size:12px;margin:0}
+.pr-scroll{overflow:auto;max-width:100%}
+.pr-table tfoot td{font-weight:700;border-top:2px solid #888}
+.pr-slip .slip{width:auto;max-width:720px;margin:0 0 12px;border:1px solid #888;padding:12px;background:#fff;color:#111}
+.pr-slip h2,.pr-slip h3{margin:2px 0;text-align:center}
+.pr-slip .info{display:grid;grid-template-columns:1fr 1fr;gap:3px 16px;margin:8px 0;font-size:12px}
+.pr-slip .info span{opacity:.65;display:inline-block;min-width:90px}
+.pr-slip table{width:100%;border-collapse:collapse;font-size:12px}.pr-slip th,.pr-slip td{border:1px solid #aaa;padding:3px 6px}.pr-slip .n{text-align:right}
+.pr-slip .sign{text-align:center;opacity:.6;margin:8px 0 0;font-size:11px}
+.pr-chip{display:inline-flex;align-items:center;gap:4px;background:#eef3fb;border:1px solid #c5d3ec;border-radius:12px;padding:1px 4px 1px 8px;margin:1px 4px 1px 0;font-size:11px;white-space:nowrap}
+.pr-chip button{border:0;background:none;cursor:pointer;font-size:14px;line-height:1;padding:0 3px}
+.pr-bad{background:#fdecec}.pr-badtext{color:#b42318;font-weight:600}
+.pr-formrow td{background:#f7f9fc}

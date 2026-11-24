@@ -19,6 +19,12 @@ import { TransportEntry } from "../features/transport/TransportEntry";
 import { Notepad } from "../features/utility/Notepad";
 import { CheckGstNo } from "../features/utility/CheckGstNo";
 import { RepostData } from "../features/utility/RepostData";
+import { PrintDesigner } from "../features/utility/PrintDesigner";
+import { PayrollComponents, PayrollSetup, PayrollStaff } from "../features/payroll/Payroll";
+import { PayrollPending, PayrollTagging } from "../features/payroll/PayrollTag";
+import { PayrollJournal } from "../features/payroll/PayrollJournal";
+import { PayrollBankSheet, PayrollOutstanding, PayrollStatutory, PayrollUntagged } from "../features/payroll/PayrollReports";
+import { PayrollAttendance, PayrollPayslip, PayrollProcess, PayrollRegister } from "../features/payroll/PayrollRun";
 import { TransferBalance } from "../features/utility/TransferBalance";
 import { AskAi } from "../features/ask/AskAi";
 import { isMessageBoxOpen, messageBox } from "../features/ui/MessageBox";
@@ -70,7 +76,7 @@ function MenuLabel({ node }: { node: MenuNode }) {
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
 
-type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "check-gst" | "repost" | "transfer" | "pending";
+type Screen = "home" | "master" | "small-entry" | "entry" | "report" | "pie-chart" | "year-chart" | "dashboard" | "security" | "transport" | "notepad" | "check-gst" | "repost" | "transfer" | "print-designer" | "payroll-setup" | "payroll-components" | "payroll-staff" | "payroll-attendance" | "payroll-process" | "payroll-register" | "payroll-payslip" | "payroll-tagging" | "payroll-pending" | "payroll-journal" | "payroll-outstanding" | "payroll-banksheet" | "payroll-statutory" | "payroll-untagged" | "pending";
 
 export interface WindowInstance extends MenuNode {
   menuId: number;
@@ -189,12 +195,33 @@ function screenOf(node: MenuNode | null): Screen {
   if (code === "TRANSPORT_ENTRY" && node.actionMenu) return "transport";
   if (code === "U_NOTEPAD") return "notepad";
   if (code === "UTILITY_CHECK_GSTNO" && node.actionMenu) return "check-gst";
+  if (code === "PRINT_DESIGNER") return "print-designer";
+  if (code === "PAYROLL_SETUP") return "payroll-setup";
+  if (code === "PAYROLL_COMPONENTS") return "payroll-components";
+  if (code === "PAYROLL_STAFF") return "payroll-staff";
+  if (code === "PAYROLL_ATTENDANCE") return "payroll-attendance";
+  if (code === "PAYROLL_PROCESS") return "payroll-process";
+  if (code === "PAYROLL_REGISTER") return "payroll-register";
+  if (code === "PAYROLL_PAYSLIP") return "payroll-payslip";
+  if (code === "PAYROLL_TAGGING") return "payroll-tagging";
+  if (code === "PAYROLL_PENDING") return "payroll-pending";
+  if (code === "PAYROLL_JOURNAL") return "payroll-journal";
+  if (code === "PAYROLL_OUTSTANDING") return "payroll-outstanding";
+  if (code === "PAYROLL_BANKSHEET") return "payroll-banksheet";
+  if (code === "PAYROLL_STATUTORY") return "payroll-statutory";
+  if (code === "PAYROLL_UNTAGGED") return "payroll-untagged";
   if (code === "REPOST_DATA") return "repost";
   if (code === "TRANSFER_DATA") return "transfer";
   if (code === "PIE_CHART" && node.actionMenu) return "pie-chart";
   if (code === "PIE_YEAR_CHART" && node.actionMenu) return "year-chart";
   if ((code === "REP_DASHBOARD" || code === "YEAR_DASHBOARD") && node.actionMenu) return "dashboard";
   return "pending";
+}
+
+/** UTILITY gets the web-only Print Format Designer as its last item (no menu row of the desktop's database carries it). */
+function withPrintDesigner(rows: MenuNode[]): MenuNode[] {
+  const designer: MenuNode = { id: -9001, label: "Print Format Designer", accessKey: null, accessIndex: -1, shortcut: null, actionCode: "PRINT_DESIGNER", programName: null, actionMenu: null, menuShortName: null, children: [] };
+  return rows.map((menu) => (menu.label.replace(/&/g, "").trim().toUpperCase() === "UTILITY" ? { ...menu, children: [...menu.children, designer] } : menu));
 }
 
 export default function Home() {
@@ -524,7 +551,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         if (!response.ok || !body.menus) throw new Error(body.error || "Menu could not be loaded");
         return body.menus;
       })
-      .then((rows) => { setMenus(rows); setMenuError(""); })
+      .then((rows) => { setMenus(withPrintDesigner(rows)); setMenuError(""); })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
         setMenuError(reason instanceof Error ? reason.message : "Menu could not be loaded");
@@ -799,6 +826,21 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
         : <SecurityRights menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "notepad": return <Notepad title={node.label} onClose={close} />;
       case "check-gst": return <CheckGstNo menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "print-designer": return <PrintDesigner title={node.label} onClose={close} />;
+      case "payroll-setup": return <PayrollSetup menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-components": return <PayrollComponents menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-staff": return <PayrollStaff menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-attendance": return <PayrollAttendance menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-process": return <PayrollProcess menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-register": return <PayrollRegister menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-payslip": return <PayrollPayslip menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-tagging": return <PayrollTagging menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-pending": return <PayrollPending menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-journal": return <PayrollJournal menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-outstanding": return <PayrollOutstanding menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-banksheet": return <PayrollBankSheet menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-statutory": return <PayrollStatutory menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
+      case "payroll-untagged": return <PayrollUntagged menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "repost": return <RepostData menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "transfer": return <TransferBalance menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;
       case "transport": return <TransportEntry menuShortName={node.menuShortName ?? ""} title={node.label} onClose={close} />;

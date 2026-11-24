@@ -1,5 +1,7 @@
 import { readOnly } from "./db";
 import { companyLicence } from "./company-license";
+import { PAYROLL_ACTIVATION } from "./payroll/schema";
+import { isPayrollMenuRow } from "./payroll/menu";
 
 /**
  * The application menu, read from smart_setup.menumaster.
@@ -108,7 +110,13 @@ async function readMenuCatalogNow(companyGroup: string | null): Promise<MenuNode
        ORDER BY menuid`,
     );
 
-    const visible = result.rows.filter((row) => isVisible(row, licence) && label(row).length > 0);
+    // The Payroll menu is in menumaster for everyone but shows only where smart_system.setup.menu_para holds "PAYROLL,".
+    const systemSchema = process.env.DB_SCHEMA_SYSTEM?.trim() || "smart_system";
+    if (!/^[a-z_][a-z0-9_]*$/i.test(systemSchema)) throw new Error("DB_SCHEMA_SYSTEM must be a PostgreSQL identifier.");
+    const para = await client.query<{ menu_para: string | null }>(`SELECT menu_para FROM ${systemSchema}.setup ORDER BY setup_key LIMIT 1`);
+    const payrollOn = (para.rows[0]?.menu_para ?? "").toUpperCase().includes(PAYROLL_ACTIVATION);
+
+    const visible = result.rows.filter((row) => isVisible(row, licence) && label(row).length > 0 && (payrollOn || !isPayrollMenuRow(row.menushortname)));
     const childrenOf = new Map<number | null, MenuRow[]>();
     for (const row of visible) {
       const parent = row.parentid ?? null;

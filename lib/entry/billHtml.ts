@@ -16,7 +16,9 @@ export type Bill = Readonly<{
   shipTo: BillParty;
   /** The account addons marked for the bill (addon_fld fiel_docprint Y) that the entry holds a value for. */
   addons: readonly Readonly<{ label: string; value: string }>[];
-  lines: readonly Readonly<{ serial: string; description: string; hsn: string; qty: string; uom: string; rate: string; rateUom: string; amount: string; discount: string; taxable: string; taxRate: string; tax: string; total: string }>[];
+  lines: readonly Readonly<{ /** Packs / bundles of the line (PROD_LEDGER.BUNDLE). */ packs?: string; serial: string; description: string; hsn: string; qty: string; uom: string; rate: string; rateUom: string; amount: string; discount: string; taxable: string; taxRate: string; tax: string; total: string }>[];
+  /** The e-way bill and e-invoice of the entry (ledger EWAY_* / EINV_* and ENTRY_QRCODE), for the formats that print them. */
+  govt?: Readonly<{ ewayNo: string; ewayDate: string; irn: string; ack: string; ackDate: string; qrText: string }>;
   totals: readonly Readonly<{ label: string; amount: string; strong?: boolean }>[];
   finalAmount: string;
   inWords: string;

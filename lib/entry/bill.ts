@@ -37,7 +37,7 @@ export async function entryBill(loader: Loader, entryName: string, firstCombo: E
   const entry = await restoreEntry(loader, entryName, firstCombo, uniqueKey);
   const screen = await loadBook(loader, entryName, firstCombo, entry.taxGroup);
   const led = (await loader.readTable(
-    `SELECT amount::numeric AS amount, full_docno, doc_date, chln_date, doc_no1, narration, credit_days FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [uniqueKey]))?.[0];
+    `SELECT amount::numeric AS amount, full_docno, doc_date, chln_date, doc_no1, narration, credit_days, led_key, eway_billno, eway_billdate, einv_ackno, einv_ackdate, einv_irnno FROM |sys.db|ledger WHERE unique_key = $1 AND doc_pos <> 'D' LIMIT 1`, [uniqueKey]))?.[0];
   if (!led) throw new Error("The entry is not found (deleted, or not posted)");
 
   const companyRow = (await loader.readTable(
@@ -83,6 +83,10 @@ export async function entryBill(loader: Loader, entryName: string, firstCombo: E
   const slabRows = screen.slabRows;
   const itemWise = slabRows.filter((row) => row.itemWise);
   const itemTotals = new Map<number, number>();
+  // The packs of each line (PROD_LEDGER.BUNDLE) and the e-way bill / e-invoice the entry carries (a QR text exists once the e-invoice was generated).
+  const packsOf = new Map<number, string>(((await loader.readTable(`SELECT il_key, bundle FROM |sys.db|prod_ledger WHERE led_id = $1 AND il_pos <> 'D'`, [Number(field(led, "led_key"))])) ?? []).map((row) => [toInt(field(row, "il_key")), String(toDecimal(field(row, "bundle")) || "")] as const));
+  const qrText = text((await loader.readTable(`SELECT einv_str_qrcode FROM |sys.db|entry_qrcode WHERE entry_id = $1 AND entry_mode = 'L' LIMIT 1`, [Number(field(led, "led_key"))]).catch(() => null))?.[0], "einv_str_qrcode");
+  const stamp = (name: string) => { const when = parseDesktopDate(displayValue(field(led, name))); return when ? formatDesktopDate(when) : ""; };
   const lines = entry.lines.map((line, index) => {
     const cells = line.cells;
     const saved = (entry as unknown as { itemSlab: Record<number, Record<number, { perc: string; amount: string }>> }).itemSlab[Number(cells._il_key)] ?? {};
@@ -102,6 +106,7 @@ export async function entryBill(loader: Loader, entryName: string, firstCombo: E
     const desc = cells.prod_desc || cells.prod_key || "";
     return {
       serial: String(index + 1),
+      packs: packsOf.get(toInt(cells._il_key)) ?? "",
       description: desc,
       hsn: cells.hsn_code ?? "",
       qty: String(toDecimal(cells.quantity)),
@@ -144,6 +149,7 @@ export async function entryBill(loader: Loader, entryName: string, firstCombo: E
     billTo,
     shipTo,
     addons,
+    govt: { ewayNo: text(led, "eway_billno"), ewayDate: stamp("eway_billdate"), irn: text(led, "einv_irnno"), ack: text(led, "einv_ackno"), ackDate: text(led, "einv_ackdate"), qrText },
     lines,
     totals,
     finalAmount: fixed(final, 2),

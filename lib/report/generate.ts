@@ -220,6 +220,11 @@ export async function planReport(loader: Loader, reportName: string, selection: 
     : filterItem || sortItem || formatItem ? `Selection :  ${listPart}` : "";
 
   // "Cancel Event If None Group Selected For A particullar Report".
+  // No group ticked but the report has the product group (its help is C1HelpProduct): every product is meant (or the ticked ones), as if that group were ticked.
+  if (tickedGroups.length === 0) {
+    const productGroup = groupItems.find((item) => Number(item.value) < 0 && text(controlValRow(item.controlValKey), "visible_controls_lst") === "C1HelpProduct");
+    if (productGroup) tickedGroups.push(productGroup);
+  }
   if (flag(properties, "one_grp_sud_selected") && tickedGroups.length === 0) throw new ReportRefusal("Minimum one group should be selected,\nTo generate this report");
   const compulsory = field(properties, "compulsory_group_index");
   if (compulsory !== null && compulsory !== undefined && toText(compulsory) !== "") {
@@ -501,11 +506,15 @@ export async function planReport(loader: Loader, reportName: string, selection: 
         // A fixed group (account, book, schedule, product ...): the ticked rows of its help grid.
         const grid = text(row, "visible_controls_lst");
         const ticked = tickedOf(grid);
-        if (ticked.length === 0) { failures += ` - Minimum One ${caption} Should Be Selected To Generate Report\n`; continue; }
+        // The product help needs no selection: with none ticked every product is meant, and the group adds no keys to the report's where (its from, order and group by still apply).
+        const everyProduct = grid === "C1HelpProduct" && ticked.length === 0;
+        if (ticked.length === 0 && !everyProduct) { failures += ` - Minimum One ${caption} Should Be Selected To Generate Report\n`; continue; }
         // The product help's ticks are the products' keys; a group whose where names the code (Description, Party Wise Rate's
         // Product Code: "product.PROD_SHORT in") would compare the code with a number, which PostgreSQL refuses: the key is compared.
         const outputWhere = grid === "C1HelpProduct" ? String(field(row, "output_where") ?? "").replace(/(\w+)\.PROD_SHORT(\s+in\s*)$/i, "$1.PROD_KEY$2") : String(field(row, "output_where") ?? "");
-        if (outputWhere.trim() !== "") {
+        if (outputWhere.trim() !== "" && everyProduct) {
+          // nothing to add to the where
+        } else if (outputWhere.trim() !== "") {
           if (!isWhereBlank()) {
             if (otherGroup) where += call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21) ? " " : " and ";
             else if (!checkQuery.includes("CHK_MULTICO,") && reportKey !== 136 && reportKey !== 138 && reportKey !== 178) { where += " and ("; addBracket = true; }
@@ -520,6 +529,7 @@ export async function planReport(loader: Loader, reportName: string, selection: 
         if (text(row, "display_helptextid") === "") throw new ReportRefusal("Internal Program Setup Failed,\nCan't Find Help Selection Field", "SMART_SETUP.CONTROL_VALUE ERROR");
         const numeric = !(grid === "C1HelpBook" && reportKey === 17);
         const keys = `(${ticked.map((key) => keyLiteral(key, numeric)).join(",")})`;
+        if (!everyProduct) {
         if (grid === "C1HelpBook" && call.selectBookKey === "") call.selectBookKey = keys;
         if (grid === "C1HelpSchedule" && call.selectScheduleKey === "") call.selectScheduleKey = keys;
         if (grid === "C1HelpProductGroup" && call.selectIdoptKey === "") call.selectIdoptKey = keys;
@@ -527,6 +537,7 @@ export async function planReport(loader: Loader, reportName: string, selection: 
         if (!(call.selectKey[0] !== "" && (reportKey === 6 || reportKey === 21)) && !checkQuery.includes("CHK_MULTICO,") && reportKey !== 136 && reportKey !== 138 && reportKey !== 143 && reportKey !== 178) where += keys;
         if (grid === "C1HelpProduct") { productKeys += keys; if (call.selectKey[4] === "") call.selectKey[4] = keys; }
         group1Keys += keys;
+        }
         const formatId = text(row, "formating_sp_id");
         if (formatId !== "" && fixFillable(`SMART_${formatId}`)) {
           fixColumns.set(`SMART_${formatId}`, String(field(row, "output_where")).split("in").join("").trim());
@@ -729,7 +740,8 @@ export async function planReport(loader: Loader, reportName: string, selection: 
   call.formating = "";
   call.dateField = dateField;
   call.from_ = from_;
-  call.where = where;
+  // Every product (the product help with none ticked) can leave the where empty: the report's own conditions are joined to it with AND, so it keeps a true condition.
+  call.where = isWhereBlank() && tickedGroups.some((group) => Number(group.value) < 0 && text(controlValRow(group.controlValKey) ?? {}, "visible_controls_lst") === "C1HelpProduct") ? `${where} 1=1 ` : where;
   call.groupBy = selectedSlabs !== "" && reportName === "REPORT_REGISTER_REGISTER" && (filterItem?.text.trim().toLowerCase() ?? "") !== "none"
     ? "led.LED_KEY,led.CODE,led.doc_date,led.FULL_DOCNO,led.DOC_NO1,led.DOC_NO,ac.NAME,led.AMOUNT,LED.DOC_REMARK,LED.NARRATION"
     : chkGroupGroupBy.replace(/,$/, "");

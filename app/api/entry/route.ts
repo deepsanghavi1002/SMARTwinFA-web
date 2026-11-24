@@ -1,3 +1,4 @@
+import { billDocument } from "@/lib/entry/billDocument";
 import { transaction } from "@/lib/db";
 import { allowedMasterMenu } from "@/lib/master-program/access";
 import { requireOperator } from "@/lib/auth/request";
@@ -288,6 +289,12 @@ export async function POST(request: Request) {
           const uniqueKey = Number(body.uniqueKey);
           if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the entry first");
           return { bill: await entryBill(loader, body.entryName, chosenRegister(def, body.firstCombo), uniqueKey), warnings: loader.warnings };
+        }
+        case "bill-document": {
+          // The bill as the desktop's SP_BILL_PRINT makes it (DOCUMENT_TOP / BODY / BOTTOM columns), read from the saved entry, nothing written.
+          const uniqueKey = Number(body.uniqueKey);
+          if (!Number.isInteger(uniqueKey) || uniqueKey <= 0) throw new Error("Open the entry first");
+          return { document: await billDocument(loader, { ledKey: uniqueKey, copyNo: Number(body.copyNo) || 1, totalCopies: Number(body.totalCopies) || 1 }), warnings: loader.warnings };
         }
         case "preview-all":
           // Find / Edit with every field of each entry: read only when the operator asks for it.

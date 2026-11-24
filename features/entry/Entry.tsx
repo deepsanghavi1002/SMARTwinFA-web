@@ -50,6 +50,10 @@ import { SideGrid } from "./SideGrid";
 import { InvoicePrint } from "./InvoicePrint";
 import { combineBills, standardBillHtml } from "../../lib/entry/billHtml";
 import type { Bill } from "../../lib/entry/billHtml";
+import { PRINT_FORMATS } from "../../lib/entry/printFormats";
+import { renderTemplate } from "../../lib/print/template";
+import type { BillDocument } from "../../lib/entry/billDocument";
+import type { Template } from "../../lib/print/template";
 import { AddressPick } from "./AddressPick";
 import { addressFields } from "./addressLines";
 
@@ -1727,11 +1731,39 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
   };
   const tickEntry = (key: number) => setTicked((now) => (now.includes(key) ? now.filter((item) => item !== key) : [...now, key]));
   /** The bill (Standard print) of the ticked entries, one after the other as one document; else of the opened entry. */
-  const loadBills = async () => {
+  /** The company's own Rishabh invoice template (smart_system.print_template); null: the default one. */
+  const templateCall = async (id: string): Promise<Template | null> => {
+    if (!selection) throw new Error("No company is open");
+    const response = await fetch("/api/print/template", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ action: "get", format: id, session: { companyId: Number(selection.companyId), yearKey: selection.yearKey, loginName: selection.loginName } }) });
+    const body = await response.json() as { template?: Template | null; error?: string };
+    if (!response.ok || body.error) throw new Error(body.error || "The print template could not be read");
+    return body.template ?? null;
+  };
+  /** The print formats offered besides Standard: the built-in ones, and the ones this company made in the Print Format Designer. */
+  const printFormatList = async (): Promise<{ id: string; name: string }[]> => {
+    const own: { id: string; name: string }[] = [];
+    if (selection) {
+      try {
+        const response = await fetch("/api/print/template", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ action: "list", format: "x", session: { companyId: Number(selection.companyId), yearKey: selection.yearKey, loginName: selection.loginName } }) });
+        const body = await response.json() as { formats?: { id: string; name: string }[] };
+        for (const item of body.formats ?? []) own.push({ id: item.id, name: item.name });
+      } catch { /* the company's own formats are left out */ }
+    }
+    return [...PRINT_FORMATS.map((item) => ({ id: item.id, name: item.name })), ...own];
+  };
+  const loadBills = async (format = "standard") => {
     if (!register) return "";
     const keys = ticked.length > 0 ? ticked : restored !== null ? [restored] : [];
     const bills: string[] = [];
-    for (const key of keys) bills.push(standardBillHtml((await call<{ bill: Bill }>("bill", { firstCombo: register, uniqueKey: key })).bill));
+    // The Rishabh invoice is drawn on the company's own template (a template that cannot be read leaves the default one).
+    const stored = format === "standard" ? null : await templateCall(format).catch(() => null);
+    const base = format === "standard" ? undefined : PRINT_FORMATS.find((item) => item.id === format) ?? PRINT_FORMATS.find((item) => item.id === stored?.meta?.base);
+    if (format !== "standard" && !base) throw new Error("This print format is not available");
+    const template = stored ?? base?.defaultTemplate() ?? null;
+    for (const key of keys) {
+      if (base && template) { const document = (await call<{ document: BillDocument }>("bill-document", { firstCombo: register, uniqueKey: key })).document; bills.push(renderTemplate(template, base.docFrom(document), document.top.INVOICE_FULLDOCNO ?? "")); }
+      else bills.push(standardBillHtml((await call<{ bill: Bill }>("bill", { firstCombo: register, uniqueKey: key })).bill));
+    }
     return combineBills(bills);
   };
   /** The number the exported file is named with: the opened entry's, or the first and last of the ticked ones. */
@@ -2507,7 +2539,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="d" aria-keyshortcuts="Alt+D" disabled={!isRestored} title="Delete the opened invoice" onClick={() => void deleteEntry()}><Icon name="clear" /><HotkeyLabel text="Delete" hotkey="d" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="p" aria-keyshortcuts="Alt+P" disabled={!isRestored && ticked.length === 0} title="Print the opened invoice, or the entries ticked by Range: Standard (bill preview with a Print button) or Special (later)" onClick={() => setPrinting(true)}><Icon name="print" /><HotkeyLabel text="Print" hotkey="p" /></button>
         <button type="button" className="mp-btn mp-btn-blue" data-hotkey="r" aria-keyshortcuts="Alt+R" title="Read the helps, the addon lists and the Find / Edit list again" onClick={() => { setAccountHelp(null); setProductHelp(null); setPreview(null); setPreviewAll({ fields: null, products: null }); setFindMode(""); setHelpKind(null); void refreshAddonLists(); if (tab === "find") void openTab("find"); }}><Icon name="refresh" /><HotkeyLabel text="Refresh" hotkey="r" /></button>
-        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!book || voucher} title="Range print: tick the entries from a number to a number of the series, then Print" onClick={() => setRangeOpen(true)}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
+        <button type="button" className="mp-btn mp-btn-blue" data-hotkey="g" aria-keyshortcuts="Alt+G" disabled={!book || voucher || tab !== "find"} title="Range print: open the Find / Edit tab, then tick the entries from a number to a number of the series and Print" onClick={() => setRangeOpen(true)}><Icon name="list" /><HotkeyLabel text="Range" hotkey="g" /></button>
         {def?.buttons.upload && <button type="button" className="mp-btn mp-btn-blue" data-hotkey="u" aria-keyshortcuts="Alt+U" disabled={!isRestored} title="Keep up to five JPEG / PDF files with this entry (written when the entry is saved)" onClick={() => void uploadDocuments()}><Icon name="image" /><HotkeyLabel text="Upload Document" hotkey="u" /></button>}
         {def?.buttons.einvoice && <button type="button" className="mp-btn mp-btn-blue" disabled={!isRestored} title="E-invoice is not ported yet" onClick={notPorted("E-invoice")}><Icon name="export" />E-Invoice</button>}
         {def?.buttons.log && <button type="button" className="mp-btn mp-btn-blue" data-hotkey="l" aria-keyshortcuts="Alt+L" disabled={!isRestored} title="The entry's log: every save of it, side by side" onClick={() => void showLog()}><Icon name="log" /><HotkeyLabel text="Log" hotkey="l" /></button>}
@@ -2524,6 +2556,7 @@ ${reply.report.summary.fullDocNo}`, "Delete (dry run)");
           docNo={printNumber()}
           onClose={() => setPrinting(false)}
           load={loadBills}
+          formats={printFormatList}
         />
       )}
       {returnsAsk && <ReturnsPanel choices={returnsAsk.choices} onDone={returnsAsk.resolve} />}

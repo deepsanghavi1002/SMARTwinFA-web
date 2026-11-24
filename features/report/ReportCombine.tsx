@@ -365,7 +365,8 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
     from,
     upto,
     groups,
-    ticks: Object.fromEntries(Object.keys(ticks).map((grid) => [grid, [...ticksOf(grid)]])),
+    // Every product ticked is sent as none: the report then reads all products with no key list (a long IN list made the Ledger slow).
+    ticks: Object.fromEntries(Object.keys(ticks).map((grid) => { const keys = [...ticksOf(grid)]; return [grid, grid === "C1HelpProduct" && keys.length > 0 && keys.length >= (def?.helps.find((help) => help.grid === grid)?.rows.length ?? Infinity) ? [] : keys]; })),
     choices: slabListShown ? { ...choices, [filterList]: slabsTicked.join(",") } : choices,
     columns: columnsTicked,
     texts,
