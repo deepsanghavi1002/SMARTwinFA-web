@@ -6,7 +6,7 @@ ticking, so the history stays.
 
 Format of an item: `- [ ] what is left — why / where (date noted)`
 
-Last updated: 2026-10-14
+Last updated: 2026-11-24
 
 ---
 
@@ -429,6 +429,44 @@ One generic web master for all MASTER menus (`lib/master-program/`, `features/ma
 - [ ] The two `Master_ProgramGrid.cs` copies (F: and D:) have identical grid logic; F: is the SQL
   Server dialect. Keep the grid column index coupling in mind (property-grid row N = update-grid
   column N). (2026-09)
+
+---
+
+## Payroll (PAYROLL menu, built 2026-11-24)
+
+Own top-level menu, last in the menu bar, shown only while `smart_system.setup.menu_para` holds `PAYROLL,` (lib/menu-catalog.ts).
+Staff are never copied: a profile points at `account.code`; the name and opening balance are read from `account` / `ac_balance`.
+Code: `lib/payroll/` (schema, calc, service, run, tag, jv, reports, rights, sheetRead), `features/payroll/`, `app/api/payroll/route.ts`.
+Tables (company schema, prefix `pay_`): setup, component, staff_profile, salary_structure, period, attendance, slip, slip_line,
+voucher_tag, loan, loan_deduct, schema_version. A tag points at a voucher line (`ledger.led_key`) and the staff code, not at a
+`ledger_post` key, so a Re-post of the data does not lose it.
+
+Setup, run after the software is updated and after a company is created or restored (idempotent, versioned, one transaction per schema):
+`node --experimental-strip-types scripts/payroll-setup.mts` (`--dry-run` rolls everything back, `--schema <name>`, `--activate` writes `PAYROLL,`
+to menu_para, `--no-menu`). The web screens also make a company's tables on first use. Applied to rishabh_plastic26, rishabh_plastic27 and
+rishabh_plastic27_old on 2026-11-24 (versions 1 to 5).
+
+### Done
+- [x] Phase 1 (2026-11-24): Payroll Setup (journal mode A / B / both, salary expense account, days basis, PF / ESI / PT fixed percentages and ceilings), Pay Components, Staff Payroll Profile with salary structure by effective date.
+- [x] Phase 2 (2026-11-24): periods (Open, Processed, Locked), attendance typed or imported from Excel / CSV, Process Payroll (one slip per staff per month, unique key; processing again replaces the slips), Salary Register (Excel), Payslip (print).
+- [x] Phase 3 (2026-11-24): Voucher Tagging (part or all of a voucher line to a period and a kind: salary credit, payout, advance, recovery, other; the sum of a line's tags can never pass the line, checked under a lock on the staff member; side rules), Pending Salary with the ledger tie-out.
+- [x] Phase 4 (2026-11-24): Salary Journal. B: map an existing journal line to a slip (adds the salary-credit tag, links the line). A: make the month's journal through the Voucher save (lib/entry/save.ts), always previewed first in a rolled-back savepoint; posts only when `SMARTWINFA_ENTRY_SAVE_COMMIT=true`.
+- [x] Phase 5 (2026-11-24): loans with the instalment taken from the slip (never more than is owed), Advance and Loans, Bank Transfer Sheet (Excel and CSV), PF / ESI / PT Statement, Untagged Vouchers.
+- [x] Per-user rights (2026-11-24): Menu Book Rights (Allow, View, Add, Edit, Delete, module / add / edit / delete passwords) enforced on every call (lib/payroll/rights.ts); Print and Export switched off in the screens.
+- [x] Committed and pushed as fd497b7 (2026-11-24). Saved tests: tests/payroll-*.test.mts (18, pure logic).
+
+### Open
+- [ ] Not browser-tested: none of the payroll screens has been opened in a browser; the checks were rolled-back runs against rishabh_plastic27 and unit tests. The .xlsx attendance reader is untested (it needs the browser's DOMParser); the CSV path is tested. (2026-11-24)
+- [ ] Mode A real posting has never run: only the rolled-back preview. The commit path and the linking of slips to the new journal lines afterwards are untested. `SMARTWINFA_ENTRY_SAVE_COMMIT=true` was added to .env.local on 2026-11-24 and is app-wide (every entry screen can write). Back up, post a small month, check the voucher in Transaction > Voucher. (2026-11-24)
+- [ ] No way to unlink a journal payroll made: if a Mode A voucher is deleted in Accounts, its slips stay linked and can be neither re-processed nor released (Release works for mapped journals only). Add an unlink that checks the voucher is really gone. (2026-11-24)
+- [ ] Rights: Save / Tag / Post buttons stay visible for a user without that right (the server refuses with the message); View, Print and Export passwords are not asked; Print and Export are gated in the screen only, the server cannot tell an export from a view. The rights code has no saved test (it needs the database modules); it was checked in a rolled-back run. (2026-11-24)
+- [ ] The Payroll rows are in the shared `smart_setup.menumaster`, so the desktop also lists them (no desktop screens behind them). Hide them from the desktop with menuvisible / menuspecial if wanted. (2026-11-24)
+- [ ] One slip per staff member per month: no supplementary slip for arrears or a bonus, no overtime. (2026-11-24)
+- [ ] Payslip prints a simple built-in layout, not the Print Format Designer. (2026-11-24)
+- [ ] PF / ESI / PT is a statement only: no ECR or challan upload file; the PF wage of a past period follows the component's current PF flag. (2026-11-24)
+- [ ] Attendance import is Excel / CSV only: no direct link to an attendance device. (2026-11-24)
+- [ ] Tags and the tie-out are for the open year; a year rollover has not been tried. (2026-11-24)
+- [ ] Database-level checks (processing, tagging, journal, loans, rights) were scratch scripts run with jiti and rolled back, then deleted; only the pure logic has saved tests. (2026-11-24)
 
 ---
 

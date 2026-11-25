@@ -5,7 +5,7 @@ import { messageBox } from "../ui/MessageBox";
 import { download } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
 import type { ExportColumn } from "../../lib/export/table";
-import { money, usePayroll, type Props } from "./Payroll";
+import { SetupIcon, money, usePayroll, type Props } from "./Payroll";
 
 /**
  * PAYROLL (Phase 3): Voucher Tagging and Pending Salary. The vouchers are the ones already entered in Accounts (Cash / Bank / Journal); a tag only
@@ -42,6 +42,7 @@ export function PayrollTagging({ menuShortName, title, onClose }: Props) {
   const [code, setCode] = useState<number | null>(null);
   const [data, setData] = useState<Lines | null>(null);
   const [onlyOpen, setOnlyOpen] = useState(false);
+  const [term, setTerm] = useState("");
   const [form, setForm] = useState<{ ledId: number; periodId: number; type: TagType; amount: string; note: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -73,27 +74,32 @@ export function PayrollTagging({ menuShortName, title, onClose }: Props) {
     try { setData(await call<Lines>(action, payload)); setForm(null); } catch (reason) { await fail(reason); } finally { setBusy(false); }
   };
 
+  const found = staff.filter((s) => `${s.name} ${s.code}`.toLowerCase().includes(term.trim().toLowerCase()));
   const formLine = form ? data?.lines.find((l) => l.ledId === form.ledId) : undefined;
   const allowed = (type: TagType) => !types || !formLine || types[type].side === "B" || types[type].side === (formLine.side === "Dr" ? "D" : "C");
 
   return (
-    <div className="mp-screen te-screen pr-screen pr-staff" role="region" aria-label={title}>
-      <div className="pr-left">
-        <table className="pr-table">
-          <thead><tr><th>Staff</th></tr></thead>
-          <tbody>
-            {staff.map((s) => <tr key={s.code} className={`${s.active ? "" : "pr-off"} ${code === s.code ? "pr-pick" : ""}`} onClick={() => setCode(s.code)}><td>{s.name} <small>#{s.code}</small></td></tr>)}
-            {staff.length === 0 && <tr><td className="pr-note">No staff enrolled yet.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-      <div className="pr-right">
-        {!data ? <p className="pr-note">Pick a staff member to see the vouchers in their ledger.</p> : (
+    <div className="mp-screen te-screen pr-screen pr-vt" role="region" aria-label={title}>
+      <section className="vt-card vt-staff" aria-label="Staff">
+        <header className="vt-head">
+          <span className="vt-title"><span className="vt-badge"><SetupIcon name="group" /></span><h3>Staff</h3></span>
+          <label className="vt-search"><SetupIcon name="search" /><input type="search" aria-label="Search staff" placeholder="Search staff..." value={term} onChange={(event) => setTerm(event.target.value)} /></label>
+        </header>
+        <ul className="vt-people">
+          {found.map((s) => (
+            <li key={s.code}><button type="button" className={`${s.active ? "" : "pr-off"} ${code === s.code ? "vt-on" : ""}`} aria-pressed={code === s.code} onClick={() => setCode(s.code)}><i aria-hidden="true" />{s.name} #{s.code}</button></li>
+          ))}
+          {found.length === 0 && <li className="pr-note">{staff.length === 0 ? "No staff enrolled yet." : "No staff matches the search."}</li>}
+        </ul>
+      </section>
+      <section className="vt-card vt-main" aria-label="Vouchers">
+        <span className="vt-title"><span className="vt-badge"><SetupIcon name="tag" /></span><h3>Voucher Tagging</h3></span>
+        {!data ? <p className="vt-empty">Pick a staff member to see the vouchers in their ledger.</p> : (
           <>
             <h3 className="pr-head">{data.name} <small>Opening {drCr(data.opening)}</small></h3>
             <label className="pr-check"><input type="checkbox" checked={onlyOpen} onChange={(event) => setOnlyOpen(event.target.checked)} /> Show only lines not fully tagged</label>
-            <div className="pr-scroll">
-              <table className="pr-table">
+            <div className="vt-table-box">
+              <table className="vt-table">
                 <thead><tr><th>Date</th><th>Voucher</th><th>Book</th><th>Dr/Cr</th><th className="pr-num">Amount</th><th className="pr-num">Untagged</th><th>Tagged to</th><th /></tr></thead>
                 <tbody>
                   {shown.map((l) => (
@@ -109,7 +115,7 @@ export function PayrollTagging({ menuShortName, title, onClose }: Props) {
                           ))}
                           {l.over && <span className="pr-warn">Voucher changed in Accounts: the tags are more than the line. Remove one.</span>}
                         </td>
-                        <td>{l.untagged > 0 && <button type="button" onClick={() => openLine(l)}>Tag</button>}</td>
+                        <td className="vt-act">{l.untagged > 0 && <button type="button" className="vt-tag" onClick={() => openLine(l)}>Tag</button>}</td>
                       </tr>
                       {form?.ledId === l.ledId && (
                         <tr className="pr-formrow"><td colSpan={8}>
@@ -137,8 +143,8 @@ export function PayrollTagging({ menuShortName, title, onClose }: Props) {
             )}
           </>
         )}
-        <div className="pr-actions"><button type="button" onClick={() => void quit()}>Quit</button></div>
-      </div>
+        <div className="vt-foot"><button type="button" className="vt-quit" onClick={() => void quit()}><SetupIcon name="close" />Quit</button></div>
+      </section>
     </div>
   );
 }
@@ -159,6 +165,7 @@ export function PayrollPending({ menuShortName, title, onClose }: Props) {
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [rows, setRows] = useState<Recon[]>([]);
   const [company, setCompany] = useState("");
+  const [term, setTerm] = useState("");
 
   useEffect(() => {
     if (!ready) return;
@@ -183,38 +190,51 @@ export function PayrollPending({ menuShortName, title, onClose }: Props) {
       `Pending Salary ${label}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   };
 
+  // The search narrows what is shown and totalled on the screen; the Excel export always carries every staff member.
+  const shown = rows.filter((r) => `${r.name} ${r.code}`.toLowerCase().includes(term.trim().toLowerCase()));
+  const filtered = shown.length !== rows.length;
+  const shownTotal = (pick: (r: Recon) => number) => shown.reduce((t, r) => t + pick(r), 0);
+  const totalled: ((r: Recon) => number)[] = [(r) => r.opening, (r) => r.salary, (r) => r.paid, (r) => r.advance, (r) => r.recovered, (r) => r.pending, (r) => r.glPayable, (r) => r.untagged, (r) => r.earned, (r) => r.notCredited];
+
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <div className="pr-bar">
-        <label className="pr-field"><span>Pay period</span>
-          <select value={periodId ?? ""} onChange={(event) => setPeriodId(event.target.value === "" ? null : Number(event.target.value))}>
-            <option value="">All periods (whole year)</option>{periods.map((p) => <option key={p.id} value={p.id}>{periodName(p)}</option>)}</select></label>
-        <button type="button" disabled={rows.length === 0 || !rights.export} onClick={exportXlsx}>Export Excel</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
-      </div>
-      <p className="pr-note">
-        Payable amounts: plus is owed to the staff member, minus is owed by them. <b>Pending (tags)</b> = opening + salary credited + recovered − paid − advance, from the tagged vouchers.
-        <b> Ledger payable</b> is the closing of the staff ledger in Accounts. They match (✔) when no voucher line is left untagged.{!all && " With one period chosen, the opening, ledger and tie columns are for the whole year."}
-      </p>
-      <div className="pr-scroll">
-        <table className="pr-table">
-          <thead><tr><th>Staff</th><th className="pr-num">Opening</th><th className="pr-num">Salary credited</th><th className="pr-num">Paid</th><th className="pr-num">Advance</th><th className="pr-num">Recovered</th>
-            <th className="pr-num">Pending (tags)</th><th className="pr-num">Ledger payable</th><th className="pr-num">Untagged</th><th className="pr-num">Slip net</th><th className="pr-num">Not credited</th><th>Tie</th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.code}><td>{r.name}</td><td className="pr-num">{money(r.opening)}</td><td className="pr-num">{money(r.salary)}</td><td className="pr-num">{money(r.paid)}</td><td className="pr-num">{money(r.advance)}</td>
-                <td className="pr-num">{money(r.recovered)}</td><td className="pr-num"><b>{money(r.pending)}</b></td><td className="pr-num">{money(r.glPayable)}</td>
-                <td className={`pr-num ${r.tie ? "" : "pr-badtext"}`}>{money(r.untagged)}{r.untaggedLines > 0 && <small> ({r.untaggedLines})</small>}</td>
-                <td className="pr-num">{money(r.earned)}</td><td className={`pr-num ${r.notCredited > 0.004 ? "pr-badtext" : ""}`}>{money(r.notCredited)}</td><td>{r.tie ? "✔" : "✖"}</td></tr>
-            ))}
-            {rows.length === 0 && <tr><td colSpan={12} className="pr-note">No staff enrolled yet.</td></tr>}
-          </tbody>
-          {rows.length > 0 && (
-            <tfoot><tr><td>Total</td><td className="pr-num">{money(total((r) => r.opening))}</td><td className="pr-num">{money(total((r) => r.salary))}</td><td className="pr-num">{money(total((r) => r.paid))}</td><td className="pr-num">{money(total((r) => r.advance))}</td>
-              <td className="pr-num">{money(total((r) => r.recovered))}</td><td className="pr-num">{money(total((r) => r.pending))}</td><td className="pr-num">{money(total((r) => r.glPayable))}</td><td className="pr-num">{money(total((r) => r.untagged))}</td>
-              <td className="pr-num">{money(total((r) => r.earned))}</td><td className="pr-num">{money(total((r) => r.notCredited))}</td><td /></tr></tfoot>
-          )}
-        </table>
+    <div className="mp-screen te-screen pr-screen pr-setup pr-comp pr-pend" role="region" aria-label={title}>
+      <div className="pc-panel">
+        <header className="pc-head">
+          <span className="pc-title"><span className="pc-badge"><SetupIcon name="group" /></span><h3>Pending Salary</h3></span>
+          <label className="pc-search"><SetupIcon name="search" /><input type="search" aria-label="Search staff" placeholder="Search staff..." value={term} onChange={(event) => setTerm(event.target.value)} /></label>
+        </header>
+        <div className="pn-bar">
+          <label className="pr-field"><span>Pay period</span>
+            <select value={periodId ?? ""} onChange={(event) => setPeriodId(event.target.value === "" ? null : Number(event.target.value))}>
+              <option value="">All periods (whole year)</option>{periods.map((p) => <option key={p.id} value={p.id}>{periodName(p)}</option>)}</select></label>
+          <div className="ps-actions">
+            <button type="button" className="ps-quit" disabled={rows.length === 0 || !rights.export} onClick={exportXlsx}><SetupIcon name="excel" />Export Excel</button>
+            <button type="button" className="ps-quit" onClick={() => void quit()}><SetupIcon name="close" />Quit</button>
+          </div>
+        </div>
+        <p className="pn-note">
+          Payable amounts: plus is owed to the staff member, minus is owed by them. <b>Pending (tags)</b> = opening + salary credited + recovered − paid − advance, from the tagged vouchers.
+          <b> Ledger payable</b> is the closing of the staff ledger in Accounts. They match (✔) when no voucher line is left untagged.{!all && " With one period chosen, the opening, ledger and tie columns are for the whole year."}
+        </p>
+        <div className="pc-scroll">
+          <table className="pc-table">
+            <thead><tr><th>Staff</th><th>Opening</th><th>Salary credited</th><th>Paid</th><th>Advance</th><th>Recovered</th>
+              <th>Pending (tags)</th><th>Ledger payable</th><th>Untagged</th><th>Slip net</th><th>Not credited</th><th>Tie</th></tr></thead>
+            <tbody>
+              {shown.map((r) => (
+                <tr key={r.code}><td>{r.name}</td><td className="pr-num">{money(r.opening)}</td><td className="pr-num">{money(r.salary)}</td><td className="pr-num">{money(r.paid)}</td><td className="pr-num">{money(r.advance)}</td>
+                  <td className="pr-num">{money(r.recovered)}</td><td className="pr-num"><b>{money(r.pending)}</b></td><td className="pr-num">{money(r.glPayable)}</td>
+                  <td className={`pr-num ${r.tie ? "" : "pr-badtext"}`}>{money(r.untagged)}{r.untaggedLines > 0 && <small> ({r.untaggedLines})</small>}</td>
+                  <td className="pr-num">{money(r.earned)}</td><td className={`pr-num ${r.notCredited > 0.004 ? "pr-badtext" : ""}`}>{money(r.notCredited)}</td>
+                  <td className={`pn-tie ${r.tie ? "pn-ok" : "pn-no"}`} aria-label={r.tie ? "Ties to the ledger" : "Does not tie to the ledger"}>{r.tie ? "✔" : "✖"}</td></tr>
+              ))}
+              {shown.length === 0 && <tr><td colSpan={12}>{rows.length === 0 ? "No staff enrolled yet." : "No staff matches the search."}</td></tr>}
+            </tbody>
+            {shown.length > 0 && (
+              <tfoot><tr><td>{filtered ? `Total (${shown.length} shown)` : "Total"}</td>{totalled.map((pick, i) => <td key={i} className="pr-num">{money(shownTotal(pick))}</td>)}<td /></tr></tfoot>
+            )}
+          </table>
+        </div>
       </div>
     </div>
   );

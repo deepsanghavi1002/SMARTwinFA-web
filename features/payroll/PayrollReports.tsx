@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { download } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
 import type { ExportCell, ExportColumn } from "../../lib/export/table";
-import { money, usePayroll, type Props } from "./Payroll";
+import { SetupIcon, money, usePayroll, type Props } from "./Payroll";
 
 /**
  * PAYROLL (Phase 5): Advance and Loans, Bank Transfer Sheet, PF / ESI / PT Statement and Untagged Vouchers. Loans are repaid by an instalment taken from
@@ -45,6 +45,9 @@ export function PayrollOutstanding({ menuShortName, title, onClose }: Props) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [staff, setStaff] = useState<{ code: number; name: string }[]>([]);
   const [form, setForm] = useState<LoanForm | null>(null);
+  const [term, setTerm] = useState("");
+  // The loan form opens under the lists: it is brought into view and the cursor goes to its first box (when it opens, not on every keystroke).
+  const showForm = useCallback((node: HTMLElement | null) => { node?.scrollIntoView({ block: "nearest" }); node?.querySelector("select")?.focus(); }, []);
 
   const refresh = () => Promise.all([
     call<{ rows: OutRow[]; company: string }>("report").then((b) => { setRows(b.rows); setCompany(b.company); }),
@@ -76,51 +79,76 @@ export function PayrollOutstanding({ menuShortName, title, onClose }: Props) {
     shown.map((r) => [r.name, r.advanceGiven, r.advanceRecovered, r.advanceBalance, r.loanTaken, r.loanDeducted, r.loanBalance, r.total]),
     [null, sumOf(shown, (r) => r.advanceGiven), sumOf(shown, (r) => r.advanceRecovered), sumOf(shown, (r) => r.advanceBalance), sumOf(shown, (r) => r.loanTaken), sumOf(shown, (r) => r.loanDeducted), sumOf(shown, (r) => r.loanBalance), sumOf(shown, (r) => r.total)]);
 
-  return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <p className="pr-note">Owed by staff: advances given less recovered (from the Salary advance and Recovery tags on vouchers), and loans less the instalments taken from salary slips.</p>
-      <div className="pr-scroll">
-        <table className="pr-table">
-          <thead><tr><th>Staff</th><th className="pr-num">Advance given</th><th className="pr-num">Recovered</th><th className="pr-num">Advance balance</th><th className="pr-num">Loans</th><th className="pr-num">Instalments taken</th><th className="pr-num">Loan balance</th><th className="pr-num">Total owed</th></tr></thead>
-          <tbody>
-            {shown.map((r) => <tr key={r.code}><td>{r.name}</td><td className="pr-num">{money(r.advanceGiven)}</td><td className="pr-num">{money(r.advanceRecovered)}</td><td className="pr-num">{money(r.advanceBalance)}</td><td className="pr-num">{money(r.loanTaken)}</td><td className="pr-num">{money(r.loanDeducted)}</td><td className="pr-num">{money(r.loanBalance)}</td><td className="pr-num"><b>{money(r.total)}</b></td></tr>)}
-            {shown.length === 0 && <tr><td colSpan={8} className="pr-note">No advances or loans yet.</td></tr>}
-          </tbody>
-          {shown.length > 0 && <tfoot><tr><td>Total</td>{[(r: OutRow) => r.advanceGiven, (r: OutRow) => r.advanceRecovered, (r: OutRow) => r.advanceBalance, (r: OutRow) => r.loanTaken, (r: OutRow) => r.loanDeducted, (r: OutRow) => r.loanBalance, (r: OutRow) => r.total].map((p, i) => <td key={i} className="pr-num">{money(sumOf(shown, p))}</td>)}</tr></tfoot>}
-        </table>
-      </div>
+  // The search narrows what the two lists show and total on the screen; the Excel export carries every staff member of the summary.
+  const matches = (name: string, code: number) => `${name} ${code}`.toLowerCase().includes(term.trim().toLowerCase());
+  const listed = shown.filter((r) => matches(r.name, r.code));
+  const listedLoans = loans.filter((l) => matches(l.name, l.code));
+  const totalled: ((r: OutRow) => number)[] = [(r) => r.advanceGiven, (r) => r.advanceRecovered, (r) => r.advanceBalance, (r) => r.loanTaken, (r) => r.loanDeducted, (r) => r.loanBalance, (r) => r.total];
 
-      <h3 className="pr-head">Loans</h3>
-      <table className="pr-table">
-        <thead><tr><th>Staff</th><th>Date</th><th className="pr-num">Loan</th><th className="pr-num">Instalment</th><th>From</th><th className="pr-num">Taken</th><th className="pr-num">Balance</th><th>Note</th><th /></tr></thead>
-        <tbody>
-          {loans.map((l) => (
-            <tr key={l.id} className={l.active ? "" : "pr-off"}><td>{l.name}</td><td>{l.date}</td><td className="pr-num">{money(l.principal)}</td><td className="pr-num">{money(l.emi)}</td><td>{MONTHS[l.startMonth - 1]} {l.startYear}</td>
-              <td className="pr-num">{money(l.deducted)}</td><td className="pr-num">{money(l.balance)}</td><td>{l.note}</td>
-              <td><button type="button" onClick={() => setForm({ id: l.id, code: l.code, date: l.date, principal: String(l.principal), emi: String(l.emi), startYear: l.startYear, startMonth: l.startMonth, note: l.note, active: l.active })}>Edit</button></td></tr>
-          ))}
-          {loans.length === 0 && <tr><td colSpan={9} className="pr-note">No loans.</td></tr>}
-        </tbody>
-      </table>
+  return (
+    <div className="mp-screen te-screen pr-screen pr-adv" role="region" aria-label={title}>
+      <section className="av-card" aria-label="Advances and loans summary">
+        <header className="av-head">
+          <div>
+            <h3><SetupIcon name="money" />Advances and Loans Summary</h3>
+            <p>Owed by staff: advances given less recovered (from the Salary advance and Recovery tags on vouchers), and loans less the instalments taken from salary slips.</p>
+          </div>
+          <label className="av-search"><SetupIcon name="search" /><input type="search" aria-label="Search staff" placeholder="Search staff..." value={term} onChange={(event) => setTerm(event.target.value)} /></label>
+        </header>
+        <div className="av-scroll">
+          <table className="av-table">
+            <thead><tr><th>Staff</th><th>Advance given</th><th>Recovered</th><th>Advance balance</th><th>Loans</th><th>Instalments taken</th><th>Loan balance</th><th>Total owed</th></tr></thead>
+            <tbody>
+              {listed.map((r) => <tr key={r.code}><td>{r.name}</td>{totalled.map((pick, i) => <td key={i}>{money(pick(r))}</td>)}</tr>)}
+              {listed.length === 0 && <tr><td colSpan={8}>{shown.length === 0 ? "No advances or loans yet." : "No staff matches the search."}</td></tr>}
+            </tbody>
+            {listed.length > 0 && <tfoot><tr><td>{listed.length === shown.length ? "Total" : `Total (${listed.length} shown)`}</td>{totalled.map((pick, i) => <td key={i}>{money(sumOf(listed, pick))}</td>)}</tr></tfoot>}
+          </table>
+        </div>
+      </section>
+
+      <section className="av-card" aria-label="Loans">
+        <header className="av-head"><div><h3><SetupIcon name="doc" />Loans</h3></div></header>
+        <div className="av-scroll">
+          <table className="av-table av-loans">
+            <thead><tr><th>Staff</th><th>Date</th><th>Loan</th><th>Instalment</th><th>From</th><th>Taken</th><th>Balance</th><th>Note</th><th aria-label="Edit" /></tr></thead>
+            <tbody>
+              {listedLoans.map((l) => (
+                <tr key={l.id} className={l.active ? "" : "pr-off"}><td>{l.name}</td><td>{l.date}</td><td>{money(l.principal)}</td><td>{money(l.emi)}</td><td>{MONTHS[l.startMonth - 1]} {l.startYear}</td>
+                  <td>{money(l.deducted)}</td><td>{money(l.balance)}</td><td>{l.note}{l.active ? "" : " (not active)"}</td>
+                  <td><button type="button" className="av-edit" onClick={() => setForm({ id: l.id, code: l.code, date: l.date, principal: String(l.principal), emi: String(l.emi), startYear: l.startYear, startMonth: l.startMonth, note: l.note, active: l.active })}>Edit</button></td></tr>
+              ))}
+              {listedLoans.length === 0 && <tr><td colSpan={9}>{loans.length === 0 ? "No loans." : "No loan matches the search."}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {form && (
-        <fieldset className="pr-edit"><legend>{form.id ? "Edit loan" : "New loan"}</legend>
-          <label className="pr-field"><span>Staff</span><select value={form.code ?? ""} onChange={(event) => patch({ code: Number(event.target.value) })}>
-            <option value="">Choose…</option>{staff.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</select></label>
-          <label className="pr-field"><span>Loan date</span><input type="date" value={form.date} onChange={(event) => patch({ date: event.target.value })} /></label>
-          <label className="pr-field"><span>Loan amount</span><input type="number" min={0} step="0.01" value={form.principal} onChange={(event) => patch({ principal: event.target.value })} /></label>
-          <label className="pr-field"><span>Monthly instalment</span><input type="number" min={0} step="0.01" value={form.emi} onChange={(event) => patch({ emi: event.target.value })} /></label>
-          <label className="pr-field"><span>First instalment in</span>
-            <select value={form.startMonth} onChange={(event) => patch({ startMonth: Number(event.target.value) })}>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select>
-            <input type="number" min={2000} max={2100} value={form.startYear} onChange={(event) => patch({ startYear: Number(event.target.value) })} style={{ width: 80 }} /></label>
-          <label className="pr-field"><span>Note</span><input maxLength={100} value={form.note} onChange={(event) => patch({ note: event.target.value })} /></label>
-          <label className="pr-check"><input type="checkbox" checked={form.active} onChange={(event) => patch({ active: event.target.checked })} /> Active (instalments are taken while it is on)</label>
-          <div className="pr-actions"><button type="button" className="pr-primary" onClick={() => void save()}>Save</button><button type="button" onClick={() => setForm(null)}>Cancel</button></div>
-        </fieldset>
+        <section ref={showForm} className="av-card av-form" aria-label={form.id ? "Edit loan" : "New loan"} key={form.id ?? "new"}>
+          <header className="av-head"><div><h3><SetupIcon name="pencil" />{form.id ? "Edit Loan" : "New Loan"}</h3></div></header>
+          <div className="av-fields">
+            <label><span>Staff</span><select value={form.code ?? ""} onChange={(event) => patch({ code: Number(event.target.value) })}>
+              <option value="">Choose…</option>{staff.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</select></label>
+            <label><span>Loan date</span><input type="date" value={form.date} onChange={(event) => patch({ date: event.target.value })} /></label>
+            <label><span>Loan amount</span><span className="av-money"><em>₹</em><input aria-label="Loan amount" type="number" min={0} step="0.01" value={form.principal} onChange={(event) => patch({ principal: event.target.value })} /></span></label>
+            <label><span>Monthly instalment</span><span className="av-money"><em>₹</em><input aria-label="Monthly instalment" type="number" min={0} step="0.01" value={form.emi} onChange={(event) => patch({ emi: event.target.value })} /></span></label>
+            <div><span>First instalment in</span><span className="av-two">
+              <select aria-label="First instalment month" value={form.startMonth} onChange={(event) => patch({ startMonth: Number(event.target.value) })}>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select>
+              <input aria-label="First instalment year" type="number" min={2000} max={2100} value={form.startYear} onChange={(event) => patch({ startYear: Number(event.target.value) })} /></span></div>
+            <label><span>Note</span><input maxLength={100} value={form.note} onChange={(event) => patch({ note: event.target.value })} /></label>
+          </div>
+          <div className="av-form-foot">
+            <label className="av-check"><input type="checkbox" checked={form.active} onChange={(event) => patch({ active: event.target.checked })} /> Active (instalments are taken while it is on)</label>
+            <span className="av-buttons"><button type="button" className="av-btn av-primary" onClick={() => void save()}>Save</button><button type="button" className="av-btn" onClick={() => setForm(null)}>Cancel</button></span>
+          </div>
+        </section>
       )}
-      <div className="pr-actions">
-        <button type="button" onClick={() => setForm(blank())}>Add loan</button>
-        <button type="button" disabled={shown.length === 0 || !rights.export} onClick={exportRows}>Export Excel</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+
+      <div className="av-buttons av-bottom">
+        <button type="button" className="av-btn av-primary" onClick={() => setForm(blank())}><SetupIcon name="plus" />Add loan</button>
+        <button type="button" className="av-btn" disabled={shown.length === 0 || !rights.export} onClick={exportRows}><SetupIcon name="excel" />Export Excel</button>
+        <button type="button" className="av-btn" onClick={() => void quit()}><SetupIcon name="close" />Quit</button>
       </div>
     </div>
   );
@@ -239,6 +267,7 @@ export function PayrollUntagged({ menuShortName, title, onClose }: Props) {
   const { call, fail, quit, ready, rights } = usePayroll("untagged", menuShortName, title, onClose);
   const [lines, setLines] = useState<UntaggedLine[]>([]);
   const [orphans, setOrphans] = useState<Orphan[]>([]);
+  const [term, setTerm] = useState("");
   const [company, setCompany] = useState("");
 
   useEffect(() => {
@@ -250,26 +279,38 @@ export function PayrollUntagged({ menuShortName, title, onClose }: Props) {
     [col("Staff", "text", "left", 180), col("Date", "text", "left", 80), col("Voucher", "text", "left", 110), col("Book", "text", "left", 70), col("Dr/Cr", "text", "left", 50), col("Amount", "number", "right", 100), col("Untagged", "number", "right", 100), col("Narration", "text", "left", 260)],
     lines.map((l) => [l.name, l.date, l.docNo, l.book, l.side, l.amount, l.untagged, l.over ? `TAGGED FOR MORE THAN THE LINE. ${l.narration}` : l.narration]), [null, null, null, null, null, sumOf(lines, (l) => l.amount), sumOf(lines, (l) => l.untagged), null]);
 
+  // The search narrows what the screen shows and totals; the Excel export always carries every untagged line.
+  const q = term.trim().toLowerCase();
+  const shown = lines.filter((l) => `${l.name} ${l.date} ${l.docNo} ${l.book} ${l.narration} ${money(l.amount)}`.toLowerCase().includes(q));
+
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <p className="pr-note">Voucher lines in the enrolled staff ledgers (open year) that are not fully tagged to a pay period. Tag them in Voucher Tagging so Pending Salary ties to the ledger.</p>
-      <div className="pr-scroll">
-        <table className="pr-table">
-          <thead><tr><th>Staff</th><th>Date</th><th>Voucher</th><th>Book</th><th>Dr/Cr</th><th className="pr-num">Amount</th><th className="pr-num">Untagged</th><th>Narration</th></tr></thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={`${l.code}-${l.ledId}`} className={l.over ? "pr-bad" : ""}><td>{l.name}</td><td>{l.date}</td><td>{l.docNo}</td><td>{l.book}</td><td>{l.side}</td><td className="pr-num">{money(l.amount)}</td>
-                <td className="pr-num">{l.over ? "tagged too much" : money(l.untagged)}</td><td>{l.narration}</td></tr>
-            ))}
-            {lines.length === 0 && <tr><td colSpan={8} className="pr-note">Every voucher line of the staff ledgers is tagged.</td></tr>}
-          </tbody>
-          {lines.length > 0 && <tfoot><tr><td colSpan={5}>Total ({lines.length} lines)</td><td className="pr-num">{money(sumOf(lines, (l) => l.amount))}</td><td className="pr-num">{money(sumOf(lines, (l) => l.untagged))}</td><td /></tr></tfoot>}
-        </table>
-      </div>
+    <div className="mp-screen te-screen pr-screen pr-adv pr-untag" role="region" aria-label={title}>
+      <section className="av-card" aria-label="Untagged vouchers">
+        <header className="av-head">
+          <div>
+            <h3><SetupIcon name="layers" />Untagged Vouchers</h3>
+            <p>Voucher lines in the enrolled staff ledgers (open year) that are not fully tagged to a pay period. Tag them in Voucher Tagging so Pending Salary ties to the ledger.</p>
+          </div>
+          <label className="av-search"><SetupIcon name="search" /><input type="search" aria-label="Search vouchers" placeholder="Search vouchers..." value={term} onChange={(event) => setTerm(event.target.value)} /></label>
+        </header>
+        <div className="av-scroll">
+          <table className="av-table">
+            <thead><tr><th>Staff</th><th>Date</th><th>Voucher</th><th>Book</th><th>Dr/Cr</th><th className="pr-num">Amount</th><th className="pr-num">Untagged</th><th>Narration</th></tr></thead>
+            <tbody>
+              {shown.map((l) => (
+                <tr key={`${l.code}-${l.ledId}`} className={l.over ? "pr-bad" : ""}><td>{l.name}</td><td>{l.date}</td><td>{l.docNo}</td><td>{l.book}</td><td>{l.side}</td><td className="pr-num">{money(l.amount)}</td>
+                  <td className="pr-num">{l.over ? "tagged too much" : money(l.untagged)}</td><td className="av-narration">{l.narration}</td></tr>
+              ))}
+              {shown.length === 0 && <tr><td colSpan={8}>{lines.length === 0 ? "Every voucher line of the staff ledgers is tagged." : "No voucher matches the search."}</td></tr>}
+            </tbody>
+            {shown.length > 0 && <tfoot><tr><td colSpan={5}>{shown.length === lines.length ? `Total (${lines.length} lines)` : `Total (${shown.length} of ${lines.length} lines shown)`}</td><td className="pr-num">{money(sumOf(shown, (l) => l.amount))}</td><td className="pr-num">{money(sumOf(shown, (l) => l.untagged))}</td><td /></tr></tfoot>}
+          </table>
+        </div>
+      </section>
       {orphans.length > 0 && <p className="pr-warn">Tags on vouchers that no longer exist in Accounts: {orphans.map((o) => `${o.name} (${o.periodLabel}, ${money(o.amount)})`).join("; ")}. Remove them in Voucher Tagging.</p>}
-      <div className="pr-actions">
-        <button type="button" disabled={lines.length === 0 || !rights.export} onClick={exportXlsx}>Export Excel</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+      <div className="av-buttons av-bottom">
+        <button type="button" className="av-btn" disabled={lines.length === 0 || !rights.export} onClick={exportXlsx}><SetupIcon name="excel" />Export Excel</button>
+        <button type="button" className="av-btn" onClick={() => void quit()}><SetupIcon name="close" />Quit</button>
       </div>
     </div>
   );

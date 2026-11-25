@@ -6,7 +6,7 @@ import { download } from "../../lib/export/table";
 import { xlsx } from "../../lib/export/xlsx";
 import type { ExportColumn } from "../../lib/export/table";
 import { attendanceFromSheet, readSheet } from "../../lib/payroll/sheetRead";
-import { money, usePayroll, type Props, type Screen } from "./Payroll";
+import { SetupIcon, money, usePayroll, type Props, type Screen } from "./Payroll";
 
 /**
  * PAYROLL (Phase 2): Attendance, Process Payroll, Salary Register and Payslip. A pay period is a calendar month; it goes Open -> Processed -> Locked.
@@ -133,30 +133,42 @@ export function PayrollAttendance({ menuShortName, title, onClose }: Props) {
   };
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <PeriodBar state={state} />
-      <p className="pr-note">Paid days = days worked + paid leave and holidays (month has {monthDays}). Leave a box empty to pay the default shown in grey.</p>
-      <table className="pr-table">
-        <thead><tr><th>Staff</th><th>Designation</th><th className="pr-num">Default</th><th>Paid days</th><th>Remark</th></tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.code}>
-              <td>{r.name} <small>#{r.code}</small></td><td>{r.designation}</td><td className="pr-num">{r.defaultDays}</td>
-              <td><input type="number" min={0} max={31} step="0.5" disabled={locked} placeholder={String(r.defaultDays)} value={edited[r.code]?.paid ?? ""} onChange={(event) => set(r.code, { paid: event.target.value })} style={{ width: 80 }} /></td>
-              <td><input maxLength={100} disabled={locked} value={edited[r.code]?.remark ?? ""} onChange={(event) => set(r.code, { remark: event.target.value })} /></td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={5} className="pr-note">No staff are paid in this period (enrol staff with a joining date first).</td></tr>}
-        </tbody>
-      </table>
-      <div className="pr-actions">
-        <button type="button" className="pr-primary" disabled={busy || locked || periodId === null} onClick={() => void save()}>Save</button>
-        <button type="button" disabled={locked || rows.length === 0} onClick={() => file.current?.click()}>Import Excel / CSV</button>
-        <button type="button" disabled={rows.length === 0 || !rights.export} onClick={exportSheet}>Export sheet</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+    <div className="mp-screen te-screen pr-screen pr-setup pr-att" role="region" aria-label={title}>
+      <header className="pa-head"><span className="pa-badge"><SetupIcon name="group" /><SetupIcon name="calendar" /></span><h2>Attendance</h2></header>
+
+      <section className="pa-card pa-period" aria-label="Pay period and status">
+        <h3><SetupIcon name="calendar" />Pay Period &amp; Status</h3>
+        <PeriodBar state={state} />
+      </section>
+
+      <section className="pa-card pa-staff" aria-label="Staff attendance">
+        <h3><SetupIcon name="bank" />Staff Attendance Table</h3>
+        <div className="pa-scroll">
+          <table className="pa-table">
+            <thead><tr><th>Staff</th><th>Designation</th><th>Default</th><th>Paid days</th><th>Remark</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.code}>
+                  <td>{r.name} <small>#{r.code}</small></td><td>{r.designation}</td><td>{r.defaultDays}</td>
+                  <td className="pa-days"><input aria-label={`Paid days of ${r.name}`} type="number" min={0} max={31} step="0.5" disabled={locked} placeholder={String(r.defaultDays)} value={edited[r.code]?.paid ?? ""} onChange={(event) => set(r.code, { paid: event.target.value })} /></td>
+                  <td className="pa-remark"><input aria-label={`Remark for ${r.name}`} maxLength={100} disabled={locked} value={edited[r.code]?.remark ?? ""} onChange={(event) => set(r.code, { remark: event.target.value })} /></td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={5} className="pr-note">No staff are paid in this period (enrol staff with a joining date first).</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <p className="pa-note">Paid days = days worked + paid leave and holidays (month has {monthDays}). Leave a box empty to pay the default shown in grey.</p>
+        {locked && <p className="pr-warn">This period is locked. Unlock it in Process Payroll to change attendance.</p>}
+      </section>
+
+      <div className="pa-card pa-buttons">
+        <button type="button" className="pa-primary" disabled={busy || locked || periodId === null} onClick={() => void save()}><SetupIcon name="save" />Save</button>
+        <button type="button" disabled={locked || rows.length === 0} onClick={() => file.current?.click()}><SetupIcon name="upload" />Import Excel / CSV</button>
+        <button type="button" disabled={rows.length === 0 || !rights.export} onClick={exportSheet}><SetupIcon name="download" />Export sheet</button>
+        <button type="button" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
         <input ref={file} type="file" accept=".xlsx,.csv,.txt" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
       </div>
-      {locked && <p className="pr-note">This period is locked. Unlock it in Process Payroll to change attendance.</p>}
     </div>
   );
 }
@@ -201,26 +213,38 @@ export function PayrollProcess({ menuShortName, title, onClose }: Props) {
   };
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <PeriodBar state={state} />
-      <div className="pr-actions">
-        <button type="button" className="pr-primary" disabled={busy || !period || period.status === "L"} onClick={() => void act("process")}>Process payroll</button>
-        <button type="button" disabled={busy || period?.status !== "P"} onClick={() => void act("lock")}>Lock period</button>
-        <button type="button" disabled={busy || period?.status !== "L"} onClick={() => void act("unlock")}>Unlock</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+    <div className="mp-screen te-screen pr-screen pr-setup pr-att pr-proc" role="region" aria-label={title}>
+      <header className="pa-head"><span className="pa-badge"><SetupIcon name="group" /><SetupIcon name="calendar" /></span><h2>Process Payroll</h2></header>
+
+      <section className="pa-card pa-period px-actions-card" aria-label="Pay period and actions">
+        <h3>Pay Period &amp; Actions</h3>
+        <PeriodBar state={state} />
+        <div className="pa-buttons">
+          <button type="button" className="pa-primary" disabled={busy || !period || period.status === "L"} onClick={() => void act("process")}><SetupIcon name="gear" />Process payroll</button>
+          <button type="button" disabled={busy || period?.status !== "P"} onClick={() => void act("lock")}><SetupIcon name="lock" />Lock period</button>
+          <button type="button" disabled={busy || period?.status !== "L"} onClick={() => void act("unlock")}><SetupIcon name="unlock" />Unlock</button>
+          <button type="button" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
+        </div>
+      </section>
+
+      <div className="px-tiles">
+        <div className="pa-card"><small>Slips</small><b>{slips.length}</b></div><div className="pa-card"><small>Gross</small><b>{money(totals.gross)}</b></div>
+        <div className="pa-card"><small>Deductions</small><b>{money(totals.ded)}</b></div><div className="pa-card"><small>Net payable</small><b>{money(totals.net)}</b></div>
       </div>
-      <div className="pr-tiles">
-        <div><small>Slips</small><b>{slips.length}</b></div><div><small>Gross</small><b>{money(totals.gross)}</b></div>
-        <div><small>Deductions</small><b>{money(totals.ded)}</b></div><div><small>Net payable</small><b>{money(totals.net)}</b></div>
-      </div>
+
       {skipped.length > 0 && <p className="pr-warn">Not processed: {skipped.map((s) => `${s.name} (${s.reason})`).join("; ")}</p>}
-      <table className="pr-table">
-        <thead><tr><th>Staff</th><th className="pr-num">Days</th><th className="pr-num">Gross</th><th className="pr-num">Deductions</th><th className="pr-num">Net payable</th></tr></thead>
-        <tbody>
-          {slips.map((s) => <tr key={s.slipId}><td>{s.name} <small>#{s.code}</small></td><td className="pr-num">{s.paidDays}/{s.monthDays}</td><td className="pr-num">{money(s.gross)}</td><td className="pr-num">{money(s.totalDed)}</td><td className="pr-num">{money(s.net)}</td></tr>)}
-          {slips.length === 0 && <tr><td colSpan={5} className="pr-note">{period ? "No slips yet. Enter attendance if needed, then press Process payroll." : "Open a month to begin."}</td></tr>}
-        </tbody>
-      </table>
+
+      <section className="pa-card px-slips" aria-label="Slips">
+        <div className="px-table-box">
+          <table className="pa-table">
+            <thead><tr><th>Staff</th><th className="pr-num">Days</th><th className="pr-num">Gross</th><th className="pr-num">Deductions</th><th className="pr-num">Net payable</th></tr></thead>
+            <tbody>
+              {slips.map((s) => <tr key={s.slipId}><td>{s.name} <small>#{s.code}</small></td><td className="pr-num">{s.paidDays}/{s.monthDays}</td><td className="pr-num">{money(s.gross)}</td><td className="pr-num">{money(s.totalDed)}</td><td className="pr-num">{money(s.net)}</td></tr>)}
+              {slips.length === 0 && <tr><td colSpan={5} className="px-none">{period ? "No slips yet. Enter attendance if needed, then press Process payroll." : "Open a month to begin."}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
@@ -252,11 +276,18 @@ export function PayrollRegister({ menuShortName, title, onClose }: Props) {
   };
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <PeriodBar state={state} />
-      <div className="pr-actions"><button type="button" disabled={slips.length === 0 || !rights.export} onClick={exportXlsx}>Export Excel</button><button type="button" onClick={() => void quit()}>Quit</button></div>
-      <div className="pr-scroll">
-        <table className="pr-table">
+    <div className="mp-screen te-screen pr-screen pr-regs" role="region" aria-label={title}>
+      <section className="rg-card" aria-label="Report period and actions">
+        <h3>Report Period &amp; Actions</h3>
+        <div className="rg-actions">
+          <PeriodBar state={state} />
+          <button type="button" className="rg-btn" disabled={slips.length === 0 || !rights.export} onClick={exportXlsx}><SetupIcon name="excel" />Export Excel</button>
+          <button type="button" className="rg-btn" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
+        </div>
+      </section>
+      <section className="rg-card" aria-label="Salary register">
+        <div className="rg-table-box">
+        <table className="rg-table">
           <thead><tr><th>Staff</th><th className="pr-num">Days</th>{heads.earn.map((h) => <th key={`E${h.name}`} className="pr-num">{h.name}</th>)}<th className="pr-num">Gross</th>
             {heads.ded.map((h) => <th key={`D${h.name}`} className="pr-num">{h.name}</th>)}<th className="pr-num">Total Ded.</th><th className="pr-num">Net Payable</th></tr></thead>
           <tbody>
@@ -264,14 +295,15 @@ export function PayrollRegister({ menuShortName, title, onClose }: Props) {
               <tr key={s.slipId}><td>{s.name}</td><td className="pr-num">{s.paidDays}</td>{heads.earn.map((h) => <td key={`E${h.name}`} className="pr-num">{money(amountOf(s, h))}</td>)}<td className="pr-num">{money(s.gross)}</td>
                 {heads.ded.map((h) => <td key={`D${h.name}`} className="pr-num">{money(amountOf(s, h))}</td>)}<td className="pr-num">{money(s.totalDed)}</td><td className="pr-num"><b>{money(s.net)}</b></td></tr>
             ))}
-            {slips.length === 0 && <tr><td colSpan={4} className="pr-note">No slips for this period. Process payroll first.</td></tr>}
+            {slips.length === 0 && <tr><td colSpan={heads.earn.length + heads.ded.length + 5}>No slips for this period. Process payroll first.</td></tr>}
           </tbody>
           {slips.length > 0 && (
             <tfoot><tr><td>Total ({slips.length})</td><td />{heads.earn.map((h) => <td key={`E${h.name}`} className="pr-num">{money(sum((s) => amountOf(s, h)))}</td>)}<td className="pr-num">{money(sum((s) => s.gross))}</td>
               {heads.ded.map((h) => <td key={`D${h.name}`} className="pr-num">{money(sum((s) => amountOf(s, h)))}</td>)}<td className="pr-num">{money(sum((s) => s.totalDed))}</td><td className="pr-num">{money(sum((s) => s.net))}</td></tr></tfoot>
           )}
         </table>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -310,21 +342,31 @@ export function PayrollPayslip({ menuShortName, title, onClose }: Props) {
   };
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <PeriodBar state={state} />
-      <div className="pr-bar">
-        <label className="pr-field"><span>Staff</span>
-          <select value={pick} onChange={(event) => setPick(event.target.value === "all" ? "all" : Number(event.target.value))}>
-            <option value="all">All staff ({slips.length})</option>{slips.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
-          </select></label>
-        <button type="button" className="pr-primary" disabled={chosen.length === 0 || !rights.print} onClick={print}>Print payslip{chosen.length > 1 ? "s" : ""}</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+    <div className="mp-screen te-screen pr-screen pr-payslip" role="region" aria-label={title}>
+      <div className="py-column">
+        <header className="py-head"><SetupIcon name="doc" /><h2>Payslip</h2></header>
+
+        <section className="py-card" aria-label="Payslip selection and actions">
+          <h3>Payslip Selection &amp; Actions</h3>
+          <div className="py-actions">
+            <PeriodBar state={state} />
+            <label className="pr-field"><span>Staff</span>
+              <select value={pick} onChange={(event) => setPick(event.target.value === "all" ? "all" : Number(event.target.value))}>
+                <option value="all">All staff ({slips.length})</option>{slips.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
+              </select></label>
+            <button type="button" className="py-primary" disabled={chosen.length === 0 || !rights.print} onClick={print}><SetupIcon name="print" />Print payslip{chosen.length > 1 ? "s" : ""}</button>
+            <button type="button" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
+          </div>
+        </section>
+
+        <section className="py-card py-preview" aria-label="Payslip preview">
+          {chosen.length === 0 && <div className="py-empty"><span><SetupIcon name="doc" /></span><p>No slips for this period. Process payroll first.</p></div>}
+          {chosen.slice(0, 3).map((s) => (
+            <div key={s.slipId} className="pr-slip" dangerouslySetInnerHTML={{ __html: state.period ? slipHtml(s, company, state.period) : "" }} />
+          ))}
+          {chosen.length > 3 && <p className="pr-note">Preview shows the first 3 of {chosen.length}; Print prints all of them.</p>}
+        </section>
       </div>
-      {chosen.length === 0 && <p className="pr-note">No slips for this period. Process payroll first.</p>}
-      {chosen.slice(0, 3).map((s) => (
-        <div key={s.slipId} className="pr-slip" dangerouslySetInnerHTML={{ __html: state.period ? slipHtml(s, company, state.period) : "" }} />
-      ))}
-      {chosen.length > 3 && <p className="pr-note">Preview shows the first 3 of {chosen.length}; Print prints all of them.</p>}
     </div>
   );
 }

@@ -125,7 +125,9 @@ export function PayrollSetup({ menuShortName, title, onClose }: Props) {
   const set = <K extends keyof Setup>(key: K, value: Setup[K]) => setSetup((current) => (current ? { ...current, [key]: value } : current));
   const numberField = (key: keyof Setup, label: string, suffix = "") => (
     <label className="pr-field"><span>{label}</span>
-      <input type="number" step="any" min={0} value={setup ? String(setup[key] ?? "") : ""} onChange={(event) => set(key, Number(event.target.value) as never)} />{suffix && <em>{suffix}</em>}
+      <span className="ps-box">
+        <input type="number" step="any" min={0} value={setup ? String(setup[key] ?? "") : ""} onChange={(event) => set(key, Number(event.target.value) as never)} />{suffix && <em>{suffix}</em>}
+      </span>
     </label>
   );
   const save = async () => {
@@ -138,11 +140,11 @@ export function PayrollSetup({ menuShortName, title, onClose }: Props) {
     } catch (reason) { await fail(reason); } finally { setBusy(false); }
   };
 
-  if (!setup) return <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}><p className="pr-note">Loading…</p></div>;
+  if (!setup) return <div className="mp-screen te-screen pr-screen pr-setup" role="region" aria-label={title}><p className="pr-note">Loading…</p></div>;
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <div className="pr-grid">
-        <fieldset><legend>Salary journal</legend>
+    <div className="mp-screen te-screen pr-screen pr-setup" role="region" aria-label={title}>
+      <div className="ps-grid">
+        <SetupCard tone="blue" icon="person" heading="Salary Journal">
           <label className="pr-field"><span>Journal mode</span>
             <select value={setup.jvMode} onChange={(event) => set("jvMode", event.target.value as Setup["jvMode"])}>
               <option value="AB">A or B (choose each month)</option><option value="A">A - create the salary JV</option><option value="B">B - map an existing JV</option>
@@ -150,31 +152,74 @@ export function PayrollSetup({ menuShortName, title, onClose }: Props) {
           </label>
           <AccountPicker label="Salary expense account" search={async (term) => (await call<{ accounts: Account[] }>("accounts", { term })).accounts}
             onPick={(account) => { set("salaryExpCode", account.code); setExpName(account.name); }} />
-          <p className="pr-note">Debited when mode A creates the monthly JV: <b>{expName || (setup.salaryExpCode ? `#${setup.salaryExpCode}` : "not chosen")}</b></p>
-        </fieldset>
-        <fieldset><legend>Days in a month</legend>
+          <p className="ps-info"><SetupIcon name="info" /><span>Debited when mode A creates the monthly JV: <b>{expName || (setup.salaryExpCode ? `#${setup.salaryExpCode}` : "not chosen")}</b></span></p>
+        </SetupCard>
+        <SetupCard tone="green" icon="calendar" heading="Days in a Month">
           <label className="pr-field"><span>Basis</span>
             <select value={setup.daysBasis} onChange={(event) => set("daysBasis", event.target.value as Setup["daysBasis"])}>
               <option value="CAL">Calendar days of the month</option><option value="FIX">Fixed days</option>
             </select>
           </label>
           {setup.daysBasis === "FIX" && numberField("fixedDays", "Fixed days")}
-        </fieldset>
-        <fieldset><legend>Provident fund</legend>
+        </SetupCard>
+        <SetupCard tone="orange" icon="group" heading="Provident Fund">
           {numberField("pfPct", "Employee PF", "%")}{numberField("pfEmpPct", "Employer PF", "%")}{numberField("pfCeiling", "Wage ceiling", "₹")}
-        </fieldset>
-        <fieldset><legend>ESI</legend>
+        </SetupCard>
+        <SetupCard tone="teal" icon="shield" heading="ESI">
           {numberField("esiPct", "Employee ESI", "%")}{numberField("esiEmpPct", "Employer ESI", "%")}{numberField("esiCeiling", "Gross ceiling", "₹")}
-        </fieldset>
-        <fieldset><legend>Professional tax</legend>
+        </SetupCard>
+        <SetupCard tone="violet" icon="percent" heading="Professional Tax">
           {numberField("ptAmount", "Monthly amount", "₹")}{numberField("ptFromGross", "Applies from gross of", "₹")}
-        </fieldset>
+        </SetupCard>
       </div>
-      <div className="pr-actions">
-        <button type="button" className="pr-primary" disabled={busy} onClick={() => void save()}>Save</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+      <div className="ps-actions">
+        <button type="button" className="ps-save" disabled={busy} onClick={() => void save()}><SetupIcon name="save" />Save</button>
+        <button type="button" className="ps-quit" onClick={() => void quit()}><SetupIcon name="quit" />Quit</button>
       </div>
     </div>
+  );
+}
+
+/** The line icons of the Payroll Setup cards and buttons (24 x 24, drawn in the current colour). */
+const SETUP_ICONS = {
+  person: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20c0-3.5 3.6-6 8-6s8 2.500 8 6",
+  calendar: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01",
+  group: "M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6.500 19c0-3 2.500-5 5.500-5s5.500 2 5.500 5M5 12.500a2 2 0 1 0 0-4M2 18c0-2 1.200-3.500 3-4M19 12.500a2 2 0 1 1 0-4M22 18c0-2-1.200-3.500-3-4",
+  shield: "M12 3l8 3v6c0 5-3.500 8-8 9-4.500-1-8-4-8-9V6zM8.500 12l2.500 2.500 4.500-5",
+  percent: "M6 18L18 6M7.500 10a2.500 2.500 0 1 0 0-5 2.500 2.500 0 0 0 0 5zM16.500 19a2.500 2.500 0 1 0 0-5 2.500 2.500 0 0 0 0 5z",
+  info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01",
+  save: "M4 3h13l3 3v15H4zM8 3v5h7V3M7 21v-7h10v7",
+  quit: "M20 12a8 8 0 1 1-4-6.9M20 3v5h-5",
+  layers: "M12 3l9 5-9 5-9-5zM3 12.500l9 5 9-5M3 16.500l9 5 9-5",
+  search: "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM16 16l5 5",
+  pencil: "M4 20l1-4L16 5l3 3L8 19zM14 7l3 3",
+  plus: "M12 5v14M5 12h14",
+  close: "M6 6l12 12M18 6L6 18",
+  briefcase: "M4 8h16v12H4zM9 8V5h6v3M4 13h16",
+  bank: "M3 9l9-5 9 5zM5 10v8M9.500 10v8M14.500 10v8M19 10v8M3 20h18",
+  exit: "M13 4H5v16h8M16 8l4 4-4 4M20 12H10",
+  upload: "M12 16V4M7 9l5-5 5 5M4 15v5h16v-5",
+  download: "M13 4H5v16h8M16 8l4 4-4 4M20 12H10M9 4v4",
+  gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 2v3M12 19v3M2 12h3M19 12h3M4.900 4.900L7 7M17 17l2.100 2.100M19.100 4.900L17 7M7 17l-2.100 2.100M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12z",
+  lock: "M6 11h12v10H6zM8.500 11V8a3.500 3.500 0 0 1 7 0v3M12 15v2",
+  unlock: "M6 11h12v10H6zM8.500 11V8a3.500 3.500 0 0 1 6.800-1.200M12 15v2",
+  excel: "M6 3h9l4 4v14H6zM14 3v5h5M9.500 11l5 6M14.500 11l-5 6",
+  doc: "M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 15h7M9 18h4",
+  print: "M7 8V3h10v5M6 17H3v-8h18v8h-3M7 14h10v7H7z",
+  tag: "M3 4h8l10 10-7 7L4 11zM8.500 9h.01",
+  money: "M3 6h18v12H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 12h.01M18 12h.01",
+} as const;
+
+export function SetupIcon({ name }: { name: keyof typeof SETUP_ICONS }) {
+  return <svg className="ps-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={SETUP_ICONS[name]} /></svg>;
+}
+
+function SetupCard({ tone, icon, heading, children }: { tone: "blue" | "green" | "orange" | "teal" | "violet"; icon: keyof typeof SETUP_ICONS; heading: string; children: React.ReactNode }) {
+  return (
+    <section className={`ps-card ps-${tone}`} role="group" aria-label={heading}>
+      <header><span className="ps-badge"><SetupIcon name={icon} /></span><h3>{heading}</h3></header>
+      <div className="ps-body">{children}</div>
+    </section>
   );
 }
 
@@ -186,11 +231,17 @@ export function PayrollComponents({ menuShortName, title, onClose }: Props) {
   const { call, fail, quit, ready } = usePayroll("components", menuShortName, title, onClose);
   const [rows, setRows] = useState<Component[]>([]);
   const [edit, setEdit] = useState<Component | null>(null);
+  const [term, setTerm] = useState("");
 
+  const refresh = useCallback(() => call<{ components: Component[] }>("list").then((body) => setRows(body.components)).catch(fail), [call, fail]);
   useEffect(() => {
     if (!ready) return;
     call<{ components: Component[] }>("list").then((body) => setRows(body.components)).catch(fail);
   }, [call, fail, ready]);
+
+  const typeText = (row: Component) => (row.type === "E" ? "Earning" : "Deduction");
+  const calcText = (row: Component) => (row.calc === "F" ? "Fixed amount" : "% of BASIC");
+  const shown = rows.filter((row) => `${row.name} ${typeText(row)} ${calcText(row)}`.toLowerCase().includes(term.trim().toLowerCase()));
 
   const save = async () => {
     if (!edit) return;
@@ -202,19 +253,27 @@ export function PayrollComponents({ menuShortName, title, onClose }: Props) {
   const patch = (change: Partial<Component>) => setEdit((current) => (current ? { ...current, ...change } : current));
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <table className="pr-table">
-        <thead><tr><th>Seq</th><th>Name</th><th>Type</th><th>Calculation</th><th>PF</th><th>ESI</th><th>Active</th><th /></tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className={row.active ? "" : "pr-off"}>
-              <td>{row.seq}</td><td>{row.name}{row.system ? " (system)" : ""}</td><td>{row.type === "E" ? "Earning" : "Deduction"}</td>
-              <td>{row.calc === "F" ? "Fixed amount" : "% of BASIC"}</td><td>{row.pf ? "Yes" : ""}</td><td>{row.esi ? "Yes" : ""}</td><td>{row.active ? "Yes" : "No"}</td>
-              <td><button type="button" onClick={() => setEdit(row)}>Edit</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="mp-screen te-screen pr-screen pr-setup pr-comp" role="region" aria-label={title}>
+      <div className="pc-panel">
+        <header className="pc-head">
+          <span className="pc-title"><span className="pc-badge"><SetupIcon name="layers" /></span><h3>Pay Component</h3></span>
+          <label className="pc-search"><SetupIcon name="search" /><input type="search" aria-label="Search components" placeholder="Search..." value={term} onChange={(event) => setTerm(event.target.value)} /></label>
+        </header>
+        <div className="pc-scroll">
+          <table className="pc-table">
+            <thead><tr><th>Seq</th><th>Name</th><th>Type</th><th>Calculation</th><th>PF</th><th>ESI</th><th>Active</th><th aria-label="Edit" /></tr></thead>
+            <tbody>
+              {shown.map((row) => (
+                <tr key={row.id} className={row.active ? "" : "pr-off"}>
+                  <td>{row.seq}</td><td>{row.name}{row.system ? " (system)" : ""}</td><td>{typeText(row)}</td>
+                  <td>{calcText(row)}</td><td>{row.pf ? "Yes" : ""}</td><td>{row.esi ? "Yes" : ""}</td><td>{row.active ? "Yes" : "No"}</td>
+                  <td className="pc-act"><button type="button" className="pc-edit" onClick={() => setEdit(row)}><SetupIcon name="pencil" />Edit</button></td>
+                </tr>
+              ))}
+              {shown.length === 0 && rows.length > 0 && <tr><td colSpan={8}>No component matches the search.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       {edit && (
         <fieldset className="pr-edit"><legend>{edit.id ? `Edit ${edit.name}` : "New component"}</legend>
           <label className="pr-field"><span>Name</span><input maxLength={40} disabled={edit.system} value={edit.name} onChange={(event) => patch({ name: event.target.value.toUpperCase() })} /></label>
@@ -226,12 +285,14 @@ export function PayrollComponents({ menuShortName, title, onClose }: Props) {
           {edit.type === "E" && <label className="pr-check"><input type="checkbox" checked={edit.pf} onChange={(event) => patch({ pf: event.target.checked })} /> Counts for PF</label>}
           {edit.type === "E" && <label className="pr-check"><input type="checkbox" checked={edit.esi} onChange={(event) => patch({ esi: event.target.checked })} /> Counts for ESI</label>}
           <label className="pr-check"><input type="checkbox" checked={edit.active} disabled={edit.system} onChange={(event) => patch({ active: event.target.checked })} /> Active</label>
-          <div className="pr-actions"><button type="button" className="pr-primary" onClick={() => void save()}>Save</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>
+          <div className="ps-actions pc-form-actions"><button type="button" className="ps-save" onClick={() => void save()}><SetupIcon name="save" />Save</button><button type="button" className="ps-quit" onClick={() => setEdit(null)}><SetupIcon name="close" />Cancel</button></div>
         </fieldset>
       )}
-      <div className="pr-actions">
-        <button type="button" onClick={() => setEdit({ ...BLANK_COMPONENT })}>Add component</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
+        <div className="ps-actions">
+          <button type="button" className="ps-save" onClick={() => setEdit({ ...BLANK_COMPONENT })}><SetupIcon name="plus" />Add Component</button>
+          <button type="button" className="ps-quit" onClick={() => void refresh()}><SetupIcon name="quit" />Refresh</button>
+          <button type="button" className="ps-quit" onClick={() => void quit()}><SetupIcon name="close" />Quit</button>
+        </div>
       </div>
     </div>
   );
@@ -253,6 +314,7 @@ export function PayrollStaff({ menuShortName, title, onClose }: Props) {
   const [amounts, setAmounts] = useState<Record<number, string>>({});
   const [effectiveFrom, setEffectiveFrom] = useState(today());
   const [history, setHistory] = useState<string[]>([]);
+  const [term, setTerm] = useState("");
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => { setStaff((await call<{ staff: StaffRow[] }>("list")).staff); }, [call]);
@@ -287,60 +349,76 @@ export function PayrollStaff({ menuShortName, title, onClose }: Props) {
       <input maxLength={max} value={profile ? String(profile[key] ?? "") : ""} onChange={(event) => patch({ [key]: event.target.value } as Partial<Profile>)} /></label>
   );
 
+  const q = term.trim().toLowerCase();
+  const shown = staff.filter((row) => `${row.name} ${row.code} ${row.designation} ${row.department}`.toLowerCase().includes(q));
+
   return (
-    <div className="mp-screen te-screen pr-screen pr-staff" role="region" aria-label={title}>
-      <div className="pr-left">
-        <AccountPicker label="Enrol a ledger" search={async (term) => (await call<{ accounts: Account[] }>("accounts", { term })).accounts} onPick={enrol} />
-        <table className="pr-table">
-          <thead><tr><th>Staff (from Accounts)</th><th>Designation</th><th>Fixed pay</th><th>Opening</th></tr></thead>
-          <tbody>
-            {staff.map((row) => (
-              <tr key={row.code} className={`${row.active ? "" : "pr-off"} ${profile?.code === row.code ? "pr-pick" : ""}`} onClick={() => void load(row.code)}>
-                <td>{row.name} <small>#{row.code}</small></td><td>{row.designation}</td><td className="pr-num">{money(row.fixedEarnings)}</td><td className="pr-num">{drCr(row.opening)}</td>
-              </tr>
-            ))}
-            {staff.length === 0 && <tr><td colSpan={4} className="pr-note">No staff enrolled yet. Search a ledger above to enrol it.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-      <div className="pr-right">
-        {!profile ? <p className="pr-note">Pick a staff member, or enrol a ledger.</p> : (
-          <>
-            <h3 className="pr-head">{profile.name} <small>#{profile.code} · Opening {drCr(profile.opening)}</small></h3>
-            <div className="pr-grid">
-              <fieldset><legend>Job</legend>
-                {text("designation", "Designation", 60)}{text("department", "Department", 60)}
-                <label className="pr-field"><span>Joining date</span><input type="date" value={profile.joinDate} onChange={(event) => patch({ joinDate: event.target.value })} /></label>
-                <label className="pr-field"><span>Exit date</span><input type="date" value={profile.exitDate} onChange={(event) => patch({ exitDate: event.target.value })} /></label>
-                <label className="pr-field"><span>Pay basis</span>
-                  <select value={profile.payBasis} onChange={(event) => patch({ payBasis: event.target.value as "M" | "D" })}><option value="M">Monthly</option><option value="D">Daily</option></select></label>
-                <label className="pr-check"><input type="checkbox" checked={profile.active} onChange={(event) => patch({ active: event.target.checked })} /> Active</label>
-              </fieldset>
-              <fieldset><legend>Bank and statutory</legend>
-                {text("bankName", "Bank", 60)}{text("bankAcNo", "Account no", 30)}{text("bankIfsc", "IFSC", 15)}{text("panNo", "PAN", 15)}
-                {text("pfNo", "PF no", 30)}{text("uanNo", "UAN", 20)}{text("esiNo", "ESI no", 30)}
-                <label className="pr-check"><input type="checkbox" checked={profile.pfOn} onChange={(event) => patch({ pfOn: event.target.checked })} /> PF applies</label>
-                <label className="pr-check"><input type="checkbox" checked={profile.esiOn} onChange={(event) => patch({ esiOn: event.target.checked })} /> ESI applies</label>
-                <label className="pr-check"><input type="checkbox" checked={profile.ptOn} onChange={(event) => patch({ ptOn: event.target.checked })} /> Professional tax applies</label>
-              </fieldset>
-              <fieldset><legend>Salary structure</legend>
-                <label className="pr-field"><span>Effective from</span><input type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></label>
-                {active.map((component) => (
-                  <label className="pr-field" key={component.id}><span>{component.name}{component.calc === "P" ? " (% of BASIC)" : ""}{component.type === "D" ? " (deduct)" : ""}</span>
-                    <input type="number" min={0} step="any" value={amounts[component.id] ?? ""} onChange={(event) => setAmounts({ ...amounts, [component.id]: event.target.value })} /></label>
+    <div className="mp-screen te-screen pr-screen pr-setup pr-sp" role="region" aria-label={title}>
+      <header className="sp-head">
+        <span className="sp-badge"><SetupIcon name="group" /></span>
+        <h2>Staff Payroll Profile</h2>
+        {profile && <p className="sp-who"><b>{profile.name}</b> #{profile.code} · Opening {drCr(profile.opening)}</p>}
+      </header>
+
+      <div className="sp-columns">
+        <section className="sp-list" aria-label="Staff list">
+          <div className="sp-list-head">
+            <span className="sp-card-title"><SetupIcon name="group" /><h3>Staff List</h3></span>
+            <label className="sp-search"><SetupIcon name="search" /><input type="search" aria-label="Search staff" placeholder="Search..." value={term} onChange={(event) => setTerm(event.target.value)} /></label>
+          </div>
+          <AccountPicker label="Enrol a ledger" search={async (value) => (await call<{ accounts: Account[] }>("accounts", { term: value })).accounts} onPick={enrol} />
+          <div className="sp-table-box">
+            <table className="sp-table">
+              <thead><tr><th>Sr.No</th><th>Staff (from Accounts)</th><th>Designation</th><th className="pr-num">Fixed Pay</th><th className="pr-num">Opening</th></tr></thead>
+              <tbody>
+                {shown.map((row, index) => (
+                  <tr key={row.code} tabIndex={0} className={`${row.active ? "" : "pr-off"} ${profile?.code === row.code ? "pr-pick" : ""}`} onClick={() => void load(row.code)}
+                    onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void load(row.code); } }}>
+                    <td>{index + 1}</td><td>{row.name} <small>#{row.code}</small></td><td>{row.designation}</td><td className="pr-num">{money(row.fixedEarnings)}</td><td className="pr-num">{drCr(row.opening)}</td>
+                  </tr>
                 ))}
-                {history.length > 1 && <p className="pr-note">Earlier structures from: {history.slice(1).join(", ")}</p>}
-                <p className="pr-note">Saving with a new date keeps the old structure as history.</p>
-              </fieldset>
-            </div>
-            {text("remark", "Remark", 200)}
+                {shown.length === 0 && <tr><td colSpan={5} className="pr-note">{staff.length === 0 ? "No staff enrolled yet. Use Enrol a ledger above." : "No staff matches the search."}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {!profile ? <section className="sp-empty">Pick a staff member from the list, or enrol a ledger.</section> : (
+          <>
+            <SetupCard tone="blue" icon="briefcase" heading="Basic Info">
+              {text("designation", "Designation", 60)}{text("department", "Department", 60)}
+              <label className="pr-field"><span>Joining Date</span><input type="date" value={profile.joinDate} onChange={(event) => patch({ joinDate: event.target.value })} /></label>
+              <label className="pr-field"><span>Exit Date</span><input type="date" value={profile.exitDate} onChange={(event) => patch({ exitDate: event.target.value })} /></label>
+              <label className="pr-field"><span>Pay Basis</span>
+                <select value={profile.payBasis} onChange={(event) => patch({ payBasis: event.target.value as "M" | "D" })}><option value="M">Monthly</option><option value="D">Daily</option></select></label>
+              {text("remark", "Remark", 200)}
+              <label className="pr-check"><input type="checkbox" checked={profile.active} onChange={(event) => patch({ active: event.target.checked })} /> Active</label>
+            </SetupCard>
+            <SetupCard tone="blue" icon="bank" heading="Bank and Statutory">
+              {text("bankName", "Bank", 60)}{text("bankAcNo", "Account no", 30)}{text("bankIfsc", "IFSC", 15)}{text("panNo", "PAN", 15)}
+              {text("pfNo", "PF no", 30)}{text("uanNo", "UAN", 20)}{text("esiNo", "ESI no", 30)}
+              <label className="pr-check"><input type="checkbox" checked={profile.pfOn} onChange={(event) => patch({ pfOn: event.target.checked })} /> PF Applicable</label>
+              <label className="pr-check"><input type="checkbox" checked={profile.esiOn} onChange={(event) => patch({ esiOn: event.target.checked })} /> ESI Applicable</label>
+              <label className="pr-check"><input type="checkbox" checked={profile.ptOn} onChange={(event) => patch({ ptOn: event.target.checked })} /> Professional Tax Applicable</label>
+            </SetupCard>
+            <SetupCard tone="blue" icon="info" heading="Salary Structure">
+              <label className="pr-field"><span>Effective from</span><input type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></label>
+              {active.map((component) => (
+                <label className="pr-field" key={component.id}><span>{component.name}{component.calc === "P" ? " (% of BASIC)" : ""}{component.type === "D" ? " (deduct)" : ""}</span>
+                  <input type="number" min={0} step="any" value={amounts[component.id] ?? ""} onChange={(event) => setAmounts({ ...amounts, [component.id]: event.target.value })} /></label>
+              ))}
+              {history.length > 1 && <p className="pr-note">Earlier structures from: {history.slice(1).join(", ")}</p>}
+              <p className="sp-hint"><SetupIcon name="info" /><span>Saving with a new date keeps the old structure as history.</span></p>
+            </SetupCard>
           </>
         )}
-        <div className="pr-actions">
-          <button type="button" className="pr-primary" disabled={!profile || busy} onClick={() => void save()}>Save</button>
-          <button type="button" disabled={!profile} onClick={() => setProfile(null)}>Cancel</button>
-          <button type="button" onClick={() => void quit()}>Quit</button>
-        </div>
+      </div>
+
+      <div className="ps-actions">
+        <button type="button" className="ps-save" disabled={!profile || busy} onClick={() => void save()}><SetupIcon name="save" />Save</button>
+        <button type="button" className="ps-quit" disabled={!profile} onClick={() => setProfile(null)}><SetupIcon name="quit" />Cancel</button>
+        <span className="sp-divider" aria-hidden="true" />
+        <button type="button" className="ps-quit" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
       </div>
     </div>
   );

@@ -4366,3 +4366,375 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .pr-chip button{border:0;background:none;cursor:pointer;font-size:14px;line-height:1;padding:0 3px}
 .pr-bad{background:#fdecec}.pr-badtext{color:#b42318;font-weight:600}
 .pr-formrow td{background:#f7f9fc}
+
+/* PAYROLL SETUP: the card layout of the entry area only (features/payroll/Payroll.tsx PayrollSetup). The program's bars are not touched. */
+.mp-screen.pr-setup{display:flex;flex-direction:column;gap:0;padding:20px 24px;overflow:auto;color:#0b2a5b;font-size:13px;
+  background:#f3f8ff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 240' preserveAspectRatio='none'%3E%3Cpath d='M380 240C720 232 900 70 1180 96S1480 40 1600 10V240Z' fill='%23cfe2ff' fill-opacity='.45'/%3E%3Cpath d='M640 240C900 232 1100 130 1330 150S1520 110 1600 92V240Z' fill='%23a9ccff' fill-opacity='.45'/%3E%3C/svg%3E") bottom center / 100% 240px no-repeat}
+.pr-setup .ps-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px}
+.pr-setup .ps-card{background:#fff;border:1px solid #dbe7fb;border-radius:12px;box-shadow:0 4px 16px rgba(30,80,170,.10);min-width:0}
+.pr-setup .ps-card>header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:12px 12px 0 0;background:var(--ps-head)}
+.pr-setup .ps-card h3{margin:0;font-size:16px;font-weight:700;color:#0b2a5b}
+.pr-setup .ps-badge{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;background:var(--ps-accent);color:#fff;flex:0 0 auto}
+.pr-setup .ps-badge .ps-icon{width:20px;height:20px}
+.pr-setup .ps-blue{--ps-head:#eaf2ff;--ps-accent:#1a73e8}
+.pr-setup .ps-green{--ps-head:#e8f8f0;--ps-accent:#1faa6c}
+.pr-setup .ps-orange{--ps-head:#fff1e8;--ps-accent:#f5883a}
+.pr-setup .ps-teal{--ps-head:#e6f7f9;--ps-accent:#14a8ad}
+.pr-setup .ps-violet{--ps-head:#f0ecfd;--ps-accent:#7c4ddb}
+.pr-setup .ps-body{display:flex;flex-direction:column;gap:8px;padding:12px 16px 14px}
+.pr-setup .pr-field{gap:10px;min-height:36px}
+.pr-setup .pr-field>span:first-child{flex:0 0 146px;font-size:13px;color:#0b2a5b}
+.pr-setup .pr-field>input,.pr-setup .pr-field>select,.pr-setup .ps-box{flex:1;min-width:0;height:36px;border:1px solid #d5e2f7;border-radius:8px;background:#fff;color:#0b2a5b;font:inherit;font-size:13px;box-shadow:0 1px 3px rgba(30,80,170,.07)}
+.pr-setup .pr-field>input,.pr-setup .pr-field>select{padding:0 10px}
+.pr-setup .ps-box{display:flex;align-items:center;padding-right:12px}
+.pr-setup .ps-box input{flex:1;width:100%;min-width:0;height:100%;border:0;background:transparent;padding:0 12px;color:#0b2a5b;font:inherit;font-weight:600;outline:none;box-shadow:none}
+.pr-setup .ps-box em{font-style:normal;font-weight:600}
+.pr-setup .pr-field>input:focus,.pr-setup .pr-field>select:focus,.pr-setup .ps-box:focus-within{outline:2px solid #1a73e8;outline-offset:0;border-color:#1a73e8}
+.pr-setup .ps-info{display:flex;align-items:flex-start;gap:8px;margin:2px 0 0;font-size:13px;line-height:1.5}
+.pr-setup .ps-info .ps-icon{width:16px;height:16px;margin-top:2px;flex:0 0 auto;color:#1a73e8}
+.pr-setup .ps-actions{display:flex;gap:16px;margin-top:40px}
+.pr-setup .ps-actions button{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-width:128px;height:44px;padding:0 22px;border-radius:10px;border:1.5px solid #1a62d6;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.pr-setup .ps-actions .ps-icon{width:19px;height:19px}
+.pr-setup .ps-save{background:linear-gradient(#1f6fe5,#0f55c8);color:#fff;box-shadow:0 4px 12px rgba(20,90,210,.30)}
+.pr-setup .ps-quit{background:#fff;color:#0b2a5b}
+.pr-setup .ps-actions button:hover:not(:disabled){filter:brightness(1.07)}
+.pr-setup .ps-actions button:disabled{opacity:.55;cursor:default}
+
+/* PAY COMPONENTS: a panel with its heading and search, the list, and the buttons (shares the Payroll Setup background, fields and buttons). */
+.pr-comp .pc-panel{background:rgba(255,255,255,.72);border:1px solid #dbe7fb;border-radius:14px;box-shadow:0 4px 18px rgba(30,80,170,.09);padding:12px 16px 16px;display:flex;flex-direction:column;gap:14px}
+.pr-comp .pc-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.pr-comp .pc-title{display:flex;align-items:center;gap:14px}
+.pr-comp .pc-title h3{margin:0;font-size:20px;font-weight:700;color:#0b2a5b}
+.pr-comp .pc-badge{display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:50%;background:#1565d8;color:#fff}
+.pr-comp .pc-badge .ps-icon{width:24px;height:24px}
+.pr-comp .pc-search{display:flex;align-items:center;gap:10px;width:260px;max-width:100%;height:40px;padding:0 16px;background:#fff;border:1px solid #dbe7fb;border-radius:20px;box-shadow:0 2px 8px rgba(30,80,170,.10);color:#0b2a5b}
+.pr-comp .pc-search:focus-within{outline:2px solid #1a73e8}
+.pr-comp .pc-search .ps-icon{width:19px;height:19px;flex:0 0 auto}
+.pr-comp .pc-search input{flex:1;min-width:0;border:0;outline:none;background:transparent;font:inherit;font-size:14px;color:#0b2a5b;box-shadow:none}
+.pr-comp .pc-scroll{overflow:auto;border:1px solid #dbe7fb;border-radius:12px;background:#fff}
+.pr-comp .pc-table{width:100%;border-collapse:collapse;font-size:13.5px;color:#0b2a5b}
+.pr-comp .pc-table th{background:#1257b8;color:#fff;font-weight:700;text-align:left;padding:13px 18px;border-right:1px solid rgba(255,255,255,.28);white-space:nowrap}
+.pr-comp .pc-table td{padding:7px 18px;height:30px;border-right:1px solid #e3ecfa;white-space:nowrap}
+.pr-comp .pc-table th:last-child,.pr-comp .pc-table td:last-child{border-right:0}
+.pr-comp .pc-table tbody tr:nth-child(odd){background:#f1f6ff}
+.pr-comp .pc-table tbody tr:hover{background:#e4efff}
+.pr-comp .pc-table td.pc-act{width:1%;text-align:center;padding:5px 14px}
+.pr-comp .pc-edit{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 16px;border:1px solid #dbe7fb;border-radius:9px;background:#eaf2ff;color:#1257b8;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.pr-comp .pc-edit:hover{background:#d8e8ff}
+.pr-comp .pc-edit .ps-icon{width:15px;height:15px}
+.pr-comp .ps-actions{margin-top:6px;flex-wrap:wrap}
+.pr-comp .ps-actions button{border-radius:22px}
+.pr-comp .pc-form-actions{margin-top:6px}
+.pr-comp fieldset.pr-edit{max-width:520px;background:#fff;border:1px solid #dbe7fb;border-radius:12px;padding:10px 16px 14px;gap:8px;box-shadow:0 4px 16px rgba(30,80,170,.10)}
+.pr-comp fieldset.pr-edit legend{font-weight:700;font-size:14px;padding:0 6px}
+
+/* STAFF PAYROLL PROFILE: heading, the staff list, three cards and the buttons (shares the Payroll Setup background, cards, fields and buttons). */
+.pr-sp .sp-head{display:flex;align-items:center;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+.pr-sp .sp-head h2{margin:0;font-size:20px;font-weight:700;color:#0b2a5b}
+.pr-sp .sp-badge{display:flex;align-items:center;justify-content:center;width:50px;height:50px;border-radius:50%;background:#1565d8;color:#fff;box-shadow:0 4px 12px rgba(20,90,210,.30)}
+.pr-sp .sp-badge .ps-icon{width:28px;height:28px}
+.pr-sp .sp-who{margin:0 0 0 auto;padding:7px 14px;border-radius:18px;background:#fff;border:1px solid #dbe7fb;font-size:12.5px}
+.pr-sp .sp-columns{display:flex;flex-wrap:wrap;align-items:stretch;gap:12px}
+.pr-sp .sp-list{flex:1.7 1 410px;min-width:0;display:flex;flex-direction:column;gap:10px;padding:12px;background:rgba(255,255,255,.82);border:1px solid #dbe7fb;border-radius:12px;box-shadow:0 4px 16px rgba(30,80,170,.10)}
+.pr-sp .sp-list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pr-sp .sp-card-title{display:flex;align-items:center;gap:9px;color:#1565d8}
+.pr-sp .sp-card-title .ps-icon{width:22px;height:22px}
+.pr-sp .sp-card-title h3{margin:0;font-size:15px;font-weight:700;color:#0b2a5b}
+.pr-sp .sp-search{display:flex;align-items:center;gap:8px;width:190px;max-width:100%;height:34px;padding:0 13px;background:#fff;border:1px solid #d5e2f7;border-radius:18px}
+.pr-sp .sp-search:focus-within{outline:2px solid #1a73e8}
+.pr-sp .sp-search .ps-icon{width:16px;height:16px;flex:0 0 auto}
+.pr-sp .sp-search input{flex:1;min-width:0;border:0;outline:none;background:transparent;font:inherit;font-size:13px;color:#0b2a5b;box-shadow:none}
+.pr-sp .sp-list .pr-field>span:first-child{flex:0 0 96px}
+.pr-sp .sp-table-box{flex:1;min-height:190px;max-height:430px;overflow:auto;background:#fff;border:1px solid #dbe7fb;border-radius:10px}
+.pr-sp .sp-table{width:100%;border-collapse:collapse;font-size:12.5px;color:#0b2a5b}
+.pr-sp .sp-table th{position:sticky;top:0;background:#d9e8ff;text-align:left;padding:10px 9px;font-weight:700}
+.pr-sp .sp-table th.pr-num{text-align:right}
+.pr-sp .sp-table td{padding:10px 9px;border-bottom:1px solid #e7eefb;cursor:pointer}
+.pr-sp .sp-table tbody tr:hover{background:#eef5ff}
+.pr-sp .sp-table tbody tr.pr-pick{background:#e0edff;box-shadow:inset 3px 0 0 #1565d8}
+.pr-sp .sp-columns>.ps-card{flex:1 1 252px}
+.pr-sp .ps-card>header{background:transparent;padding:11px 14px 2px;gap:9px}
+.pr-sp .ps-card .ps-badge{width:24px;height:24px;background:transparent;color:#1565d8}
+.pr-sp .ps-card .ps-badge .ps-icon{width:22px;height:22px}
+.pr-sp .ps-card h3{font-size:15px}
+.pr-sp .ps-body{padding:8px 14px 12px;gap:6px}
+.pr-sp .ps-card .pr-field{min-height:32px;gap:8px}
+.pr-sp .ps-card .pr-field>span:first-child{flex:0 0 96px;font-size:12.5px;line-height:1.3}
+.pr-sp .ps-card .pr-field>input,.pr-sp .ps-card .pr-field>select{height:32px;width:0}
+.pr-sp .pr-check{gap:9px;font-size:12.5px;min-height:24px;cursor:pointer}
+.pr-sp .pr-check input{width:17px;height:17px;margin:0;accent-color:#1565d8}
+.pr-sp .sp-hint{display:flex;align-items:flex-start;gap:9px;margin:6px 0 0;padding:10px 12px;border-radius:9px;background:#e9f2ff;font-size:12.5px;line-height:1.45}
+.pr-sp .sp-hint .ps-icon{width:17px;height:17px;flex:0 0 auto;color:#1565d8}
+.pr-sp .sp-empty{flex:3 1 520px;display:flex;align-items:center;justify-content:center;min-height:240px;padding:20px;text-align:center;font-size:14px;background:rgba(255,255,255,.7);border:1px dashed #b9d0f5;border-radius:12px}
+.pr-sp .ps-actions{margin-top:20px;flex-wrap:wrap}
+.pr-sp .ps-actions button{border-radius:22px}
+.pr-sp .sp-divider{width:1px;align-self:stretch;margin:6px 0;background:#c3d6f5}
+/* Staff Payroll Profile: kept compact so the buttons are in view on a 768-line screen. */
+.mp-screen.pr-setup.pr-sp{padding:10px 18px}
+.pr-sp .sp-head{margin-bottom:8px}
+.pr-sp .sp-badge{width:40px;height:40px}
+.pr-sp .sp-badge .ps-icon{width:23px;height:23px}
+.pr-sp .sp-list{flex:2 1 440px;gap:7px;padding:10px}
+.pr-sp .sp-table th,.pr-sp .sp-table td{padding:8px 7px}
+.pr-sp .sp-table{font-size:12px}
+.pr-sp .sp-columns>.ps-card{flex:1 1 240px}
+.pr-sp .ps-card>header{padding-top:8px}
+.pr-sp .ps-body{padding:5px 12px 9px;gap:4px}
+.pr-sp .ps-card .pr-field{min-height:28px}
+.pr-sp .ps-card .pr-field>span:first-child{flex-basis:92px}
+.pr-sp .ps-card .pr-field>input,.pr-sp .ps-card .pr-field>select{height:28px}
+.pr-sp .pr-check{min-height:21px}
+.pr-sp .pr-check input{width:15px;height:15px}
+.pr-sp .ps-actions{margin-top:12px;flex-shrink:0}
+.pr-sp .ps-actions button{height:38px}
+
+/* ATTENDANCE: heading, the pay period card, the staff table card and the button card. Only this screen: the period bar is shared with other screens. */
+.mp-screen.pr-setup.pr-att{padding:14px 18px;gap:12px;background:#e6edf8}
+.pr-att .pa-head{display:flex;align-items:center;gap:12px}
+.pr-att .pa-head h2{margin:0;font-size:22px;font-weight:700;color:#0b2a5b}
+.pr-att .pa-badge{position:relative;display:flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:9px;background:#1561c2;color:#fff;box-shadow:0 4px 12px rgba(20,90,200,.30)}
+.pr-att .pa-badge .ps-icon:first-child{width:30px;height:30px;transform:translate(-6px,-4px)}
+.pr-att .pa-badge .ps-icon:last-child{position:absolute;right:7px;bottom:7px;width:22px;height:22px}
+.pr-att .pa-card{background:#fff;border:1px solid #dbe5f6;border-radius:12px;box-shadow:0 4px 14px rgba(30,70,140,.10);flex-shrink:0}
+.pr-att .pa-card h3{display:flex;align-items:center;gap:11px;margin:0;padding:11px 14px 6px;font-size:15px;font-weight:700;color:#0b2a5b}
+.pr-att .pa-card h3 .ps-icon{width:21px;height:21px;color:#1561c2}
+.pr-att .pa-period{align-self:flex-start;max-width:100%}
+.pr-att .pa-period .pr-bar{padding:6px 14px 13px;gap:8px}
+.pr-att .pa-period .pr-field>span:first-child{flex:0 0 104px}
+.pr-att .pa-period .pr-field>select{width:195px;flex:0 0 195px}
+.pr-att .pa-period .pr-bar>select,.pr-att .pa-period .pr-bar>input{height:36px;padding:0 10px;border:1px solid #ccd6e8;border-radius:8px;background:#fff;color:#14213d;font:inherit;font-size:13px}
+.pr-att .pa-period .pr-bar>select{min-width:120px}
+.pr-att .pa-period .pr-bar>input{width:92px!important}
+.pr-att .pa-period .pr-bar>button{height:34px;margin-left:8px;padding:0 14px;border:0;border-radius:8px;background:#1b2333;color:#fff;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.pr-att .pa-period .pr-bar>button:hover{background:#2b3752}
+.pr-att .pa-scroll{overflow:auto;max-height:270px}
+.pr-att .pa-table{width:100%;border-collapse:collapse;font-size:13px;color:#14213d}
+.pr-att .pa-table th{position:sticky;top:0;z-index:1;background:#f7f9fd;text-align:left;font-weight:700;padding:9px 14px;border-bottom:1px solid #e1e8f5}
+.pr-att .pa-table td{padding:6px 14px;border-bottom:1px solid #e7edf8}
+.pr-att .pa-table td.pa-days{width:200px}
+.pr-att .pa-table td.pa-remark{width:34%}
+.pr-att .pa-table input{width:100%;box-sizing:border-box;height:34px;padding:0 11px;border:1px solid #ccd6e8;border-radius:8px;background:#fff;color:#14213d;font:inherit;font-size:13px}
+.pr-att .pa-table input:focus,.pr-att .pa-period select:focus,.pr-att .pa-period input:focus{outline:2px solid #1a73e8;border-color:#1a73e8}
+.pr-att .pa-table input:disabled{background:#eef1f7;color:#6b7690}
+.pr-att .pa-note{margin:0;padding:7px 14px 9px;font-size:12px;color:#4a5875}
+.pr-att .pa-staff .pr-warn{margin:0 14px 10px}
+.pr-att .pa-buttons{align-self:flex-start;display:flex;flex-wrap:wrap;gap:10px;padding:12px 14px;max-width:100%}
+.pr-att .pa-buttons button{display:inline-flex;align-items:center;gap:9px;height:38px;padding:0 16px;border:1.5px solid #1561c2;border-radius:8px;background:#fff;color:#10264d;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
+.pr-att .pa-buttons button .ps-icon{width:18px;height:18px;color:#1561c2}
+.pr-att .pa-buttons button.pa-primary{background:#1561c2;color:#fff}
+.pr-att .pa-buttons button.pa-primary .ps-icon{color:#fff}
+.pr-att .pa-buttons button:hover:not(:disabled){filter:brightness(1.06)}
+.pr-att .pa-buttons button:disabled{opacity:.5;cursor:default}
+
+/* PROCESS PAYROLL: shares the Attendance heading, cards, period bar and buttons; its own are the blue card bar, the four totals and the slip list. */
+.mp-screen.pr-setup.pr-att.pr-proc{padding:12px 18px;gap:11px}
+.pr-att.pr-proc .px-actions-card{align-self:stretch;overflow:hidden}
+.pr-att.pr-proc .px-actions-card h3{padding:7px 14px;background:#11499f;color:#fff;font-size:14px;font-weight:600}
+.pr-att.pr-proc .px-actions-card .pr-bar{padding:10px 14px 8px}
+.pr-att.pr-proc .px-actions-card .pr-field>span:first-child{flex:0 0 74px}
+.pr-att.pr-proc .px-actions-card .pr-bar>button{background:#dde4f0;color:#14213d;border-radius:18px}
+.pr-att.pr-proc .px-actions-card .pr-bar>button:hover{background:#cfd9ec}
+.pr-att.pr-proc .pa-buttons{display:flex;flex-wrap:wrap;gap:10px;padding:2px 14px 12px}
+.pr-att.pr-proc .pa-buttons button{height:35px}
+.pr-att .px-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;flex-shrink:0}
+.pr-att .px-tiles>div{display:flex;flex-direction:column;gap:2px;padding:10px 15px;background:#f4f6fb}
+.pr-att .px-tiles small{font-size:13px;color:#14213d}
+.pr-att .px-tiles b{font-size:19px;color:#0a1730}
+.pr-att .px-slips{padding:12px 14px}
+.pr-att .px-table-box{overflow:auto;max-height:300px;border:1px solid #b9cdee;border-radius:9px}
+.pr-att .px-table-box .pa-table th{background:#d9e7fb;border-bottom:1px solid #b9cdee}
+.pr-att .px-table-box .pa-table th.pr-num,.pr-att .px-table-box .pa-table td.pr-num{text-align:right}
+.pr-att .px-table-box .pa-table td{padding:9px 14px}
+.pr-att .px-table-box .pa-table tbody tr:last-child td{border-bottom:0}
+.pr-att .px-table-box .pa-table td.px-none{height:44px;text-align:center}
+.pr-att.pr-proc>.pr-warn{flex-shrink:0}
+
+/* SALARY REGISTER: a card with the period and actions, and a card with the register. */
+.mp-screen.pr-regs{display:flex;flex-direction:column;gap:14px;padding:18px 24px;overflow:auto;background:#bcd7f5;color:#10233d;font-size:13px}
+.pr-regs .rg-card{flex-shrink:0;background:#fff;border:1px solid #dde7f6;border-radius:12px;box-shadow:0 4px 14px rgba(25,65,130,.18);padding:14px 18px}
+.pr-regs .rg-card h3{margin:0 0 11px;font-size:16px;font-weight:600;color:#14213d}
+.pr-regs .rg-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.pr-regs .pr-field{gap:13px}
+.pr-regs .pr-field>span{flex:0 0 auto;font-size:13px}
+.pr-regs .pr-field>select{flex:0 0 232px;width:232px;height:35px;padding:0 10px;border:1px solid #ccd6e8;border-radius:8px;background:#fff;color:#14213d;font:inherit;font-size:13px}
+.pr-regs .rg-btn{display:inline-flex;align-items:center;gap:9px;height:35px;padding:0 16px;border:1.5px solid #1a52a8;border-radius:8px;background:#fff;color:#12448f;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.pr-regs .rg-btn .ps-icon{width:18px;height:18px}
+.pr-regs .rg-btn:hover:not(:disabled){background:#eef4ff}
+.pr-regs .rg-btn:disabled{opacity:.5;cursor:default}
+.pr-regs .pr-field>select:focus{outline:2px solid #1a73e8;border-color:#1a73e8}
+.pr-regs .rg-table-box{overflow:auto;max-height:330px;border:1px solid #d6e2f5;border-radius:9px}
+.pr-regs .rg-table{width:100%;border-collapse:collapse;font-size:13px;color:#14213d}
+.pr-regs .rg-table th{position:sticky;top:0;background:#c3daf8;padding:13px 12px;text-align:left;font-weight:700;white-space:nowrap}
+.pr-regs .rg-table td{padding:11px 12px;border-bottom:1px solid #e4ecf9;white-space:nowrap}
+.pr-regs .rg-table .pr-num{text-align:right}
+.pr-regs .rg-table tbody tr:last-child td{border-bottom:0}
+.pr-regs .rg-table tbody tr:hover{background:#f2f7ff}
+.pr-regs .rg-table tfoot td{position:sticky;bottom:0;background:#eef4fd;border-top:2px solid #9dbbe8;font-weight:700}
+
+/* PAYSLIP: a centred column with the heading, the selection card and the preview card. The printed payslip is not changed (it has its own styles). */
+.mp-screen.pr-payslip{display:block;padding:16px 20px;overflow:auto;background:#e3eefb;color:#10233d;font-size:13px}
+.pr-payslip .py-column{max-width:780px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.pr-payslip .py-head{display:flex;align-items:center;gap:12px;color:#0c1a33}
+.pr-payslip .py-head .ps-icon{width:32px;height:32px;stroke-width:1.8}
+.pr-payslip .py-head h2{margin:0;font-size:27px;font-weight:700}
+.pr-payslip .py-card{background:#fff;border:1px solid #dbe6f7;border-radius:12px;box-shadow:0 5px 16px rgba(25,65,130,.15)}
+.pr-payslip .py-card>h3{margin:0;padding:11px 16px;border-radius:11px 11px 0 0;background:linear-gradient(#2064c2,#1856ac);color:#fff;font-size:15px;font-weight:600}
+.pr-payslip .py-actions{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px 16px;padding:14px 16px 18px}
+.pr-payslip .py-actions .pr-bar{display:contents}
+.pr-payslip .pr-field{flex:1 1 190px;flex-direction:column;align-items:stretch;gap:7px}
+.pr-payslip .pr-field>span{flex:0 0 auto;font-size:13px}
+.pr-payslip .pr-field>select{flex:0 0 auto;width:100%;height:37px;padding:0 14px;border:1px solid #ccd6e8;border-radius:19px;background:#fff;color:#14213d;font:inherit;font-size:13px}
+.pr-payslip .pr-field>select:focus{outline:2px solid #1a73e8;border-color:#1a73e8}
+.pr-payslip .py-actions button{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:37px;min-width:92px;padding:0 18px;border:1.5px solid #17458c;border-radius:19px;background:#fff;color:#123a78;font:inherit;font-size:13.5px;font-weight:500;cursor:pointer}
+.pr-payslip .py-actions button .ps-icon{width:18px;height:18px}
+.pr-payslip .py-actions button.py-primary{background:#17509f;border-color:#17509f;color:#fff}
+.pr-payslip .py-actions button:hover:not(:disabled){filter:brightness(1.07)}
+.pr-payslip .py-actions button:disabled{opacity:.55;cursor:default}
+.pr-payslip .py-preview{min-height:170px;padding:16px}
+.pr-payslip .py-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:138px;text-align:center}
+.pr-payslip .py-empty span{display:flex;align-items:center;justify-content:center;width:76px;height:76px;border-radius:50%;background:#e8f0fc;color:#7f99bd}
+.pr-payslip .py-empty .ps-icon{width:46px;height:46px;stroke-width:1.4}
+.pr-payslip .py-empty p{margin:0;font-size:15px}
+.pr-payslip .pr-slip .slip{margin:0 auto 12px}
+
+/* VOUCHER TAGGING: the staff card on the left, the staff member's voucher lines on the right. */
+.mp-screen.pr-vt{display:flex;flex-direction:row;align-items:stretch;gap:14px;padding:12px 14px;overflow:auto;color:#10233d;font-size:13px;
+  background:#eaf2fd url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 400' preserveAspectRatio='none'%3E%3Cpath d='M0 190C180 40 330 110 520 200S900 400 1100 400H0Z' fill='%23cfe0fb' fill-opacity='.7'/%3E%3Cpath d='M0 300C220 170 420 230 700 330S980 400 1040 400H0Z' fill='%23bcd4fa' fill-opacity='.6'/%3E%3C/svg%3E") bottom left / 100% 340px no-repeat}
+.pr-vt .vt-card{background:#fff;border:1px solid #dbe6f7;border-radius:12px;box-shadow:0 5px 16px rgba(25,65,130,.13);padding:11px 12px}
+.pr-vt .vt-staff{flex:0 0 27%;min-width:250px;align-self:flex-start;max-height:100%;overflow:auto}
+.pr-vt .vt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.pr-vt .vt-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.pr-vt .vt-title{display:flex;align-items:center;gap:11px}
+.pr-vt .vt-title h3{margin:0;font-size:18px;font-weight:700;color:#0c1a33}
+.pr-vt .vt-badge{display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;background:#1a82e8;color:#fff;flex:0 0 auto}
+.pr-vt .vt-badge .ps-icon{width:24px;height:24px}
+.pr-vt .vt-search{display:flex;align-items:center;gap:8px;flex:1 1 150px;max-width:220px;height:34px;padding:0 12px;background:#fff;border:1px solid #c9d6ea;border-radius:18px;box-shadow:0 2px 7px rgba(30,80,170,.10)}
+.pr-vt .vt-search:focus-within{outline:2px solid #1a73e8}
+.pr-vt .vt-search .ps-icon{width:16px;height:16px;flex:0 0 auto;color:#6d7f9e}
+.pr-vt .vt-search input{flex:1;min-width:0;border:0;outline:none;background:transparent;font:inherit;font-size:13px;color:#14213d;box-shadow:none}
+.pr-vt .vt-people{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.pr-vt .vt-people button{display:flex;align-items:center;gap:12px;width:100%;padding:10px 13px;border:0;border-radius:8px;background:transparent;color:#10233d;font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.pr-vt .vt-people button i{width:11px;height:11px;border-radius:50%;background:#c3d2ea;flex:0 0 auto}
+.pr-vt .vt-people button:hover{background:#f0f6ff}
+.pr-vt .vt-people button.vt-on{background:#e6f0fd}
+.pr-vt .vt-people button.vt-on i{background:#1a82e8}
+.pr-vt .vt-empty{flex:1;display:flex;align-items:center;justify-content:center;margin:0;min-height:160px;text-align:center;color:#4a5875}
+.pr-vt .pr-head{font-size:17px;font-weight:700}
+.pr-vt .pr-check{font-size:13px;gap:7px;cursor:pointer}
+.pr-vt .pr-check input{width:15px;height:15px;margin:0;accent-color:#1561c2}
+.pr-vt .vt-table-box{flex:1 1 0;min-height:150px;overflow:auto;border:1px solid #d6e2f5;border-radius:8px}
+.pr-vt .vt-table{width:100%;border-collapse:collapse;font-size:12.5px;color:#0f1c36}
+.pr-vt .vt-table th{position:sticky;top:0;z-index:1;background:#1254b4;color:#fff;text-align:left;font-weight:700;padding:7px 7px;white-space:nowrap}
+.pr-vt .vt-table td{height:27px;padding:2px 7px;border-bottom:1px solid #dde8f8;white-space:nowrap}
+.pr-vt .vt-table .pr-num{text-align:right}
+.pr-vt .vt-table tbody tr:nth-child(even){background:#eef5ff}
+.pr-vt .vt-table tbody tr:hover{background:#dcecff}
+.pr-vt .vt-table tbody tr.pr-bad{background:#fdecec}
+.pr-vt .vt-table .pr-chip{background:#e9edf5;border-color:#aebbd3;font-size:12px;padding:1px 4px 1px 10px}
+.pr-vt .vt-table .pr-warn{display:inline-block;white-space:normal;padding:2px 8px}
+.pr-vt .vt-table td.vt-act{width:1%;text-align:center}
+.pr-vt .vt-tag{height:22px;min-width:46px;padding:0 12px;border:1px solid #1a62c4;border-radius:12px;background:#dcebff;color:#0f4a9e;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.pr-vt .vt-tag:hover{background:#c7deff}
+.pr-vt .vt-table tr.pr-formrow,.pr-vt .vt-table tr.pr-formrow:hover{background:#f6f9ff}
+.pr-vt .pr-formrow td{white-space:normal;padding:8px 10px}
+.pr-vt .pr-formrow .pr-bar{gap:8px 14px}
+.pr-vt .pr-formrow .pr-field{gap:6px}
+.pr-vt .pr-formrow .pr-field>span{flex:0 0 auto}
+.pr-vt .pr-formrow input,.pr-vt .pr-formrow select{height:29px;border:1px solid #c3d0e6;border-radius:7px;background:#fff;padding:0 8px;font:inherit;font-size:12.5px}
+.pr-vt .pr-formrow button{height:29px;padding:0 14px;border:1.5px solid #1a52a8;border-radius:7px;background:#fff;color:#12448f;font:inherit;font-weight:600;cursor:pointer}
+.pr-vt .pr-formrow button.pr-primary{background:#1561c2;color:#fff}
+.pr-vt .vt-foot{margin-top:auto;padding-top:5px}
+.pr-vt .vt-quit{display:inline-flex;align-items:center;gap:9px;height:33px;padding:0 17px;border:1.5px solid #17458c;border-radius:8px;background:#fff;color:#10264d;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.pr-vt .vt-quit .ps-icon{width:16px;height:16px}
+.pr-vt .vt-quit:hover{background:#eef4ff}
+@media (max-width:900px){.mp-screen.pr-vt{flex-direction:column}.pr-vt .vt-staff{flex:0 0 auto;align-self:stretch;max-height:200px}.pr-vt .vt-main{flex:0 0 auto;min-height:340px}}
+
+/* PENDING SALARY: the Pay Components panel, search and list style, with the period and buttons on one row and twelve narrow columns. */
+.mp-screen.pr-setup.pr-comp.pr-pend{padding:14px 18px}
+.pr-pend .pc-panel{gap:10px}
+.pr-pend .pn-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.pr-pend .pn-bar .pr-field>span:first-child{flex:0 0 76px}
+.pr-pend .pn-bar .pr-field>select{flex:0 0 256px;width:256px;border-radius:19px;padding:0 14px}
+.pr-pend .pn-bar .ps-actions{margin:0}
+.pr-pend .pn-bar .ps-actions button{min-width:112px;height:38px}
+.pr-pend .pn-note{margin:0;font-size:13px;line-height:1.45;color:#0f1c36}
+.pr-pend .pc-scroll{max-height:310px}
+.pr-pend .pc-table{font-size:12.5px}
+.pr-pend .pc-table th{position:sticky;top:0;z-index:1;padding:11px 7px;text-align:center;white-space:normal;line-height:1.25;vertical-align:middle}
+.pr-pend .pc-table td{padding:7px 7px;height:26px}
+.pr-pend .pc-table td.pr-num{text-align:right}
+.pr-pend .pc-table td:first-child,.pr-pend .pc-table th:first-child{padding-left:14px;text-align:left;white-space:normal;min-width:96px}
+.pr-pend .pc-table td.pr-badtext{color:#b42318;font-weight:600}
+.pr-pend .pc-table tfoot td{position:sticky;bottom:0;background:#fff;border-top:2px solid #a9c2ea;font-weight:700}
+.pr-pend .pc-table td.pn-tie{text-align:center;font-size:17px;font-weight:700}
+.pr-pend .pc-table td.pn-ok{color:#13824a}
+.pr-pend .pc-table td.pn-no{color:#9f1239}
+
+/* ADVANCE AND LOANS: the summary card, the loans card, the loan form card and the buttons under them. */
+.mp-screen.pr-adv{display:flex;flex-direction:column;gap:12px;padding:12px 14px;overflow:auto;background:#dce8f9;color:#0f1c36;font-size:13px}
+.pr-adv .av-card{flex-shrink:0;background:#fff;border:1px solid #d6e3f6;border-radius:12px;box-shadow:0 3px 12px rgba(25,65,130,.14);padding:9px 6px 6px}
+.pr-adv .av-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 16px;padding:0 8px 7px}
+.pr-adv .av-head h3{display:flex;align-items:center;gap:10px;margin:0;font-size:18px;font-weight:700;color:#0c1a33}
+.pr-adv .av-head h3 .ps-icon{width:23px;height:23px;color:#1561c2}
+.pr-adv .av-head p{margin:2px 0 0;font-size:12.5px}
+.pr-adv .av-search{display:flex;align-items:center;gap:8px;width:215px;max-width:100%;height:31px;padding:0 12px;border:1px solid #9fb0cc;border-radius:16px;background:#fff}
+.pr-adv .av-search:focus-within{outline:2px solid #1a73e8}
+.pr-adv .av-search .ps-icon{width:15px;height:15px;flex:0 0 auto;color:#5d6f90}
+.pr-adv .av-search input{flex:1;min-width:0;border:0;outline:none;background:transparent;font:inherit;font-size:13px;color:#14213d;box-shadow:none}
+.pr-adv .av-scroll{overflow:auto;max-height:230px;border-radius:7px}
+.pr-adv .av-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.pr-adv .av-table th{position:sticky;top:0;z-index:1;background:#1c5fc0;color:#fff;text-align:left;font-weight:700;padding:7px 9px;white-space:nowrap}
+.pr-adv .av-table td{padding:7px 9px;border-bottom:1px solid #e3ebf8;white-space:nowrap}
+.pr-adv .av-table tbody tr:hover{background:#f1f7ff}
+.pr-adv .av-table tfoot td{position:sticky;bottom:0;background:#f1f4f9;border-bottom:0;font-weight:700}
+.pr-adv .av-loans td{padding-top:4px;padding-bottom:4px;height:24px}
+.pr-adv .av-edit{height:23px;padding:0 14px;border:0;border-radius:12px;background:#d8ecfd;color:#0f5199;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.pr-adv .av-edit:hover{background:#c3e0fb}
+.pr-adv .av-form{padding-bottom:10px}
+.pr-adv .av-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px 18px;padding:0 8px}
+.pr-adv .av-fields>*{display:flex;flex-direction:column;gap:3px;min-width:0}
+.pr-adv .av-fields>*>span:first-child{font-size:13px}
+.pr-adv .av-fields select,.pr-adv .av-fields input,.pr-adv .av-money{box-sizing:border-box;width:100%;height:32px;padding:0 12px;border:1px solid #9fb0cc;border-radius:16px;background:#fff;color:#14213d;font:inherit;font-size:13px}
+.pr-adv .av-fields .av-money{display:flex;flex-direction:row;align-items:center;gap:8px}
+.pr-adv .av-money em{font-style:normal;color:#5d6f90}
+.pr-adv .av-fields .av-money input{flex:1;min-width:0;height:100%;padding:0;border:0;border-radius:0;outline:none;background:transparent;box-shadow:none}
+.pr-adv .av-two{display:flex;gap:12px}
+.pr-adv .av-fields select:focus,.pr-adv .av-fields>*>input:focus,.pr-adv .av-money:focus-within,.pr-adv .av-two>*:focus{outline:2px solid #1a73e8;border-color:#1a73e8}
+.pr-adv .av-form-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 8px 0}
+.pr-adv .av-check{display:flex;align-items:center;gap:8px;cursor:pointer}
+.pr-adv .av-check input{width:16px;height:16px;margin:0;accent-color:#1561c2}
+.pr-adv .av-buttons{display:flex;flex-wrap:wrap;gap:9px}
+.pr-adv .av-bottom{flex-shrink:0}
+.pr-adv .av-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:33px;min-width:82px;padding:0 17px;border:1.5px solid #1a52a8;border-radius:17px;background:#fff;color:#12448f;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.pr-adv .av-btn .ps-icon{width:16px;height:16px}
+.pr-adv .av-btn.av-primary{background:#1757b5;border-color:#1757b5;color:#fff}
+.pr-adv .av-btn:hover:not(:disabled){filter:brightness(1.07)}
+.pr-adv .av-btn:disabled{opacity:.5;cursor:default}
+/* Advance and Loans: the form three boxes across, and all of it compact enough for a 768-line screen. */
+.pr-adv .av-fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px 18px}
+@media (max-width:900px){.pr-adv .av-fields{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}}
+.mp-screen.pr-adv{gap:8px;padding:8px 14px}
+.pr-adv .av-card{padding:6px 6px 4px}
+.pr-adv .av-head{padding-bottom:5px}
+.pr-adv .av-head h3{font-size:16px}
+.pr-adv .av-table th,.pr-adv .av-table td{padding-top:5px;padding-bottom:5px}
+.pr-adv .av-loans td{padding-top:3px;padding-bottom:3px;height:23px}
+.pr-adv .av-form{padding-bottom:7px}
+.pr-adv .av-fields>*{gap:1px}
+.pr-adv .av-fields select,.pr-adv .av-fields input,.pr-adv .av-money{height:28px}
+.pr-adv .av-fields .av-money input{height:100%}
+.pr-adv .av-form-foot{padding-top:6px}
+.pr-adv .av-btn{height:30px}
+
+/* UNTAGGED VOUCHERS: the Advance and Loans card and list style; one card whose list takes the height there is, with the narration wrapping. */
+.pr-untag .av-card{flex:0 1 auto;display:flex;flex-direction:column;min-height:180px}
+.pr-untag .av-scroll{flex:0 1 auto;min-height:0;max-height:none}
+.pr-untag .av-table th.pr-num,.pr-untag .av-table td.pr-num{text-align:right}
+.pr-untag .av-table tbody tr:nth-child(even){background:#e8f2fe}
+.pr-untag .av-table tbody tr:hover{background:#d8e9ff}
+.pr-untag .av-table tbody tr.pr-bad{background:#fdecec}
+.pr-untag .av-table td.av-narration{white-space:normal;min-width:230px}
+.pr-untag .av-table td:last-child,.pr-untag .av-table th:last-child{padding-left:14px}
+.pr-untag .av-table tfoot td{background:#fff;border-top:2px solid #cbd9f0;font-size:13.5px;padding-top:7px;padding-bottom:7px}
+.pr-untag>.pr-warn{flex-shrink:0}
+.pr-untag .av-bottom .av-btn{height:33px;min-width:100px}
