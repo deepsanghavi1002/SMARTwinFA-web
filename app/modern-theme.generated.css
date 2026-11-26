@@ -12055,3 +12055,47 @@ html[data-mtheme="dark"] .modern-view .context-tools .view-switch {
     background: rgba(255,255,255,0.22);
     box-shadow: none
 }
+html[data-mtheme="light"] .rp-views-mail {
+    border: 1px solid #d2d8e1;
+    background: #ffffff
+}
+html[data-mtheme="light"] .rp-mail-row input[type=email] {
+    border: 1px solid #d2d8e1
+}
+html[data-mtheme="light"] .rp-mail-field input {
+    border: 1px solid #d2d8e1
+}
+html[data-mtheme="light"] .rp-mail-history li {
+    border-bottom: 1px solid #d2d8e1
+}
+html[data-mtheme="dark"] .rp-views-mail {
+    border: 1px solid #242b38;
+    background: #0e1218
+}
+html[data-mtheme="dark"] .rp-mail-row input[type=email] {
+    border: 1px solid #242b38
+}
+html[data-mtheme="dark"] .rp-mail-field input {
+    border: 1px solid #242b38
+}
+html[data-mtheme="dark"] .rp-mail-history li {
+    border-bottom: 1px solid #242b38
+}
+html[data-mtheme="light"] .menu-star {
+    color: #7d8fa8
+}
+html[data-mtheme="light"] .menu-star-on {
+    color: #d99a00
+}
+html[data-mtheme="light"] .menu-move {
+    color: #52688a
+}
+html[data-mtheme="dark"] .menu-star {
+    color: #7c889c
+}
+html[data-mtheme="dark"] .menu-star-on {
+    color: #ffca47
+}
+html[data-mtheme="dark"] .menu-move {
+    color: #8e98aa
+}

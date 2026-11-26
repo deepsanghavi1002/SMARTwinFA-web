@@ -36,6 +36,19 @@ export async function reportCall<T>(selection: StartupSelection, reportName: str
   return body;
 }
 
+/** One call to /api/report-schedules (emailing a saved view). A refusal is thrown with its own message. */
+export async function emailCall<T>(selection: StartupSelection, reportName: string, menuShortName: string, action: string, payload: Record<string, unknown> = {}): Promise<T> {
+  const response = await fetch("/api/report-schedules", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ action, reportName, menuShortName, companyId: Number(selection.companyId), yearKey: selection.yearKey, ...payload }),
+  });
+  const body = await readJson<T & { error?: string; refusal?: string }>(response, action);
+  if (!response.ok || body.error || body.refusal) throw new Error(body.refusal || body.error || `Email request ${action} failed`);
+  return body;
+}
+
 /** One call to /api/report/views (a report's saved views). */
 export async function viewsCall<T>(selection: StartupSelection, reportName: string, menuShortName: string, action: string, payload: Record<string, unknown> = {}): Promise<T> {
   const response = await fetch("/api/report/views", {
