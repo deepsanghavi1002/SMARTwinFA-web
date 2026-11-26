@@ -223,6 +223,14 @@
    row opens its own panel beside the dropdown, the way the desktop does. */
 
 .menu-branch{position:relative}
+.menu-star{visibility:hidden;font-size:14px;line-height:1;font-weight:400;color:#7d8fa8;text-align:center;align-self:stretch;display:flex;align-items:center;justify-content:center}
+.menu-star-on{visibility:visible;color:#d99a00}
+.dropdown button:hover>.menu-star,.dropdown button:focus>.menu-star,.submenu button:hover>.menu-star,.submenu button:focus>.menu-star{visibility:visible}
+.menu-move{display:inline-block;padding:0 4px;font-size:10px;color:#52688a}
+.menu-move-off{opacity:.25}
+/* Favourites sits at the right end of the Legacy menu bar; its list opens leftwards so it stays on screen. */
+@media(min-width:781px){.legacy-view .menu-bar>.menu-root-favourites{margin-left:auto}.legacy-view .menu-bar>.menu-root-favourites>.dropdown{left:auto;right:0}}
+@media(hover:none){.menu-star{visibility:visible}.menu-move{padding:0 8px;font-size:13px}}
 
 .dropdown>button,.dropdown>.menu-branch>button,.submenu>button,.submenu>.menu-branch>button{
 

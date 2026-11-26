@@ -34,6 +34,8 @@ import { WindowLinkProvider } from "../features/ui/windowLink";
 import { IdleGuard } from "../features/startup/IdleGuard";
 import { StartupGate, useStartupActions, useStartupSelection, useViewMode } from "../features/startup/StartupGate";
 import { ModernHome } from "../features/home/ModernHome";
+import { useFavourites } from "../features/home/useFavourites";
+import { favouriteKey, favouriteList } from "../lib/menu-favourites/items";
 
 /**
  * The menu is data, not application code: it is read from
@@ -72,6 +74,9 @@ function MenuLabel({ node }: { node: MenuNode }) {
   if (key === "" || at < 0) return <>{node.label}</>;
   return <>{node.label.slice(0, at)}<u className="menu-key">{node.label.charAt(at)}</u>{node.label.slice(at + 1)}</>;
 }
+
+/** The web-only last menu: the user's own favourites, there only while the list has something. Its rows are the menu's own rows, so they open and behave the same. */
+const FAVOURITES_ID = -9002;
 
 /** At most this many program windows open at once (each keeps its grid in memory). */
 const MAX_WINDOWS = 10;
@@ -238,6 +243,26 @@ function MainMenu() {
   const startup = useStartupActions();
   const [menus, setMenus] = useState<MenuNode[]>([]);
   const [menuError, setMenuError] = useState("");
+  const favourites = useFavourites(selection);
+  const favouriteItems = favouriteList<MenuNode>(menus, favourites.keys);
+  /** The menu bar: the company's menu, then Favourites at the end when there are any. */
+  const barMenus: MenuNode[] = favouriteItems.length === 0 ? menus : [
+    ...menus,
+    { id: FAVOURITES_ID, label: "Favourites", accessKey: "V", accessIndex: 2, shortcut: null, actionCode: null, programName: null, actionMenu: null, menuShortName: null, children: favouriteItems.map((entry) => ({ ...entry.node, label: entry.label, accessKey: null, accessIndex: -1 })) },
+  ];
+  const toggleFavourite = (node: MenuNode) => {
+    const key = favouriteKey(node);
+    if (key === "") return;
+    const removing = favourites.keys.includes(key);
+    // Taking off the last one takes the Favourites menu away: it must not be left open.
+    if (removing && openMenu === FAVOURITES_ID && favouriteItems.length === 1 && favouriteItems[0].key === key) { setOpenMenu(null); setOpenSub(null); }
+    favourites.change({ action: removing ? "remove" : "add", key });
+  };
+  const moveFavourite = (key: string, by: -1 | 1) => {
+    const at = favouriteItems.findIndex((entry) => entry.key === key);
+    const other = favouriteItems[at + by];
+    if (at >= 0 && other) favourites.change({ action: "swap", key, other: other.key });
+  };
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [openSub, setOpenSub] = useState<number | null>(null);
   /**
@@ -673,7 +698,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     setOpenSub(id);
     focusLater(() => rowsOf(submenuOf(id))[0]);
   };
-  const nodeById = (id: number, list: MenuNode[] = menus): MenuNode | undefined => {
+  const nodeById = (id: number, list: MenuNode[] = [...menus, ...barMenus.slice(menus.length)]): MenuNode | undefined => {
     for (const node of list) {
       if (node.id === id) return node;
       const found = nodeById(id, node.children);
@@ -693,19 +718,19 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     if (screenBusy()) { event.preventDefault(); return; }
     const button = (event.target as HTMLElement).closest?.("button");
     if (!button || !menuBar.current?.contains(button)) return;
-    const index = menus.findIndex((menu) => menu.id === (button.dataset.menuRoot ? Number(button.dataset.menuRoot) : openMenu));
-    const step = (by: number) => { const next = menus[(index + by + menus.length) % menus.length]; if (next) openTop(next.id); };
+    const index = barMenus.findIndex((menu) => menu.id === (button.dataset.menuRoot ? Number(button.dataset.menuRoot) : openMenu));
+    const step = (by: number) => { const next = barMenus[(index + by + barMenus.length) % barMenus.length]; if (next) openTop(next.id); };
     const letterKey = /^[a-z0-9]$/i.test(event.key) && !event.ctrlKey && !event.altKey && !event.metaKey;
     // On the menu bar itself.
     if (button.dataset.menuRoot) {
       const id = Number(button.dataset.menuRoot);
       if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") { event.preventDefault(); openTop(id); }
       else if (event.key === "ArrowUp") { event.preventDefault(); openTop(id, "last"); }
-      else if (event.key === "ArrowRight") { event.preventDefault(); topButton(menus[(index + 1) % menus.length].id)?.focus(); }
-      else if (event.key === "ArrowLeft") { event.preventDefault(); topButton(menus[(index - 1 + menus.length) % menus.length].id)?.focus(); }
+      else if (event.key === "ArrowRight") { event.preventDefault(); topButton(barMenus[(index + 1) % barMenus.length].id)?.focus(); }
+      else if (event.key === "ArrowLeft") { event.preventDefault(); topButton(barMenus[(index - 1 + barMenus.length) % barMenus.length].id)?.focus(); }
       else if (event.key === "Escape") { event.preventDefault(); closeMenus(); button.blur(); }
       else if (letterKey) {
-        const menu = menus.find((candidate) => menuKey(candidate) === event.key.toUpperCase());
+        const menu = barMenus.find((candidate) => menuKey(candidate) === event.key.toUpperCase());
         if (menu) { event.preventDefault(); openTop(menu.id); }
       }
       return;
@@ -716,6 +741,17 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     const at = rows.indexOf(button as HTMLButtonElement);
     const inSub = panel?.classList.contains("submenu") ?? false;
     const parentRow = inSub ? (panel?.parentElement?.querySelector<HTMLButtonElement>(":scope > button") ?? null) : null;
+    // Insert or * on a row adds it to Favourites, or takes it off; in Favourites, Alt+Up / Alt+Down moves it.
+    if ((event.key === "Insert" || event.key === "*") && !event.ctrlKey && !event.altKey && !event.metaKey && !button.parentElement?.classList.contains("menu-branch")) {
+      const node = nodeById(Number(button.dataset.menuId));
+      if (node) { event.preventDefault(); toggleFavourite(node); }
+      return;
+    }
+    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown") && button.dataset.favKey) {
+      event.preventDefault();
+      moveFavourite(button.dataset.favKey, event.key === "ArrowUp" ? -1 : 1);
+      return;
+    }
     switch (event.key) {
       case "ArrowDown": event.preventDefault(); rows[(at + 1) % rows.length]?.focus(); return;
       case "ArrowUp": event.preventDefault(); rows[(at - 1 + rows.length) % rows.length]?.focus(); return;
@@ -755,7 +791,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
   // Alt + a menu's letter from anywhere (after the screen's own Alt letters, which stop the key when they take it). Alt alone, pressed
   // and let go with nothing between, puts the keyboard on the menu bar (or takes it off again).
   const menusNow = useRef<MenuNode[]>([]);
-  useEffect(() => { menusNow.current = menus; }, [menus]);
+  useEffect(() => { menusNow.current = barMenus; });
   const openMenuNow = useRef<number | null>(null);
   useEffect(() => { openMenuNow.current = openMenu; }, [openMenu]);
   const openTopNow = useRef(openTop);
@@ -849,6 +885,30 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     }
   };
 
+  /**
+   * The star in a row's first column. It is a mouse and touch target inside the row's button (a button may not hold another), so a click on
+   * it does not run the row; the keyboard uses Insert or * on the row.
+   */
+  const star = (node: MenuNode) => {
+    const on = favourites.keys.includes(favouriteKey(node));
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- the row's Insert / * key does the same
+    return <span className={`menu-star ${on ? "menu-star-on" : ""}`} title={on ? "Remove from Favourites (Insert)" : "Add to Favourites (Insert)"} onClick={(event) => { event.stopPropagation(); event.preventDefault(); toggleFavourite(node); }}>{on ? "★" : "☆"}</span>;
+  };
+
+  /** A row of the Favourites menu: it opens as its menu row does; ▲ ▼ move it. */
+  const favouriteItem = (node: MenuNode, at: number) => {
+    const key = favouriteItems[at].key;
+    const move = (by: -1 | 1, mark: string, name: string, off: boolean) => (
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- Alt+Up / Alt+Down on the row do the same
+      <span className={`menu-move ${off ? "menu-move-off" : ""}`} title={`${name} (Alt+${by < 0 ? "Up" : "Down"})`} onClick={(event) => { event.stopPropagation(); event.preventDefault(); if (!off) moveFavourite(key, by); }}>{mark}</span>
+    );
+    return (
+      <button key={key} role="menuitem" data-menu-id={node.id} data-fav-key={key} data-menu-key={menuKey(node)} onClick={() => choose(favouriteItems[at].node)}>
+        {star(node)}<span>{node.label}</span><b>{move(-1, "▲", "Move up", at === 0)}{move(1, "▼", "Move down", at === favouriteItems.length - 1)}</b>
+      </button>
+    );
+  };
+
   /** One dropdown row: a leaf runs, a branch opens its submenu beside it. */
   const item = (node: MenuNode) => node.children.length ? (
     <div className={`menu-branch ${openSub === node.id ? "open-branch" : ""}`} key={node.id}>
@@ -861,7 +921,7 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
     </div>
   ) : (
     <button key={node.id} role="menuitem" data-menu-id={node.id} data-menu-key={menuKey(node)} onClick={() => choose(node)}>
-      <span /><span><MenuLabel node={node} /></span><b>{node.shortcut ?? ""}</b>
+      {star(node)}<span><MenuLabel node={node} /></span><b>{node.shortcut ?? ""}</b>
     </button>
   );
 
@@ -926,10 +986,10 @@ The ${open} open window${open === 1 ? "" : "s"} will close, and work not saved i
           <button type="button" className="nav-close" aria-label="Close menu" onClick={() => { closeMenus(); navToggle.current?.focus(); }}>×</button>
         </div>
         {menuError && <p className="menu-bar-error" role="alert">{menuError}</p>}
-        {menus.map((menu) => (
-          <div className="menu-root" key={menu.id}>
+        {barMenus.map((menu) => (
+          <div className={`menu-root ${menu.id === FAVOURITES_ID ? "menu-root-favourites" : ""}`} key={menu.id}>
             <button className={openMenu === menu.id ? "open" : ""} onClick={() => { setSuspendHoverMenu(false); setOpenSub(null); setOpenMenu(openMenu === menu.id ? null : menu.id); }} role="menuitem" data-menu-root={menu.id} aria-expanded={openMenu === menu.id} aria-keyshortcuts={menuKey(menu) ? `Alt+${menuKey(menu)}` : undefined}><MenuLabel node={menu} /></button>
-            <div className={`dropdown ${openMenu === menu.id ? "open-menu" : ""}`} role="menu" data-menu-panel={menu.id}>{menu.children.map((child) => item(child))}</div>
+            <div className={`dropdown ${openMenu === menu.id ? "open-menu" : ""}`} role="menu" data-menu-panel={menu.id}>{menu.id === FAVOURITES_ID ? menu.children.map(favouriteItem) : menu.children.map((child) => item(child))}</div>
           </div>
         ))}
       </div>

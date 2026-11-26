@@ -80,7 +80,9 @@ test("keeps the latest migrated application surface wired into the root route", 
   // smart_setup.menumaster for the company that was opened, so the page is
   // checked for the wiring rather than for any particular menu name.
   assert.match(page, /\/api\/menu\?group=/);
-  assert.match(page, /menus\.map\(\(menu\) =>/);
+  // The bar is the user's Favourites followed by the company's menu.
+  assert.match(page, /barMenus\.map\(\(menu\) =>/);
+  assert.match(page, /\.\.\.menus,/);
   assert.match(page, /menu-branch/, "menumaster is three levels deep");
 
   assert.match(page, /<StartupGate>/);
