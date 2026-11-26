@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useEscapeClose } from "../grid/useEscapeClose";
 import { Icon } from "../ui/Icon";
 import { messageBox } from "../ui/MessageBox";
+import { ReportEmail } from "./ReportEmail";
+import type { EmailCall } from "./ReportEmail";
 
 /**
  * Saved views (web only): a name for the selection on screen (and the Group By of its output),
@@ -14,13 +16,16 @@ import { messageBox } from "../ui/MessageBox";
 
 export type SavedView = Readonly<{ name: string; payload: unknown }>;
 
-export function SavedViews({ list, save, remove, apply, onClose }: {
+export function SavedViews({ list, save, remove, apply, onClose, email }: {
   list: () => Promise<SavedView[]>;
   save: (name: string) => Promise<void>;
   remove: (name: string) => Promise<void>;
   apply: (view: SavedView, keepDates: boolean) => void;
   onClose: () => void;
+  /** Emailing a view; absent when this report cannot be emailed or the user has no export rights. */
+  email?: EmailCall;
 }) {
+  const [mailing, setMailing] = useState<string | null>(null);
   useEscapeClose(onClose);
   const [views, setViews] = useState<SavedView[] | null>(null);
   const [error, setError] = useState("");
@@ -48,6 +53,7 @@ export function SavedViews({ list, save, remove, apply, onClose }: {
         <b><Icon name="views" />Saved views</b>
         <button type="button" className="rp-chart-close" onClick={onClose} aria-label="Close saved views">×</button>
       </div>
+      {email && mailing !== null ? <ReportEmail viewName={mailing} call={email} onBack={() => setMailing(null)} /> : (<>
       <p className="rp-chart-note">A view keeps this selection (accounts, options, dates) and the Group By of the output you last opened. It is yours, for this company and report.</p>
       <button type="button" className="mp-btn mp-btn-green" onClick={() => void saveNow()}>Save current selection as…</button>
       <label className="rp-compare-sort"><input type="checkbox" checked={keepDates} onChange={(event) => setKeepDates(event.target.checked)} /> Keep the dates on screen when applying</label>
@@ -57,11 +63,13 @@ export function SavedViews({ list, save, remove, apply, onClose }: {
           {views.map((view) => (
             <li key={view.name}>
               <button type="button" className="rp-views-name" onClick={() => apply(view, keepDates)} title="Apply this view">{view.name}</button>
+              {email && <button type="button" className="rp-views-mail" onClick={() => setMailing(view.name)} title="Email this view">Email</button>}
               <button type="button" className="rp-views-del" onClick={() => void removeNow(view.name)} aria-label={`Delete ${view.name}`}>×</button>
             </li>
           ))}
         </ul>
       )}
+      </>)}
     </aside>
   );
 }

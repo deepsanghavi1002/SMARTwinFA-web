@@ -2165,6 +2165,16 @@
 
 .rp-views{position:fixed;right:34px;top:96px;bottom:64px;z-index:30;border:1px solid #c9d8ea;box-shadow:0 4px 16px #0003}
 
+.rp-views-mail{height:28px;border:1px solid #c9d8ea;border-radius:5px;background:#fff;font-size:12px;padding:0 8px;cursor:pointer}
+.rp-mail{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0}
+.rp-mail-row{display:flex;gap:12px;align-items:center;font-size:12px}
+.rp-mail-row input[type=email]{flex:1;min-width:0;height:28px;border:1px solid #c9d8ea;border-radius:5px;padding:0 8px;font-size:12px}
+.rp-mail-field{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.rp-mail-field input{height:28px;border:1px solid #c9d8ea;border-radius:5px;padding:0 8px;font-size:12px}
+.rp-mail-head{font-size:12px;margin-top:6px}
+.rp-mail-history{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:12px}
+.rp-mail-history li{display:flex;flex-direction:column;border-bottom:1px solid #c9d8ea;padding-bottom:4px;overflow-wrap:anywhere}
+.rp-mail-address{flex:1;font-size:12px;align-self:center;overflow-wrap:anywhere}
 .rp-views-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
 
 .rp-views-list li{display:flex;gap:4px}

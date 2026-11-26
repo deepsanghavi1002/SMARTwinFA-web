@@ -278,7 +278,7 @@ export async function againstBookItems(loader: Loader, reportName: string, first
 }
 
 /** Report_Combine's print / preview / export rights: u_roll_id characters 10, 8 and 12 through Security_read_pw. */
-async function reportRights(loader: Loader, menuShortName: string) {
+export async function reportRights(loader: Loader, menuShortName: string) {
   const { session } = loader;
   const rights = await readRights(loader.client, session, `Menu-${menuShortName}`);
   const encoded = securityWrite(`Menu-${menuShortName}`, 0);

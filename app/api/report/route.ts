@@ -18,6 +18,7 @@ import { detailCatalog, detailIdentity, detailValues } from "@/lib/report/detail
 import type { DetailRequest } from "@/lib/report/detailTypes";
 import type { ReportDefinition, ReportOutput, ReportSelection } from "@/lib/report/types";
 import { packedOutputStream } from "@/lib/report/wire";
+import { cleanSelection, strings } from "@/lib/report/selection";
 import { logError, logWarn } from "@/lib/log";
 
 /**
@@ -30,12 +31,6 @@ type Body = Readonly<{ candidates?: unknown; request?: unknown; action: string; 
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
 const headers = { "cache-control": "no-store" };
 
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.map((entry) => String(entry ?? "")).slice(0, 20000) : []);
-const record = <T>(value: unknown, map: (entry: unknown) => T): Record<string, T> => (value && typeof value === "object" && !Array.isArray(value)
-  ? Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 200).map(([key, entry]) => [String(key), map(entry)]))
-  : {});
-
-/** The selection as sent, reduced to plain strings, lists and flags (planReport checks every value against setup). */
 /** The year before the open one: the company of the same name and group whose year ends the day before this one starts. */
 async function previousYear(client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> }, session: { companyKey: number; companyName: string; companyGroup: string; tarikh1: Date }): Promise<{ companyId: number; yearKey: number } | null> {
   const start = `${session.tarikh1.getFullYear()}-${String(session.tarikh1.getMonth() + 1).padStart(2, "0")}-${String(session.tarikh1.getDate()).padStart(2, "0")}`;
@@ -43,21 +38,6 @@ async function previousYear(client: { query: (sql: string, params?: unknown[]) =
     `SELECT n.c_id, n.c_yearid FROM smart_system.cname n JOIN smart_system.company c ON c.co_key = n.c_id WHERE btrim(c.name) = $1 AND btrim(coalesce(c.co_group, '')) = $2 AND c.co_pos = 'A' AND n.c_tarikh2::date = $3::date - 1 ORDER BY n.c_id DESC LIMIT 1`,
     [session.companyName.trim(), session.companyGroup.trim(), start])).rows[0];
   return row ? { companyId: Number(row.c_id), yearKey: Number(row.c_yearid) } : null;
-}
-
-function cleanSelection(value: ReportSelection | undefined): ReportSelection {
-  const source = (value ?? {}) as Record<string, unknown>;
-  return {
-    firstCombo: String(source.firstCombo ?? ""),
-    from: String(source.from ?? ""),
-    upto: String(source.upto ?? ""),
-    groups: strings(source.groups),
-    ticks: record(source.ticks, strings),
-    choices: record(source.choices, (entry) => String(entry ?? "")),
-    columns: strings(source.columns),
-    texts: record(source.texts, (entry) => String(entry ?? "").slice(0, 40)),
-    checks: record(source.checks, (entry) => entry === true),
-  };
 }
 
 /**

@@ -7,8 +7,9 @@ import { useStartupSelection } from "../startup/StartupGate";
 import { parseDesktopDate } from "../../lib/master-program/legacy";
 import { accountHelpBooks } from "../../lib/report/registerBooks";
 import type { ControlItem, HelpGrid as HelpGridData, ReportDefinition, ReportOutput, ReportSelection } from "../../lib/report/types";
-import { reportCall, viewsCall } from "./api";
+import { emailCall, reportCall, viewsCall } from "./api";
 import { SavedViews } from "./SavedViews";
+import { EMAIL_REPORT_KEYS } from "../../lib/report-mail/rules";
 import type { SavedView } from "./SavedViews";
 import type { GroupSpec } from "../../lib/report/groupBy";
 import type { PivotHint, SumifHint } from "../../lib/report/pivotHint";
@@ -376,6 +377,7 @@ export function ReportCombine({ reportName, menuShortName, title, onClose, zoomA
   // Saved views (web only).
   const listViews = useCallback(async () => (await viewsCall<{ views: SavedView[] }>(selection!, reportName, menuShortName, "list")).views, [selection, reportName, menuShortName]);
   const saveView = async (name: string) => { await viewsCall(selection!, reportName, menuShortName, "save", { name, payload: { selection: selectionNow(), groupBy: groupByNow.current } }); };
+  const mailView = useCallback(<T,>(action: string, payload: Record<string, unknown> = {}) => emailCall<T>(selection!, reportName, menuShortName, action, payload), [selection, reportName, menuShortName]);
   const removeView = async (name: string) => { await viewsCall(selection!, reportName, menuShortName, "delete", { name }); };
   const applyView = (view: SavedView, keepDates: boolean) => {
     const saved = view.payload as { selection?: Partial<ReportSelection>; groupBy?: GroupSpec[] } | null;
@@ -901,7 +903,7 @@ This cannot be undone. Are you sure you want to continue?`, "Auto Billing Genera
             <button type="button" data-hotkey="q" aria-keyshortcuts="Alt+Q" className="mp-btn mp-btn-red rp-quit" onClick={() => void leave()}><Icon name="close" /><HotkeyLabel text="Quit" hotkey="q" /></button>
           </div>
           {tools.popups}
-          {viewsOpen && <SavedViews list={listViews} save={saveView} remove={removeView} apply={applyView} onClose={() => setViewsOpen(false)} />}
+          {viewsOpen && <SavedViews list={listViews} save={saveView} remove={removeView} apply={applyView} onClose={() => setViewsOpen(false)} email={def && EMAIL_REPORT_KEYS.has(def.key) && def.rights.export ? mailView : undefined} />}
         </div>
       )}
 

@@ -5,6 +5,7 @@ import { readSession } from "@/lib/master-program/session";
 import type { SessionKey } from "@/lib/master-program/types";
 import { readMenuCatalog } from "@/lib/menu-catalog";
 import { logError } from "@/lib/log";
+import { ensureSavedViews } from "@/lib/report-mail/store";
 
 /**
  * Saved views of a report (web only): a name for a selection (and the Group By on its output),
@@ -40,6 +41,7 @@ export async function POST(request: Request) {
       if (!allowedMasterMenu(await readMenuCatalog(session.companyGroup), body.reportName, String(body.menuShortName ?? ""), "REPORT")) {
         throw new Error("The requested report and module are not in this company's visible menu");
       }
+      await ensureSavedViews(client);
       const who = [session.companyKey, session.userNo, body.reportName];
       switch (body.action) {
         case "list": {

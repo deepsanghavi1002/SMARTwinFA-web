@@ -4,14 +4,13 @@ import { printPatiya } from "./patiyaPrint";
 import { GROUP_PREFIX, withGroups } from "../../lib/report/growth";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import type { ExportRowStyle } from "../../lib/export/table";
 import type { OutputColumn, OutputRow, ReportOutput } from "../../lib/report/types";
 import { ArrangeColumns } from "../grid/ArrangeColumns";
 import { FilterButton, FilterPopup, useColumnFilters } from "../grid/ColumnFilter";
 import { filterHolds, sortedDistinct, statsOf } from "../grid/filter";
 import { headCurrent } from "../grid/headCursor";
 import type { ColumnStats } from "../grid/filter";
-import { exportTableFrom } from "../grid/exportTable";
+import { captionMover, reportExportTable } from "../../lib/report/exportTable";
 import { FoundText } from "../grid/FoundText";
 import { useTypeFind } from "../grid/typeFind";
 import { useZoom } from "./zoom";
@@ -114,21 +113,6 @@ type Point = { row: number; col: number };
 const NO_FORMULAS: readonly FormulaColumn[] = [];
 
 export type OutputStatus = { hotKeys: string; message: string; red?: boolean };
-
-/** A colour name or #rgb as RRGGBB, as the browser reads it (report_style holds names: Pink, MistyRose ...). */
-function hexColour(colour: string): string {
-  if (/^#?[0-9a-f]{6}$/i.test(colour)) return colour.replace(/^#/, "").toUpperCase();
-  try {
-    const context = document.createElement("canvas").getContext("2d");
-    if (!context) return "";
-    context.fillStyle = "#000000";
-    context.fillStyle = colour;
-    const value = String(context.fillStyle);
-    return /^#[0-9a-f]{6}$/i.test(value) ? value.slice(1).toUpperCase() : "";
-  } catch {
-    return "";
-  }
-}
 
 /** A spreadsheet's column letters: 0 is A, 25 is Z, 26 is AA. */
 export function columnLetters(index: number): string {
@@ -430,20 +414,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
       }
       return { ...row, values };
     };
-    // A report with subtotals: the final total's caption goes in the column the subtotals' captions are in (the one most of them start in).
-    const captionAt = new Map<string, number>();
-    for (const row of output.rows) {
-      if (row.kind !== "subtotal") continue;
-      const column = output.columns.find((candidate) => candidate.kind !== "number" && (row.values[candidate.key] ?? "") !== "");
-      if (column) captionAt.set(column.key, (captionAt.get(column.key) ?? 0) + 1);
-    }
-    const captionKey = [...captionAt.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-    const toCaptionColumn = (row: OutputRow): OutputRow => {
-      if (captionKey === undefined || !(row.kind === "total" || (row.kind === "data" && row.rowType === "FT")) || (row.values[captionKey] ?? "") !== "") return row;
-      const from = output.columns.find((candidate) => candidate.kind !== "number" && (row.values[candidate.key] ?? "") !== "");
-      if (!from) return row;
-      return { ...row, values: { ...row.values, [captionKey]: row.values[from.key] ?? "", [from.key]: "" } };
-    };
+    const toCaptionColumn = captionMover(output);
     let entries = 0;
     // With a filter on, a heading (or the blank line before a main group) with no entry left under it is not drawn. One pass from the end:
     // an entry that passes keeps every heading level above it alive, and a heading ends the entries counted for its own level and deeper.
@@ -1221,8 +1192,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   const kindOf = (row: OutputRow): RowKind => (row.kind === "total" || (row.kind === "data" && row.rowType === "FT") ? "total" : row.kind === "subtotal" ? "subtotal" : isHeading(row) ? "heading" : "detail");
   const headingLevel = (row: OutputRow) => headingLevelOf(row.rowType, output.headingLevels, tickOrder);
   const lookOf = (row: OutputRow): RowLook => rowLook(kindOf(row), row.kind === "subtotal" ? row.level : headingLevel(row), levelColours);
-  const rowColours = (row: OutputRow): { background?: string; bold: boolean } => { const look = lookOf(row); return { background: look.background, bold: look.bold }; };
-  /** Modern dark: the level fills are dark tints on screen; print and export (rowColours) keep the light ones. */
+  /** Modern dark: the level fills are dark tints on screen; print and export (lib/report/exportTable) keep the light ones. */
   const dark = useModernDark();
   const modernLight = useModernLight();
   const screenLook = (row: OutputRow): RowLook => (dark
@@ -1274,20 +1244,7 @@ export function OutputGrid({ output: base, fallbackTitle, companyName, userName,
   });
   function buildTable(cols: readonly OutputColumn[]) {
     {
-      const fills = new Map<string, string>();
-      const styleOf = (row: OutputRow): ExportRowStyle | null => {
-        const colours = rowColours(row);
-        if (!colours.background && !colours.bold) return null;
-        const name = colours.background ?? "";
-        if (name && !fills.has(name)) fills.set(name, hexColour(name));
-        return { fill: name ? fills.get(name) : undefined, bold: colours.bold };
-      };
-      const table = exportTableFrom(
-        { company: companyName, title: output.title || fallbackTitle, titleRight: output.dateLine, footerCenter: `${entriesInOutput()} entries`, footerNote: askNote || undefined },
-        cols.map((column) => ({ caption: column.caption, kind: column.kind, decimals: column.decimals, align: column.align === "R" ? "right" : column.align === "C" ? "center" : "left", width: widthOf(column), summed: false })),
-        shown.map(({ row }) => cols.map((column) => (row.values[column.key] ?? "").replace(/,/g, column.kind === "number" ? "" : ","))),
-        shown.map(({ row }) => styleOf(row)),
-      );
+      const table = reportExportTable({ output, columns: cols, rows: shown.map(({ row }) => row), widthOf, company: companyName, title: output.title || fallbackTitle, entries: entriesInOutput(), footerNote: askNote || undefined });
       if (formulaSpecs.length === 0 || cols.length !== columns.length) return table;
       // The added columns go to Excel as real formulas (the cell keeps its value beside it).
       const entries = new Set(entryIndexes(output));

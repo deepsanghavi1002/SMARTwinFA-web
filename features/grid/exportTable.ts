@@ -1,4 +1,4 @@
-import { parseDesktopDate } from "../../lib/master-program/legacy";
+import { parseDesktopDate } from "../../lib/master-program/legacy.ts";
 import type { ExportCell, ExportColumn, ExportRowStyle, ExportTable } from "../../lib/export/table";
 
 /**
