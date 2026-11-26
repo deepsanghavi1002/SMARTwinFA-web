@@ -185,29 +185,45 @@ export function PayrollBankSheet({ menuShortName, title, onClose }: Props) {
     download(lines.join("\r\n"), `Bank Transfer ${periodName(period)}.csv`, "text/csv");
   };
 
+  const empty = periods.length === 0 ? ["No pay period yet.", "Open a month in Attendance or Process Payroll to get started."]
+    : rows.length === 0 ? ["No slips for this period.", "Run Process Payroll for this period first; the bank transfer sheet is made from its slips."]
+      : ["Everyone is already paid.", "Untick \"Only what is still to be paid\" to see all staff."];
+
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <div className="pr-bar">
-        <label className="pr-field"><span>Pay period</span><select value={periodId ?? ""} onChange={(event) => setPeriodId(Number(event.target.value))}>
-          {periods.map((p) => <option key={p.id} value={p.id}>{periodName(p)}</option>)}</select></label>
-        <label className="pr-check"><input type="checkbox" checked={onlyDue} onChange={(event) => setOnlyDue(event.target.checked)} /> Only what is still to be paid (net less payouts tagged)</label>
-      </div>
-      {missing.length > 0 && <p className="pr-warn">No bank account or IFSC for: {missing.map((r) => r.name).join(", ")}. Add them in Staff Payroll Profile.</p>}
-      <div className="pr-scroll">
-        <table className="pr-table">
-          <thead><tr><th>Staff</th><th>Bank</th><th>Account no</th><th>IFSC</th><th className="pr-num">Net payable</th><th className="pr-num">Already paid</th><th className="pr-num">To transfer</th></tr></thead>
-          <tbody>
-            {shown.map((r) => <tr key={r.code}><td>{r.name}</td><td>{r.bankName}</td><td>{r.bankAcNo}</td><td>{r.bankIfsc}</td><td className="pr-num">{money(r.net)}</td><td className="pr-num">{money(r.paid)}</td><td className="pr-num"><b>{money(r.toPay)}</b></td></tr>)}
-            {shown.length === 0 && <tr><td colSpan={7} className="pr-note">{rows.length === 0 ? "No slips for this period." : "Everyone is already paid."}</td></tr>}
-          </tbody>
-          {shown.length > 0 && <tfoot><tr><td colSpan={4}>Total ({shown.length})</td><td className="pr-num">{money(sumOf(shown, (r) => r.net))}</td><td className="pr-num">{money(sumOf(shown, (r) => r.paid))}</td><td className="pr-num">{money(sumOf(shown, (r) => r.toPay))}</td></tr></tfoot>}
-        </table>
-      </div>
-      <div className="pr-actions">
-        <button type="button" disabled={shown.length === 0 || !rights.export} onClick={exportXlsx}>Export Excel</button>
-        <button type="button" disabled={shown.length === 0 || !rights.export} onClick={exportCsv}>Export CSV for bank</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
-      </div>
+    <div className="mp-screen te-screen pr-screen pr-sj pr-bank" role="region" aria-label={title}>
+      <section className="sj-panel" aria-label="Bank transfer sheet">
+        <div className="sj-tiles">
+          <label className="sj-period"><SetupIcon name="calendar" />
+            <span><small>Pay period</small>
+              <select value={periodId ?? ""} onChange={(event) => setPeriodId(Number(event.target.value))}>
+                {periods.length === 0 && <option value="">No period yet</option>}
+                {periods.map((p) => <option key={p.id} value={p.id}>{periodName(p)}</option>)}
+              </select></span></label>
+          <label className="bk-due"><input type="checkbox" checked={onlyDue} onChange={(event) => setOnlyDue(event.target.checked)} /><span>Only what is still to be paid<br />(net less payouts tagged)</span></label>
+        </div>
+        <div className="sj-actions">
+          <button type="button" disabled={shown.length === 0 || !rights.export} onClick={exportXlsx}><SetupIcon name="excel" />Export Excel</button>
+          <button type="button" disabled={shown.length === 0 || !rights.export} onClick={exportCsv}><SetupIcon name="download" />Export CSV for bank</button>
+          <button type="button" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
+        </div>
+        {missing.length > 0 && <p className="pr-warn">No bank account or IFSC for: {missing.map((r) => r.name).join(", ")}. Add them in Staff Payroll Profile.</p>}
+        <div className="sj-table-box">
+          <table className="sj-table">
+            <thead><tr><th><span><SetupIcon name="group" />Staff</span></th><th><span><SetupIcon name="bank" />Bank</span></th><th><span><SetupIcon name="card" />Account no</span></th><th><span><SetupIcon name="code" />IFSC</span></th><th className="pr-num"><span><SetupIcon name="wallet" />Net payable</span></th><th className="pr-num"><span><SetupIcon name="check" />Already paid</span></th><th className="pr-num"><span><SetupIcon name="transfer" />To transfer</span></th></tr></thead>
+            <tbody>
+              {shown.map((r) => <tr key={r.code}><td>{r.name}</td><td>{r.bankName}</td><td>{r.bankAcNo}</td><td>{r.bankIfsc}</td><td className="pr-num">{money(r.net)}</td><td className="pr-num">{money(r.paid)}</td><td className="pr-num"><b>{money(r.toPay)}</b></td></tr>)}
+            </tbody>
+            {shown.length > 0 && <tfoot><tr><td colSpan={4}>Total ({shown.length})</td><td className="pr-num">{money(sumOf(shown, (r) => r.net))}</td><td className="pr-num">{money(sumOf(shown, (r) => r.paid))}</td><td className="pr-num">{money(sumOf(shown, (r) => r.toPay))}</td></tr></tfoot>}
+          </table>
+          {shown.length === 0 && (
+            <div className="sj-empty">
+              <span className="sj-art"><SetupIcon name="doc" /><SetupIcon name="search" /></span>
+              <b>{empty[0]}</b>
+              <p>{empty[1]}</p>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -236,24 +252,37 @@ export function PayrollStatutory({ menuShortName, title, onClose }: Props) {
     rows.map((r) => [r.name, r.uanNo, r.pfNo, r.esiNo, r.pfWage, r.pfEmp, r.pfEr, r.esiWage, r.esiEmp, r.esiEr, r.pt]), [null, null, null, null, ...keys.map((k) => sumOf(rows, k))]);
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <div className="pr-bar">
-        <label className="pr-field"><span>Pay period</span><select value={periodId ?? ""} onChange={(event) => setPeriodId(event.target.value === "" ? null : Number(event.target.value))}>
-          <option value="">Year to date</option>{periods.map((p) => <option key={p.id} value={p.id}>{periodName(p)}</option>)}</select></label>
-        <button type="button" disabled={rows.length === 0 || !rights.export} onClick={exportXlsx}>Export Excel</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
-      </div>
-      <p className="pr-note">Contributions as worked into the slips. The PF wage is the PF-counting earnings up to the ceiling. Staff with nothing deducted are left out.</p>
-      <div className="pr-scroll">
-        <table className="pr-table">
-          <thead><tr><th>Staff</th><th>UAN</th><th>PF no</th><th>ESI no</th><th className="pr-num">PF wage</th><th className="pr-num">PF employee</th><th className="pr-num">PF employer</th><th className="pr-num">ESI wage</th><th className="pr-num">ESI employee</th><th className="pr-num">ESI employer</th><th className="pr-num">Prof. tax</th></tr></thead>
-          <tbody>
-            {rows.map((r) => <tr key={r.code}><td>{r.name}</td><td>{r.uanNo}</td><td>{r.pfNo}</td><td>{r.esiNo}</td>{keys.map((k, i) => <td key={i} className="pr-num">{money(k(r))}</td>)}</tr>)}
-            {rows.length === 0 && <tr><td colSpan={11} className="pr-note">No PF, ESI or professional tax was deducted in this period.</td></tr>}
-          </tbody>
-          {rows.length > 0 && <tfoot><tr><td colSpan={4}>Total ({rows.length})</td>{keys.map((k, i) => <td key={i} className="pr-num">{money(sumOf(rows, k))}</td>)}</tr></tfoot>}
-        </table>
-      </div>
+    <div className="mp-screen te-screen pr-screen pr-sj pr-bank pr-stat" role="region" aria-label={title}>
+      <section className="sj-panel" aria-label="PF, ESI and professional tax statement">
+        <div className="sj-tiles">
+          <label className="sj-period"><SetupIcon name="calendar" />
+            <span><small>Pay period</small>
+              <select value={periodId ?? ""} onChange={(event) => setPeriodId(event.target.value === "" ? null : Number(event.target.value))}>
+                <option value="">Year to date</option>{periods.map((p) => <option key={p.id} value={p.id}>{periodName(p)}</option>)}
+              </select></span></label>
+          <p className="st-note">Contributions as worked into the slips. The PF wage is the PF-counting earnings up to the ceiling.<br />Staff with nothing deducted are left out.</p>
+        </div>
+        <div className="sj-actions">
+          <button type="button" disabled={rows.length === 0 || !rights.export} onClick={exportXlsx}><SetupIcon name="excel" />Export Excel</button>
+          <button type="button" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
+        </div>
+        <div className="sj-table-box">
+          <table className="sj-table">
+            <thead><tr><th><span><SetupIcon name="group" />Staff</span></th><th><span><SetupIcon name="bank" />UAN</span></th><th><span><SetupIcon name="card" />PF no</span></th><th><span><SetupIcon name="card" />ESI no</span></th><th className="pr-num"><span><SetupIcon name="money" />PF wage</span></th><th className="pr-num"><span><SetupIcon name="person" />PF employee</span></th><th className="pr-num"><span><SetupIcon name="person" />PF employer</span></th><th className="pr-num"><span><SetupIcon name="money" />ESI wage</span></th><th className="pr-num"><span><SetupIcon name="person" />ESI employee</span></th><th className="pr-num"><span><SetupIcon name="person" />ESI employer</span></th><th className="pr-num"><span><SetupIcon name="percent" />Prof. tax</span></th></tr></thead>
+            <tbody>
+              {rows.map((r) => <tr key={r.code}><td>{r.name}</td><td>{r.uanNo}</td><td>{r.pfNo}</td><td>{r.esiNo}</td>{keys.map((k, i) => <td key={i} className="pr-num">{money(k(r))}</td>)}</tr>)}
+            </tbody>
+            {rows.length > 0 && <tfoot><tr><td colSpan={4}>Total ({rows.length})</td>{keys.map((k, i) => <td key={i} className="pr-num">{money(sumOf(rows, k))}</td>)}</tr></tfoot>}
+          </table>
+          {rows.length === 0 && (
+            <div className="sj-empty">
+              <span className="sj-art"><SetupIcon name="doc" /><SetupIcon name="search" /></span>
+              <b>No PF, ESI or professional tax was deducted in this period.</b>
+              <p>The statement is made from processed payroll slips.</p>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

@@ -4738,3 +4738,66 @@ html body .lg-field:has(.lg-eye) input{padding-right:50px!important}
 .pr-untag .av-table tfoot td{background:#fff;border-top:2px solid #cbd9f0;font-size:13.5px;padding-top:7px;padding-bottom:7px}
 .pr-untag>.pr-warn{flex-shrink:0}
 .pr-untag .av-bottom .av-btn{height:33px;min-width:100px}
+
+/* SALARY JOURNAL: a white panel with the period and mode tiles, the buttons, the slip list with its blue heading, and an empty-list picture. */
+.mp-screen.pr-sj{display:flex;flex-direction:column;gap:12px;padding:12px 18px;overflow:auto;background:linear-gradient(160deg,#f6faff 40%,#e3eefd);color:#0b2a5b;font-size:13px}
+.pr-sj .sj-panel{flex-shrink:0;display:flex;flex-direction:column;gap:10px;padding:12px;background:#fff;border:1px solid #dde9fb;border-radius:13px;box-shadow:0 5px 18px rgba(30,80,170,.12)}
+.pr-sj .sj-tiles{display:flex;flex-wrap:wrap;align-items:stretch;gap:20px}
+.pr-sj .sj-period,.pr-sj .sj-mode{display:flex;align-items:center;gap:15px;margin:0;min-height:46px;padding:6px 16px;border-radius:10px}
+.pr-sj .sj-period{background:#eaf2ff;cursor:pointer}
+.pr-sj .sj-period>.ps-icon{width:25px;height:25px;color:#1264d8}
+.pr-sj .sj-period>span{display:flex;flex-direction:column}
+.pr-sj .sj-period small{font-size:11.5px;color:#14213d}
+.pr-sj .sj-period select{min-width:195px;border:0;outline:none;background:transparent;color:#0b1f44;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.pr-sj .sj-period:focus-within{outline:2px solid #1a73e8}
+.pr-sj .sj-mode{background:#e7f7f1;color:#0f5c4c;font-size:13px;font-weight:600}
+.pr-sj .sj-mode .ps-icon{width:23px;height:23px;flex:0 0 auto;color:#138a68}
+.pr-sj .sj-actions{display:flex;flex-wrap:wrap;gap:10px}
+.pr-sj .sj-actions button{display:inline-flex;align-items:center;gap:10px;height:37px;padding:0 17px;border:1px solid #d3dded;border-radius:9px;background:#f1f4f9;color:#0b2a5b;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer}
+.pr-sj .sj-actions .ps-icon{width:18px;height:18px}
+.pr-sj .sj-actions button.sj-primary{border-color:#0f62e0;background:linear-gradient(#1a75ee,#0b5bd3);color:#fff;box-shadow:0 4px 12px rgba(15,98,224,.28)}
+.pr-sj .sj-actions button:hover:not(:disabled){filter:brightness(1.05)}
+.pr-sj .sj-actions button:disabled{opacity:.55;cursor:default;box-shadow:none}
+.pr-sj .sj-table-box{overflow:auto;max-height:330px;border:1px solid #dde9fb;border-radius:10px}
+.pr-sj .sj-table{width:100%;border-collapse:collapse;font-size:13px}
+.pr-sj .sj-table thead tr{background:linear-gradient(100deg,#0a47ab,#0d63e6 55%,#0a55cf 75%,#0a6cff)}
+.pr-sj .sj-table th{padding:10px 14px;color:#fff;text-align:left;font-weight:700;border-right:1px solid rgba(255,255,255,.2);white-space:nowrap}
+.pr-sj .sj-table th:last-child{border-right:0}
+.pr-sj .sj-table th span{display:inline-flex;align-items:center;gap:11px}
+.pr-sj .sj-table th .ps-icon{width:19px;height:19px}
+.pr-sj .sj-table th.pr-num,.pr-sj .sj-table td.pr-num{text-align:right}
+.pr-sj .sj-table td{padding:8px 14px;border-bottom:1px solid #e6eefb}
+.pr-sj .sj-table tbody tr:hover{background:#f2f7ff}
+.pr-sj .sj-row-actions{text-align:right;white-space:nowrap}
+.pr-sj .sj-row-actions button,.pr-sj fieldset.pr-edit .pr-actions button,.pr-sj fieldset.pr-edit .pr-bar button{height:28px;margin-left:6px;padding:0 14px;border:1.5px solid #1a62c4;border-radius:8px;background:#eaf2ff;color:#0f4a9e;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.pr-sj fieldset.pr-edit .pr-actions button.pr-primary,.pr-sj fieldset.pr-edit .pr-bar button.pr-primary{background:#1264d8;color:#fff}
+.pr-sj button:disabled{opacity:.55;cursor:default}
+.pr-sj .sj-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:190px;padding:14px;text-align:center}
+.pr-sj .sj-art{position:relative;display:block;width:150px;height:86px;border-radius:50%;background:radial-gradient(ellipse at 50% 75%,#e3eefd 0,#eef5ff 55%,transparent 72%)}
+.pr-sj .sj-art .ps-icon:first-child{position:absolute;left:36px;top:2px;width:78px;height:80px;color:#8fb4ee;stroke-width:1.2}
+.pr-sj .sj-art .ps-icon:last-child{position:absolute;left:84px;top:36px;width:52px;height:52px;color:#1264d8;stroke-width:2.2}
+.pr-sj .sj-empty b{font-size:16px;color:#0b2a5b}
+.pr-sj .sj-empty p{margin:0;font-size:13px;color:#6a7da3}
+.pr-sj fieldset.pr-edit{flex-shrink:0;display:flex;flex-direction:column;gap:8px;margin:0;padding:10px 14px 12px;background:#fff;border:1px solid #dde9fb;border-radius:12px;box-shadow:0 4px 14px rgba(30,80,170,.10)}
+.pr-sj fieldset.pr-edit legend{padding:0 6px;font-size:14px;font-weight:700}
+.pr-sj fieldset.pr-edit .pr-scroll{flex-shrink:0}
+.pr-sj fieldset.pr-edit .pr-field input{height:28px;border:1px solid #c3d0e6;border-radius:7px;padding:0 8px;font:inherit}
+
+/* BANK TRANSFER SHEET: the Salary Journal panel, with its own second tile (what is still to be paid) and seven columns. */
+.pr-bank .bk-due{display:flex;align-items:center;gap:15px;min-height:46px;padding:6px 40px 6px 16px;border-radius:10px;background:#eef4ff;font-size:13px;line-height:1.4;cursor:pointer}
+.pr-bank .bk-due input{width:19px;height:19px;margin:0;flex:0 0 auto;accent-color:#1264d8}
+.pr-bank .sj-actions button{border-radius:19px}
+.pr-bank .sj-actions .ps-icon{color:#1264d8}
+.pr-bank .sj-table th{padding-left:11px;padding-right:11px}
+.pr-bank .sj-table th span{gap:9px}
+.pr-bank .sj-table td{padding-left:11px;padding-right:11px}
+.pr-bank .sj-table tfoot td{position:sticky;bottom:0;background:#f1f6ff;border-top:2px solid #a9c2ea;border-bottom:0;font-weight:700}
+.pr-bank .pr-warn{flex-shrink:0}
+
+/* PF / ESI / PT STATEMENT: the Bank Transfer Sheet panel with a note tile and eleven narrow columns. */
+.pr-stat .st-note{display:block;align-self:stretch;margin:0;padding:7px 18px;border-radius:10px;background:#eef4ff;color:#14213d;font-size:13px;line-height:1.4}
+.pr-stat .sj-table{font-size:12.5px}
+.pr-stat .sj-table th{padding:9px 7px}
+.pr-stat .sj-table th span{gap:6px;font-size:12.5px}
+.pr-stat .sj-table th .ps-icon{width:15px;height:15px}
+.pr-stat .sj-table td{padding:7px 7px}

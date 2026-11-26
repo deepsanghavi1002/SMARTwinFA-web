@@ -208,6 +208,12 @@ const SETUP_ICONS = {
   print: "M7 8V3h10v5M6 17H3v-8h18v8h-3M7 14h10v7H7z",
   tag: "M3 4h8l10 10-7 7L4 11zM8.500 9h.01",
   money: "M3 6h18v12H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 12h.01M18 12h.01",
+  calculator: "M6 3h12v18H6zM9 7h6M9 12h.01M12 12h.01M15 12h.01M9 15h.01M12 15h.01M15 15h.01M9 18h.01M12 18h.01M15 18h.01",
+  wallet: "M4 7h15v13H4zM4 7l11-3v3M15 11h5v5h-5z",
+  check: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM7.800 12.400l2.900 2.900 5.600-5.800",
+  card: "M3 6h18v12H3zM3 10h18M7 15h4",
+  code: "M5 3h14v18H5zM8 8h8M8 12h8M8 16h5",
+  transfer: "M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4",
 } as const;
 
 export function SetupIcon({ name }: { name: keyof typeof SETUP_ICONS }) {

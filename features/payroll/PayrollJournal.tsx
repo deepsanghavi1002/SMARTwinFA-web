@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { messageBox } from "../ui/MessageBox";
-import { money, usePayroll, type Props } from "./Payroll";
+import { SetupIcon, money, usePayroll, type Props } from "./Payroll";
 
 /**
  * PAYROLL (Phase 4): Salary Journal. Gets each slip's salary into the staff ledger in the accounts, one of two ways (Payroll Setup picks which are on):
@@ -69,41 +69,52 @@ export function PayrollJournal({ menuShortName, title, onClose }: Props) {
   const canCreate = !!status && mode.includes("A") && status.period.status === "P" && status.slips.length > 0 && unlinked && status.slips.every((s) => s.credited === 0);
 
   return (
-    <div className="mp-screen te-screen pr-screen" role="region" aria-label={title}>
-      <div className="pr-bar">
-        <label className="pr-field"><span>Pay period</span>
-          <select value={periodId ?? ""} onChange={(event) => setPeriodId(Number(event.target.value))}>
-            {periods.length === 0 && <option value="">No period yet</option>}
-            {periods.map((p) => <option key={p.id} value={p.id}>{MONTHS[p.month - 1]} {p.year} - {STATE[p.status]}</option>)}
-          </select></label>
-        {status && <span className="pr-note">Mode: {mode === "AB" ? "A or B" : mode === "A" ? "A (create)" : "B (map)"} · Expense account: {status.salaryExpName || "not chosen"}</span>}
-      </div>
-      <div className="pr-actions">
-        <button type="button" className="pr-primary" disabled={busy || !canCreate} onClick={() => void preview()}>Create salary journal…</button>
-        <button type="button" onClick={() => void quit()}>Quit</button>
-      </div>
-      {status && status.period.status === "O" && <p className="pr-note">Process payroll for this period first.</p>}
+    <div className="mp-screen te-screen pr-screen pr-sj" role="region" aria-label={title}>
+      <section className="sj-panel" aria-label="Salary journal">
+        <div className="sj-tiles">
+          <label className="sj-period"><SetupIcon name="calendar" />
+            <span><small>Pay period</small>
+              <select value={periodId ?? ""} onChange={(event) => setPeriodId(Number(event.target.value))}>
+                {periods.length === 0 && <option value="">No period yet</option>}
+                {periods.map((p) => <option key={p.id} value={p.id}>{MONTHS[p.month - 1]} {p.year} - {STATE[p.status]}</option>)}
+              </select></span></label>
+          {status && <p className="sj-mode"><SetupIcon name="calculator" /><span>Mode: {mode === "AB" ? "A or B" : mode === "A" ? "A (create)" : "B (map)"} · Expense account: {status.salaryExpName || "not chosen"}</span></p>}
+        </div>
+        <div className="sj-actions">
+          <button type="button" className="sj-primary" disabled={busy || !canCreate} onClick={() => void preview()}><SetupIcon name="plus" />Create salary journal…</button>
+          <button type="button" onClick={() => void quit()}><SetupIcon name="exit" />Quit</button>
+        </div>
 
-      <table className="pr-table">
-        <thead><tr><th>Staff</th><th className="pr-num">Net payable</th><th className="pr-num">Credited in ledger</th><th>Journal</th><th /></tr></thead>
-        <tbody>
-          {(status?.slips ?? []).map((s) => {
-            const left = Math.round((s.net - s.credited) * 100) / 100;
-            return (
-              <tr key={s.slipId}>
-                <td>{s.name} <small>#{s.code}</small></td><td className="pr-num">{money(s.net)}</td>
-                <td className={`pr-num ${left > 0.004 ? "pr-badtext" : ""}`}>{money(s.credited)}{left > 0.004 && <small> ({money(left)} to go)</small>}</td>
-                <td>{s.jvDoc ? `${s.jvDoc} (${s.jvMode === "A" ? "made by payroll" : "mapped"})` : "—"}</td>
-                <td>
-                  {mode.includes("B") && left > 0.004 && status?.period.status !== "L" && <button type="button" disabled={busy} onClick={() => void openMap(s)}>Map existing JV</button>}
-                  {s.jvMode === "B" && status?.period.status !== "L" && <button type="button" disabled={busy} onClick={() => void release(s)}>Release</button>}
-                </td>
-              </tr>
-            );
-          })}
-          {status && status.slips.length === 0 && <tr><td colSpan={5} className="pr-note">No slips for this period.</td></tr>}
-        </tbody>
-      </table>
+        <div className="sj-table-box">
+          <table className="sj-table">
+            <thead><tr><th><span><SetupIcon name="group" />Staff</span></th><th className="pr-num"><span><SetupIcon name="wallet" />Net payable</span></th><th className="pr-num"><span><SetupIcon name="check" />Credited in ledger</span></th><th><span><SetupIcon name="doc" />Journal</span></th><th aria-label="Actions" /></tr></thead>
+            <tbody>
+              {(status?.slips ?? []).map((s) => {
+                const left = Math.round((s.net - s.credited) * 100) / 100;
+                return (
+                  <tr key={s.slipId}>
+                    <td>{s.name} <small>#{s.code}</small></td><td className="pr-num">{money(s.net)}</td>
+                    <td className={`pr-num ${left > 0.004 ? "pr-badtext" : ""}`}>{money(s.credited)}{left > 0.004 && <small> ({money(left)} to go)</small>}</td>
+                    <td>{s.jvDoc ? `${s.jvDoc} (${s.jvMode === "A" ? "made by payroll" : "mapped"})` : "—"}</td>
+                    <td className="sj-row-actions">
+                      {mode.includes("B") && left > 0.004 && status?.period.status !== "L" && <button type="button" disabled={busy} onClick={() => void openMap(s)}>Map existing JV</button>}
+                      {s.jvMode === "B" && status?.period.status !== "L" && <button type="button" disabled={busy} onClick={() => void release(s)}>Release</button>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {(!status || status.slips.length === 0) && (
+            <div className="sj-empty">
+              <span className="sj-art"><SetupIcon name="doc" /><SetupIcon name="search" /></span>
+              <b>{periods.length === 0 ? "No pay period yet." : "No slips for this period."}</b>
+              <p>{periods.length === 0 ? "Open a month in Attendance or Process Payroll to get started." : "Run Process Payroll for this period first; the salary journal is made from its slips."}</p>
+            </div>
+          )}
+        </div>
+        {status && status.period.status === "O" && status.slips.length > 0 && <p className="pr-note">Process payroll for this period first.</p>}
+      </section>
 
       {mapping && (
         <fieldset className="pr-edit"><legend>Map a journal line to {mapping.slip.name}</legend>
