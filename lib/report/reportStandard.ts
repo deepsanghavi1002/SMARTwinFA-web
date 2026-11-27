@@ -1090,8 +1090,9 @@ async function journal(loader: Loader, plan: ReportPlan): Promise<ResultTable> {
   const inner = `SELECT LED.FULL_DOCNO${csFrom}${call.where}${/\bbetween\b/i.test(call.where) ? "" : dated} and led.DOC_POSTING='P' `;
   // bit_use_union 0: the narration is a column of its own; otherwise (Show Narration in rows) it is left out.
   const narration = call.showNarration && call.useUnion ? "" : ",led.NARRATION";
-  const sql = `SELECT ${call.queryStart}${narration}${csFrom} WHERE LED.FULL_DOCNO IN (${inner}) and led.DOC_POS<>'D' and led.DOC_POSTING='P'${dated} ORDER BY LED.DOC_NO,LED.AC_DBCODE,"SORTING_DATE"`;
-  const lines = await runReportSql(loader, frag(sql));
+  const sql = `SELECT ${call.queryStart}${narration}${csFrom} WHERE LED.FULL_DOCNO IN (${inner}) and led.DOC_POS<>'D' and led.DOC_POSTING='P'${dated} ORDER BY LED.DOC_NO,LED.AC_DBCODE,"SORTING_DATE",LED.LED_KEY`;
+  // Hashed: the planner expects one line from the voucher list and would compare every line with every voucher (Detail, a full year: 17 s; hash joins: 0.1 s).
+  const lines = await runReportSqlHashed(loader, frag(sql));
   const table = tableFromFields(lines.fields);
   table.rows = lines.rows.map((row) => ({ ...row }));
 
