@@ -56,7 +56,9 @@ test("setup SQL written for SQL Server reads in PostgreSQL", () => {
   assert.equal(literal("a = |sys.tarikh1| or b = '|sys.tarikh1|'", "|sys.tarikh1|", "01/Apr/2026"), "a = '01/Apr/2026' or b = '01/Apr/2026'");
   assert.equal(setBooksValueInString("book in (|PCbook_DRSLED|,|PCbook_JOURNAL|)"), "book in (2,19)");
   assert.equal(pgFragment("case when x then ledpost.post_amt else 0.00 end from |sys.db|ledger", { moneyColumns: ["post_amt"] }, "co"), "case when x then ledpost.post_amt::numeric else 0.00 end from co.ledger");
-  assert.equal(pgFragment("ledpost.post_amt::numeric", { moneyColumns: ["post_amt"] }, "co"), "ledpost.post_amt::numeric", "a cast already there is left alone");
+  assert.equal(pgFragment("case when led.AC_DBCODE=1 then led.amount else '' end", { moneyColumns: [] }, "co"), "case when led.AC_DBCODE=1 then led.amount else 0 end", "the Journal's blank side, amounts stored as numeric");
+  assert.equal(pgFragment("case when led.AC_DBCODE=1 then led.amount else '' end", { moneyColumns: ["amount"] }, "co"), "case when led.AC_DBCODE=1 then led.amount::numeric else 0 end", "the same with amounts stored as money");
+  assert.equal(pgFragment("ledpost.post_amt::numeric",{ moneyColumns: ["post_amt"] }, "co"), "ledpost.post_amt::numeric", "a cast already there is left alone");
   assert.equal(pgFragment(`case when bk_dbcode=1 then amount else 0.00 end as "RECEIPT"`, { moneyColumns: ["amount"] }, "co"), `case when bk_dbcode=1 then amount::numeric else 0.00 end as "RECEIPT"`, "a bare money column as a CASE result");
   assert.equal(pgFragment(`sum(amount) as "amount"`, { moneyColumns: ["amount"] }, "co"), `sum(amount) as "amount"`, "only CASE results are cast bare");
   assert.equal(pgFragment("led.type=9 and led.\"TYPE\"=1 and ac.limit>0 and x.type=2", { moneyColumns: [] }, "co"), "led.\"TYPE\"=9 and led.\"TYPE\"=1 and ac.\"LIMIT\">0 and x.type=2", "the columns PostgreSQL keeps in capitals");
